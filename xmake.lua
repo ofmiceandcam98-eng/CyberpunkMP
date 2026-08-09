@@ -19,7 +19,7 @@ add_requires(
     "zlib",
     "nlohmann_json",
     "flecs v4.0.3",
-    "protobuf-cpp",
+    "protobuf-cpp 29.3",
     "entt",
     "microsoft-gsl")
 
