@@ -4,7 +4,7 @@ ENV XMAKE_ROOT y
 
 RUN echo 'deb http://deb.debian.org/debian bookworm-backports main' >> /etc/apt/sources.list
 RUN apt update \
-  && apt install -y xmake g++ \
+  && apt install -y xmake g++ unzip wget ca-certificates git \
   && apt clean
 
 COPY . .
