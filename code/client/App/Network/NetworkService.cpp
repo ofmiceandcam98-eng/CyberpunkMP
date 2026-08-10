@@ -71,8 +71,7 @@ void NetworkService::HandleAuthentication(const PacketEvent<server::Authenticati
 {
     if (!aResponse.get_success())
     {
-        // Handle the error message here
-        // aResponse.get_error();
+        spdlog::error("Authentication failed: {}", aResponse.get_error());
         Close();
         return;
     }
@@ -88,8 +87,10 @@ void NetworkService::HandleAuthentication(const PacketEvent<server::Authenticati
     Red::Handle<Red::GameObject> player;
     system->GetLocalPlayerControlledGameObject(player);
 
-    const auto& cEntityPosition = player->placedComponent->localTransform.Position;
-    const auto cEntityRotation = Game::ToGlm(player->placedComponent->localTransform.Orientation);
+    // Use worldTransform: localTransform is relative and stays near-origin, which made
+    // the server spawn our puppet at ~(0, 3.6, 0) instead of our actual world position.
+    const auto& cEntityPosition = player->placedComponent->worldTransform.Position;
+    const auto cEntityRotation = Game::ToGlm(player->placedComponent->worldTransform.Orientation);
 
     common::Vector3 pos;
     pos.set_x(cEntityPosition.x);
@@ -105,14 +106,19 @@ void NetworkService::HandleAuthentication(const PacketEvent<server::Authenticati
 
 
     auto ccSystem = Red::GetGameSystem<Red::game::ui::CharacterCustomizationSystem>();
+
+    // GetCustomizationState() returns (ccSystem + 0x78), which can never be null - the
+    // instance behind it can be, and is during normal gameplay. Serializing a null
+    // instance crashes the game, so check the instance itself.
     auto stateHandle = GetCustomizationState(ccSystem);
-    if (stateHandle) 
+
+    if (stateHandle && stateHandle->instance)
     {
         auto writer = CMPWriter();
         CharacterCustomizationState_Serialize(stateHandle->instance, &writer);
         spdlog::info("Got bytes: {}", writer.bytes.size());
         request.set_ccstate(writer.bytes);
-    } 
+    }
     else
     {
         spdlog::info("CustomizationState was null");

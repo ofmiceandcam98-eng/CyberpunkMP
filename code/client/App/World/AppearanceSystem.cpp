@@ -165,19 +165,28 @@ void AddItems(Red::Handle<Red::game::Object> & object, Red::DynArray<Red::TweakD
 
 bool AppearanceSystem::ApplyAppearance(Red::Handle<Red::game::Object> object)
 {
-    if (m_playerCcstate.find(object.instance->id) == m_playerCcstate.end()) 
+    if (!object.instance)
+    {
+        spdlog::error("[Appearance] ApplyAppearance called with a null object - aborting");
+        return false;
+    }
+
+    if (m_playerCcstate.find(object.instance->id) == m_playerCcstate.end())
     {
         // not our entity
         return false;
     }
 
     auto bytes = m_playerCcstate[object.instance->id];
-    if (bytes.size() == 0) 
+    if (bytes.size() == 0)
     {
         spdlog::info("no bytes for {}", object->id.hash);
         return false;
     }
 
+    // NOTE: leftover upstream debug code - sets every remote player's display name to
+    // "Test" by writing into a hand-mapped field. Verified NOT to be the spawn crash
+    // (execution reaches here fine), but it serves no purpose either.
     object.instance->displayName.unk08 = Red::CString("Test");
 
     spdlog::info("Loaded bytes: {}", bytes.size());
@@ -185,13 +194,31 @@ bool AppearanceSystem::ApplyAppearance(Red::Handle<Red::game::Object> object)
     Red::Handle<game::ui::CharacterCustomizationState> stateHandle;
     CreateHandle_CharacterCustomizationState(&stateHandle);
 
-    auto reader = CMPReader(bytes);
-    CharacterCustomizationState_Serialize(stateHandle.instance, &reader);
+    if (!stateHandle.instance)
+    {
+        spdlog::error("[Appearance] CreateHandle_CharacterCustomizationState returned null - aborting");
+        return false;
+    }
+
+    if (bytes.empty())
+    {
+        spdlog::warn("[Appearance] no ccstate bytes for this entity - appearance will be default");
+    }
+    else
+    {
+        auto reader = CMPReader(bytes);
+        CharacterCustomizationState_Serialize(stateHandle.instance, &reader);
+    }
 
     // shouldn't be needed
     // Red::CallVirtual(this, "AddBodyParts", object, stateHandle.instance->isBodyGenderMale);
 
     auto ps = reinterpret_cast<Red::game::PuppetPS*>(object.instance->persistentState.instance);
+    if (!ps)
+    {
+        spdlog::error("[Appearance] puppet persistentState is null - aborting before writing unk72");
+        return false;
+    }
     // checked during item adding process for &TPP
     ps->unk72[0] = 1;
 

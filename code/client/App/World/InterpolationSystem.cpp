@@ -2,6 +2,7 @@
 
 #include <App/Components/AttachedComponent.h>
 #include <App/Threading/ThreadService.h>
+#include <App/World/PuppetRegistry.h>
 
 #include "App/Network/NetworkService.h"
 #include "RED4ext/Scripting/Natives/Generated/game/EntityStubComponentPS.hpp"
@@ -210,7 +211,11 @@ void HookIdleController_SetAnimation(Game::Controller* apController, AnimationDa
     Game::EntityPtr entity(pMoveComponent);
     if (const auto pOwner = Red::Cast<Red::GameObject>(entity.GetValuePtr()))
     {
-        if (pOwner->tags.Contains("CyberpunkMP.Puppet"))
+        // This hook runs on the game's ANIMATION thread. Reading pOwner->tags here
+        // walks a heap DynArray on an entity the main thread may still be building,
+        // which raced and crashed the game shortly after a remote player spawned.
+        // PuppetRegistry only touches the entity's 64-bit id.
+        if (App::PuppetRegistry::Contains(pOwner->id.hash))
         {
             if (apController->m_type == MultiMovementController::kMulti)
                 return;
