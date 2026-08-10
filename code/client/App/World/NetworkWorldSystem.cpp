@@ -14,6 +14,7 @@
 #include "App/Components/EntityComponent.h"
 #include "App/Components/SpawningComponent.h"
 #include "App/Components/InterpolationComponent.h"
+#include "App/World/PuppetRegistry.h"
 #include "Game/Utils.h"
 #include "Game/CharacterCustomizationSystem.h"
 
@@ -40,20 +41,55 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
     Red::EntityID id;
     Red::ScriptGameInstance game;
 
+    spdlog::info("[Spawn] remote id {} - ccstate {} bytes, {} equipment item(s)", aServerId, aCcstate.size(),
+                 aEquipment.size);
+
+    if (!m_pCreatePuppet)
+    {
+        spdlog::error("[Spawn] CreatePuppet script function was never resolved - aborting");
+        return false;
+    }
+
     Red::Handle<game::ui::CharacterCustomizationState> stateHandle;
     CreateHandle_CharacterCustomizationState(&stateHandle);
 
-    auto reader = CMPReader(aCcstate);
-    CharacterCustomizationState_Serialize(stateHandle.instance, &reader);
-
-    if (!Red::Detail::CallFunctionWithArgs(m_pCreatePuppet, handle, id, aPosition, aRotation, stateHandle.instance->isBodyGenderMale))
+    if (!stateHandle.instance)
+    {
+        spdlog::error("[Spawn] CreateHandle_CharacterCustomizationState returned a null instance - aborting");
         return false;
+    }
+
+    // Default to male if we have no appearance data. An empty buffer leaves the
+    // customization state uninitialized, and reading it would be undefined.
+    bool isBodyGenderMale = true;
+
+    if (!aCcstate.empty())
+    {
+        auto reader = CMPReader(aCcstate);
+        CharacterCustomizationState_Serialize(stateHandle.instance, &reader);
+        isBodyGenderMale = stateHandle.instance->isBodyGenderMale;
+    }
+    else
+    {
+        spdlog::warn("[Spawn] remote player sent no ccstate - spawning with default appearance");
+    }
+
+    if (!Red::Detail::CallFunctionWithArgs(m_pCreatePuppet, handle, id, aPosition, aRotation, isBodyGenderMale))
+    {
+        spdlog::error("[Spawn] CreatePuppet call failed for remote id {}", aServerId);
+        return false;
+    }
 
     auto apprSystem = Red::GetGameSystem<NetworkWorldSystem>()->GetAppearanceSystem();
     apprSystem->AddEntity(id, aEquipment, aCcstate);
 
     if (!id.IsDynamic())
         return false;
+
+    // Register BEFORE the entity finishes assembling. The animation-thread hook
+    // identifies our puppets through this registry instead of reading the entity's
+    // tag array off-thread, which was racing against the main thread's setup.
+    App::PuppetRegistry::Add(id.hash);
 
     make_alive(aServerId).emplace<SpawningComponent>(id);
 
@@ -69,11 +105,13 @@ void NetworkWorldSystem::DeSpawn(uint64_t aServerId) const
 
     if (auto* pEntity = entity.get<EntityComponent>())
     {
+        App::PuppetRegistry::Remove(pEntity->Id.hash);
         const auto handle = Red::GetGameSystem<NetworkWorldSystem>();
         Red::Detail::CallFunctionWithArgs(m_pDeletePuppet, handle, pEntity->Id);
     }
     else if (auto* pEntity = entity.get<SpawningComponent>())
     {
+        App::PuppetRegistry::Remove(pEntity->Id.hash);
         const auto handle = Red::GetGameSystem<NetworkWorldSystem>();
         Red::Detail::CallFunctionWithArgs(m_pDeletePuppet, handle, pEntity->Id);
     }
@@ -319,7 +357,10 @@ void NetworkWorldSystem::UpdatePlayerLocation() const
     }
     else
     {
-        const auto cEntityPosition = puppet->placedComponent->localTransform.Position;
+        // localTransform is not updated as the player walks (V moves via the character
+        // controller), so it stays frozen at its spawn value. Rotation already reads
+        // worldTransform on the next line - use it for position too.
+        const auto cEntityPosition = puppet->placedComponent->worldTransform.Position;
         const auto cEntityRotation = eulerAngles(Game::ToGlm(puppet->placedComponent->worldTransform.Orientation));
         float speed = puppet->moveComponent->speed.Magnitude();
 
@@ -436,6 +477,10 @@ void NetworkWorldSystem::OnConnected()
         .each([this](flecs::entity aEntity, SpawningComponent& aSpawning)
         {
             const auto pEntity = GetEntity(aSpawning.Id);
+
+            if (!pEntity)
+                return;
+
             if (const auto pOwner = Red::Cast<Red::GameObject>(pEntity))
             {
                 if (pOwner->tags.Contains("CyberpunkMP.Vehicle"))
@@ -463,6 +508,8 @@ void NetworkWorldSystem::OnDisconnected(Client::EDisconnectReason aReason)
             DeSpawn(entity.raw_id());
             entity.destruct();
         });
+
+    App::PuppetRegistry::Clear();
 
     if (m_updatePlayerLocation)
         m_updatePlayerLocation.destruct();
