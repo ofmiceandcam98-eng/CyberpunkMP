@@ -10,17 +10,33 @@ void Settings::Load()
     if (launchParameters.Contains(RED4ext::CString("-online")))
         settings.enabled = true;
 
+    bool ipFromArgs = false;
+    bool portFromArgs = false;
+
     if (const auto ip = launchParameters.Get("-ip"); ip)
     {
         if (ip->size > 0)
+        {
             settings.ip = (*ip)[0].c_str();
+            ipFromArgs = true;
+        }
     }
 
     if (const auto port = launchParameters.Get("-port"); port)
     {
         if (port->size > 0)
+        {
             settings.port = std::strtoul((*port)[0].c_str(), nullptr, 10) & 0xFFFF;
+            portFromArgs = true;
+        }
     }
+
+    // Report what we actually parsed. The game's parser only fills these in for the
+    // --ip=<addr> / --port=<n> form; "-ip <addr>" produces an empty value list and
+    // silently leaves the defaults in place, which looks identical to a dead server.
+    spdlog::info("Server address: {}:{} (ip {}, port {})", settings.ip, settings.port,
+                 ipFromArgs ? "from launch args" : "DEFAULT - --ip= was not parsed",
+                 portFromArgs ? "from launch args" : "DEFAULT - --port= was not parsed");
 
     if (const auto mods = launchParameters.Get("-mod"); mods)
     {

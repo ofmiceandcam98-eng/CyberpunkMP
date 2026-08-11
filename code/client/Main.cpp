@@ -40,6 +40,11 @@ void Initialize()
 
 #include "App/Application.h"
 
+// The game version this build has actually been tested against. Bump when the mod
+// is verified on a newer patch.
+constexpr uint8_t kSupportedGameMajor = 2;
+constexpr uint16_t kSupportedGameMinor = 31;
+
 RED4EXT_C_EXPORT bool Main(RED4ext::PluginHandle aHandle, RED4ext::EMainReason aReason, const RED4ext::Sdk* aSdk)
 {
 
@@ -47,6 +52,27 @@ RED4EXT_C_EXPORT bool Main(RED4ext::PluginHandle aHandle, RED4ext::EMainReason a
     {
     case RED4ext::EMainReason::Load:
     {
+        // Report the game version, and say plainly when it isn't one we've tested.
+        // Without this, an unsupported patch shows up as a wall of script validation
+        // errors ("Missing native function ...", "declared base class ... different
+        // than current one ...") that give no hint the game version is the problem.
+        // Warn rather than refuse: a later patch may well work, and blocking it would
+        // be presumptuous.
+        if (aSdk->runtime)
+        {
+            const auto& v = *aSdk->runtime;
+            aSdk->logger->InfoF(aHandle, "Game version %u.%u.%u", v.major, v.minor, v.patch);
+
+            if (v.major != kSupportedGameMajor || v.minor != kSupportedGameMinor)
+            {
+                aSdk->logger->WarnF(aHandle,
+                                    "CyberpunkMP was tested against game %u.%u - you are on %u.%u. "
+                                    "If the game refuses to start with script validation errors, "
+                                    "this mismatch is the likely cause.",
+                                    kSupportedGameMajor, kSupportedGameMinor, v.major, v.minor);
+            }
+        }
+
         Initialize();
 
         App::GApplication = MakeUnique<App::Application>(aHandle, aSdk);

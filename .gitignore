@@ -27,3 +27,8 @@ distrib/*
 code/client/Archives/CyberpunkMP.zip
 Cyberpunk2077.exe*
 imgui.ini
+# Local secrets / runtime state (docker compose)
+.env
+config/
+logs/
+plugins/

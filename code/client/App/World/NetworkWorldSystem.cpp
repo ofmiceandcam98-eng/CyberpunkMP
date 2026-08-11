@@ -406,6 +406,12 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
 void NetworkWorldSystem::Connect()
 {
     auto address = fmt::format("{}:{}", Settings::Get().ip, Settings::Get().port);
+
+    // Log the address we actually dial. The launch arguments must use the
+    // --ip=<addr> --port=<n> form; anything else silently leaves these at their
+    // defaults (127.0.0.1:11778) and the connection times out against your own PC.
+    spdlog::info("Connecting to {}", address);
+
     Core::Container::Get<NetworkService>()->Connect(address);
 }
 
