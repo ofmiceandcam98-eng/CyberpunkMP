@@ -24,6 +24,23 @@ dist
 distrib/*
 
 # Miscellaneous
+# Local coordination scratchpads shared between Cam's assistants - never upstream.
+# (ASSISTANTS_COMMUNICATION.md is deliberately TRACKED - committed in 7800c75 - so it is
+# not listed here; .gitignore has no effect on already-tracked files anyway.)
+ANTIGRAVITY_NOTES.md
+CYBERPUNKMP_BRIEFING.md
+# Sources for the public status page / release notes - fork-specific
+publish/
 code/client/Archives/CyberpunkMP.zip
 Cyberpunk2077.exe*
 imgui.ini
+
+# Local secrets / runtime state (docker compose)
+.env
+config/
+logs/
+plugins/
+
+# Discord credentials. The bot token is a password - never commit either of these.
+tools/.discord-webhook
+tools/.discord-bot
