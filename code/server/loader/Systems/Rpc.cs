@@ -75,7 +75,11 @@ namespace Server.Loader.Systems
                     else
                     {
                         var id = rpc.RegisterServer(name.Hash, funcName.Hash);
-                        serverRpcs.Add(id, m);
+                        // Assign rather than Add: registration is idempotent, so a
+                        // reloaded plugin returns the same id and must replace the
+                        // MethodInfo with the one from the new assembly. Add() would
+                        // throw on the duplicate key.
+                        serverRpcs[id] = m;
                     }
                 }
             }
