@@ -107,12 +107,20 @@ void GameServer::OnConsume(const void* apData, uint32_t aSize, ConnectionId aCon
 
 void GameServer::OnConnection(ConnectionId aHandle)
 {
-    spdlog::debug("Connection received {:x}", aHandle);
+    // Log at info, with the peer address. At debug level this is invisible by
+    // default, which makes "the client cannot connect" impossible to diagnose:
+    // there is no way to tell a client that never reached us from one that
+    // reached us and failed later.
+    char address[SteamNetworkingIPAddr::k_cchMaxString] = {};
+    const auto info = GetConnectionInfo(aHandle);
+    info.m_addrRemote.ToString(address, sizeof(address), true);
+
+    spdlog::info("Connection received from {} (id {:x})", address, aHandle);
 }
 
 void GameServer::OnDisconnection(ConnectionId aConnectionId, EDisconnectReason aReason)
 {
-    spdlog::debug("Connection ended {:x}", aConnectionId);
+    spdlog::info("Connection {:x} ended (reason {})", aConnectionId, static_cast<uint32_t>(aReason));
 
     auto* pPlayerManager = GetWorld()->get_mut<PlayerManager>();
 
