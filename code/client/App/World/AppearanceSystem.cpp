@@ -58,8 +58,17 @@ Vector<String> AppearanceSystem::GetPlayerItems(Red::Handle<Red::GameObject> pla
 void AppearanceSystem::AddEntity(const Red::EntityID entityID, const Red::DynArray<Red::TweakDBID>& items, const Vector<uint8_t> ccstate)
 {
     spdlog::info("Logging Entity Appearance: {}", entityID.hash);
+
+    // TEMPORARY [PROBE] lines - see the matching block in NetworkWorldSystem::Spawn.
+    // These two maps have no mutex, and they are read from redscript callbacks
+    // (GetEntityItems, ApplyAppearance) while this writes them from the spawn path.
+    spdlog::info("[PROBE 2] AddEntity: writing equipment map ({} items)", items.size);
     m_playerEquipment[entityID] = items;
+
+    spdlog::info("[PROBE 3] AddEntity: writing ccstate map ({} bytes)", ccstate.size());
     m_playerCcstate[entityID] = ccstate;
+
+    spdlog::info("[PROBE 4] AddEntity: both map writes done");
 }
 
 void AddItems(Red::Handle<Red::game::Object> & object, Red::DynArray<Red::TweakDBID> const & items, game::ui::CharacterCustomizationState const * state)

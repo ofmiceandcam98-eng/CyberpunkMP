@@ -80,18 +80,44 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
         return false;
     }
 
+    // TEMPORARY [PROBE] lines bisect the remote-spawn crash. Both crash logs end at
+    // AddEntity's first log line, so the fault is somewhere in this block. Strip these
+    // once the culprit is identified.
+    spdlog::info("[PROBE 1] puppet created, entity id {:x} - calling AddEntity", id.hash);
+
     auto apprSystem = Red::GetGameSystem<NetworkWorldSystem>()->GetAppearanceSystem();
     apprSystem->AddEntity(id, aEquipment, aCcstate);
 
+    spdlog::info("[PROBE 5] AddEntity returned");
+
     if (!id.IsDynamic())
+    {
+        spdlog::warn("[PROBE 6] entity id is NOT dynamic - bailing out of Spawn");
         return false;
+    }
+
+    spdlog::info("[PROBE 6] entity id is dynamic");
 
     // Register BEFORE the entity finishes assembling. The animation-thread hook
     // identifies our puppets through this registry instead of reading the entity's
     // tag array off-thread, which was racing against the main thread's setup.
     App::PuppetRegistry::Add(id.hash);
 
-    make_alive(aServerId).emplace<SpawningComponent>(id);
+    spdlog::info("[PROBE 7] PuppetRegistry::Add done");
+
+    // Split from the emplace below so the two can be told apart. The low 32 bits are
+    // the flecs id proper and the high 32 are its generation counter; set_entity_range
+    // above declares 10'000'000-20'000'000, and server ids routinely fall outside it.
+    spdlog::info("[PROBE 8] calling make_alive({}) - low32 {}, generation {}", aServerId,
+                 static_cast<uint32_t>(aServerId), static_cast<uint32_t>(aServerId >> 32));
+
+    auto spawned = make_alive(aServerId);
+
+    spdlog::info("[PROBE 9] make_alive returned - calling emplace<SpawningComponent>");
+
+    spawned.emplace<SpawningComponent>(id);
+
+    spdlog::info("[PROBE 10] Spawn complete for remote id {}", aServerId);
 
     return true;
 }
@@ -447,6 +473,12 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
 void NetworkWorldSystem::Connect()
 {
     auto address = fmt::format("{}:{}", Settings::Get().ip, Settings::Get().port);
+
+    // Log the address we actually dial. The launch arguments must use the
+    // --ip=<addr> --port=<n> form; anything else silently leaves these at their
+    // defaults (127.0.0.1:11778) and the connection times out against your own PC.
+    spdlog::info("Connecting to {}", address);
+
     Core::Container::Get<NetworkService>()->Connect(address);
 }
 
