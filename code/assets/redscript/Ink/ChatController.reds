@@ -102,7 +102,13 @@ public class ChatController extends inkHUDGameController {
             // Mouse wheel, registered only while the chat input is open. Bound globally
             // it would fight weapon switching during normal play; while the input is up
             // the game is already in a modal context and the wheel has nothing else to do.
-            this.m_player.RegisterInputListener(this, n"mouse_wheel");
+            //
+            // These are OUR action names, declared in assets/Inputs/CyberpunkMP.xml
+            // against IK_MouseWheelUp and IK_MouseWheelDown. There is no "mouse_wheel"
+            // action in Cyberpunk - registering for one silently listens for something
+            // that never fires, which is what the first attempt at this did.
+            this.m_player.RegisterInputListener(this, n"ChatScrollUp");
+            this.m_player.RegisterInputListener(this, n"ChatScrollDown");
         } else {
             this.m_repeatingScrollActionEnabled = false;
             let targets = new inkWidgetsSet();
@@ -120,7 +126,8 @@ public class ChatController extends inkHUDGameController {
             this.m_player.UnregisterInputListener(this, n"ChatTop");
             this.m_player.UnregisterInputListener(this, n"ChatBottom");
             this.m_player.UnregisterInputListener(this, n"EnterChat");
-            this.m_player.UnregisterInputListener(this, n"mouse_wheel");
+            this.m_player.UnregisterInputListener(this, n"ChatScrollUp");
+            this.m_player.UnregisterInputListener(this, n"ChatScrollDown");
             this.m_input.SetText("");
             this.RequestSetFocus(null);
         }
@@ -188,6 +195,14 @@ public class ChatController extends inkHUDGameController {
                 return true;
                 break;
             case n"navigate_down":
+                this.Scroll(false);
+                return true;
+                break;
+            case n"ChatScrollUp":
+                this.Scroll(true);
+                return true;
+                break;
+            case n"ChatScrollDown":
                 this.Scroll(false);
                 return true;
                 break;

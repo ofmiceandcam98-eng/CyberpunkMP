@@ -2,6 +2,10 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Discord — Night City Online:** https://discord.gg/M9NSWsndC7
 
+## What changed — v0.1.12
+
+- **Cyber Engine Tweaks may now work alongside this mod — worth testing.** With the developer overlay off, the mod no longer creates *anything* on the graphics device and never takes part in a frame. CET draws its own overlay through the same path, and two overlays sharing one swapchain is what caused the GPU hard-lock. A mod that renders nothing cannot fight another renderer. **This is untested — if it hard-locks, tell us and turn CET back off.**
+
 ## What changed — v0.1.11
 
 - **The mouse wheel actually scrolls chat now.** The previous attempt listened for an action called `mouse_wheel`, which does not exist in Cyberpunk — the game exposes the wheel as two separate buttons. Real bindings are now declared through Input Loader.

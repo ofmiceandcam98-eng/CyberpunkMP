@@ -19,6 +19,27 @@ ImGuiService::~ImGuiService()
 
 void ImGuiService::OnRenderInit()
 {
+    // With the overlay off, take no part in rendering whatsoever.
+    //
+    // Returning here means no descriptor heap, no command allocators, no command list,
+    // no ImGui context - the mod creates nothing on the game's D3D12 device and never
+    // touches a frame. PrepareUpdate and OnPresent already skipped their work; this
+    // removes the objects as well.
+    //
+    // The reason to go this far is Cyber Engine Tweaks. CET draws its own ImGui overlay
+    // through the same present path, and two overlays sharing one swapchain is a known
+    // way to hard-lock a GPU - which is exactly what was seen when both were installed.
+    // Most Cyberpunk mods want CET, so "you must uninstall CET" is a real cost to anyone
+    // playing here. A mod that renders nothing cannot fight another renderer.
+    //
+    // Safe to decide once: the overlay is set from the command line at launch and cannot
+    // change mid-session, so there is no case where this is skipped and later needed.
+    if (!Settings::Get().debug)
+    {
+        spdlog::info("[ImGuiService] developer overlay off - not initialising any rendering");
+        return;
+    }
+
     Microsoft::WRL::ComPtr<ID3D12Device> pDevice;
     if (FAILED(GetSwapChain()->GetDevice(IID_PPV_ARGS(&pDevice))))
     {
