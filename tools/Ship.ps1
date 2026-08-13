@@ -350,8 +350,13 @@ if ($uploads.Count -eq 0) { Warn "nothing to publish"; exit 0 }
 # release that is not flagged latest is a release nobody receives. That already happened
 # once: a build sat published-but-not-latest while every download link quietly served an
 # older one.
-gh release view $Tag --repo $GhRepo > $null 2>&1
-if ($LASTEXITCODE -ne 0) {
+# Asked as a LIST rather than "view this tag". A missing release makes `gh release view`
+# print to stderr, and PowerShell 5.1 turns native stderr into an ErrorRecord that
+# $ErrorActionPreference='Stop' treats as fatal - so probing for absence killed the whole
+# ship, after the version had already been bumped and everything built.
+$existingTags = (gh release list --repo $GhRepo --limit 100 --json tagName | ConvertFrom-Json).tagName
+
+if ($existingTags -notcontains $Tag) {
     Step "Create release $Tag"
     $branch = git rev-parse --abbrev-ref HEAD
     gh release create $Tag --repo $GhRepo `
