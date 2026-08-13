@@ -2,6 +2,7 @@
 
 #include "App/Network/NetworkService.h"
 #include "App/ChatMessageEvent.h"
+#include "App/Settings.h"
 #include <RED4ext/Scripting/Natives/Generated/game/ui/IGameSystemUI.hpp>
 
 void ChatSystem::OnWorldAttached(RED4ext::world::RuntimeScene* aScene)
@@ -44,5 +45,9 @@ void ChatSystem::Send(const Red::CString& aMessage)
 
 RED4ext::CString ChatSystem::GetUsername()
 {
-    return RED4ext::CString("jackhumbert");
+    // Whoever the launcher signed in as. This is only what the local UI shows next to
+    // your own messages - everyone else sees the name the SERVER has for you, which is
+    // the one Discord vouched for once verification is enabled.
+    const auto& name = Settings::Get().discordName;
+    return RED4ext::CString(name.empty() ? "Player" : name.c_str());
 }

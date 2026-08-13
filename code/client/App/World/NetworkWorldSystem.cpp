@@ -50,29 +50,50 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
         return false;
     }
 
-    Red::Handle<game::ui::CharacterCustomizationState> stateHandle;
-    CreateHandle_CharacterCustomizationState(&stateHandle);
-
-    if (!stateHandle.instance)
-    {
-        spdlog::error("[Spawn] CreateHandle_CharacterCustomizationState returned a null instance - aborting");
-        return false;
-    }
-
     // Default to male if we have no appearance data. An empty buffer leaves the
     // customization state uninitialized, and reading it would be undefined.
     bool isBodyGenderMale = true;
 
-    if (!aCcstate.empty())
+    // The customization state is scoped deliberately. It used to live until Spawn()
+    // returned, meaning its handle was RELEASED immediately after [PROBE 10] logged - which
+    // is exactly where crashing clients go silent.
+    //
+    // Every puppet that survived carried an EMPTY ccstate, so this object was created and
+    // released without ever being deserialised. The one that crashed carried 6352 bytes,
+    // so it was populated first. Releasing a populated state is therefore the last thing
+    // that happens before the crash, and nothing had ever measured it.
     {
-        auto reader = CMPReader(aCcstate);
-        CharacterCustomizationState_Serialize(stateHandle.instance, &reader);
-        isBodyGenderMale = stateHandle.instance->isBodyGenderMale;
+        Red::Handle<game::ui::CharacterCustomizationState> stateHandle;
+        CreateHandle_CharacterCustomizationState(&stateHandle);
+
+        if (!stateHandle.instance)
+        {
+            spdlog::error("[Spawn] CreateHandle_CharacterCustomizationState returned a null instance - aborting");
+            return false;
+        }
+
+        if (!aCcstate.empty())
+        {
+            auto reader = CMPReader(aCcstate);
+            CharacterCustomizationState_Serialize(stateHandle.instance, &reader);
+            isBodyGenderMale = stateHandle.instance->isBodyGenderMale;
+        }
+        else
+        {
+            spdlog::warn("[Spawn] remote player sent no ccstate - spawning with default appearance");
+        }
+
+        spdlog::info("[PROBE 23] releasing customization state ({} bytes deserialised)", aCcstate.size());
     }
-    else
-    {
-        spdlog::warn("[Spawn] remote player sent no ccstate - spawning with default appearance");
-    }
+
+    spdlog::info("[PROBE 24] customization state released cleanly");
+
+    // TEMPORARY [PROBE 22]. Every puppet that survived so far carried no appearance data and
+    // therefore defaulted to male / MaMuppet. The first one with real appearance data crashed,
+    // from across the map, which rules out proximity. Gender is the one thing real ccstate
+    // changes about the entity actually built, so record which record we are asking for.
+    spdlog::info("[PROBE 22] creating puppet: isBodyGenderMale={} -> record {}", isBodyGenderMale,
+                 isBodyGenderMale ? "Character.MaMuppet" : "Character.WaMuppet");
 
     if (!Red::Detail::CallFunctionWithArgs(m_pCreatePuppet, handle, id, aPosition, aRotation, isBodyGenderMale))
     {
@@ -116,6 +137,16 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
     spdlog::info("[PROBE 9] make_alive returned - calling emplace<SpawningComponent>");
 
     spawned.emplace<SpawningComponent>(id);
+
+    // Give the puppet somewhere to put movement immediately.
+    //
+    // InterpolationComponent is normally added by an observer on EntityComponent, which
+    // does not exist until the promotion poll runs up to 200ms later. Movement arriving
+    // before that had nowhere to go - it used to crash on a null component, and merely
+    // guarding that would instead silently discard the first fifth of a second of a
+    // player's movement and make them snap on arrival. Adding it here means their very
+    // first update is buffered.
+    spawned.add<InterpolationComponent>();
 
     spdlog::info("[PROBE 10] Spawn complete for remote id {}", aServerId);
 
@@ -225,6 +256,35 @@ void NetworkWorldSystem::OnWorldAttached(RED4ext::world::RuntimeScene* aScene)
     m_vehicleSystem->OnWorldAttached(aScene);
 
     m_ready = true;
+
+    // NO automatic connecting.
+    //
+    // This used to connect here, and it was wrong twice over. Cyberpunk's MAIN MENU is
+    // itself a world, so OnWorldAttached fires about half a second after startup - long
+    // before any save exists. The client connected from the menu, the server began
+    // streaming players into a world with no game in it, and it died trying to spawn
+    // them.
+    //
+    // The deeper problem is that joining a server should be a decision, not something
+    // that happens to you because of how the game was launched. Connecting is now driven
+    // explicitly - see the MULTIPLAYER entry in MainMenu.reds.
+}
+
+void NetworkWorldSystem::RequestJoin()
+{
+    spdlog::info("[NetworkWorldSystem] join requested from the main menu");
+    m_joinRequested = true;
+}
+
+bool NetworkWorldSystem::ConsumeJoinRequest()
+{
+    // Deliberately one-shot. Loading a save from the MULTIPLAYER entry should connect;
+    // loading another save afterwards from the pause menu should not silently reconnect
+    // someone who never asked for it a second time.
+    const bool requested = m_joinRequested;
+    m_joinRequested = false;
+
+    return requested;
 }
 
 void NetworkWorldSystem::OnAfterWorldDetach()
@@ -508,19 +568,35 @@ void NetworkWorldSystem::OnConnected()
         .write<SpawningComponent>()
         .each([this](flecs::entity aEntity, SpawningComponent& aSpawning)
         {
+            // TEMPORARY [PROBE 11..16]. Spawn() itself is cleared - a solo /dummy run
+            // reached [PROBE 10] and then died, so the fault is here or later, while the
+            // game is still assembling the entity asynchronously.
+            spdlog::info("[PROBE 11] poll: resolving entity {:x}", aSpawning.Id.hash);
+
             const auto pEntity = GetEntity(aSpawning.Id);
 
             if (!pEntity)
                 return;
 
+            spdlog::info("[PROBE 12] poll: GetEntity returned a handle");
+
             if (const auto pOwner = Red::Cast<Red::GameObject>(pEntity))
             {
+                spdlog::info("[PROBE 13] poll: cast to GameObject ok - reading tags");
+
                 if (pOwner->tags.Contains("CyberpunkMP.Vehicle"))
                     return;
 
+                spdlog::info("[PROBE 14] poll: tags read ok - promoting to EntityComponent");
+
                  aEntity.emplace<EntityComponent>(aSpawning.Id, false, aSpawning.Controller);
                  aEntity.remove<SpawningComponent>();
+
+                spdlog::info("[PROBE 15] poll: promoted - about to MUTATE tags array");
+
                  pOwner->tags.Add("CyberpunkMP.Puppet");
+
+                spdlog::info("[PROBE 16] poll: tags.Add survived - entity fully promoted");
             }
         });
 

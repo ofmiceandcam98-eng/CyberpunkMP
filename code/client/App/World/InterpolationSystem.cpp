@@ -196,6 +196,19 @@ void InterpolationSystem::HandleNotifyEntityMove(const PacketEvent<server::Notif
 
     auto* pInterpolation = entity.get_mut<InterpolationComponent>();
 
+    // get_mut returns NULL when the entity does not have the component yet, and this was
+    // dereferenced unconditionally.
+    //
+    // InterpolationComponent is added by an observer on EntityComponent, which is only
+    // attached once the promotion poll runs - up to 200ms after the puppet spawns. A real
+    // player is sending movement the entire time, so their first update reliably lands
+    // inside that window and dereferenced a null pointer: an access violation with no
+    // crash report, a few milliseconds after the spawn completed.
+    //
+    // It never reproduced with a fabricated test player because those never move.
+    if (!pInterpolation)
+        return;
+
     if (!pInterpolation->TimePoints.empty() && pInterpolation->TimePoints.back().Tick > aMessage.get_tick())
         return;
 
@@ -220,14 +233,37 @@ void HookIdleController_SetAnimation(Game::Controller* apController, AnimationDa
             if (apController->m_type == MultiMovementController::kMulti)
                 return;
 
+            // TEMPORARY [PROBE 17..20]. Spawn() and the promotion poll are both cleared;
+            // the crash lands in the ~40ms of async entity assembly, and this hook is what
+            // runs there. Note the kMulti guard above is evaluated on the ANIMATION thread
+            // while the attach happens later on the MAIN thread - every animation frame in
+            // that gap queues another attach for the same move component.
+            static std::atomic<uint32_t> s_queued{0};
+            static std::atomic<uint32_t> s_ran{0};
+
+            const auto queued = ++s_queued;
+            if (queued <= 25)
+                spdlog::info("[PROBE 17] anim thread: queueing attach #{} for entity {:x}", queued, pOwner->id.hash);
+
             ThreadService::RunInMainThread([id = pOwner->id, pMoveComponent, apController]
             {
+                const auto ran = ++s_ran;
+                if (ran <= 25)
+                    spdlog::info("[PROBE 18] main thread: attach #{} starting for entity {:x}", ran, id.hash);
+
                 const auto pSystem = Red::GetGameSystem<NetworkWorldSystem>();
                 const auto entityQuery = pSystem->query<const EntityComponent>();
                 auto flecsEntity = entityQuery.find([id](const EntityComponent& component) { return component.Id == id; });
 
                 auto* pController = Red::Memory::New<MultiMovementController>();
+
+                if (ran <= 25)
+                    spdlog::info("[PROBE 19] main thread: calling AttachController");
+
                 AttachController(pMoveComponent, pController);
+
+                if (ran <= 25)
+                    spdlog::info("[PROBE 20] main thread: AttachController survived");
 
                 if (flecsEntity)
                 {

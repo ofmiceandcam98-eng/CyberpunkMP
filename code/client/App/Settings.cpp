@@ -31,6 +31,28 @@ void Settings::Load()
         }
     }
 
+    if (const auto token = launchParameters.Get("-discord-token"); token)
+    {
+        if (token->size > 0)
+            settings.discordToken = (*token)[0].c_str();
+    }
+
+    if (const auto name = launchParameters.Get("-discord-name"); name)
+    {
+        if (name->size > 0)
+            settings.discordName = (*name)[0].c_str();
+    }
+
+    spdlog::info("Display name: {}", settings.discordName.empty() ? "none - not launched from the launcher"
+                                                                 : settings.discordName.c_str());
+
+    // Never log the token itself - it is a live credential, and these logs get pasted
+    // into Discord by people reporting crashes. Length is enough to tell "present" from
+    // "the launcher passed nothing".
+    spdlog::info("Discord token: {}", settings.discordToken.empty()
+                                          ? "none - launched without the launcher"
+                                          : fmt::format("present ({} chars)", settings.discordToken.length()));
+
     // Report what we actually parsed. The game's parser only fills these in for the
     // --ip=<addr> / --port=<n> form; "-ip <addr>" produces an empty value list and
     // silently leaves the defaults in place, which looks identical to a dead server.

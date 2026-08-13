@@ -63,7 +63,11 @@ protected:
 
 private:
 
+    // Logs ping / link quality on a slow heartbeat, and immediately when the link degrades.
+    void ReportConnectionHealth();
+
     std::chrono::time_point<std::chrono::steady_clock> m_lastUpdate;
+    std::chrono::time_point<std::chrono::steady_clock> m_lastHealthReport;
     bool m_ready = false;
     bool m_authenticated = false;
     bool m_isPaused = false;

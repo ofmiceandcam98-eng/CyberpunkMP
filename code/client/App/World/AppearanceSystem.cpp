@@ -174,6 +174,11 @@ void AddItems(Red::Handle<Red::game::Object> & object, Red::DynArray<Red::TweakD
 
 bool AppearanceSystem::ApplyAppearance(Red::Handle<Red::game::Object> object)
 {
+    // TEMPORARY [PROBE 21]. Tells us whether the Entity/Attached script callback fired at
+    // all for a puppet that crashed - the surviving spawn reaches this ~40ms after Spawn()
+    // returns, the crashing one never logs anything after [PROBE 10].
+    spdlog::info("[PROBE 21] ApplyAppearance entered");
+
     if (!object.instance)
     {
         spdlog::error("[Appearance] ApplyAppearance called with a null object - aborting");

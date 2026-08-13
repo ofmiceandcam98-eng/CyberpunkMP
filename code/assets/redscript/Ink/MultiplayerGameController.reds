@@ -79,7 +79,8 @@ public class MultiplayerGameController extends inkGameController {
         // this.m_player.RegisterInputListener(this, n"UIDisconnectFromServer");
         this.UpdateInputHints();
 
-        this.m_username = "jackhumbert";
+        // Whoever signed in to the launcher, not the mod author's handle.
+        this.m_username = GameInstance.GetNetworkWorldSystem().GetChatSystem().GetUsername();
         // this.SpawnFromExternal(this.GetWidget(n"hud/wrapper"), r"mods\\cyberpunkmp\\multiplayer_ui.inkwidget", n"phone_device");
         this.AsyncSpawnFromLocal(this.GetWidget(n"hud"), n"phone_device", this, n"OnHotKeySpawn");
 
@@ -87,6 +88,22 @@ public class MultiplayerGameController extends inkGameController {
         let callbackSystem = GameInstance.GetCallbackSystem();
         callbackSystem.RegisterCallback(n"Entity/Attached", this, n"OnEntityAttached")
             .AddTarget(DynamicEntityTarget.Tag(n"CyberpunkMP.Puppet.Animation"));
+
+        // The far side of the main-menu MULTIPLAYER entry.
+        //
+        // This controller only ever exists in a real gameplay world - it needs a HUD and a
+        // player puppet to initialise at all, both of which the main menu lacks. So
+        // reaching this line is itself the proof that there is somewhere for other players
+        // to be spawned, which is exactly what was missing when this connected on world
+        // attach and crashed against the menu.
+        //
+        // Consuming the request clears it, so this fires once for the load the player
+        // actually asked to join on, and not for any load after it.
+        let network = GameInstance.GetNetworkWorldSystem();
+        if IsDefined(network) && network.ConsumeJoinRequest() {
+            FTLog(s"[MultiplayerGameController] Joining - requested from the main menu");
+            network.Connect();
+        }
     }
 
     protected cb func OnUninitialize() -> Bool {
@@ -237,16 +254,30 @@ public class MultiplayerGameController extends inkGameController {
     protected func OnConnectedToServer(connected: Bool) -> Void {
         FTLog(s"[MultiplayerGameController] OnConnectedToServer");
         this.m_connectedToServer = connected;
+        // RegisterInputListener does NOT deduplicate, and this runs on every connection
+        // state change. Registering without unregistering first leaks a listener each time,
+        // and the leak is self-feeding: every extra listener fires another Connect() on the
+        // next keypress, each Connect() aborts the previous one, and every abort comes back
+        // through here to register yet another. It doubles - 1, 2, 4, 8 - until hundreds of
+        // connection attempts land in the same millisecond and none of them can survive
+        // long enough to finish. Always unregister before registering.
         if (connected) {
             this.ShowServerList(false);
             this.AsyncSpawnFromLocal(this.GetWidget(n"hud"), n"chat");
             this.m_player.UnregisterInputListener(this, n"UIConnectToServer");
+
+            this.m_player.UnregisterInputListener(this, n"UIDisconnectFromServer");
             this.m_player.RegisterInputListener(this, n"UIDisconnectFromServer");
+            this.m_player.UnregisterInputListener(this, n"UIEmote");
             this.m_player.RegisterInputListener(this, n"UIEmote");
+            this.m_player.UnregisterInputListener(this, n"UIJob");
             this.m_player.RegisterInputListener(this, n"UIJob");
         } else {
             this.GetWidget(n"hud") as inkCompoundWidget.RemoveChild(this.GetWidget(n"hud/chat"));
+
+            this.m_player.UnregisterInputListener(this, n"UIConnectToServer");
             this.m_player.RegisterInputListener(this, n"UIConnectToServer");
+
             this.m_player.UnregisterInputListener(this, n"UIDisconnectFromServer");
             this.m_player.UnregisterInputListener(this, n"UIEmote");
             this.m_player.UnregisterInputListener(this, n"UIJob");
