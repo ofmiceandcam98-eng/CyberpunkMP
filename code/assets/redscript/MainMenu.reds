@@ -30,8 +30,13 @@ private func PopulateMenuItemList() -> Void {
     this.m_menuListController.Refresh();
 }
 
+// NOTE THE ref<>. The game's own source declares this as `data : PauseMenuListItemData`,
+// and copying that signature across breaks the ENTIRE mod: redscript requires class types
+// to be reached through ref or wref, and it aborts all compilation on one bad file. The
+// game then starts with no scripts at all - no menu entry, no chat, no HUD - while looking
+// like the mod simply did nothing. The .script dialect the game ships is not redscript.
 @wrapMethod(SingleplayerMenuGameController)
-protected func HandleMenuItemActivate(data: PauseMenuListItemData) -> Bool {
+protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool {
     if Equals(data.eventName, n"OnMultiplayerJoin") {
         FTLog(s"[CyberpunkMP] Multiplayer selected from the main menu");
 

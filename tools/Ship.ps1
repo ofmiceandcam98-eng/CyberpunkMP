@@ -32,6 +32,7 @@ $LauncherDir = Join-Path $Repo "code\launcher-lite"
 $XMake     = "C:\Users\Cam\scoop\shims\xmake.exe"
 $Tag       = "test-2026.08.12-probes"
 $GhRepo    = "ofmiceandcam98-eng/CyberpunkMP"
+$GameDir   = "C:\Program Files (x86)\Steam\steamapps\common\Cyberpunk 2077"
 
 # Nothing selected means everything.
 $all = -not ($Launcher -or $Mod -or $Server)
@@ -105,6 +106,41 @@ if ($Mod) {
         }
         if ($stale.Count -gt 0) { Die "scripts did not ship: $($stale -join ', ')" }
         Ok "scripts match source"
+
+        # Actually COMPILE the redscript, using the game's own compiler.
+        #
+        # This exists because a single bad .reds file does not fail quietly and locally -
+        # redscript aborts the whole compilation, so the game starts with NO scripts at
+        # all. No menu entry, no chat, no HUD, and nothing that points at the real cause.
+        # It looks exactly like the mod doing nothing.
+        #
+        # The mistake that earned this check: copying a method signature straight out of
+        # the game's own .script source. That dialect writes `data : PauseMenuListItemData`;
+        # redscript requires `ref<PauseMenuListItemData>`. The two languages look alike
+        # enough that the difference is invisible until the game refuses to run any script.
+        #
+        # Output goes to a scratch file. Pointing this at the real cache would let a ship
+        # check overwrite the compiled scripts the game actually loads.
+        $scc = Join-Path $GameDir "engine\tools\scc.exe"
+        if (-not (Test-Path $scc)) {
+            Warn "no scc.exe - skipping the redscript compile check"
+        } else {
+            $scratch  = Join-Path $env:TEMP "ship_scc"
+            New-Item -ItemType Directory -Force -Path $scratch | Out-Null
+            $pathsFile = Join-Path $scratch "paths.txt"
+            Set-Content -Path $pathsFile -Value (Join-Path $Repo "distrib\launcher\mod\assets\redscript") -Encoding UTF8
+
+            $sccOut = & $scc -compile (Join-Path $GameDir "r6\scripts") `
+                             (Join-Path $GameDir "r6\cache\final.redscripts") `
+                             -compilePathsFile $pathsFile `
+                             -outputCacheFile (Join-Path $scratch "final.redscripts") 2>&1
+
+            if ($LASTEXITCODE -ne 0) {
+                $sccOut | Where-Object { $_ -match 'ERROR|error' } | Select-Object -First 12 | ForEach-Object { Write-Host "      $_" -ForegroundColor Red }
+                Die "redscript does not compile - shipping this would disable every script in the mod"
+            }
+            Ok "redscript compiles"
+        }
     }
 }
 
