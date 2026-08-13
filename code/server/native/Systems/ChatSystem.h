@@ -1,15 +1,57 @@
 #pragma once
 
+#include "Components/PlayerComponent.h"
+
+// How far a line of chat carries, in metres.
+//
+// Range is what makes a roleplay server feel like a place rather than a group chat: two
+// people talking on a street corner are not audible across Night City, and a shout is
+// meant to attract attention from further than a conversation. The distances are
+// deliberately generous compared to real life - too realistic and people cannot find each
+// other; too far and every conversation is public.
+namespace ChatRange
+{
+constexpr float kWhisper = 5.f;
+constexpr float kLocal = 30.f;
+constexpr float kYell = 60.f;
+}
+
 struct World;
 struct ChatSystem
 {
     ChatSystem(gsl::not_null<World*> apWorld);
 
+    // Everyone on the server, wherever they are. For SERVER notices and /advert.
     void Broadcast(String acUsername, String acMessage);
+
+    // One player only. Anything addressed to "you" belongs here: usage text, refusals,
+    // and command output. Broadcasting those tells the whole server that someone tried
+    // something they were not allowed to, which is both noise and a small humiliation.
+    void Tell(const PlayerComponent& acPlayer, const std::string& acMessage);
+
+    // Only players whose puppet is within aRange of acOrigin.
+    //
+    // The sender is always included regardless of distance. Not seeing your own message
+    // reads as "chat is broken" - and if you are out of everyone else's range, silence is
+    // the correct outcome but an alarming one to watch.
+    void BroadcastInRange(const std::string& acUsername, const std::string& acMessage,
+                          const glm::vec3& acOrigin, float aRange, flecs::entity aSender);
 
 protected:
 
     void HandleChatMessageRequest(const PacketEvent<client::ChatMessageRequest>& aMessage);
+
+    // Splits a chat channel prefix off the front of a line. Returns false when the line
+    // named a channel the sender is not allowed to use, or gave it no text, having
+    // already told them why.
+    bool ResolveChannel(const PlayerComponent& acSender, const std::string& acLine,
+                        std::string& aText, float& aRange, bool& aEveryone);
+
+    // Returns true when the line was a command and has been dealt with, so it is not
+    // also echoed to everyone as normal chat. Permission is checked against the level
+    // the server derived from Discord - not anything the client claims.
+    bool HandleModerationCommand(flecs::entity aSender, const PlayerComponent& acSender,
+                                 const std::string& acLine);
 
 private:
 
