@@ -431,6 +431,18 @@
 
           <div class="tool">
             <div>
+              <div class="tool-name">Desktop shortcut</div>
+              <div class="tool-desc">
+                Puts Night City Online Launcher on your Desktop and in the Start Menu.
+                Windows will not let a program pin itself to the taskbar - right-click the
+                shortcut and choose "Pin to taskbar" for that.
+              </div>
+            </div>
+            <button class="action ghost" id="makeShortcut">Create</button>
+          </div>
+
+          <div class="tool">
+            <div>
               <div class="tool-name">Verify game files</div>
               <div class="tool-desc">
                 Checks the mod files are present and current. Reports everything wrong at
@@ -1192,6 +1204,15 @@
   })
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && $('settingsModal').style.display !== 'none') closeSettings()
+  })
+
+  $('makeShortcut').addEventListener('click', async () => {
+    const result = await window.launcher.createShortcuts()
+    if (result.ok) {
+      setSettingsStatus('Shortcut added to your Desktop and Start Menu.', 'ok')
+    } else {
+      setSettingsStatus(result.error, 'error')
+    }
   })
 
   $('viewGameDir').addEventListener('click', () => window.launcher.openFolder('game'))

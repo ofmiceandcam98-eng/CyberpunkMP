@@ -1517,6 +1517,18 @@ ipcMain.handle('discord:logout', () => {
   return { ok: true }
 })
 
+// Re-runnable from Settings, because the first-run question is asked exactly once and
+// "No thanks" is easy to click by reflex.
+ipcMain.handle('shortcuts:create', async () => {
+  try {
+    createShortcut('desktop')
+    createShortcut('startmenu')
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
 ipcMain.handle('update:check', async () => {
   try {
     lastUpdateCheck = await checkForUpdates()
@@ -1708,8 +1720,82 @@ ipcMain.handle('game:launch', () => {
 // Lifecycle
 // ---------------------------------------------------------------------------
 
+/**
+ * Puts a shortcut where the player asked for one.
+ *
+ * Note what is NOT here: pinning to the taskbar. Windows 10 and 11 deliberately removed
+ * the ability for a program to pin itself - the old shell verb is blocked, and every
+ * workaround that still circulates either fails silently or trips defender heuristics.
+ * Claiming to do it and quietly not doing it would be worse than saying so, so the
+ * dialog says plainly that the taskbar is a right-click away and does the two things
+ * that genuinely work.
+ */
+function createShortcut (where) {
+  const target = process.execPath
+  const name = 'Night City Online Launcher.lnk'
+
+  const folder = where === 'desktop'
+    ? app.getPath('desktop')
+    : path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs')
+
+  const link = path.join(folder, name)
+
+  return shell.writeShortcutLink(link, 'create', {
+    target,
+    // Without this the shortcut inherits whatever directory it was launched from,
+    // which breaks relative paths the moment someone moves the .lnk.
+    cwd: path.dirname(target),
+    icon: target,
+    iconIndex: 0,
+    description: 'Night City Online - Cyberpunk 2077 multiplayer'
+  })
+}
+
+/**
+ * Asked once, on the first run after installing, and never again unless the answer is
+ * lost. A launcher that asks about shortcuts every single time is a launcher people
+ * learn to dismiss without reading.
+ */
+async function offerShortcuts () {
+  if (loadSettings().shortcutsAsked) return
+
+  // Record the answer BEFORE acting on it. If shortcut creation throws, the question
+  // is still answered - otherwise a failing call would re-prompt on every launch.
+  saveSettings({ shortcutsAsked: true })
+
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'question',
+    title: 'Night City Online Launcher',
+    message: 'Add a shortcut?',
+    detail: 'Windows does not let a program pin itself to the taskbar. To get it there, ' +
+            'right-click the shortcut and choose "Pin to taskbar".',
+    buttons: ['Desktop', 'Start Menu', 'Both', 'No thanks'],
+    defaultId: 0,
+    cancelId: 3,
+    noLink: true
+  })
+
+  if (response === 3) return
+
+  try {
+    if (response === 0 || response === 2) createShortcut('desktop')
+    if (response === 1 || response === 2) createShortcut('startmenu')
+  } catch (err) {
+    dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      title: 'Night City Online Launcher',
+      message: 'Could not create the shortcut',
+      detail: err.message
+    })
+  }
+}
+
 app.whenReady().then(() => {
   createWindow()
+
+  // After the window exists, so the dialog has a parent to attach to rather than
+  // appearing as a stray box with no launcher behind it.
+  mainWindow.once('ready-to-show', () => { offerShortcuts() })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

@@ -247,13 +247,22 @@ if ($Launcher) {
     # stamps the installer filename with it, so a hardcoded number breaks this copy the
     # first time the version moves - silently shipping nothing, or the previous build.
     $pkgVersion = (Get-Content (Join-Path $LauncherDir "package.json") -Raw -Encoding UTF8 | ConvertFrom-Json).version
-    $built = Join-Path $LauncherDir "dist\NightCityOnline Setup $pkgVersion.exe"
+    $built = Join-Path $LauncherDir "dist\NightCityOnline-Setup-$pkgVersion.exe"
     if (-not (Test-Path $built)) { Die "no installer at '$built' - version changed without a rebuild?" }
 
+    # The BUILT filename carries the version; the PUBLISHED one deliberately does not.
+    # Every link already shared - status page, Discord, INSTALL.txt - points at these two
+    # stable names, so a version bump must not break them.
     $setup = Join-Path $env:TEMP "NightCityOnline-Setup.exe"
     Copy-Item $built $setup -Force
     $uploads += $setup
-    $uploads += (Join-Path $LauncherDir "dist\NightCityOnline-Launcher.exe")
+
+    $portableBuilt = Join-Path $LauncherDir "dist\NightCityOnline-Portable.exe"
+    if (Test-Path $portableBuilt) {
+        $portable = Join-Path $env:TEMP "NightCityOnline-Launcher.exe"
+        Copy-Item $portableBuilt $portable -Force
+        $uploads += $portable
+    }
 
     # How an installed launcher learns it is out of date: it looks for this marker on the
     # release and reads the version out of the FILENAME, so the check costs no extra
