@@ -188,11 +188,32 @@ if ($Mod) {
 }
 
 if ($Launcher) {
+    # Take the version from package.json rather than repeating it here. electron-builder
+    # stamps the installer filename with it, so a hardcoded number breaks this copy the
+    # first time the version moves - silently shipping nothing, or the previous build.
+    $pkgVersion = (Get-Content (Join-Path $LauncherDir "package.json") -Raw -Encoding UTF8 | ConvertFrom-Json).version
+    $built = Join-Path $LauncherDir "dist\NightCityOnline Setup $pkgVersion.exe"
+    if (-not (Test-Path $built)) { Die "no installer at '$built' - version changed without a rebuild?" }
+
     $setup = Join-Path $env:TEMP "NightCityOnline-Setup.exe"
-    Copy-Item (Join-Path $LauncherDir "dist\NightCityOnline Setup 0.1.0.exe") $setup -Force
+    Copy-Item $built $setup -Force
     $uploads += $setup
     $uploads += (Join-Path $LauncherDir "dist\NightCityOnline-Launcher.exe")
-    Ok "launcher staged"
+
+    # How an installed launcher learns it is out of date: it looks for this marker on the
+    # release and reads the version out of the FILENAME, so the check costs no extra
+    # request. The old marker must be deleted or two versions would both look current -
+    # and the stale one would keep telling people they are fine.
+    $current = gh api "repos/$GhRepo/releases/tags/$Tag" | ConvertFrom-Json
+    foreach ($old in @($current.assets | Where-Object { $_.name -like 'launcher-version-*.txt' })) {
+        gh api -X DELETE "repos/$GhRepo/releases/assets/$($old.id)" 2>&1 | Out-Null
+    }
+
+    $marker = Join-Path $env:TEMP "launcher-version-$pkgVersion.txt"
+    Set-Content -Path $marker -Value $pkgVersion -Encoding UTF8
+    $uploads += $marker
+
+    Ok "launcher $pkgVersion staged"
 }
 
 if ($uploads.Count -eq 0) { Warn "nothing to publish"; exit 0 }

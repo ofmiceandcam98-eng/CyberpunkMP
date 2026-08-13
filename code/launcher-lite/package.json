@@ -1,0 +1,61 @@
+{
+  "name": "nightcity-launcher",
+  "productName": "Night City Online",
+  "version": "0.1.1",
+  "description": "Lightweight launcher with Discord login verification",
+  "main": "main.js",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "dist": "electron-builder --win --publish never",
+    "pack": "electron-builder --win --dir"
+  },
+  "devDependencies": {
+    "electron": "^43.4.0",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "adm-zip": "^0.6.0",
+    "axios": "^1.7.9"
+  },
+  "build": {
+    "appId": "com.nightcityonline.launcher",
+    "productName": "NightCityOnline",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.mjs",
+      "index.html",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Night City Online"
+    },
+    "portable": {
+      "artifactName": "NightCityOnline-Launcher.exe"
+    }
+  }
+}

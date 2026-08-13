@@ -1,0 +1,1721 @@
+/**
+ * main.js - Electron main process.
+ *
+ * Owns three things:
+ *   1. The window.
+ *   2. The Discord OAuth2 handshake (including a throwaway local HTTP server
+ *      that catches the redirect).
+ *   3. Launching the game.
+ *
+ * The access token NEVER leaves this file. The renderer is sent only a display
+ * profile - name, avatar, id. If the UI were ever compromised (a bad dependency,
+ * an injected script), there would be no credential sitting there to steal.
+ */
+
+import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } from 'electron'
+import { spawn } from 'node:child_process'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
+import AdmZip from 'adm-zip'
+import http from 'node:http'
+import crypto from 'node:crypto'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import axios from 'axios'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+// ---------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------
+
+// Your Discord application's Client ID. This is PUBLIC - it identifies the app,
+// it does not authorise anything, and it is fine to commit.
+//
+// There is deliberately no CLIENT SECRET here. See the PKCE note below.
+const DISCORD_CLIENT_ID = '1536256811706089512'
+
+// Must match a redirect URI registered in the Discord Developer Portal
+// (OAuth2 -> Redirects). The port is fixed because Discord will only redirect
+// to a URI it has seen before - it cannot be chosen at random at runtime.
+const CALLBACK_PORT = 53682
+const REDIRECT_URI = `http://127.0.0.1:${CALLBACK_PORT}/callback`
+
+// 'identify' gives the user's id, username and avatar. 'guilds.members.read' lets
+// the SERVER ask whether this user is in Night City Online - it reads membership
+// of one guild for this user only, not their server list, and needs no bot.
+//
+// Nothing more than this. Users see the list on the consent screen, and a long
+// one makes people (rightly) suspicious.
+const SCOPES = ['identify', 'guilds.members.read']
+
+// The Discord server players must be in, and where to send them if they are not.
+const GUILD_ID = '1536257549832167506'
+const DISCORD_INVITE = 'https://discord.gg/M9NSWsndC7'
+
+// Discord ids that see the server controls.
+//
+// This is presentation, NOT access control. The panel starts a process on the
+// user's own machine - anyone could run Server.Loader.exe by hand regardless, so
+// there is no privilege here to protect. It exists to keep controls that would
+// only confuse players out of their way.
+//
+// Put your own id here. Sign in once and the launcher shows it under your name.
+const ADMIN_DISCORD_IDS = [
+  '566025915839283220'   // Cam
+]
+
+const SERVER_EXE = 'Server.Loader.exe'
+
+// Where the server lives.
+//
+// This CANNOT be derived from __dirname: in a packaged build that points inside the app
+// bundle, not the repository, so the relative path resolves to nothing and every server
+// button silently greys out. It is a saved setting instead, with the dev-tree path only
+// as a starting guess.
+function defaultServerDir () {
+  if (process.env.MP_SERVER_DIR) return process.env.MP_SERVER_DIR
+
+  const devGuess = path.resolve(__dirname, '..', '..', 'build', 'windows', 'x64', 'release')
+  if (existsSync(path.join(devGuess, SERVER_EXE))) return devGuess
+
+  return 'C:\\Users\\Cam\\OneDrive\\Documents\\GitHub\\CyberpunkMP\\build\\windows\\x64\\release'
+}
+
+const GAME_ARGS = []
+
+// Server to join. Empty means the client falls back to 127.0.0.1 - correct if you
+// are hosting, wrong (and silent) if you are joining someone.
+const SERVER_ADDRESS = process.env.MP_SERVER || ''
+const SERVER_PORT = process.env.MP_PORT || '11778'
+
+// ---------------------------------------------------------------------------
+// State held only in the main process
+// ---------------------------------------------------------------------------
+
+let mainWindow = null
+let accessToken = null   // never sent to the renderer
+let currentUser = null   // safe subset, mirrored to the renderer
+let lastUpdateCheck = null
+let lastServerStatus = null
+
+// ---------------------------------------------------------------------------
+// Saved settings
+//
+// The token is a live credential, so it is encrypted with Electron's safeStorage,
+// which on Windows uses DPAPI - tied to the logged-in Windows account. Copying the
+// file to another machine yields nothing usable. Plain text on disk would mean
+// anyone with file access could act as this Discord user.
+// ---------------------------------------------------------------------------
+
+function settingsPath () {
+  return path.join(app.getPath('userData'), 'settings.json')
+}
+
+function loadSettings () {
+  try {
+    return JSON.parse(readFileSync(settingsPath(), 'utf8'))
+  } catch {
+    return {}
+  }
+}
+
+function saveSettings (patch) {
+  try {
+    const current = loadSettings()
+    const merged = { ...current, ...patch }
+    mkdirSync(path.dirname(settingsPath()), { recursive: true })
+    writeFileSync(settingsPath(), JSON.stringify(merged, null, 2))
+  } catch (err) {
+    console.error('Could not save settings:', err.message)
+  }
+}
+
+function saveToken (token) {
+  if (!token) {
+    saveSettings({ token: null })
+    return
+  }
+
+  if (!safeStorage.isEncryptionAvailable()) {
+    // Better to forget the session than to leave a bearer token lying in plain text.
+    console.warn('Encrypted storage unavailable - not remembering the sign-in.')
+    return
+  }
+
+  saveSettings({ token: safeStorage.encryptString(token).toString('base64') })
+}
+
+function loadToken () {
+  const { token } = loadSettings()
+  if (!token || !safeStorage.isEncryptionAvailable()) return null
+
+  try {
+    return safeStorage.decryptString(Buffer.from(token, 'base64'))
+  } catch {
+    // Different Windows account, or the file was tampered with.
+    return null
+  }
+}
+
+function getServerDir () {
+  return loadSettings().serverDir || defaultServerDir()
+}
+
+// ---------------------------------------------------------------------------
+// Mod updates
+//
+// The release on GitHub is the single source of truth - the same one the Discord
+// bot announces from, so the launcher and #server-update can never disagree about
+// what the current build is.
+// ---------------------------------------------------------------------------
+
+const GITHUB_REPO = 'ofmiceandcam98-eng/CyberpunkMP'
+const RELEASE_TAG = 'test-2026.08.12-probes'
+const RELEASE_API = `https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${RELEASE_TAG}`
+
+/**
+ * Finds Cyberpunk, wherever it is.
+ *
+ * A hardcoded Steam path is wrong for anyone with a second drive, a GOG copy, or
+ * Epic - which is most people. Asks Steam via the registry first, since Steam records
+ * every library folder it uses including ones on other drives.
+ */
+function findGameDir () {
+  const saved = loadSettings().gameDir
+  if (saved && existsSync(path.join(saved, 'bin', 'x64', 'Cyberpunk2077.exe'))) return saved
+
+  const candidates = []
+
+  // Steam knows where its own libraries are - far better than guessing.
+  for (const root of steamRoots()) {
+    candidates.push(path.join(root, 'steamapps', 'common', 'Cyberpunk 2077'))
+
+    for (const vdf of [path.join(root, 'steamapps', 'libraryfolders.vdf'),
+                       path.join(root, 'config', 'libraryfolders.vdf')]) {
+      try {
+        const text = readFileSync(vdf, 'utf8')
+        for (const match of text.matchAll(/"path"\s+"([^"]+)"/g)) {
+          candidates.push(path.join(match[1].replace(/\\\\/g, '\\'),
+                                    'steamapps', 'common', 'Cyberpunk 2077'))
+        }
+      } catch { /* no such library file */ }
+    }
+  }
+
+  // Common layouts on every drive letter, for GOG / Epic / manual installs.
+  for (const letter of 'CDEFGHIJKLMNOPQRSTUVWXYZAB') {
+    for (const suffix of ['SteamLibrary\\steamapps\\common\\Cyberpunk 2077',
+                          'Games\\Cyberpunk 2077',
+                          'GOG Games\\Cyberpunk 2077',
+                          'Program Files (x86)\\GOG Galaxy\\Games\\Cyberpunk 2077',
+                          'Epic Games\\Cyberpunk2077',
+                          'Cyberpunk 2077']) {
+      candidates.push(`${letter}:\\${suffix}`)
+    }
+  }
+
+  for (const dir of candidates) {
+    try {
+      if (existsSync(path.join(dir, 'bin', 'x64', 'Cyberpunk2077.exe'))) return dir
+    } catch { /* drive not present - never let this throw */ }
+  }
+
+  return null
+}
+
+function steamRoots () {
+  const roots = ['C:\\Program Files (x86)\\Steam', 'C:\\Program Files\\Steam']
+
+  // Reading the registry without a dependency: `reg query` is always present.
+  try {
+    const { execSync } = require('node:child_process')
+    const out = execSync('reg query "HKCU\\Software\\Valve\\Steam" /v SteamPath', { windowsHide: true })
+      .toString()
+    const match = out.match(/SteamPath\s+REG_SZ\s+(.+)/)
+    if (match) roots.unshift(match[1].trim().replace(/\//g, '\\'))
+  } catch { /* Steam not installed, or key missing */ }
+
+  return roots
+}
+
+function gameExecutable () {
+  if (process.env.GAME_EXE) return process.env.GAME_EXE
+
+  const dir = findGameDir()
+  return dir ? path.join(dir, 'bin', 'x64', 'Cyberpunk2077.exe') : null
+}
+
+// Finds the installed mod folder. Named zzzCyberpunkMP by convention, but RED4ext
+// loads any subfolder, so look for the DLL rather than trusting the name.
+function findModDir () {
+  const gameDir = findGameDir()
+  if (!gameDir) return null
+
+  const pluginRoot = path.join(gameDir, 'red4ext', 'plugins')
+  if (!existsSync(pluginRoot)) return null
+
+  // Deliberately NOT filtering on isDirectory().
+  //
+  // A dev install points red4ext\plugins\zzzCyberpunkMP at the build output with a
+  // directory junction, and Node reports junctions as symlinks - isDirectory() is
+  // FALSE for them. Filtering on it skipped the one folder that mattered and the
+  // launcher concluded the mod was not installed at all.
+  //
+  // Testing for the DLL directly answers the real question anyway: is the mod here?
+  for (const entry of readdirSync(pluginRoot)) {
+    const candidate = path.join(pluginRoot, entry, 'CyberpunkMP.dll')
+    try {
+      if (existsSync(candidate)) return path.join(pluginRoot, entry)
+    } catch { /* unreadable entry - keep looking */ }
+  }
+
+  return null
+}
+
+// ---------------------------------------------------------------------------
+// Tailscale
+//
+// Deliberately detect-and-guide rather than bundling their installer. Shipping
+// someone else's signed binary inside ours means owning their update cadence and
+// their bugs, and adds ~35MB for people who already have it.
+//
+// What matters is that the three states are told apart. "Server offline" when the
+// real problem is "you are not on the tailnet" is a wrong and unactionable message,
+// and it makes your server look broken when it is fine.
+// ---------------------------------------------------------------------------
+
+const TAILSCALE_DOWNLOAD = 'https://tailscale.com/download'
+
+function tailscaleExe () {
+  const candidates = [
+    'C:\\Program Files\\Tailscale\\tailscale.exe',
+    'C:\\Program Files (x86)\\Tailscale\\tailscale.exe'
+  ]
+
+  return candidates.find((p) => existsSync(p)) || null
+}
+
+function getTailscaleStatus () {
+  return new Promise((resolve) => {
+    const exe = tailscaleExe()
+
+    if (!exe) {
+      resolve({ installed: false, connected: false, downloadUrl: TAILSCALE_DOWNLOAD })
+      return
+    }
+
+    const proc = spawn(exe, ['status'], { windowsHide: true })
+
+    let out = ''
+    proc.stdout.on('data', (c) => { out += c.toString() })
+    proc.stderr.on('data', (c) => { out += c.toString() })
+
+    proc.on('close', (code) => {
+      const text = out.toLowerCase()
+
+      // `tailscale status` exits non-zero and says so when signed out or stopped.
+      const connected = code === 0 &&
+                        !text.includes('logged out') &&
+                        !text.includes('stopped') &&
+                        out.trim().length > 0
+
+      // The tailnet IP, useful to show a host who needs to hand it out.
+      const match = out.match(/(100\.\d+\.\d+\.\d+)/)
+
+      resolve({
+        installed: true,
+        connected,
+        ip: match ? match[1] : null,
+        downloadUrl: TAILSCALE_DOWNLOAD
+      })
+    })
+
+    proc.on('error', () => {
+      resolve({ installed: true, connected: false, downloadUrl: TAILSCALE_DOWNLOAD })
+    })
+  })
+}
+
+/**
+ * Is the game server actually up?
+ *
+ * Asks its public status endpoint, which needs no auth and returns nothing sensitive.
+ * Reaching it at all proves the server is running.
+ */
+async function getGameServerStatus () {
+  const host = SERVER_ADDRESS || '127.0.0.1'
+
+  try {
+    const response = await axios.get(`http://${host}:11778/api/v1/status/`, { timeout: 4000 })
+    return { online: true, players: response.data?.Players ?? 0, host }
+  } catch {
+    // Any failure - refused, timed out, no route - means players cannot get in.
+    return { online: false, players: 0, host }
+  }
+}
+
+/**
+ * Works out whether THIS launcher is the current one.
+ *
+ * The mod can update itself - it is just files on disk. A running launcher cannot
+ * replace its own executable, so the most it can honestly do is notice it is behind
+ * and say so clearly. Silently carrying on is the bad outcome: a stale launcher can
+ * fail against a changed server or install an update it does not understand, and it
+ * looks like the game is broken rather than the launcher being old.
+ *
+ * The published version is carried by the NAME of a marker asset on the release, so
+ * this costs no extra request - the release listing was already fetched. Encoding it
+ * in the filename rather than the file contents is the whole trick.
+ */
+function describeLauncherUpdate (release) {
+  const current = app.getVersion()
+
+  const marker = (release.assets || []).find((a) => /^launcher-version-.+\.txt$/.test(a.name))
+
+  // No marker means a release published before this check existed. Treat that as
+  // "nothing to say" rather than nagging about an update that does not exist.
+  if (!marker) {
+    return { current, available: current, upToDate: true }
+  }
+
+  const available = marker.name.replace(/^launcher-version-/, '').replace(/\.txt$/, '')
+
+  return { current, available, upToDate: available === current }
+}
+
+async function checkForUpdates () {
+  const modDir = findModDir()
+
+  // The release is fetched BEFORE the not-installed check, because the launcher
+  // version matters whether or not the mod is on disk - someone with a stale launcher
+  // and no mod yet needs telling most of all.
+  let release
+  try {
+    const response = await axios.get(RELEASE_API, {
+      headers: { 'User-Agent': 'NightCityOnline-Launcher' },
+      timeout: 10000
+    })
+    release = response.data
+  } catch {
+    // Cannot reach GitHub. Do NOT block play over this - an outage should not stop
+    // people getting into a game they already have installed.
+    if (!modDir) {
+      return { installed: false, upToDate: false, reason: 'The mod is not installed yet.' }
+    }
+    return { installed: true, upToDate: true, offline: true, version: loadSettings().installedVersion || 'unknown' }
+  }
+
+  const launcher = describeLauncherUpdate(release)
+
+  if (!modDir) {
+    return { installed: false, upToDate: false, reason: 'The mod is not installed yet.', launcher }
+  }
+
+  const asset = (release.assets || []).find((a) => a.name === 'ModPayload.zip')
+  if (!asset) {
+    return { installed: true, upToDate: true, offline: true, version: release.tag_name, launcher }
+  }
+
+  // Compare against what was actually installed, recorded when we applied it. Asset id
+  // plus size changes whenever a new payload is uploaded.
+  const remoteStamp = `${asset.id}:${asset.size}`
+  const localStamp = loadSettings().installedStamp
+
+  return {
+    installed: true,
+    upToDate: localStamp === remoteStamp,
+    version: release.tag_name,
+    published: release.published_at,
+    notes: release.body || '',
+    downloadUrl: asset.browser_download_url,
+    size: asset.size,
+    remoteStamp,
+    launcher
+  }
+}
+
+/**
+ * Checks the install is actually intact, not just that the version stamp matches.
+ *
+ * A stamp only records what was last downloaded. It says nothing about whether the
+ * files are still there - someone deletes a folder, an antivirus quarantines the
+ * DLL, a half-finished extract leaves gaps - and in every one of those cases the
+ * launcher would happily report "up to date" and let them launch into a broken mod.
+ */
+async function verifyInstall () {
+  const modDir = findModDir()
+
+  if (!modDir) {
+    return {
+      ok: false,
+      installed: false,
+      problems: ['The mod is not installed. Install it once from the release, then use Update.']
+    }
+  }
+
+  const problems = []
+
+  // The pieces the mod cannot run without.
+  const required = [
+    ['CyberpunkMP.dll', 'the mod itself'],
+    ['assets', 'game scripts and assets'],
+    ['Rpc', 'network definitions']
+  ]
+
+  for (const [name, description] of required) {
+    if (!existsSync(path.join(modDir, name))) {
+      problems.push(`Missing ${name} (${description})`)
+    }
+  }
+
+  // Redscript files are what the game compiles at startup; a missing one shows up as
+  // a script validation failure long after launch, which is hard to trace back here.
+  const redscriptDir = path.join(modDir, 'assets', 'redscript')
+  let redscriptCount = 0
+
+  if (existsSync(redscriptDir)) {
+    const walk = (dir) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name)
+        if (entry.isDirectory()) walk(full)
+        else if (entry.name.endsWith('.reds')) redscriptCount++
+      }
+    }
+    try { walk(redscriptDir) } catch { /* unreadable - reported below */ }
+  }
+
+  if (redscriptCount === 0) {
+    problems.push('No script files found - the install looks incomplete')
+  }
+
+  // Now the version question, separately from the integrity one.
+  const update = await checkForUpdates()
+  lastUpdateCheck = update
+
+  const outOfDate = update.installed && !update.upToDate && !update.offline
+
+  if (outOfDate) {
+    problems.push(`A newer build is available (${update.version})`)
+  }
+
+  return {
+    ok: problems.length === 0,
+    installed: true,
+    modDir,
+    redscriptCount,
+    outOfDate,
+    version: update.version,
+    problems
+  }
+}
+
+/**
+ * First-time install: prerequisites AND the mod, in one pass.
+ *
+ * The six prerequisites (RED4ext, redscript, Codeware, ArchiveXL, TweakXL, Input
+ * Loader) are all MIT licensed and are redistributed unmodified with their licence
+ * texts. Each is a zip laid out relative to the game root, so extracting straight
+ * into the game folder puts every file where it belongs.
+ *
+ * The mod folder is deliberately named zzzCyberpunkMP - RED4ext loads plugins
+ * alphabetically, and the mod must load AFTER the libraries it depends on.
+ */
+async function installEverything (onProgress = () => {}) {
+  const gameDir = findGameDir()
+  if (!gameDir) {
+    throw new Error('Could not find Cyberpunk 2077. Use Settings to point at it.')
+  }
+
+  const running = await isProcessRunning('Cyberpunk2077.exe')
+  if (running) throw new Error('Close Cyberpunk 2077 first.')
+
+  onProgress('Downloading...')
+
+  const url = `https://github.com/${GITHUB_REPO}/releases/download/${RELEASE_TAG}/FullInstall.zip`
+  const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 180000 })
+  const buffer = Buffer.from(response.data)
+
+  if (buffer.length < 1024 * 1024) {
+    throw new Error(`That download looks wrong (${buffer.length} bytes) - nothing was changed.`)
+  }
+
+  const pkg = new AdmZip(buffer)
+
+  // --- prerequisites ------------------------------------------------------
+  // Each is its own zip nested inside the package. Extract them into the game
+  // root, where their internal paths (bin\x64\..., red4ext\...) land correctly.
+  const prereqs = pkg.getEntries().filter((e) => e.entryName.startsWith('prerequisites/') && !e.isDirectory)
+
+  for (const entry of prereqs) {
+    const name = path.basename(entry.entryName)
+    onProgress(`Installing ${name.replace(/\.zip$/, '')}...`)
+
+    const inner = new AdmZip(entry.getData())
+    inner.extractAllTo(gameDir, true)
+  }
+
+  // --- the mod ------------------------------------------------------------
+  onProgress('Installing the multiplayer mod...')
+
+  const modTarget = path.join(gameDir, 'red4ext', 'plugins', 'zzzCyberpunkMP')
+  mkdirSync(modTarget, { recursive: true })
+
+  for (const entry of pkg.getEntries()) {
+    if (entry.isDirectory || !entry.entryName.startsWith('mod/')) continue
+
+    const relative = entry.entryName.slice('mod/'.length)
+    const dest = path.join(modTarget, relative.replace(/\//g, path.sep))
+
+    mkdirSync(path.dirname(dest), { recursive: true })
+    writeFileSync(dest, entry.getData())
+  }
+
+  // Record what was installed so the update check has something to compare against.
+  const info = await checkForUpdates()
+  if (info.remoteStamp) {
+    saveSettings({ installedStamp: info.remoteStamp, installedVersion: info.version })
+  }
+
+  onProgress('Done')
+
+  return { installed: true, gameDir, modDir: modTarget, prerequisites: prereqs.length }
+}
+
+/**
+ * The game died. Put the log somewhere obvious and tell the player.
+ *
+ * The whole point is that nobody should have to find it. It gets copied to the Desktop
+ * with a name that says what it is, the folder opens with the file selected, and the
+ * path is on the clipboard. Three ways to hand it over, because the person who just
+ * crashed is annoyed and should not also be given a scavenger hunt.
+ */
+function handleGameCrash (exitCode) {
+  const modDir = findModDir()
+  const hex = '0x' + (exitCode >>> 0).toString(16).toUpperCase()
+
+  // 0xC0000005 is an access violation - worth naming, because it is the signature of
+  // the crash this project has been chasing.
+  const kind = exitCode === -1073741819 ? `access violation (${hex})` : `exit code ${exitCode} (${hex})`
+
+  let savedTo = null
+
+  try {
+    const logDir = path.join(modDir || '', 'logs')
+
+    if (modDir && existsSync(logDir)) {
+      const newest = readdirSync(logDir)
+        .filter((f) => f.startsWith('CyberpunkMP_') && f.endsWith('.log'))
+        .map((f) => ({ name: f, full: path.join(logDir, f), time: statSync(path.join(logDir, f)).mtimeMs }))
+        .sort((a, b) => b.time - a.time)[0]
+
+      if (newest) {
+        const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19)
+        savedTo = path.join(app.getPath('desktop'), `NightCityOnline-CRASH-${stamp}.log`)
+        writeFileSync(savedTo, readFileSync(newest.full))
+      }
+    }
+  } catch (err) {
+    console.error('Could not copy the crash log:', err.message)
+  }
+
+  if (savedTo) clipboard.writeText(savedTo)
+
+  if (mainWindow) {
+    mainWindow.webContents.send('game-crashed', { kind, savedTo })
+    mainWindow.show()
+    mainWindow.focus()
+  }
+
+  const detail = savedTo
+    ? `Your log has been copied to your Desktop:\n\n${savedTo}\n\n` +
+      'The path is on your clipboard. Send that FILE in the Discord - the whole file, ' +
+      'not a screenshot.'
+    : 'The log could not be found automatically. Look in:\n\n' +
+      `${modDir ? path.join(modDir, 'logs') : 'your mod folder'}\n\nand send the newest file.`
+
+  dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    buttons: savedTo ? ['Show me the file', 'OK'] : ['OK'],
+    defaultId: 0,
+    title: 'Cyberpunk crashed',
+    message: `The game crashed - ${kind}`,
+    detail
+  }).then((choice) => {
+    if (savedTo && choice.response === 0) shell.showItemInFolder(savedTo)
+  })
+}
+
+function isProcessRunning (imageName) {
+  return new Promise((resolve) => {
+    const check = spawn('tasklist', ['/FI', `IMAGENAME eq ${imageName}`, '/NH'], { windowsHide: true })
+    let out = ''
+    check.stdout.on('data', (c) => { out += c.toString() })
+    check.on('close', () => resolve(out.includes(imageName)))
+    check.on('error', () => resolve(false))
+  })
+}
+
+async function applyUpdate () {
+  const modDir = findModDir()
+  if (!modDir) throw new Error('The mod is not installed - install it once first.')
+
+  // The game holds CyberpunkMP.dll open, so extracting over it fails with a
+  // permission error that reads like a broken download. Say what it actually is.
+  const running = await new Promise((resolve) => {
+    const check = spawn('tasklist', ['/FI', 'IMAGENAME eq Cyberpunk2077.exe', '/NH'], { windowsHide: true })
+    let out = ''
+    check.stdout.on('data', (c) => { out += c.toString() })
+    check.on('close', () => resolve(out.includes('Cyberpunk2077.exe')))
+    check.on('error', () => resolve(false))
+  })
+
+  if (running) {
+    throw new Error('Close Cyberpunk 2077 first - the game is holding the mod files open.')
+  }
+
+  // Reuse the check we already did rather than asking GitHub again. Two calls per
+  // click doubled the chance of hitting the unauthenticated rate limit, and a failed
+  // second call made the button look like it needed pressing repeatedly.
+  const info = lastUpdateCheck?.downloadUrl ? lastUpdateCheck : await checkForUpdates()
+
+  if (!info.downloadUrl) {
+    throw new Error('Could not reach GitHub to download the update. Check your connection and try again.')
+  }
+
+  const response = await axios.get(info.downloadUrl, { responseType: 'arraybuffer', timeout: 120000 })
+  const buffer = Buffer.from(response.data)
+
+  // Refuse anything implausible rather than shredding a working install with a
+  // truncated download or an error page.
+  if (buffer.length < 1024 * 1024) {
+    throw new Error(`That download looks wrong (${buffer.length} bytes) - install left alone.`)
+  }
+
+  const zip = new AdmZip(buffer)
+  zip.extractAllTo(modDir, true)
+
+  saveSettings({ installedStamp: info.remoteStamp, installedVersion: info.version })
+
+  return { version: info.version }
+}
+
+// ---------------------------------------------------------------------------
+// Uninstall
+// ---------------------------------------------------------------------------
+
+/**
+ * Removes the mod files, leaving the game and the prerequisite mods alone.
+ *
+ * Deliberately confirms first and reports what it will delete. Anything that removes
+ * files should say exactly what, before doing it - a launcher that quietly wipes a
+ * folder is a launcher nobody trusts twice.
+ */
+async function uninstallMod () {
+  const modDir = findModDir()
+  if (!modDir) throw new Error('The mod does not appear to be installed.')
+
+  const running = await new Promise((resolve) => {
+    const check = spawn('tasklist', ['/FI', 'IMAGENAME eq Cyberpunk2077.exe', '/NH'], { windowsHide: true })
+    let out = ''
+    check.stdout.on('data', (c) => { out += c.toString() })
+    check.on('close', () => resolve(out.includes('Cyberpunk2077.exe')))
+    check.on('error', () => resolve(false))
+  })
+
+  if (running) throw new Error('Close Cyberpunk 2077 first.')
+
+  const choice = await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    buttons: ['Remove the mod', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    title: 'Remove CyberpunkMP',
+    message: 'Remove the multiplayer mod?',
+    detail:
+      `This deletes:\n${modDir}\n\n` +
+      'Your game, your saves, and the other mods (RED4ext, Codeware, ArchiveXL, ' +
+      'TweakXL, redscript, Input Loader) are left alone.\n\n' +
+      'You can reinstall any time from the release page.'
+  })
+
+  if (choice.response !== 0) return { removed: false }
+
+  rmSync(modDir, { recursive: true, force: true })
+  saveSettings({ installedStamp: null, installedVersion: null })
+
+  return { removed: true, modDir }
+}
+
+/**
+ * Forgets everything the launcher stores about this user: the saved Discord session
+ * and any remembered folders. Does not touch the game or the mod.
+ */
+async function resetLauncherData () {
+  const choice = await dialog.showMessageBox(mainWindow, {
+    type: 'question',
+    buttons: ['Sign out and forget', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    title: 'Reset launcher',
+    message: 'Forget your saved sign-in and settings?',
+    detail:
+      'You will need to sign in with Discord again next time.\n\n' +
+      'Your game and the mod are untouched.\n\n' +
+      'To revoke the launcher\'s access entirely, also remove it under ' +
+      'Discord â†’ Settings â†’ Authorized Apps.'
+  })
+
+  if (choice.response !== 0) return { reset: false }
+
+  accessToken = null
+  currentUser = null
+  lastUpdateCheck = null
+
+  try {
+    rmSync(settingsPath(), { force: true })
+  } catch { /* nothing saved yet */ }
+
+  return { reset: true }
+}
+
+// ---------------------------------------------------------------------------
+// Window
+// ---------------------------------------------------------------------------
+
+function createWindow () {
+  mainWindow = new BrowserWindow({
+    // 1180x760 rather than 1280x720.
+    //
+    // The extra height matters more than matching a video resolution: this is a
+    // two-column layout with a tall right-hand stack (status rows, verify, play,
+    // and the admin server panel). At 720 the server controls were cut off, which
+    // is what "having to stretch it" was.
+    //
+    // A minimum size stops anyone shrinking it back into that state.
+    width: 1180,
+    height: 760,
+    minWidth: 1024,
+    minHeight: 700,
+    backgroundColor: '#0f1115',
+    autoHideMenuBar: true,
+    webPreferences: {
+      // contextIsolation keeps the page's JavaScript in a separate world from
+      // Electron's internals, so the page cannot reach Node APIs directly. The
+      // preload script exposes an explicit, minimal bridge instead. Turning
+      // either of these off would let any script in the page spawn processes.
+      contextIsolation: true,
+      nodeIntegration: false,
+      // ESM preload scripts do not run in a sandboxed renderer. Leaving sandbox on
+      // (the default) means the preload never loads at all, window.launcher is
+      // undefined, and every button silently does nothing - no error, no clue.
+      sandbox: false,
+      // .mjs, not .js - Electron requires that extension for an ESM preload script.
+      preload: path.join(__dirname, 'preload.mjs')
+    }
+  })
+
+  mainWindow.loadFile('index.html')
+
+  // Surface renderer and preload failures instead of letting them vanish.
+  mainWindow.webContents.on('preload-error', (_event, preloadPath, error) => {
+    console.error('PRELOAD FAILED', preloadPath, error)
+  })
+
+  mainWindow.webContents.on('console-message', (_event, level, message) => {
+    if (level >= 2) console.error('[renderer]', message)
+  })
+
+  if (process.argv.includes('--dev')) {
+    mainWindow.webContents.openDevTools({ mode: 'detach' })
+  }
+
+  // Anything trying to open a new window (a link, an ad, an injected script)
+  // goes to the user's real browser instead of opening an uncontrolled
+  // Electron window with our privileges.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url)
+    return { action: 'deny' }
+  })
+}
+
+// ---------------------------------------------------------------------------
+// PKCE
+//
+// The classic OAuth "authorization code" flow proves the app's identity with a
+// client secret. That works for a web server, where the secret stays on the
+// server. It does NOT work for a desktop app: the app is handed to users, and
+// anything inside it can be read out with a text editor. A secret shipped to
+// users is not a secret.
+//
+// PKCE ("proof key for code exchange") replaces the secret with a value
+// invented fresh for each login:
+//
+//   1. Generate a random `code_verifier`.
+//   2. Send its SHA-256 hash (`code_challenge`) with the authorize request.
+//   3. Send the original `code_verifier` when exchanging the code.
+//
+// Discord checks that the verifier hashes to the challenge it saw earlier. An
+// attacker who intercepts the authorization code cannot use it, because they
+// never saw the verifier - it never left this process.
+// ---------------------------------------------------------------------------
+
+/**
+ * Turns a Discord snowflake into a stable, meaningless display number.
+ *
+ * Same account always produces the same id, so people can recognise each other, but
+ * it reveals nothing about the Discord account behind it and cannot be reversed.
+ *
+ * Display only. Bans and permissions key on the real snowflake server-side, which is
+ * why a collision here would be cosmetic rather than a way to inherit someone's rank.
+ */
+/**
+ * What the renderer is allowed to see: everything except the Discord snowflake.
+ *
+ * One place that decides this, so a new field cannot accidentally leak the id by
+ * being added to the wrong object.
+ */
+function publicProfile () {
+  if (!currentUser) return null
+  const { id, ...safe } = currentUser
+  return safe
+}
+
+function derivePlayerId (snowflake) {
+  // FNV-1a. Must stay byte-identical to DerivePlayerId in the server's
+  // GameServer.cpp, or the number a player reads off their launcher will not match
+  // the one in the server log and reports become untraceable.
+  //
+  // Math.imul is required, not `*`: JavaScript numbers are doubles, so a plain
+  // multiply loses the low bits once the value exceeds 2^53 and silently stops
+  // agreeing with the C++ side.
+  const input = `nightcity:${snowflake}`
+
+  let hash = 2166136261 // FNV offset basis
+
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i)
+    hash = Math.imul(hash, 16777619) >>> 0
+  }
+
+  return (hash % 900000 + 100000).toString()
+}
+
+function base64url (buffer) {
+  return buffer.toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=/g, '')
+}
+
+function createPkcePair () {
+  // 32 random bytes -> 43 characters, comfortably inside the 43-128 the spec allows.
+  const verifier = base64url(crypto.randomBytes(32))
+  const challenge = base64url(crypto.createHash('sha256').update(verifier).digest())
+  return { verifier, challenge }
+}
+
+// ---------------------------------------------------------------------------
+// The local callback server
+//
+// Discord cannot redirect to a desktop app, so we become a web server for a few
+// seconds. Discord sends the user's browser to 127.0.0.1, we read the code out
+// of the query string, show a "you can close this" page, and shut down.
+//
+// It binds to 127.0.0.1 rather than 0.0.0.0 so nothing outside this machine can
+// reach it, and it exists only for the duration of one login.
+// ---------------------------------------------------------------------------
+
+/**
+ * Opens Discord's consent page in a window owned by the launcher, and resolves
+ * with the authorization code once Discord redirects.
+ *
+ * We never serve the redirect - we intercept it. The moment Discord tries to
+ * navigate to 127.0.0.1, the code is in the URL, so the navigation is cancelled
+ * and the window closed. No local web server is needed at all.
+ *
+ * The window is deliberately bare: no preload, no node integration, its own
+ * session partition. It can reach nothing of ours. The user is typing their
+ * password into Discord's real page, served over TLS from Discord - we are only
+ * providing the frame around it.
+ */
+function signInWindow (authorizeUrl, expectedState) {
+  return new Promise((resolve, reject) => {
+    const authWindow = new BrowserWindow({
+      width: 520,
+      height: 800,
+      parent: mainWindow,
+      modal: true,
+      show: false,
+      autoHideMenuBar: true,
+      backgroundColor: '#0f1115',
+      title: 'Sign in with Discord',
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        // A fresh partition each time, so signing out actually signs out and the
+        // next person on this PC does not inherit a live Discord session.
+        partition: `oauth-${Date.now()}`
+      }
+    })
+
+    let settled = false
+
+    const finish = (fn, value) => {
+      if (settled) return
+      settled = true
+      fn(value)
+      if (!authWindow.isDestroyed()) authWindow.close()
+    }
+
+    const handleUrl = (url) => {
+      if (!url.startsWith(REDIRECT_URI)) return false
+
+      const parsed = new URL(url)
+      const code = parsed.searchParams.get('code')
+      const state = parsed.searchParams.get('state')
+      const error = parsed.searchParams.get('error')
+
+      if (error) {
+        finish(reject, new Error(`Discord returned: ${error}`))
+      } else if (state !== expectedState) {
+        // See the CSRF note below - a mismatched state means this response is not
+        // the one we asked for, and must be thrown away.
+        finish(reject, new Error('State mismatch - possible CSRF attempt'))
+      } else if (!code) {
+        finish(reject, new Error('Discord did not return an authorization code'))
+      } else {
+        finish(resolve, code)
+      }
+
+      return true
+    }
+
+    // will-redirect catches the 302 to our redirect URI; will-navigate covers the
+    // case where Discord navigates directly instead.
+    authWindow.webContents.on('will-redirect', (event, url) => {
+      if (handleUrl(url)) event.preventDefault()
+    })
+
+    authWindow.webContents.on('will-navigate', (event, url) => {
+      if (handleUrl(url)) event.preventDefault()
+    })
+
+    authWindow.webContents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL) => {
+      // Navigating to 127.0.0.1 legitimately fails - nothing is listening there.
+      // That is expected and already handled above; anything else is real.
+      if (validatedURL && validatedURL.startsWith(REDIRECT_URI)) return
+      finish(reject, new Error(`Could not load Discord: ${errorDescription}`))
+    })
+
+    authWindow.on('closed', () => {
+      if (!settled) {
+        settled = true
+        reject(new Error('Sign-in window was closed'))
+      }
+    })
+
+    authWindow.once('ready-to-show', () => authWindow.show())
+    authWindow.loadURL(authorizeUrl)
+  })
+}
+
+// Kept for reference: the local-server variant, used when the login happens in
+// the user's own browser instead of a window we own.
+function waitForAuthorizationCode (expectedState) {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((req, res) => {
+      const url = new URL(req.url, `http://127.0.0.1:${CALLBACK_PORT}`)
+
+      if (url.pathname !== '/callback') {
+        res.writeHead(404).end()
+        return
+      }
+
+      const code = url.searchParams.get('code')
+      const state = url.searchParams.get('state')
+      const error = url.searchParams.get('error')
+
+      const reply = (title, message) => {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+        res.end(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>
+          <style>
+            body{background:#0f1115;color:#e7e6df;font-family:system-ui,sans-serif;
+                 display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+            div{text-align:center;max-width:28rem;padding:2rem}
+            h1{font-size:1.3rem;margin:0 0 .6rem}
+            p{color:#98968a;line-height:1.5;margin:0}
+          </style></head>
+          <body><div><h1>${title}</h1><p>${message}</p></div></body></html>`)
+      }
+
+      // The user declined on Discord's consent screen, or Discord refused.
+      if (error) {
+        reply('Sign-in cancelled', 'You can close this tab and return to the launcher.')
+        server.close()
+        reject(new Error(`Discord returned: ${error}`))
+        return
+      }
+
+      // CSRF check. `state` is a random value we generated and Discord echoes
+      // back untouched. If it does not match, this response did not originate
+      // from the request we made, and must be discarded - otherwise an attacker
+      // could feed us an authorization code belonging to their own account.
+      if (state !== expectedState) {
+        reply('Sign-in failed', 'The response did not match the request. Please try again.')
+        server.close()
+        reject(new Error('State mismatch - possible CSRF attempt'))
+        return
+      }
+
+      if (!code) {
+        reply('Sign-in failed', 'Discord did not return an authorization code.')
+        server.close()
+        reject(new Error('No authorization code in callback'))
+        return
+      }
+
+      reply('Signed in', 'You can close this tab and return to the launcher.')
+      server.close()
+      resolve(code)
+    })
+
+    server.on('error', reject)
+
+    // Give up rather than leaving a server listening forever if the user walks
+    // away mid-login.
+    const timeout = setTimeout(() => {
+      server.close()
+      reject(new Error('Timed out waiting for Discord sign-in'))
+    }, 5 * 60 * 1000)
+
+    server.on('close', () => clearTimeout(timeout))
+
+    server.listen(CALLBACK_PORT, '127.0.0.1')
+  })
+}
+
+// ---------------------------------------------------------------------------
+// The handshake, end to end
+// ---------------------------------------------------------------------------
+
+async function signInWithDiscord () {
+  const { verifier, challenge } = createPkcePair()
+  const state = base64url(crypto.randomBytes(16))
+
+  const authorizeUrl = new URL('https://discord.com/oauth2/authorize')
+  authorizeUrl.searchParams.set('client_id', DISCORD_CLIENT_ID)
+  authorizeUrl.searchParams.set('redirect_uri', REDIRECT_URI)
+  authorizeUrl.searchParams.set('response_type', 'code')
+  authorizeUrl.searchParams.set('scope', SCOPES.join(' '))
+  authorizeUrl.searchParams.set('state', state)
+  authorizeUrl.searchParams.set('code_challenge', challenge)
+  authorizeUrl.searchParams.set('code_challenge_method', 'S256')
+
+  // Sign in inside the launcher rather than kicking the user out to a browser.
+  //
+  // Worth being clear about the tradeoff: the most cautious approach is the
+  // system browser, where the user can see the real URL and padlock themselves.
+  // An in-app window asks them to trust that we are showing them the genuine
+  // Discord. Every game launcher does it this way because bouncing users to a
+  // browser mid-launch is miserable, and it is acceptable HERE because the page
+  // is loaded straight from discord.com over TLS, in a window with no preload,
+  // no node access and its own session. We never see the password - only the
+  // authorization code Discord hands back afterwards.
+  const code = await signInWindow(authorizeUrl.toString(), state)
+
+  // Exchange the one-time code for an access token. `code_verifier` is what
+  // replaces the client secret here.
+  const body = new URLSearchParams({
+    client_id: DISCORD_CLIENT_ID,
+    grant_type: 'authorization_code',
+    code,
+    redirect_uri: REDIRECT_URI,
+    code_verifier: verifier
+  })
+
+  const tokenResponse = await axios.post('https://discord.com/api/v10/oauth2/token', body.toString(), {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+  })
+
+  accessToken = tokenResponse.data.access_token
+
+  return hydrateUserFromToken()
+}
+
+/**
+ * Turns whatever is in accessToken into a profile.
+ *
+ * Shared by a fresh sign-in and by restoring a saved session, so both go through the
+ * same identity check. Restoring from disk without re-asking Discord would mean a
+ * revoked or expired token still looked signed in.
+ */
+async function hydrateUserFromToken () {
+  // Ask Discord who this token belongs to. We never trust anything the UI says
+  // about the user's identity - it comes from here, or not at all.
+  const userResponse = await axios.get('https://discord.com/api/v10/users/@me', {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  })
+
+  const user = userResponse.data
+
+  // Are they actually in Night City Online?
+  //
+  // This is for the PLAYER's benefit, not for security - it tells them straight
+  // away that they need to join, rather than letting them get all the way to a
+  // connection that the server refuses. The check that actually matters happens
+  // server-side on connect, because anything decided here runs on the player's
+  // own machine and could be patched out.
+  let isMember = false
+
+  try {
+    const membership = await axios.get(
+      `https://discord.com/api/v10/users/@me/guilds/${GUILD_ID}/member`,
+      { headers: { Authorization: `Bearer ${accessToken}` }, validateStatus: () => true })
+
+    // 404 is Discord's honest "not in that server".
+    isMember = membership.status === 200
+  } catch (err) {
+    // Network trouble - do not claim they are a member, and do not claim they
+    // are not. The server will decide either way.
+    isMember = false
+  }
+
+  // Two records, deliberately.
+  //
+  // currentUser is INTERNAL and keeps the Discord snowflake, because isAdmin() and
+  // anything else server-facing has to key on the real identity. publicProfile() is
+  // what the renderer gets, and strips it.
+  //
+  // Collapsing these into one object is exactly the bug that broke the admin panel:
+  // dropping `id` to keep it out of the UI also made every permission check fail.
+  currentUser = {
+    id: user.id,
+    isMember,
+    inviteUrl: DISCORD_INVITE,
+    isAdmin: ADMIN_DISCORD_IDS.includes(user.id),
+
+    // A display id derived from the Discord snowflake, NOT the snowflake itself.
+    //
+    // The snowflake is a real, permanent handle on someone's Discord account -
+    // anyone who has it can look them up or add them. It ends up in screenshots,
+    // stream overlays and pasted bug reports, and once it is out there it cannot
+    // be changed. This is a one-way hash: stable for a given account, meaningless
+    // to anyone else, and it cannot be turned back into their Discord identity.
+    playerId: derivePlayerId(user.id),
+    username: user.global_name || user.username,
+    handle: user.username,
+    avatarUrl: user.avatar
+      ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=128`
+      : `https://cdn.discordapp.com/embed/avatars/${(BigInt(user.id) >> 22n) % 6n}.png`
+  }
+
+  return currentUser
+}
+
+// ---------------------------------------------------------------------------
+// Launching the game
+// ---------------------------------------------------------------------------
+
+function launchGame () {
+  if (!currentUser) {
+    // Belt and braces. The button is disabled in the UI, but the UI is not a
+    // security boundary - a renderer could send this message anyway.
+    throw new Error('Not signed in')
+  }
+
+  if (!currentUser.isMember) {
+    throw new Error('You must join the Night City Online Discord to play.')
+  }
+
+  // Not installed at all is a different problem from out of date, and saying
+  // "press Update" to someone who has never installed the mod just confuses them.
+  if (lastUpdateCheck && !lastUpdateCheck.installed) {
+    throw new Error('The mod is not installed yet. Use "Download the mod" at the bottom, then restart the launcher.')
+  }
+
+  if (!lastUpdateCheck || !(lastUpdateCheck.upToDate || lastUpdateCheck.offline)) {
+    // Re-checked here rather than trusting the button state. An out-of-date client
+    // against a newer server is the sort of mismatch that produces bug reports nobody
+    // can reproduce, so it is refused outright.
+    throw new Error('Your game files are out of date. Press Update first.')
+  }
+
+  // Do not send players to a server that is not there. They would sit at a black
+  // screen, time out with no explanation, and report it as a broken mod.
+  //
+  // Admins are exempt on purpose: starting the game against a dead server is exactly
+  // what you do when testing, and the person who can start the server is the person
+  // who should be allowed to launch into nothing.
+  if (!lastServerStatus?.online && !isAdmin()) {
+    throw new Error('The server is offline right now. Check the Discord for when it is back up.')
+  }
+
+  // Pass the TOKEN, not the id.
+  //
+  // An id is just a number - the game would be asserting "I am 1234", which any
+  // player could edit. The token is a credential only Discord can vouch for, and
+  // the game server verifies it independently on connect. This is the difference
+  // between the launcher claiming an identity and the server establishing one.
+  //
+  // Note the '=' form: the game's argument parser silently ignores space-separated
+  // values, leaving the setting at its default with no error anywhere.
+  const args = [
+    ...GAME_ARGS,
+    '--online',
+    `--discord-token=${accessToken}`,
+    // The display name, so chat shows who you are before Discord verification is
+    // switched on server-side. Once it is, the SERVER overwrites this with the name
+    // Discord returns - a name the client sends is a claim, not an identity.
+    // The HANDLE (noremacxxi), not the display name (Noremac).
+    //
+    // Handles are unique across Discord; display names are not. Two people called
+    // "Ghost" in chat is a moderation problem, and "who was that?" needs to have one
+    // answer. The display name is still shown in the launcher header, where it is
+    // decoration rather than identity.
+    `--discord-name=${currentUser.handle}`
+  ]
+
+  if (SERVER_ADDRESS) {
+    args.push(`--ip=${SERVER_ADDRESS}`)
+    args.push(`--port=${SERVER_PORT}`)
+  }
+
+  // detached + unref lets the game outlive the launcher. Without it, closing
+  // the launcher would take the game down with it, and the launcher would sit
+  // in memory for the whole session doing nothing.
+  //
+  // stdio 'ignore' matters too: with pipes, a game that writes a lot of output
+  // eventually fills the OS buffer and BLOCKS, because nobody is reading it.
+  const exe = gameExecutable()
+  if (!exe || !existsSync(exe)) {
+    throw new Error('Could not find Cyberpunk 2077. Use "Locate game" to point at it.')
+  }
+
+  const child = spawn(exe, args, {
+    detached: true,
+    stdio: 'ignore'
+  })
+
+  child.on('error', (err) => {
+    if (mainWindow) {
+      mainWindow.webContents.send('launch-error', err.message)
+    }
+  })
+
+  // Watch for a crash.
+  //
+  // The child is detached and unref'd so the game outlives the launcher, but as long as
+  // the launcher IS still open we can still see it exit - and that is exactly when
+  // someone needs their log. Nobody should have to go hunting through Program Files for
+  // a file whose name they do not know.
+  child.on('exit', (code) => {
+    // 0 is a normal quit. 0xC0000005 (-1073741819) is an access violation - the crash
+    // this project has spent days on. Anything else non-zero is also worth capturing.
+    if (code === 0 || code === null) return
+
+    handleGameCrash(code)
+  })
+
+  child.unref()
+
+  return { launched: true, executable: exe }
+}
+
+// ---------------------------------------------------------------------------
+// Server controls (admin only)
+// ---------------------------------------------------------------------------
+
+function isAdmin () {
+  return Boolean(currentUser) && ADMIN_DISCORD_IDS.includes(currentUser.id)
+}
+
+function serverExePath () {
+  return path.join(getServerDir(), SERVER_EXE)
+}
+
+/**
+ * Is the server process alive?
+ *
+ * Asks Windows rather than tracking a child handle, so it reports correctly even
+ * for a server started before the launcher was opened - or one started by the
+ * .bat, or by hand.
+ */
+function getServerStatus () {
+  return new Promise((resolve) => {
+    const check = spawn('tasklist', ['/FI', `IMAGENAME eq ${SERVER_EXE}`, '/NH'], {
+      windowsHide: true
+    })
+
+    let output = ''
+    check.stdout.on('data', (chunk) => { output += chunk.toString() })
+
+    check.on('close', () => {
+      resolve({
+        running: output.includes(SERVER_EXE),
+        exePath: serverExePath(),
+        exists: existsSync(serverExePath())
+      })
+    })
+
+    check.on('error', () => resolve({ running: false, exePath: serverExePath(), exists: false }))
+  })
+}
+
+function startServer () {
+  if (!existsSync(serverExePath())) {
+    throw new Error(`Server not found at ${serverExePath()}`)
+  }
+
+  // Release builds refuse to start without these. The launcher never holds the
+  // password - it inherits whatever the user set with setx, and passes nothing.
+  if (!process.env.CYBERPUNKMP_ADMIN_USERNAME || !process.env.CYBERPUNKMP_ADMIN_PASSWORD) {
+    throw new Error(
+      'Admin credentials are not set. Run this once in a terminal, then reopen the launcher:\n' +
+      'setx CYBERPUNKMP_ADMIN_USERNAME "admin"\n' +
+      'setx CYBERPUNKMP_ADMIN_PASSWORD "your-password"')
+  }
+
+  // The server needs a REAL console window. With none attached, Swan never registers
+  // its ConsoleLogger and WebApi throws on startup trying to unregister it - the
+  // process starts and dies immediately, which looks exactly like "nothing happened".
+  //
+  // Node's detached:true does NOT do this on Windows. It maps to DETACHED_PROCESS,
+  // which gives the child NO console at all - the opposite of what is needed here.
+  // There is no Node option for CREATE_NEW_CONSOLE, so cmd's `start` is genuinely
+  // the right tool.
+  //
+  // The empty "" is the fix for the earlier "Windows cannot find 'Server\'" error:
+  // `start` treats a leading quoted argument as the window TITLE, so a quoted path
+  // with no title before it gets swallowed as one. Passing an explicit empty title
+  // first means the path is unambiguously the program to run.
+  const child = spawn(`start "" "${serverExePath()}"`, {
+    cwd: getServerDir(),
+    detached: true,
+    stdio: 'ignore',
+    shell: true,
+    windowsHide: false
+  })
+
+  child.unref()
+
+  return { started: true }
+}
+
+function stopServer () {
+  return new Promise((resolve, reject) => {
+    const kill = spawn('taskkill', ['/IM', SERVER_EXE, '/F'], { windowsHide: true })
+
+    kill.on('close', (code) => {
+      // 128 means "no such process" - already stopped, which is the state we wanted.
+      if (code === 0 || code === 128) resolve({ stopped: true })
+      else reject(new Error(`Could not stop the server (exit ${code})`))
+    })
+
+    kill.on('error', reject)
+  })
+}
+
+/**
+ * Stop, wait for the process to actually be gone, then start.
+ *
+ * The waiting is the whole point. taskkill returns as soon as it has ASKED Windows to
+ * end the process, not once it has. Starting immediately means the new server tries to
+ * bind port 11778 while the old one still holds it, and you get a confusing bind error
+ * that looks like a config problem.
+ */
+async function restartServer () {
+  await stopServer()
+
+  const deadline = Date.now() + 10000
+
+  while (Date.now() < deadline) {
+    const status = await getServerStatus()
+    if (!status.running) {
+      // A moment more for the socket to be released - the process disappearing from the
+      // task list and the port becoming free are not quite the same instant.
+      await new Promise((r) => setTimeout(r, 500))
+      return startServer()
+    }
+    await new Promise((r) => setTimeout(r, 400))
+  }
+
+  throw new Error('The old server did not shut down within 10 seconds - stop it manually.')
+}
+
+// ---------------------------------------------------------------------------
+// IPC - the only surface the UI can reach
+// ---------------------------------------------------------------------------
+
+ipcMain.handle('server:status', async () => {
+  if (!isAdmin()) return { ok: false, error: 'Not permitted' }
+  return { ok: true, ...(await getServerStatus()) }
+})
+
+ipcMain.handle('server:start', async () => {
+  if (!isAdmin()) return { ok: false, error: 'Not permitted' }
+  try {
+    return { ok: true, ...startServer() }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
+ipcMain.handle('server:stop', async () => {
+  if (!isAdmin()) return { ok: false, error: 'Not permitted' }
+  try {
+    return { ok: true, ...(await stopServer()) }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
+ipcMain.handle('server:restart', async () => {
+  if (!isAdmin()) return { ok: false, error: 'Not permitted' }
+  try {
+    return { ok: true, ...(await restartServer()) }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
+ipcMain.handle('discord:login', async () => {
+  try {
+    await signInWithDiscord()
+    saveToken(accessToken)
+    return { ok: true, user: publicProfile() }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
+// Restores a previous session on startup, so signing in is a one-time thing rather
+// than something to repeat every launch.
+ipcMain.handle('discord:restore', async () => {
+  const saved = loadToken()
+  if (!saved) return { ok: false }
+
+  try {
+    accessToken = saved
+    await hydrateUserFromToken()
+    return { ok: true, user: publicProfile() }
+  } catch {
+    // Expired or revoked. Clear it and fall back to the sign-in button rather than
+    // showing a session that no longer works.
+    accessToken = null
+    currentUser = null
+    saveToken(null)
+    return { ok: false }
+  }
+})
+
+ipcMain.handle('discord:logout', () => {
+  accessToken = null
+  currentUser = null
+  lastUpdateCheck = null
+  saveToken(null)
+  return { ok: true }
+})
+
+ipcMain.handle('update:check', async () => {
+  try {
+    lastUpdateCheck = await checkForUpdates()
+    return { ok: true, ...lastUpdateCheck }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
+// Public game-server status, for everyone - this is what drives the online/offline
+// badge and the player count.
+ipcMain.handle('game:serverStatus', async () => {
+  lastServerStatus = await getGameServerStatus()
+  return { ok: true, ...lastServerStatus, canBypass: isAdmin() }
+})
+
+// Everything the settings screen needs to describe the current state.
+ipcMain.handle('paths:get', () => {
+  const gameDir = findGameDir()
+  const modDir = findModDir()
+
+  // Can we actually WRITE to the game folder?
+  //
+  // Installing mods means writing into the game directory, which is often under
+  // Program Files. Steam usually loosens permissions there, but not always - and a
+  // locked-down folder fails mid-extract with a permission error that reads like a
+  // corrupt download. Better to say "run as administrator" up front than to let
+  // someone chase a phantom download problem.
+  let gameWritable = false
+
+  if (gameDir) {
+    const probe = path.join(gameDir, '.ncÐ¾-write-test')
+    try {
+      writeFileSync(probe, '')
+      rmSync(probe, { force: true })
+      gameWritable = true
+    } catch {
+      gameWritable = false
+    }
+  }
+
+  return {
+    gameDir,
+    gameWritable,
+    modDir,
+    hasDll: Boolean(modDir) && existsSync(path.join(modDir, 'CyberpunkMP.dll')),
+    userData: app.getPath('userData'),
+    appVersion: app.getVersion()
+  }
+})
+
+ipcMain.handle('paths:open', (_event, which) => {
+  const target = which === 'mod' ? findModDir() : findGameDir()
+  if (!target) return { ok: false, error: 'That folder does not exist yet.' }
+  shell.openPath(target)
+  return { ok: true }
+})
+
+ipcMain.handle('install:everything', async () => {
+  try {
+    const result = await installEverything((step) => {
+      // Progress goes to the renderer as it happens - a silent two-minute install
+      // looks identical to a hang.
+      if (mainWindow) mainWindow.webContents.send('install-progress', step)
+    })
+    lastUpdateCheck = await checkForUpdates()
+    return { ok: true, ...result }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
+ipcMain.handle('update:verify', async () => {
+  try {
+    return { ok: true, ...(await verifyInstall()) }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
+ipcMain.handle('mod:uninstall', async () => {
+  try {
+    return { ok: true, ...(await uninstallMod()) }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
+ipcMain.handle('launcher:reset', async () => {
+  try {
+    return { ok: true, ...(await resetLauncherData()) }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
+ipcMain.handle('update:apply', async () => {
+  try {
+    const result = await applyUpdate()
+    lastUpdateCheck = await checkForUpdates()
+    return { ok: true, ...result }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
+// Manual fallback when detection fails. Anyone can use this - it points at their own
+// game folder, which is not a privileged thing to know.
+ipcMain.handle('game:pickDir', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Where is Cyberpunk 2077 installed?',
+    properties: ['openDirectory'],
+    defaultPath: findGameDir() || 'C:\\'
+  })
+
+  if (result.canceled || !result.filePaths.length) return { ok: false }
+
+  const chosen = result.filePaths[0]
+  if (!existsSync(path.join(chosen, 'bin', 'x64', 'Cyberpunk2077.exe'))) {
+    return { ok: false, error: 'No Cyberpunk2077.exe under that folder.' }
+  }
+
+  saveSettings({ gameDir: chosen })
+  return { ok: true, gameDir: chosen }
+})
+
+ipcMain.handle('tailscale:status', async () => {
+  return { ok: true, ...(await getTailscaleStatus()) }
+})
+
+ipcMain.handle('tailscale:download', async () => {
+  await shell.openExternal(TAILSCALE_DOWNLOAD)
+  return { ok: true }
+})
+
+// Opens a download page in the user's real browser. Nothing is fetched by the
+// launcher here - these are first-time installs the player performs themselves.
+ipcMain.handle('links:open', async (_event, which) => {
+  const links = {
+    release: 'https://github.com/ofmiceandcam98-eng/CyberpunkMP/releases/latest',
+    diagnostic: 'https://github.com/ofmiceandcam98-eng/CyberpunkMP/releases/tag/test-2026.08.12-probes',
+    discord: DISCORD_INVITE,
+    tailscale: TAILSCALE_DOWNLOAD
+  }
+
+  const url = links[which]
+  if (!url) return { ok: false, error: 'Unknown link' }
+
+  await shell.openExternal(url)
+  return { ok: true }
+})
+
+ipcMain.handle('server:pickDir', async () => {
+  if (!isAdmin()) return { ok: false, error: 'Not permitted' }
+
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Where is Server.Loader.exe?',
+    properties: ['openDirectory'],
+    defaultPath: getServerDir()
+  })
+
+  if (result.canceled || !result.filePaths.length) return { ok: false }
+
+  const chosen = result.filePaths[0]
+  if (!existsSync(path.join(chosen, SERVER_EXE))) {
+    return { ok: false, error: `No ${SERVER_EXE} in that folder.` }
+  }
+
+  saveSettings({ serverDir: chosen })
+  return { ok: true, serverDir: chosen }
+})
+
+// Opening the invite goes through the real browser deliberately - it is a normal
+// link, not a credential flow, and Discord handles invites better there.
+ipcMain.handle('discord:openInvite', () => {
+  shell.openExternal(DISCORD_INVITE)
+  return { ok: true }
+})
+
+ipcMain.handle('game:launch', () => {
+  try {
+    return { ok: true, ...launchGame() }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Lifecycle
+// ---------------------------------------------------------------------------
+
+app.whenReady().then(() => {
+  createWindow()
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+  })
+})
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit()
+})
