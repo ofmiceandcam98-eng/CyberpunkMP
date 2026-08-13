@@ -1,6 +1,7 @@
 #include "GameServer.h"
 
 #include <Components/PlayerComponent.h>
+#include <Components/MovementComponent.h>
 
 #include "Core/Filesystem.h"
 #include "Game/Level.h"
@@ -43,6 +44,7 @@ GameServer::GameServer()
         }
 
         m_bans.Load(serverPath / "config" / "bans.json");
+        m_players.Load(serverPath / "config" / "players.json");
     }
     catch (std::exception& e)
     {
@@ -94,8 +96,36 @@ void GameServer::OnUpdate()
 
     ReportPlayerConnections(now);
     ReverifyPlayers(now);
+    SavePlayerPositions(now);
 
     m_pWorld->Update(std::chrono::duration_cast<std::chrono::duration<float>>(delta).count());
+}
+
+void GameServer::SavePlayerPositions(std::chrono::steady_clock::time_point aNow)
+{
+    const auto sinceLast = std::chrono::duration_cast<std::chrono::seconds>(aNow - m_lastPlayerSave).count();
+
+    // Every thirty seconds. This is the "autosave" - not a Cyberpunk save file, which
+    // would hitch the game and can be corrupted by a crash mid-write, but the server
+    // writing down what it already knows. Cheap enough to do often, and thirty seconds is
+    // the most anyone loses if the SERVER dies. A player crashing loses nothing at all,
+    // because their disconnect saves immediately.
+    if (sinceLast < 30)
+        return;
+
+    m_lastPlayerSave = aNow;
+
+    m_pWorld->each(
+        [this](flecs::entity, const PlayerComponent& aPlayer)
+        {
+            const auto* pMovement = aPlayer.Puppet ? aPlayer.Puppet.get<MovementComponent>() : nullptr;
+            if (!pMovement)
+                return;   // connected but not standing anywhere yet
+
+            m_players.Remember(aPlayer.DiscordId, aPlayer.Username, pMovement->Position, pMovement->Rotation.z);
+        });
+
+    m_players.Flush();
 }
 
 void GameServer::ReverifyPlayers(std::chrono::steady_clock::time_point aNow)
@@ -273,6 +303,20 @@ void GameServer::OnDisconnection(ConnectionId aConnectionId, EDisconnectReason a
 
         if (auto* pPlayerComponent = player.get<PlayerComponent>())
         {
+            // Save BEFORE the puppet is removed - afterwards there is no position left
+            // to read. This is the branch that matters most: a crashed game drops its
+            // connection, so this runs for a crash exactly as it does for a clean quit,
+            // and the player comes back where they fell over rather than wherever their
+            // singleplayer save happens to put them.
+            if (const auto* pMovement = pPlayerComponent->Puppet
+                                            ? pPlayerComponent->Puppet.get<MovementComponent>()
+                                            : nullptr)
+            {
+                m_players.Remember(pPlayerComponent->DiscordId, pPlayerComponent->Username,
+                                   pMovement->Position, pMovement->Rotation.z);
+                m_players.Flush();
+            }
+
             GetWorld()->get_mut<Level>()->Remove(pPlayerComponent->Puppet);
         }
 

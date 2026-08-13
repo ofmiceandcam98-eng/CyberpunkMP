@@ -1,7 +1,7 @@
 {
   "name": "nightcity-launcher",
   "productName": "Night City Online",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Lightweight launcher with Discord login verification",
   "main": "main.js",
   "type": "module",
@@ -69,7 +69,7 @@
       "deleteAppDataOnUninstall": false,
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
-      "artifactName": "NightCityOnline-Setup-${version}.exe"
+      "artifactName": "NightCityOnline-Setup.exe"
     },
     "portable": {
       "artifactName": "NightCityOnline-Portable.exe"

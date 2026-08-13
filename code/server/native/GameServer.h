@@ -4,6 +4,7 @@
 #include "System/Log.h"
 #include "Config.h"
 #include "BanList.h"
+#include "PlayerStore.h"
 #include "Game/World.h"
 
 template <typename T>
@@ -113,8 +114,13 @@ private:
     // effect here without waiting for them to reconnect.
     void ReverifyPlayers(std::chrono::steady_clock::time_point aNow);
 
+    // Writes everyone's position to disk on a timer, so a server crash costs seconds
+    // rather than a session. Disconnects save immediately and do not wait for this.
+    void SavePlayerPositions(std::chrono::steady_clock::time_point aNow);
+
 public:
     BanList& GetBanList() noexcept { return m_bans; }
+    PlayerStore& GetPlayerStore() noexcept { return m_players; }
 
 private:
 
@@ -127,6 +133,8 @@ private:
     std::chrono::steady_clock::time_point m_lastConnectionReport;
     std::chrono::steady_clock::time_point m_lastReverify;
     BanList m_bans;
+    PlayerStore m_players;
+    std::chrono::steady_clock::time_point m_lastPlayerSave;
     entt::dispatcher m_dispatcher;
 
     Config m_config;

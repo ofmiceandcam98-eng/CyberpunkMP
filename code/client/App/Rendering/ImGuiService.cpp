@@ -4,6 +4,7 @@
 #include "win32.h"
 #include "App/Application.h"
 #include "App/Debugging/DebugService.h"
+#include "App/Settings.h"
 
 namespace App
 {
@@ -181,6 +182,12 @@ void ImGuiService::OnPresent()
     if (!m_initialized)
         return;
 
+    // Nothing to present when the overlay is off - see PrepareUpdate. Checked here too
+    // rather than relying on the draw buffers being empty, because "no GPU work" should
+    // not depend on a buffer happening to be in the right state.
+    if (!Settings::Get().debug)
+        return;
+
     // swap staging ImGui buffer with render ImGui buffer
     {
         std::lock_guard _(m_imguiLock);
@@ -278,6 +285,21 @@ void ImGuiService::OnGameUpdate(RED4ext::CGameApplication* apApp)
 void ImGuiService::PrepareUpdate()
 {
     if (!m_pCommandList || !m_initialized)
+        return;
+
+    // With the overlay off, build no frame at all.
+    //
+    // Gating only DebugService::Draw() still ran the whole ImGui frame and still handed
+    // OnPresent a valid (empty) draw list, so the mod kept resetting a command allocator,
+    // raising a resource barrier and executing a command list inside the game's frame -
+    // every frame, to draw nothing.
+    //
+    // That is worth removing on its own, and it matters more after a GPU crash was
+    // reported with no other explanation: gpuApiDX12Error, "Gpu Crash for unknown
+    // reasons". This mod injecting DX12 work into a frame is one of the few things about
+    // the renderer we control, so for anyone not running the overlay it now injects none.
+    // That is not a claim this caused it - it removes us from the list of suspects.
+    if (!Settings::Get().debug)
         return;
 
     std::lock_guard _(m_imguiLock);

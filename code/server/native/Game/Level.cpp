@@ -188,6 +188,36 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
         rot += glm::vec3(0, 0, 3.1415);
     }
 
+    // Put returning players back where they left off.
+    //
+    // The client spawns at whatever position its own singleplayer save had, which has
+    // nothing to do with where this character was standing on the server. Somebody who
+    // crashes in the middle of a scene should come back to that scene, not to wherever
+    // their offline save last put V.
+    //
+    // The server's record wins, and the client is asked to move itself - it owns its own
+    // position, so editing our copy alone would be undone by its next update.
+    const auto* pSaved = GServer->GetPlayerStore().Find(pComponent->DiscordId);
+    if (pSaved)
+    {
+        pos = glm::vec3(pSaved->X, pSaved->Y, pSaved->Z);
+        rot = glm::vec3(0.f, 0.f, pSaved->Yaw);
+
+        server::NotifyTeleport teleport;
+
+        common::Vector3 position;
+        position.set_x(pSaved->X);
+        position.set_y(pSaved->Y);
+        position.set_z(pSaved->Z);
+        teleport.set_position(position);
+        teleport.set_rotation(pSaved->Yaw);
+
+        GServer->Send(aMessage.ConnectionId, teleport);
+
+        spdlog::info("Restored {} to ({:.1f}, {:.1f}, {:.1f})", pComponent->Username,
+                     pSaved->X, pSaved->Y, pSaved->Z);
+    }
+
     pComponent->Puppet = GetWorld()->entity()
         .child_of(player)
         .set<MovementComponent>({pos, rot, {}})

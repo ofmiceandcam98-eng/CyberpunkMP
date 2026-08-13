@@ -40,7 +40,11 @@ param(
 
     # Leads the Discord message. Without it the announcement is just the release notes,
     # which is fine for a fix and thin for a breakthrough.
-    [string]$Highlights
+    [string]$Highlights,
+
+    # Also publish the portable build. It is another ~98MB copy of the same application
+    # and everyone is pointed at the installer, so it is off by default.
+    [switch]$Portable
 )
 
 $ErrorActionPreference = 'Stop'
@@ -386,25 +390,30 @@ if ($Launcher) {
     # Take the version from package.json rather than repeating it here. electron-builder
     # stamps the installer filename with it, so a hardcoded number breaks this copy the
     # first time the version moves - silently shipping nothing, or the previous build.
-    $built = Join-Path $LauncherDir "dist\NightCityOnline-Setup-$version.exe"
-    if (-not (Test-Path $built)) { Die "no installer at '$built' - version changed without a rebuild?" }
-
-    # The versioned filename goes up UNCHANGED, because latest.yml names it exactly and
-    # the auto-updater downloads it by that name. Rename it and self-update breaks with a
-    # 404 that looks like a network problem.
+    # ONE installer, under a stable name.
+    #
+    # This used to upload the same ~99MB file twice - once versioned, because latest.yml
+    # names the file the auto-updater fetches, and once stable-named because every shared
+    # link points at it. Plus a ~98MB portable build. Nearly 300MB per ship, of which two
+    # thirds was the same bytes twice, pushed over Wi-Fi.
+    #
+    # That was the actual cause of three failed ships in one night: not a broken network,
+    # just a multi-minute upload with plenty of time to hit a blip. electron-builder does
+    # not require a version in the filename - latest.yml records whatever name is used -
+    # so one file satisfies both the updater and the links.
+    $built = Join-Path $LauncherDir "dist\NightCityOnline-Setup.exe"
+    if (-not (Test-Path $built)) { Die "no installer at '$built' - did the build actually run?" }
     $uploads += $built
 
-    # A second copy under a stable name, for humans. Every link already shared - status
-    # page, Discord, INSTALL.txt - points at this, and a version bump must not break them.
-    $setup = Join-Path $env:TEMP "NightCityOnline-Setup.exe"
-    Copy-Item $built $setup -Force
-    $uploads += $setup
-
-    $portableBuilt = Join-Path $LauncherDir "dist\NightCityOnline-Portable.exe"
-    if (Test-Path $portableBuilt) {
-        $portable = Join-Path $env:TEMP "NightCityOnline-Launcher.exe"
-        Copy-Item $portableBuilt $portable -Force
-        $uploads += $portable
+    # The portable build is a third copy of the same application, and the installer is
+    # what everyone is pointed at. Uploaded only when explicitly asked for.
+    if ($Portable) {
+        $portableBuilt = Join-Path $LauncherDir "dist\NightCityOnline-Portable.exe"
+        if (Test-Path $portableBuilt) {
+            $portable = Join-Path $env:TEMP "NightCityOnline-Launcher.exe"
+            Copy-Item $portableBuilt $portable -Force
+            $uploads += $portable
+        }
     }
 
     # latest.yml IS the auto-update mechanism: version, filename, and hash. Without it
@@ -492,7 +501,7 @@ foreach ($asset in $release.assets) {
 $names = $release.assets.name
 
 if ($Launcher) {
-    foreach ($required in @("latest.yml", "NightCityOnline-Setup-$version.exe")) {
+    foreach ($required in @("latest.yml", "NightCityOnline-Setup.exe")) {
         if ($names -notcontains $required) { Die "release is missing $required - auto-update would be broken" }
     }
     Ok "auto-update assets present"
