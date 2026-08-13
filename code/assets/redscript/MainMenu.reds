@@ -1,3 +1,9 @@
+// NetworkWorldSystem lives in module CyberpunkMP.World. This file has no module of its
+// own, so without this import the type is simply not in scope and
+// GameInstance.GetNetworkWorldSystem() fails to resolve - taking every other script in
+// the mod down with it, because redscript aborts all compilation on one bad file.
+import CyberpunkMP.World.*
+
 // Adds a MULTIPLAYER entry to the main menu, beside Continue / New Game / Load Game.
 //
 // Written against the game's own script source, which ships at

@@ -127,8 +127,27 @@ if ($Mod) {
         } else {
             $scratch  = Join-Path $env:TEMP "ship_scc"
             New-Item -ItemType Directory -Force -Path $scratch | Out-Null
+            # Every script path the game compiles, or the check is meaningless.
+            #
+            # `r6\scripts` is EMPTY on this install - nothing comes from there. RED4ext
+            # registers each plugin's Scripts folder instead, and when -compilePathsFile
+            # is supplied scc compiles ONLY the listed paths and ignores the -compile
+            # directory entirely. Leaving the other plugins out makes our own files fail
+            # on `import Codeware.*`, which is a fake error about real code.
+            #
+            # zzzCyberpunkMP is excluded because it is a junction to distrib: including it
+            # would compile our mod twice and collide on every definition.
+            $scriptPaths = @(Join-Path $Repo "distrib\launcher\mod\assets\redscript")
+            $scriptPaths += Get-ChildItem (Join-Path $GameDir "red4ext\plugins") -Directory |
+                Where-Object { $_.Name -ne 'zzzCyberpunkMP' -and (Test-Path (Join-Path $_.FullName 'Scripts')) } |
+                ForEach-Object { Join-Path $_.FullName 'Scripts' }
+
+            # NO BOM. PowerShell 5.1's -Encoding UTF8 writes one, scc reads the first path
+            # as garbage, silently compiles nothing, and reports success. That false pass
+            # is worse than no check at all - it printed "OK" over a build that disabled
+            # every script in the mod.
             $pathsFile = Join-Path $scratch "paths.txt"
-            Set-Content -Path $pathsFile -Value (Join-Path $Repo "distrib\launcher\mod\assets\redscript") -Encoding UTF8
+            [System.IO.File]::WriteAllLines($pathsFile, $scriptPaths, (New-Object System.Text.UTF8Encoding($false)))
 
             $sccOut = & $scc -compile (Join-Path $GameDir "r6\scripts") `
                              (Join-Path $GameDir "r6\cache\final.redscripts") `
