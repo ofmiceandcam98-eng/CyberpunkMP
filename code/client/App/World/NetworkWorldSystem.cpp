@@ -270,6 +270,20 @@ void NetworkWorldSystem::OnWorldAttached(RED4ext::world::RuntimeScene* aScene)
     // explicitly - see the MULTIPLAYER entry in MainMenu.reds.
 }
 
+void NetworkWorldSystem::HandleTeleport(const PacketEvent<server::NotifyTeleport>& aMessage)
+{
+    const auto& destination = aMessage.get_position();
+
+    const Red::Vector4 position{destination.get_x(), destination.get_y(), destination.get_z(), 1.f};
+
+    spdlog::info("[NetworkWorldSystem] teleport to ({:.1f}, {:.1f}, {:.1f})", position.X, position.Y, position.Z);
+
+    // Handed to redscript because the teleportation facility is script-side machinery -
+    // it deals with streaming the destination in and putting the camera somewhere sane,
+    // which writing a position straight into the entity does not.
+    Red::CallVirtual(this, "TeleportLocalPlayer", position, aMessage.get_rotation());
+}
+
 void NetworkWorldSystem::RequestJoin()
 {
     spdlog::info("[NetworkWorldSystem] join requested from the main menu");
@@ -517,6 +531,7 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
     const auto pNetworkService = Core::Container::Get<NetworkService>();
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleCharacterLoad>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleEntityUnload>(this);
+    pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleTeleport>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleSpawnCharacterResponse>(this);
 
     m_remotePlayerId = std::nullopt;

@@ -10,6 +10,13 @@ void Settings::Load()
     if (launchParameters.Contains(RED4ext::CString("-online")))
         settings.enabled = true;
 
+    // Developer overlay. The launcher only offers this to accounts with a dev or admin
+    // Discord role, but nothing here enforces that - every action the overlay exposes is
+    // re-checked by the server against the role IT derived from Discord. This flag decides
+    // whether a toolbar is drawn, nothing more.
+    if (launchParameters.Contains(RED4ext::CString("-debug")))
+        settings.debug = true;
+
     bool ipFromArgs = false;
     bool portFromArgs = false;
 

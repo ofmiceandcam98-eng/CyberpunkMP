@@ -1283,6 +1283,13 @@ function launchGame () {
     `--discord-name=${currentUser.handle}`
   ]
 
+  // Developer overlay, off unless an admin has turned it on. Checked against isAdmin()
+  // here rather than trusting the saved setting alone - the settings file is plain JSON
+  // on disk, so "debug: true" in it proves nothing about who is running the launcher.
+  if (isAdmin() && loadSettings().debugMode) {
+    args.push('--debug')
+  }
+
   if (SERVER_ADDRESS) {
     args.push(`--ip=${SERVER_ADDRESS}`)
     args.push(`--port=${SERVER_PORT}`)
@@ -1522,6 +1529,20 @@ ipcMain.handle('discord:logout', () => {
   lastUpdateCheck = null
   saveToken(null)
   return { ok: true }
+})
+
+// Developer overlay toggle. Reports admin status too, so the renderer knows whether to
+// show the control at all - and refuses to enable it for anyone else, because a renderer
+// asking nicely is not authorisation.
+ipcMain.handle('debug:get', async () => {
+  return { ok: true, admin: isAdmin(), enabled: Boolean(loadSettings().debugMode) }
+})
+
+ipcMain.handle('debug:set', async (_event, enabled) => {
+  if (!isAdmin()) return { ok: false, error: 'Not authorised.' }
+
+  saveSettings({ debugMode: Boolean(enabled) })
+  return { ok: true, enabled: Boolean(enabled) }
 })
 
 // Opens the folder the launcher is actually installed in. It lives under AppData, which

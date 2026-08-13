@@ -67,6 +67,22 @@ message NotifyEntityMove {
 message ChatMessage {
     string username = 1;
     string message = 2;
+
+    // Which channel this was said on, so the client can colour it. Sent as a number the
+    // SERVER decides rather than letting the client infer one from the text - otherwise
+    // anyone could type "[yells]" and have their local chatter render as a shout.
+    // 0 local, 1 yell, 2 whisper, 3 advert, 4 server notice.
+    uint32 channel = 3;
+}
+
+// Move a player somewhere. Sent only to the player being moved.
+//
+// The client owns its own position, so the server cannot simply relocate someone by
+// editing its own copy - the next position update would put them straight back. This
+// asks the client to move itself, which is the only thing that actually works.
+message NotifyTeleport {
+    common.Vector3 position = 1;
+    float rotation = 2;
 }
 
 message RpcCall {
@@ -99,5 +115,6 @@ message Protocol {
         NotifyVehicleEnter notify_vehicle_enter = 10;
         NotifyVehicleExit notify_vehicle_exit = 11;
         NotifyVehicleControlAssigned notify_vehicle_control_assigned = 12;
+        NotifyTeleport notify_teleport = 13;
     }
 }

@@ -356,6 +356,14 @@ if ($uploads.Count -eq 0) { Warn "nothing to publish"; exit 0 }
 # ship, after the version had already been bumped and everything built.
 $existingTags = (gh release list --repo $GhRepo --limit 100 --json tagName | ConvertFrom-Json).tagName
 
+# Created as a PRERELEASE, and only promoted to latest once the files are verified.
+#
+# Everything downstream resolves through /releases/latest - the auto-updater, the status
+# page, the launcher's links. Marking a release latest before its assets are up means any
+# interruption leaves the current release pointing at files that are not there. That is
+# not hypothetical: a 98MB upload timed out mid-flight on v0.1.6, leaving latest.yml
+# published and the installer it names missing, so every launcher checking for updates
+# would have got a 404. Nothing is "current" until it is complete.
 if ($existingTags -notcontains $Tag) {
     Step "Create release $Tag"
     $branch = git rev-parse --abbrev-ref HEAD
@@ -363,17 +371,25 @@ if ($existingTags -notcontains $Tag) {
         --target $branch `
         --title "Night City Online $Tag" `
         --notes-file (Join-Path $Repo "publish\release-notes.md") `
-        --latest 2>&1 | Select-Object -Last 1
+        --prerelease 2>&1 | Select-Object -Last 1
     if ($LASTEXITCODE -ne 0) { Die "could not create release $Tag" }
-    Ok "release created"
+    Ok "release created (held back until its files are verified)"
 } else {
-    # Existing release: refresh the notes so the launcher's patch-notes panel and the
-    # Discord post cannot disagree with what was actually written.
-    gh release edit $Tag --repo $GhRepo --notes-file (Join-Path $Repo "publish\release-notes.md") --latest 2>&1 | Out-Null
+    # Refresh the notes so the launcher's patch-notes panel and the Discord post cannot
+    # disagree with what was actually written.
+    gh release edit $Tag --repo $GhRepo --notes-file (Join-Path $Repo "publish\release-notes.md") 2>&1 | Out-Null
 }
 
-gh release upload $Tag @uploads --repo $GhRepo --clobber 2>&1 | Select-Object -Last 1
-if ($LASTEXITCODE -ne 0) { Die "upload failed" }
+# Uploads are retried. These are ~100MB over a home connection, and a transient timeout
+# should cost a retry rather than the whole ship.
+$uploaded = $false
+foreach ($attempt in 1..3) {
+    gh release upload $Tag @uploads --repo $GhRepo --clobber 2>&1 | Select-Object -Last 1
+    if ($LASTEXITCODE -eq 0) { $uploaded = $true; break }
+    Warn "upload attempt $attempt failed - retrying"
+    Start-Sleep -Seconds 5
+}
+if (-not $uploaded) { Die "upload failed after 3 attempts - $Tag is still a prerelease, so nothing is pointing at it" }
 
 # Confirm what is actually on the release, rather than assuming the upload worked.
 Step "Verify"
@@ -384,13 +400,21 @@ foreach ($asset in $release.assets) {
 
 # The auto-updater cannot work without these two, and a release missing them fails in the
 # worst way: silently, on everyone else's machine, days later.
+$names = $release.assets.name
+
 if ($Launcher) {
-    $names = $release.assets.name
     foreach ($required in @("latest.yml", "NightCityOnline-Setup-$version.exe")) {
         if ($names -notcontains $required) { Die "release is missing $required - auto-update would be broken" }
     }
     Ok "auto-update assets present"
 }
+
+if ($Mod -and $names -notcontains "ModPayload.zip") { Die "release is missing ModPayload.zip" }
+
+# Only NOW does this become the release everyone receives.
+gh release edit $Tag --repo $GhRepo --prerelease=false --latest 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) { Die "uploaded fine but could not mark $Tag as latest - nobody will be offered it" }
+Ok "promoted to latest"
 
 # ---------------------------------------------------------------------------
 # Announce

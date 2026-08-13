@@ -37,6 +37,10 @@ contextBridge.exposeInMainWorld('launcher', {
   // Desktop + Start Menu shortcuts. Asked once on first run; this is the way back.
   createShortcuts: () => ipcRenderer.invoke('shortcuts:create'),
 
+  // Developer overlay. The main process decides who is allowed to change this.
+  getDebugMode: () => ipcRenderer.invoke('debug:get'),
+  setDebugMode: (enabled) => ipcRenderer.invoke('debug:set', enabled),
+
   // Where the launcher lives, and how to remove it. Both confirm in the main process.
   openInstallDir: () => ipcRenderer.invoke('launcher:openInstallDir'),
   uninstallLauncher: () => ipcRenderer.invoke('launcher:uninstall'),

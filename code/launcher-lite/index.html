@@ -441,6 +441,19 @@
             <button class="action ghost" id="makeShortcut">Create</button>
           </div>
 
+          <!-- Hidden entirely unless the signed-in account is a dev/admin. Shown as a
+               row like the others rather than tucked away, because a toggle you cannot
+               find is a toggle you leave in the wrong state. -->
+          <div class="tool" id="debugTool" style="display:none">
+            <div>
+              <div class="tool-name">Developer overlay</div>
+              <div class="tool-desc" id="debugDesc">
+                Shows the in-game debug menu bar. Devs and admins only.
+              </div>
+            </div>
+            <button class="action ghost" id="toggleDebug">Off</button>
+          </div>
+
           <div class="tool">
             <div>
               <div class="tool-name">Launcher folder</div>
@@ -1234,6 +1247,8 @@
   }
 
   async function refreshSettings () {
+    await refreshDebugToggle()
+
     const paths = await window.launcher.getPaths()
 
     $('gamePathBox').textContent = paths.gameDir || 'not detected'
@@ -1284,6 +1299,37 @@
     } else {
       setSettingsStatus(result.error, 'error')
     }
+  })
+
+  async function refreshDebugToggle () {
+    const state = await window.launcher.getDebugMode()
+
+    // Not an admin: the row does not exist as far as this launcher is concerned.
+    if (!state.ok || !state.admin) {
+      $('debugTool').style.display = 'none'
+      return
+    }
+
+    $('debugTool').style.display = 'flex'
+    $('toggleDebug').textContent = state.enabled ? 'On' : 'Off'
+    $('debugDesc').textContent = state.enabled
+      ? 'The in-game debug menu bar will be shown next time you launch.'
+      : 'Shows the in-game debug menu bar. Devs and admins only.'
+  }
+
+  $('toggleDebug').addEventListener('click', async () => {
+    const current = await window.launcher.getDebugMode()
+    const result = await window.launcher.setDebugMode(!current.enabled)
+
+    if (!result.ok) {
+      setSettingsStatus(result.error, 'error')
+      return
+    }
+
+    await refreshDebugToggle()
+    setSettingsStatus(result.enabled
+      ? 'Developer overlay on - restart the game to see it.'
+      : 'Developer overlay off.', 'ok')
   })
 
   $('openInstallDir').addEventListener('click', () => window.launcher.openInstallDir())

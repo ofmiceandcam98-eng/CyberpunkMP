@@ -21,6 +21,12 @@ namespace App
 
     void DebugService::Draw()
     {
+        // Nothing at all unless debug mode is on. A developer toolbar sitting over the
+        // top of the game is confusing for anyone who is just here to play, and it is the
+        // first thing a screenshot shows.
+        if (!Settings::Get().debug)
+            return;
+
         if (ImGui::BeginMainMenuBar())
         {
             if (ImGui::BeginMenu("Test"))

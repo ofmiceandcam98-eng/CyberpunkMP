@@ -213,6 +213,21 @@ SteamNetConnectionInfo_t Server::GetConnectionInfo(ConnectionId aConnectionId) c
     return info;
 }
 
+SteamNetConnectionRealTimeStatus_t Server::GetConnectionRealTimeStatus(ConnectionId aConnectionId) const noexcept
+{
+    // GetConnectionInfo reports what a connection IS (state, addresses). Ping, packet loss
+    // and queue backlog live here instead, and are what you need to answer "is this player
+    // struggling, or is it the server?".
+    SteamNetConnectionRealTimeStatus_t status{};
+
+    if (aConnectionId != k_HSteamNetConnection_Invalid)
+    {
+        m_pInterface->GetConnectionRealTimeStatus(aConnectionId, &status, 0, nullptr);
+    }
+
+    return status;
+}
+
 bool Server::IsAlive(ConnectionId aConnectionId) const noexcept
 {
     const auto it = std::find(std::begin(m_connections), std::end(m_connections), aConnectionId);

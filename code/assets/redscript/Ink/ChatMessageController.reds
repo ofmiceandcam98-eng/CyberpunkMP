@@ -39,6 +39,7 @@ public class ChatMessageController extends ListItemController {
             this.m_authorLabel.SetVisible(false);
         }
         this.m_messageLabel.SetText(this.m_data.m_message);
+        this.ApplyChannelColor();
     }
 
     public final func Refresh(value: ref<IScriptable>) -> Void {
@@ -57,6 +58,25 @@ public class ChatMessageController extends ListItemController {
             this.m_authorLabel.SetVisible(false);
         }
         this.m_messageLabel.SetText(this.m_data.m_message);
+        this.ApplyChannelColor();
+    }
+
+    // Tints the line by channel.
+    //
+    // List items are RECYCLED as you scroll - the same controller is handed new data over
+    // and over. So this must set the colour back to normal for untinted channels, not
+    // just apply one for tinted ones. Without the else branch a single yell eventually
+    // turns half the chat log red as its widget gets reused.
+    private final func ApplyChannelColor() -> Void {
+        if !IsDefined(this.m_messageLabel) {
+            return;
+        }
+
+        if ChatChannelIsTinted(this.m_data.m_channel) {
+            this.m_messageLabel.SetTintColor(GetChatChannelColor(this.m_data.m_channel));
+        } else {
+            this.m_messageLabel.SetTintColor(new HDRColor(1.0, 1.0, 1.0, 1.0));
+        }
     }
 
     protected cb func OnAddedToList(target: wref<ListItemController>) -> Bool {

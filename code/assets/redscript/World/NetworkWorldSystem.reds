@@ -54,6 +54,29 @@ public native class NetworkWorldSystem extends IGameSystem {
         return GameInstance.GetDynamicEntitySystem().CreateEntity(npcSpec);
     }
 
+    // Moves the local player, on the server's instruction.
+    //
+    // Called from native when a NotifyTeleport arrives. It has to happen here rather than
+    // server-side because the client owns its own position - the server editing its copy
+    // would simply be overwritten by the next position update the client sends.
+    //
+    // The teleportation facility is the game's own fast-travel machinery, so streaming,
+    // collision and the camera are all handled properly. Setting the position directly
+    // drops people through the world.
+    public func TeleportLocalPlayer(position: Vector4, yaw: Float) -> Void {
+        let player = GetPlayer(GetGameInstance());
+        if !IsDefined(player) {
+            FTLogError(s"[NetworkWorldSystem] teleport arrived with no local player");
+            return;
+        }
+
+        // The wire carries radians; EulerAngles is in degrees.
+        let angles = new EulerAngles(0.0, 0.0, yaw * 57.2957795);
+
+        FTLog(s"[NetworkWorldSystem] teleporting to \(position.X), \(position.Y), \(position.Z)");
+        GameInstance.GetTeleportationFacility(GetGameInstance()).Teleport(player, position, angles);
+    }
+
     public func DeletePuppet(entityId: EntityID) {
         GameInstance.GetDynamicEntitySystem().DeleteEntity(entityId);
     }

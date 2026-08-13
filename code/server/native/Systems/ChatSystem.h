@@ -16,13 +16,33 @@ constexpr float kLocal = 30.f;
 constexpr float kYell = 60.f;
 }
 
+// Travels with every message so the client can colour it.
+//
+// The SERVER decides this, never the client and never the text. Colouring by sniffing for
+// "[yells]" in the message would let anyone type that prefix and have ordinary local
+// chatter render as a shout - or worse, fake a server notice.
+namespace ChatChannel
+{
+constexpr uint32_t kLocal = 0;
+constexpr uint32_t kYell = 1;
+constexpr uint32_t kWhisper = 2;
+constexpr uint32_t kAdvert = 3;
+constexpr uint32_t kServer = 4;
+}
+
+// How far a player is placed in front of whoever teleported them.
+//
+// Far enough not to be standing inside each other - two puppets sharing a spot look
+// broken and can shove each other - close enough to be obviously deliberate.
+constexpr float kTeleportDistance = 5.f;
+
 struct World;
 struct ChatSystem
 {
     ChatSystem(gsl::not_null<World*> apWorld);
 
     // Everyone on the server, wherever they are. For SERVER notices and /advert.
-    void Broadcast(String acUsername, String acMessage);
+    void Broadcast(String acUsername, String acMessage, uint32_t aChannel = ChatChannel::kServer);
 
     // One player only. Anything addressed to "you" belongs here: usage text, refusals,
     // and command output. Broadcasting those tells the whole server that someone tried
@@ -35,7 +55,8 @@ struct ChatSystem
     // reads as "chat is broken" - and if you are out of everyone else's range, silence is
     // the correct outcome but an alarming one to watch.
     void BroadcastInRange(const std::string& acUsername, const std::string& acMessage,
-                          const glm::vec3& acOrigin, float aRange, flecs::entity aSender);
+                          const glm::vec3& acOrigin, float aRange, flecs::entity aSender,
+                          uint32_t aChannel);
 
 protected:
 
@@ -45,7 +66,7 @@ protected:
     // named a channel the sender is not allowed to use, or gave it no text, having
     // already told them why.
     bool ResolveChannel(const PlayerComponent& acSender, const std::string& acLine,
-                        std::string& aText, float& aRange, bool& aEveryone);
+                        std::string& aText, float& aRange, bool& aEveryone, uint32_t& aChannel);
 
     // Returns true when the line was a command and has been dealt with, so it is not
     // also echoed to everyone as normal chat. Permission is checked against the level

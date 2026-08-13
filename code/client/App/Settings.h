@@ -28,6 +28,13 @@ struct Settings
     // verification is off; once it is on, the server replaces this with the name
     // Discord actually returns.
     String discordName{};
+    // Shows the ImGui debug overlay - the "Test" menu bar. Off unless the launcher passes
+    // --debug, which it only offers to accounts with a dev or admin Discord role.
+    //
+    // This is convenience, not security: anyone can add a launch flag by hand, and the
+    // menu only exposes actions the SERVER independently checks permission for. It exists
+    // so ordinary players are not confronted with a developer toolbar over their game.
+    bool debug = false;
     Vector<fs::path> mods = {};
     bool enabled = false;
     bool RpcOnly = false;

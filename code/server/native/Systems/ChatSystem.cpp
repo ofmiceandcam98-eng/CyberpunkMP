@@ -15,11 +15,12 @@ ChatSystem::ChatSystem(gsl::not_null<World*> apWorld)
     GServer->RegisterHandler<&ChatSystem::HandleChatMessageRequest>(this);
 }
 
-void ChatSystem::Broadcast(String acUsername, String acMessage)
+void ChatSystem::Broadcast(String acUsername, String acMessage, uint32_t aChannel)
 {
     server::ChatMessage message;
     message.set_username(std::move(acUsername));
     message.set_message(std::move(acMessage));
+    message.set_channel(aChannel);
 
     m_pWorld->each([&message](flecs::entity, const PlayerComponent& aPlayer)
     {
@@ -32,16 +33,19 @@ void ChatSystem::Tell(const PlayerComponent& acPlayer, const std::string& acMess
     server::ChatMessage message;
     message.set_username("SERVER");
     message.set_message(acMessage.c_str());
+    message.set_channel(ChatChannel::kServer);
 
     GServer->Send(acPlayer.Connection, message);
 }
 
 void ChatSystem::BroadcastInRange(const std::string& acUsername, const std::string& acMessage,
-                                  const glm::vec3& acOrigin, float aRange, flecs::entity aSender)
+                                  const glm::vec3& acOrigin, float aRange, flecs::entity aSender,
+                                  uint32_t aChannel)
 {
     server::ChatMessage message;
     message.set_username(acUsername.c_str());
     message.set_message(acMessage.c_str());
+    message.set_channel(aChannel);
 
     m_pWorld->each(
         [&](flecs::entity aEntity, const PlayerComponent& aPlayer)
@@ -65,24 +69,25 @@ void ChatSystem::BroadcastInRange(const std::string& acUsername, const std::stri
 }
 
 bool ChatSystem::ResolveChannel(const PlayerComponent& acSender, const std::string& acLine,
-                                std::string& aText, float& aRange, bool& aEveryone)
+                                std::string& aText, float& aRange, bool& aEveryone, uint32_t& aChannel)
 {
     // Default: ordinary talking, heard by anyone nearby. Typing nothing special is the
     // common case and must stay the shortest path.
     aText = acLine;
     aRange = ChatRange::kLocal;
     aEveryone = false;
+    aChannel = ChatChannel::kLocal;
 
     const auto prefix = [&](const char* acWord) { return acLine.rfind(acWord, 0) == 0; };
 
     // Each of these is checked WITH a trailing space, so "/yellow hair" is not read as a
     // yell. The bare form is handled separately so it can explain itself.
-    struct Channel { const char* Word; float Range; bool Everyone; EPermissionLevel Needs; const char* Marker; };
+    struct Channel { const char* Word; float Range; bool Everyone; EPermissionLevel Needs; const char* Marker; uint32_t Id; };
 
     static constexpr Channel kChannels[] = {
-        {"/whisper", ChatRange::kWhisper, false, EPermissionLevel::kPlayer, "[whispers] "},
-        {"/yell",    ChatRange::kYell,    false, EPermissionLevel::kPlayer, "[yells] "},
-        {"/advert",  0.f,                 true,  EPermissionLevel::kAdmin,  "[ADVERT] "},
+        {"/whisper", ChatRange::kWhisper, false, EPermissionLevel::kPlayer, "[whispers] ", ChatChannel::kWhisper},
+        {"/yell",    ChatRange::kYell,    false, EPermissionLevel::kPlayer, "[yells] ",    ChatChannel::kYell},
+        {"/advert",  0.f,                 true,  EPermissionLevel::kAdmin,  "[ADVERT] ",   ChatChannel::kAdvert},
     };
 
     for (const auto& channel : kChannels)
@@ -111,6 +116,7 @@ bool ChatSystem::ResolveChannel(const PlayerComponent& acSender, const std::stri
         aText = std::string(channel.Marker) + acLine.substr(withSpace.size());
         aRange = channel.Range;
         aEveryone = channel.Everyone;
+        aChannel = channel.Id;
         return true;
     }
 
@@ -314,6 +320,72 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         return true;
     }
 
+    // ----------------------------------------------------------------- /tp ----
+    //
+    // Brings someone to you rather than sending you to them: the person running the
+    // command is the one who chose where to stand.
+    if (command == "/tp")
+    {
+        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
+            return deny(EPermissionLevel::kAdmin);
+
+        if (target.empty())
+        {
+            Tell(acSender, "Usage: /tp <player>");
+            return true;
+        }
+
+        const auto victim = findPlayer(target);
+        if (!victim)
+        {
+            Tell(acSender, fmt::format("No player called '{}' is online.", target));
+            return true;
+        }
+
+        const auto* pVictim = victim.get<PlayerComponent>();
+
+        const auto* pMine = acSender.Puppet ? acSender.Puppet.get<MovementComponent>() : nullptr;
+        if (!pMine)
+        {
+            Tell(acSender, "You need to be in the world to teleport anyone to you.");
+            return true;
+        }
+
+        if (!pVictim->Puppet)
+        {
+            Tell(acSender, fmt::format("{} has not spawned in yet.", pVictim->Username));
+            return true;
+        }
+
+        // Yaw is rotation about Z, and Cyberpunk's world is Y-forward at yaw 0, so the
+        // facing vector is (-sin, cos). Getting this backwards would still place them the
+        // right distance away, just behind - worth an eyeball on the first use.
+        const float yaw = pMine->Rotation.z;
+        const glm::vec3 forward{-std::sin(yaw), std::cos(yaw), 0.f};
+        const glm::vec3 destination = pMine->Position + forward * kTeleportDistance;
+
+        server::NotifyTeleport teleport;
+
+        common::Vector3 position;
+        position.set_x(destination.x);
+        position.set_y(destination.y);
+        position.set_z(destination.z);
+        teleport.set_position(position);
+
+        // Turned to face the person who summoned them, which is the whole point of
+        // being brought somewhere.
+        teleport.set_rotation(yaw + 3.14159265f);
+
+        GServer->Send(pVictim->Connection, teleport);
+
+        spdlog::info("{} teleported {} to ({:.1f}, {:.1f}, {:.1f})", acSender.Username, pVictim->Username,
+                     destination.x, destination.y, destination.z);
+
+        Tell(acSender, fmt::format("Brought {} to you.", pVictim->Username));
+        Tell(*pVictim, fmt::format("You were teleported to {}.", acSender.Username));
+        return true;
+    }
+
     // --------------------------------------------------------------- /help ----
     //
     // Nobody discovers a chat channel by accident, and an unlisted feature may as well
@@ -335,7 +407,7 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             Tell(acSender, "Staff: /kick <player> [reason], /bans");
 
         if (acSender.HasAtLeast(EPermissionLevel::kAdmin))
-            Tell(acSender, "Admin: /ban <player> [reason], /unban <discord id>");
+            Tell(acSender, "Admin: /ban <player> [reason], /unban <discord id>, /tp <player>");
 
         return true;
     }
@@ -439,13 +511,14 @@ void ChatSystem::HandleChatMessageRequest(const PacketEvent<client::ChatMessageR
     std::string text;
     float range = ChatRange::kLocal;
     bool everyone = false;
+    uint32_t channel = ChatChannel::kLocal;
 
-    if (!ResolveChannel(*pPlayer, aMessage.get_message().c_str(), text, range, everyone))
+    if (!ResolveChannel(*pPlayer, aMessage.get_message().c_str(), text, range, everyone, channel))
         return; // Refused or misused - ResolveChannel already said why.
 
     if (everyone)
     {
-        Broadcast(pPlayer->Username.c_str(), text.c_str());
+        Broadcast(pPlayer->Username.c_str(), text.c_str(), channel);
         return;
     }
 
@@ -458,5 +531,5 @@ void ChatSystem::HandleChatMessageRequest(const PacketEvent<client::ChatMessageR
         return;
     }
 
-    BroadcastInRange(pPlayer->Username, text, pMovement->Position, range, entity);
+    BroadcastInRange(pPlayer->Username, text, pMovement->Position, range, entity, channel);
 }

@@ -22,6 +22,7 @@ void ChatSystem::HandleChatMessage(const PacketEvent<server::ChatMessage>& aMess
     auto evt = reinterpret_cast<ChatMessageUIEvent*>(Red::GetClass("ChatMessageUIEvent")->CreateInstance());
     evt->author = RED4ext::CString(aMessage.get_username());
     evt->message = RED4ext::CString(aMessage.get_message());
+    evt->channel = aMessage.get_channel();
 
     auto uiSystem = Red::GetGameSystem<RED4ext::game::ui::IGameSystemUI>();
     uiSystem->QueueEvent(RED4ext::Handle(evt));

@@ -63,6 +63,7 @@ protected:
     void HandleCharacterLoad(const PacketEvent<server::NotifyCharacterLoad>& aMessage);
     void HandleEntityUnload(const PacketEvent<server::NotifyEntityUnload>& aMessage);
     void HandleSpawnCharacterResponse(const PacketEvent<server::SpawnCharacterResponse>& aMessage);
+    void HandleTeleport(const PacketEvent<server::NotifyTeleport>& aMessage);
 
     void UpdatePlayerLocation() const;
 

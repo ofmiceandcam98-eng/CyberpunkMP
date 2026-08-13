@@ -60,6 +60,7 @@ public class ChatController extends inkHUDGameController {
         let messageData = new ChatMessageData();
         messageData.m_author = evt.author;
         messageData.m_message = evt.message;
+        messageData.m_channel = evt.channel;
         messageData.m_isSelf = Equals(StringToName(evt.author), StringToName(GameInstance.GetNetworkWorldSystem().GetChatSystem().GetUsername()));
         if IsDefined(this.m_lastMessageData) {
             messageData.m_needsAuthorLabel = NotEquals(StringToName(this.m_lastMessageData.m_author), StringToName(messageData.m_author));
