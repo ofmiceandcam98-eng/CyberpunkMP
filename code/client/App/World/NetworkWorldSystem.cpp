@@ -330,7 +330,14 @@ void NetworkWorldSystem::HandleCharacterLoad(const PacketEvent<server::NotifyCha
     auto equipment = Red::DynArray<Red::TweakDBID>(this->GetAllocator());
     for (auto item : aMessage.get_equipment())
     {
-        equipment.EmplaceBack(item);
+        // The wire carries the ID's numeric value; TweakDBID is a thin wrapper around
+        // exactly that, so this is a reinterpretation rather than a lookup. Constructing
+        // one from a STRING would hash the text - which is what used to happen, with an
+        // empty string, producing an ID that matches no item at all.
+        Red::TweakDBID id;
+        id.value = item;
+
+        equipment.EmplaceBack(id);
     }
 
     auto ccstate = aMessage.get_ccstate();

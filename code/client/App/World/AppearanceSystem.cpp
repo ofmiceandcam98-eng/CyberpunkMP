@@ -42,16 +42,26 @@ Red::DynArray<Red::TweakDBID> AppearanceSystem::GetEntityItems(Red::EntityID & e
     return m_playerEquipment[entityID];
 }
 
-Vector<String> AppearanceSystem::GetPlayerItems(Red::Handle<Red::GameObject> player)
+Vector<uint64_t> AppearanceSystem::GetPlayerItems(Red::Handle<Red::GameObject> player)
 {
-    auto equipment = Vector<String>();
-    Red::DynArray<Red::CString> items;
+    // Numbers, not names.
+    //
+    // This used to collect TDBID.ToStringDEBUG output. That helper reads TweakDB's debug
+    // name table, which release builds of the game do not ship, so on 2.31 every entry
+    // was an empty string. The empty strings serialised fine, crossed the wire fine, and
+    // then failed on the far side as eight "ItemID creation failed" warnings per spawn -
+    // which is why remote players had no clothes or weapons.
+    auto equipment = Vector<uint64_t>();
+
+    Red::DynArray<uint64_t> items;
     Red::CallVirtual(this, "GetPlayerItems", items);
+
     for (auto item : items)
     {
-        spdlog::info("Getting: {}", item.c_str());
-        equipment.push_back(item.c_str());
+        spdlog::info("Getting: {:#x}", item);
+        equipment.push_back(item);
     }
+
     return equipment;
 }
 

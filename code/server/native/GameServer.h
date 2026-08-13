@@ -3,6 +3,7 @@
 #include "System/Path.h"
 #include "System/Log.h"
 #include "Config.h"
+#include "BanList.h"
 #include "Game/World.h"
 
 template <typename T>
@@ -60,12 +61,72 @@ private:
 
     void FetchServerEntitlements();
 
+    // Result of asking Discord to vouch for a connecting player.
+    enum class EDiscordAuthResult
+    {
+        kOk,
+        kInvalidToken,  // Discord does not recognise it, or it expired
+        kNotAMember,    // real account, but not in the configured guild
+        kUnreachable    // we could not ask - treated as a refusal, never as a pass
+    };
+
+    struct DiscordIdentity
+    {
+        std::string Id;
+        std::string Username;
+        std::vector<std::string> RoleIds;
+        EPermissionLevel Level{EPermissionLevel::kPlayer};
+    };
+
+    // Asks Discord who a token belongs to and whether they are in the guild. The client's
+    // own claims about its identity are ignored entirely.
+    EDiscordAuthResult VerifyDiscordToken(const std::string& acToken, DiscordIdentity& aOutIdentity) const;
+
+    // A short-lived record of a successful verification.
+    //
+    // Discord rate-limits unauthenticated requests, and every connect costs two calls.
+    // A group joining together - which is exactly when a server is busiest - can trip
+    // that limit, and because verification fails closed, the result would be nobody
+    // getting in. Caching turns a burst of joins into one pair of calls per player
+    // instead of one per attempt.
+    struct CachedIdentity
+    {
+        DiscordIdentity Identity;
+        std::chrono::steady_clock::time_point Expires;
+    };
+
+    // Keyed on the token. Guarded because the re-verification loop runs off the game
+    // thread and reads this concurrently with connecting players.
+    mutable std::mutex m_discordCacheMutex;
+    mutable Map<std::string, CachedIdentity> m_discordCache;
+
+    // Deliberately short. A cached entry means a Discord ban takes up to this long to
+    // block a RECONNECT - the in-session re-verification loop still removes them within
+    // two minutes either way, and local bans are checked separately and never cached.
+    static constexpr auto kDiscordCacheTtl = std::chrono::minutes(3);
+
+    // Logs per-player ping / packet loss on a slow heartbeat, so a laggy player can be
+    // told apart from a struggling server.
+    void ReportPlayerConnections(std::chrono::steady_clock::time_point aNow);
+
+    // Re-checks connected players against Discord, so a ban or role change there takes
+    // effect here without waiting for them to reconnect.
+    void ReverifyPlayers(std::chrono::steady_clock::time_point aNow);
+
+public:
+    BanList& GetBanList() noexcept { return m_bans; }
+
+private:
+
     Path m_path;
     Log m_log;
     UniquePtr<World> m_pWorld;
     TaskQueue m_tasks;
     bool m_run = true;
     std::chrono::steady_clock::time_point m_lastUpdate;
+    std::chrono::steady_clock::time_point m_lastConnectionReport;
+    std::chrono::steady_clock::time_point m_lastReverify;
+    BanList m_bans;
     entt::dispatcher m_dispatcher;
 
     Config m_config;

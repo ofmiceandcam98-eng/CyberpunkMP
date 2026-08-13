@@ -167,7 +167,7 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
 
     glm::vec3 pos = {aMessage.get_position().get_x(), aMessage.get_position().get_y(), aMessage.get_position().get_z()};
     glm::vec3 rot = {0.f, 0.f, aMessage.get_rotation()};
-    const Vector<String> equipment = aMessage.get_equipment();
+    const Vector<uint64_t> equipment = aMessage.get_equipment();
     const Vector<uint8_t> ccstate = aMessage.get_ccstate();
 
     server::SpawnCharacterResponse response;

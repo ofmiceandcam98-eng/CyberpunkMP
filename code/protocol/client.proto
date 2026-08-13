@@ -16,7 +16,14 @@ message SpawnCharacterRequest {
     float rotation = 2;
     bool is_player = 3;
     uint64 cookie = 4;
-    repeated string equipment = 5;
+    // TweakDBIDs as raw numbers, NOT their names.
+    //
+    // These used to be strings produced by TDBID.ToStringDEBUG, which needs TweakDB's
+    // debug name table. That table is stripped from release builds of the game, so on
+    // 2.31 every name came back empty, every item serialised blank, and remote players
+    // appeared with no clothes or weapons. The number is the identity; the name was only
+    // ever for humans reading logs.
+    repeated uint64 equipment = 5;
     bytes ccstate = 6;
 }
 

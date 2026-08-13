@@ -51,10 +51,25 @@ namespace Server.Loader.Systems
 
         protected override Assembly? Load(AssemblyName assemblyName)
         {
-            // CyberpunkSdk must resolve to the host's copy, otherwise the plugin gets
-            // its own duplicate types and nothing it registers matches the server's.
-            if (assemblyName.Name == "CyberpunkSdk")
+            if (assemblyName.Name is null)
                 return null;
+
+            // Anything the host has already loaded must be SHARED, never duplicated.
+            //
+            // Two copies of an assembly mean two sets of types with the same names that the
+            // runtime treats as unrelated. That breaks silently rather than loudly: when the
+            // plugin got its own EmbedIO, its [Route] attributes were a different type from
+            // the ones the host's WebApiModule scans for, so a perfectly good controller
+            // reported "contains no controller methods" and the server died on startup.
+            //
+            // Returning null defers to the default context. Only assemblies genuinely
+            // private to the plugin get loaded here - which is also the only thing that
+            // could be unloaded on reload anyway.
+            foreach (var loaded in Default.Assemblies)
+            {
+                if (string.Equals(loaded.GetName().Name, assemblyName.Name, StringComparison.OrdinalIgnoreCase))
+                    return null;
+            }
 
             var path = resolver.ResolveAssemblyToPath(assemblyName);
             return path != null ? LoadFromAssemblyPath(path) : null;

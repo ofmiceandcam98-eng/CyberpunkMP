@@ -24,7 +24,8 @@ message NotifyCharacterLoad {
     common.Vector3 position = 2;
     float rotation = 3;
     bool is_player = 4;
-    repeated string equipment = 5;
+    // Raw TweakDBIDs - see the matching field in client.proto for why these are not names.
+    repeated uint64 equipment = 5;
     bytes ccstate = 6;
 }
 

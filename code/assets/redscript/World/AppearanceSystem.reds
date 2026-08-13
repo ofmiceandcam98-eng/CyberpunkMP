@@ -74,9 +74,18 @@ public native class AppearanceSystem extends IScriptable {
         }
     }
 
-    private func GetPlayerItems() -> array<String> {
+    // Returns the raw TweakDBID of everything worn, as numbers.
+    //
+    // This used to return TDBID.ToStringDEBUG(...) names. That helper reads TweakDB's
+    // debug name table, which is stripped from release builds of the game - so on 2.31 it
+    // returned an empty string for every single item. The empty names travelled all the
+    // way to other players' clients before failing there, which is why remote players
+    // showed up with no clothes and no weapons.
+    //
+    // The number is the item's actual identity. The name was only ever for reading logs.
+    private func GetPlayerItems() -> array<Uint64> {
         let player = GetPlayer(GetGameInstance());
-        let items: array<String>;
+        let items: array<Uint64>;
         let equipData: ref<EquipmentSystemPlayerData> = EquipmentSystem.GetData(player);
         let equipAreas: array<SEquipArea>;
         if IsDefined(equipData) {
@@ -87,9 +96,7 @@ public native class AppearanceSystem extends IScriptable {
             let item = equipData.GetVisualItemInSlot(equipAreas[i].areaType);
             let tdbid = ItemID.GetTDBID(item);
             if TDBID.IsValid(tdbid) {
-                let str = TDBID.ToStringDEBUG(ItemID.GetTDBID(item));
-                LogChannel(n"DEBUG", "Getting: " + str);
-                ArrayPush(items, str);
+                ArrayPush(items, TDBID.ToNumber(tdbid));
             }
             i += 1;
         }

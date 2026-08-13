@@ -47,7 +47,8 @@ namespace Server.Loader.Systems
                 .WithUrlPrefix(url)
                 .WithMode(HttpListenerMode.EmbedIO))
                 .WithModule(new ActionModule("/api/v1/mods/", HttpVerbs.Get, HandleModsRoute))
-                .WithModule(new ActionModule("/api/v1/statistics/", HttpVerbs.Get, HandleStatistics));
+                .WithModule(new ActionModule("/api/v1/statistics/", HttpVerbs.Get, HandleStatistics))
+                .WithModule(new ActionModule("/api/v1/status/", HttpVerbs.Get, HandleStatus));
 
             RegisterAuthentication(server);
             RegisterPlugins(server);
@@ -136,6 +137,45 @@ namespace Server.Loader.Systems
                 Statistics.Rpcs
             });
         }
+
+        /// <summary>
+        /// Public server status, for the launcher.
+        ///
+        /// Deliberately unauthenticated and deliberately boring: whether the server is up
+        /// and how busy it is. No player names, no ids, nothing about who is on - a launcher
+        /// showing "12 players" is useful, a launcher listing who is currently online is a
+        /// privacy problem and a griefing tool.
+        ///
+        /// Simply reaching this endpoint proves the server is up, so there is no "online"
+        /// field - if you got a reply, it is online.
+        /// </summary>
+        private Task HandleStatus(IHttpContext context)
+        {
+            var players = 0;
+
+            try
+            {
+                var system = CyberpunkSdk.Server.PlayerSystem;
+                if (system?.PlayerIds != null)
+                {
+                    foreach (var _ in system.PlayerIds) players++;
+                }
+            }
+            catch
+            {
+                // Status must never throw. A launcher that cannot read the count should show
+                // "unknown", not fail to load - and an exception here would make the server
+                // look down when it is fine.
+            }
+
+            return context.SendDataAsync(new
+            {
+                Players = players,
+                Uptime = (int)(DateTime.UtcNow - StartedAtUtc).TotalSeconds
+            });
+        }
+
+        private static readonly DateTime StartedAtUtc = DateTime.UtcNow;
 
         private Task HandleListPlugins(IHttpContext context)
         {
