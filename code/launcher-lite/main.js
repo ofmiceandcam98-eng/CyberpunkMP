@@ -1553,6 +1553,224 @@ ipcMain.handle('debug:set', async (_event, enabled) => {
   return { ok: true, enabled: Boolean(enabled) }
 })
 
+// ---------------------------------------------------------------------------
+// Mod list
+//
+// A curated list of Nexus mods the server expects everyone to be running. The launcher
+// installs and verifies against it, so a session is not half the players on one set of
+// mods and half on another.
+//
+// It does NOT host anything. Those mods belong to their authors and are not ours to
+// redistribute - which is exactly why this points at Nexus instead. The six prerequisites
+// in FullInstall.zip are different: they are MIT and redistribution is permitted.
+//
+// The download path is the one Nexus sanctions. Their API refuses download links to
+// non-Premium accounts outright, so a launcher cannot fetch files on a free user's
+// behalf. Instead the browser hands us an nxm:// link when they press "Mod Manager
+// Download" on the mod page, and we take it from there - the same route Vortex uses.
+// ---------------------------------------------------------------------------
+
+const MODLIST_URL = `https://github.com/${GITHUB_REPO}/releases/latest/download/modlist.json`
+
+/**
+ * The Nexus API key, encrypted exactly like the Discord token.
+ *
+ * A personal API key, not a password - but it acts as the account for API purposes, so
+ * it gets the same DPAPI treatment. Plain text on disk would let anyone with file access
+ * use someone's Nexus account, and a leaked key is grounds for Nexus to revoke it.
+ */
+function loadNexusKey () {
+  const stored = loadSettings().nexusKey
+  if (!stored) return null
+
+  try {
+    return safeStorage.decryptString(Buffer.from(stored, 'base64'))
+  } catch {
+    return null
+  }
+}
+
+function saveNexusKey (key) {
+  if (!key) {
+    saveSettings({ nexusKey: null, nexusName: null })
+    return true
+  }
+
+  if (!safeStorage.isEncryptionAvailable()) return false
+
+  saveSettings({ nexusKey: safeStorage.encryptString(key).toString('base64') })
+  return true
+}
+
+// Validates the key by asking Nexus who it belongs to, rather than storing whatever was
+// pasted and failing later at download time with something unhelpful.
+ipcMain.handle('nexus:signIn', async (_event, key) => {
+  const trimmed = (key || '').trim()
+  if (!trimmed) return { ok: false, error: 'Paste your Nexus API key first.' }
+
+  try {
+    const response = await axios.get('https://api.nexusmods.com/v1/users/validate.json', {
+      headers: { apikey: trimmed, 'User-Agent': 'NightCityOnline-Launcher/1.0' },
+      timeout: 15000
+    })
+
+    if (!saveNexusKey(trimmed)) {
+      return { ok: false, error: 'Encrypted storage is unavailable, so the key was not saved.' }
+    }
+
+    saveSettings({ nexusName: response.data?.name || 'Nexus user' })
+
+    return {
+      ok: true,
+      name: response.data?.name,
+      premium: Boolean(response.data?.is_premium)
+    }
+  } catch (err) {
+    if (err.response?.status === 401) return { ok: false, error: 'Nexus rejected that key.' }
+    return { ok: false, error: `Could not reach Nexus: ${err.message}` }
+  }
+})
+
+ipcMain.handle('nexus:status', async () => {
+  const settings = loadSettings()
+  return { ok: true, signedIn: Boolean(settings.nexusKey), name: settings.nexusName || null }
+})
+
+ipcMain.handle('nexus:signOut', async () => {
+  saveNexusKey(null)
+  return { ok: true }
+})
+
+function installedModsPath () {
+  return path.join(app.getPath('userData'), 'mods-installed.json')
+}
+
+function loadInstalledMods () {
+  try {
+    return JSON.parse(readFileSync(installedModsPath(), 'utf8'))
+  } catch {
+    return {}
+  }
+}
+
+function saveInstalledMods (record) {
+  try {
+    writeFileSync(installedModsPath(), JSON.stringify(record, null, 2))
+  } catch (err) {
+    console.error('[mods] could not save install record:', err.message)
+  }
+}
+
+async function fetchModList () {
+  const response = await axios.get(MODLIST_URL, {
+    headers: { 'User-Agent': 'NightCityOnline-Launcher' },
+    timeout: 15000
+  })
+
+  const list = response.data
+  return Array.isArray(list?.mods) ? list.mods : []
+}
+
+/**
+ * What is on disk, judged by what we recorded installing.
+ *
+ * Recording the files we extracted is what makes uninstall possible at all - without it
+ * "delete this mod" means guessing which files belonged to it, and guessing wrong means
+ * deleting someone else's mod or leaving half of this one behind.
+ */
+function describeInstalledMod (mod, installed, gameDir) {
+  const record = installed[String(mod.nexusModId)]
+
+  if (!record) return { state: 'missing' }
+
+  // Recorded as installed is not the same as still being there. People delete folders.
+  const present = (record.files || []).every((relative) => existsSync(path.join(gameDir, relative)))
+  if (!present) return { state: 'missing' }
+
+  return {
+    state: 'installed',
+    fileId: record.fileId,
+    version: record.version,
+    files: record.files
+  }
+}
+
+ipcMain.handle('mods:list', async () => {
+  try {
+    const gameDir = findGameDir()
+    if (!gameDir) return { ok: false, error: 'Cyberpunk 2077 not found. Set it in Settings.' }
+
+    const mods = await fetchModList()
+    const installed = loadInstalledMods()
+
+    return {
+      ok: true,
+      mods: mods.map((mod) => ({
+        id: String(mod.nexusModId),
+        name: mod.name,
+        summary: mod.summary || '',
+        required: mod.required !== false,
+        nexusUrl: `https://www.nexusmods.com/cyberpunk2077/mods/${mod.nexusModId}`,
+        ...describeInstalledMod(mod, installed, gameDir)
+      }))
+    }
+  } catch (err) {
+    // An unreachable list must not stop anyone playing - they may already have every
+    // mod installed. Report it and let the rest of the launcher carry on.
+    return { ok: false, error: `Could not read the mod list: ${err.message}` }
+  }
+})
+
+// Opens the mod's Nexus page. From there "Mod Manager Download" comes back to us as an
+// nxm:// link - see registerNxmHandler.
+ipcMain.handle('mods:open', async (_event, modId) => {
+  const mods = await fetchModList().catch(() => [])
+  const mod = mods.find((m) => String(m.nexusModId) === String(modId))
+  if (!mod) return { ok: false, error: 'That mod is not on the list any more.' }
+
+  await shell.openExternal(`https://www.nexusmods.com/cyberpunk2077/mods/${mod.nexusModId}?tab=files&file_id=${mod.nexusFileId}`)
+  return { ok: true }
+})
+
+ipcMain.handle('mods:delete', async (_event, modId) => {
+  const gameDir = findGameDir()
+  if (!gameDir) return { ok: false, error: 'Cyberpunk 2077 not found.' }
+
+  const installed = loadInstalledMods()
+  const record = installed[String(modId)]
+  if (!record) return { ok: false, error: 'That mod is not recorded as installed.' }
+
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    title: 'Remove mod',
+    message: `Remove ${record.name || 'this mod'}?`,
+    detail: `${(record.files || []).length} file(s) will be deleted from your game folder.`,
+    buttons: ['Remove', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true
+  })
+
+  if (response !== 0) return { ok: false }
+
+  // Only the files WE recorded installing. Never a whole directory - mods share folders
+  // like red4ext\plugins, and removing one must not take its neighbours with it.
+  let removed = 0
+  for (const relative of record.files || []) {
+    const target = path.join(gameDir, relative)
+    try {
+      if (existsSync(target)) { rmSync(target, { force: true }); removed++ }
+    } catch (err) {
+      console.error('[mods] could not delete', target, err.message)
+    }
+  }
+
+  delete installed[String(modId)]
+  saveInstalledMods(installed)
+
+  return { ok: true, removed }
+})
+
 // Opens the folder the launcher is actually installed in. It lives under AppData, which
 // nobody should be expected to go digging through.
 ipcMain.handle('launcher:openInstallDir', async () => {
@@ -1948,7 +2166,147 @@ async function offerShortcuts () {
   }
 }
 
+/**
+ * Installs a mod from a downloaded archive.
+ *
+ * Extracts relative to the game folder, because that is how Cyberpunk mods are packaged -
+ * their internal paths (archive\pc\mod\..., red4ext\plugins\...) already say where they
+ * belong. Every extracted path is recorded so the mod can be removed later without
+ * guessing which files were its.
+ */
+async function installModArchive (modId, buffer) {
+  const gameDir = findGameDir()
+  if (!gameDir) throw new Error('Cyberpunk 2077 not found. Set it in Settings.')
+
+  if (await isProcessRunning('Cyberpunk2077.exe')) {
+    throw new Error('Close Cyberpunk 2077 first - it holds mod files open.')
+  }
+
+  const mods = await fetchModList().catch(() => [])
+  const mod = mods.find((m) => String(m.nexusModId) === String(modId))
+
+  const zip = new AdmZip(buffer)
+  const entries = zip.getEntries().filter((e) => !e.isDirectory)
+
+  if (entries.length === 0) throw new Error('That archive is empty.')
+
+  const files = []
+  for (const entry of entries) {
+    // Normalise separators and refuse anything trying to climb out of the game folder.
+    // A zip is untrusted input, and "../../windows/system32" is a real archive trick.
+    const relative = entry.entryName.replace(/\\/g, '/')
+    if (relative.includes('..')) continue
+
+    const target = path.join(gameDir, relative)
+    mkdirSync(path.dirname(target), { recursive: true })
+    writeFileSync(target, entry.getData())
+    files.push(relative)
+  }
+
+  const installed = loadInstalledMods()
+  installed[String(modId)] = {
+    name: mod?.name || `Mod ${modId}`,
+    fileId: mod?.nexusFileId,
+    version: mod?.version,
+    files,
+    at: Date.now()
+  }
+  saveInstalledMods(installed)
+
+  return { name: installed[String(modId)].name, count: files.length }
+}
+
+/**
+ * Receives nxm:// links from the browser.
+ *
+ * This is the ONLY way a launcher can install a Nexus mod for a free account. Their API
+ * returns 403 for download links unless the account is Premium, so no amount of API work
+ * gets around it - and trying would breach the API terms. Pressing "Mod Manager Download"
+ * on the mod page hands the browser an nxm:// link carrying a short-lived key, Windows
+ * routes it to whichever app registered the protocol, and that is us.
+ *
+ * Format: nxm://cyberpunk2077/mods/<modId>/files/<fileId>?key=...&expires=...
+ */
+async function handleNxmLink (url) {
+  const match = /^nxm:\/\/([^/]+)\/mods\/(\d+)\/files\/(\d+)/i.exec(url)
+  if (!match) return
+
+  const [, game, modId, fileId] = match
+
+  if (game.toLowerCase() !== 'cyberpunk2077') {
+    dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      title: 'Wrong game',
+      message: 'That download is not for Cyberpunk 2077.',
+      detail: `The link was for "${game}".`
+    })
+    return
+  }
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('mod-progress', { modId, state: 'downloading' })
+  }
+
+  try {
+    // The nxm link is a handle, not a file. It must be exchanged for a real download URL
+    // through the API, using the key and expiry it carries.
+    const query = url.includes('?') ? url.slice(url.indexOf('?')) : ''
+    const apiKey = loadNexusKey()
+
+    if (!apiKey) throw new Error('Sign in to Nexus in Settings first.')
+
+    const linkResponse = await axios.get(
+      `https://api.nexusmods.com/v1/games/cyberpunk2077/mods/${modId}/files/${fileId}/download_link.json${query}`,
+      { headers: { apikey: apiKey, 'User-Agent': 'NightCityOnline-Launcher/1.0' }, timeout: 20000 }
+    )
+
+    const downloadUrl = linkResponse.data?.[0]?.URI
+    if (!downloadUrl) throw new Error('Nexus did not return a download link.')
+
+    const file = await axios.get(downloadUrl, { responseType: 'arraybuffer', timeout: 300000 })
+    const result = await installModArchive(modId, Buffer.from(file.data))
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('mod-progress', { modId, state: 'installed', ...result })
+    }
+  } catch (err) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('mod-progress', { modId, state: 'failed', error: err.message })
+    }
+  }
+}
+
+// Only one launcher may hold the nxm:// registration, and a second copy would sit there
+// unable to receive anything. Windows delivers the link as an argument to the SECOND
+// instance, so the first must be told about it and focused.
+const gotLock = app.requestSingleInstanceLock()
+
+if (!gotLock) {
+  app.quit()
+} else {
+  app.on('second-instance', (_event, argv) => {
+    const link = argv.find((arg) => arg.startsWith('nxm://'))
+    if (link) handleNxmLink(link)
+
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
+  })
+}
+
 app.whenReady().then(() => {
+  // Register as the nxm:// handler so "Mod Manager Download" reaches us.
+  //
+  // Re-registered every start rather than once: installing Vortex or Mod Organizer takes
+  // the association away without warning, and the symptom is downloads silently opening
+  // the wrong program.
+  try {
+    app.setAsDefaultProtocolClient('nxm')
+  } catch (err) {
+    console.error('[mods] could not register nxm:// handler:', err.message)
+  }
+
   createWindow()
 
   // After the window exists, so the dialog has a parent to attach to rather than

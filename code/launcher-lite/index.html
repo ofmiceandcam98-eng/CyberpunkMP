@@ -80,11 +80,79 @@
     flex: 1;
     min-height: 0;              /* lets a flex child actually shrink and scroll */
     display: grid;
-    grid-template-columns: minmax(20rem, 26rem) 1fr;
-    gap: 1.5rem;
+    /* Three columns: patch notes, the play controls, the mod list.
+       Fixed outer columns and a flexible middle, so the play controls - the thing
+       everyone is actually here for - keep the centre and never get squeezed to a
+       sliver by a long mod name. Sized to fit 1180px without stretching the window. */
+    grid-template-columns: minmax(17rem, 22rem) 1fr minmax(17rem, 22rem);
+    gap: 1.25rem;
     padding: 1.5rem;
     overflow: hidden;
   }
+
+  .col-mods {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* The list scrolls, the panel does not grow. A hundred mods must not push the
+     window taller than the screen. */
+  .modlist {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: .4rem;
+    padding-right: .25rem;
+  }
+
+  .mod {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    padding: .45rem .55rem;
+    background: rgba(255,255,255,.02);
+    border: 1px solid rgba(255,255,255,.06);
+    border-radius: 6px;
+  }
+
+  .mod-name {
+    flex: 1;
+    min-width: 0;
+    font-size: .76rem;
+    /* Long names truncate rather than wrapping the row to two lines and making the
+       list jump about as it loads. */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .mod-badge {
+    font-size: .6rem;
+    letter-spacing: .04em;
+    padding: .12rem .4rem;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+  .mod-badge.ok      { background: rgba(70,200,120,.15); color: #6fdca0; }
+  .mod-badge.missing { background: rgba(255,255,255,.06); color: var(--ink-dim); }
+  .mod-badge.bad     { background: rgba(255,90,90,.15);  color: #ff8f8f; }
+
+  .mod-btn {
+    font-size: .62rem;
+    letter-spacing: .04em;
+    padding: .22rem .45rem;
+    border-radius: 4px;
+    border: 1px solid rgba(255,255,255,.14);
+    background: transparent;
+    color: var(--ink);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .mod-btn:hover { background: rgba(255,255,255,.08); }
+  .mod-btn.danger:hover { background: rgba(255,90,90,.15); color: #ff8f8f; }
 
   .col-left {
     min-height: 0;
@@ -431,6 +499,21 @@
 
           <div class="tool">
             <div>
+              <div class="tool-name">Nexus Mods account</div>
+              <div class="tool-desc">
+                Needed to download the server's mod list. Paste your personal API key from
+                <b>nexusmods.com &rarr; Account Settings &rarr; API Keys</b>. It is stored
+                encrypted on this PC and never leaves it.
+                <div style="margin-top:.4rem"><span id="nexusState">Not signed in</span></div>
+                <input id="nexusKey" type="password" placeholder="Nexus API key"
+                       style="margin-top:.4rem;width:100%;padding:.35rem .5rem;border-radius:4px;border:1px solid rgba(255,255,255,.14);background:rgba(0,0,0,.25);color:inherit;font-size:.75rem">
+              </div>
+            </div>
+            <button class="action ghost" id="nexusSave">Save</button>
+          </div>
+
+          <div class="tool">
+            <div>
               <div class="tool-name">Desktop shortcut</div>
               <div class="tool-desc">
                 Puts Night City Online Launcher on your Desktop and in the Start Menu.
@@ -642,6 +725,27 @@
     </div>
 
     </div><!-- /col-right -->
+
+    <!-- MOD LIST: what the server expects everyone to be running.
+         Nexus mods are not ours to redistribute, so this points at Nexus rather than
+         hosting anything. Install opens the mod page; the download comes back through
+         the nxm:// handler when you press "Mod Manager Download" there. -->
+    <div class="col-mods">
+      <div class="card changelog" style="flex:1; min-height:0">
+        <div class="admin-head">
+          <span class="admin-title">Mods</span>
+          <span class="serverstate" id="modCount"></span>
+        </div>
+
+        <div class="btn-row" style="margin:.5rem 0">
+          <button class="action verify" id="verifyAllMods">Verify all</button>
+        </div>
+
+        <div class="modlist" id="modList"></div>
+
+        <div class="field-hint" id="modHint" style="margin-top:.5rem"></div>
+      </div>
+    </div>
   </main>
 
   <footer>
@@ -1301,6 +1405,31 @@
     if (e.key === 'Escape' && $('settingsModal').style.display !== 'none') closeSettings()
   })
 
+  async function refreshNexus () {
+    const status = await window.launcher.nexusStatus()
+    $('nexusState').textContent = status.signedIn
+      ? 'Signed in as ' + (status.name || 'Nexus user')
+      : 'Not signed in'
+    $('nexusSave').textContent = status.signedIn ? 'Replace key' : 'Save'
+  }
+
+  $('nexusSave').addEventListener('click', async () => {
+    const key = $('nexusKey').value
+    const result = await window.launcher.nexusSignIn(key)
+
+    if (result.ok) {
+      // Cleared immediately. There is no reason for a live credential to sit in a
+      // text box for the rest of the session.
+      $('nexusKey').value = ''
+      setSettingsStatus(
+        'Signed in as ' + result.name + (result.premium ? ' (Premium)' : ' (free account - installs open Nexus)'),
+        'ok')
+      await refreshNexus()
+    } else {
+      setSettingsStatus(result.error, 'error')
+    }
+  })
+
   $('makeShortcut').addEventListener('click', async () => {
     const result = await window.launcher.createShortcuts()
     if (result.ok) {
@@ -1339,6 +1468,123 @@
     setSettingsStatus(result.enabled
       ? 'Developer overlay on - restart the game to see it.'
       : 'Developer overlay off.', 'ok')
+  })
+
+  // --- mod list ---------------------------------------------------------------
+
+  let modState = []
+
+  function renderMods () {
+    const list = $('modList')
+    const count = $('modCount')
+    const hint = $('modHint')
+
+    list.innerHTML = ''
+
+    if (modState.length === 0) {
+      count.textContent = ''
+      hint.textContent = 'No mods are required yet. When the server adds some, they appear here.'
+      return
+    }
+
+    const installed = modState.filter((m) => m.state === 'installed').length
+    count.textContent = modState.length + ' mods · ' + installed + ' installed'
+
+    const missingRequired = modState.filter((m) => m.state !== 'installed' && m.required).length
+    hint.textContent = missingRequired > 0
+      ? missingRequired + ' required mod(s) missing. Install opens Nexus - press "Mod Manager Download" there.'
+      : 'Everything the server expects is installed.'
+
+    for (const mod of modState) {
+      const row = document.createElement('div')
+      row.className = 'mod'
+
+      const name = document.createElement('span')
+      name.className = 'mod-name'
+      name.textContent = mod.name
+      name.title = mod.summary || mod.name
+      row.appendChild(name)
+
+      const badge = document.createElement('span')
+      if (mod.state === 'installed') {
+        badge.className = 'mod-badge ok'
+        badge.textContent = '✓ INSTALLED'
+      } else if (mod.state === 'downloading') {
+        badge.className = 'mod-badge'
+        badge.textContent = 'DOWNLOADING'
+      } else if (mod.state === 'failed') {
+        badge.className = 'mod-badge bad'
+        badge.textContent = 'FAILED'
+      } else {
+        badge.className = 'mod-badge missing'
+        badge.textContent = mod.required ? 'REQUIRED' : 'OPTIONAL'
+      }
+      row.appendChild(badge)
+
+      // The install button is REMOVED once installed rather than disabled. A greyed
+      // button still reads as something you are supposed to press.
+      if (mod.state !== 'installed' && mod.state !== 'downloading') {
+        const install = document.createElement('button')
+        install.className = 'mod-btn'
+        install.textContent = 'Install'
+        install.addEventListener('click', async () => {
+          const result = await window.launcher.openMod(mod.id)
+          if (!result.ok) setStatus(result.error, 'error')
+          else setStatus('Opened Nexus - press "Mod Manager Download" on that page.', 'ok')
+        })
+        row.appendChild(install)
+      }
+
+      if (mod.state === 'installed') {
+        const remove = document.createElement('button')
+        remove.className = 'mod-btn danger'
+        remove.textContent = '🗑'
+        remove.title = 'Remove this mod'
+        remove.addEventListener('click', async () => {
+          const result = await window.launcher.deleteMod(mod.id)
+          if (result.ok) {
+            setStatus('Removed ' + mod.name + '.', 'ok')
+            await refreshMods()
+          } else if (result.error) {
+            setStatus(result.error, 'error')
+          }
+        })
+        row.appendChild(remove)
+      }
+
+      list.appendChild(row)
+    }
+  }
+
+  async function refreshMods () {
+    const result = await window.launcher.listMods()
+    if (result.ok) {
+      modState = result.mods
+    } else {
+      modState = []
+      $('modHint').textContent = result.error
+    }
+    renderMods()
+  }
+
+  $('verifyAllMods').addEventListener('click', async () => {
+    $('modHint').textContent = 'Checking...'
+    await refreshMods()
+  })
+
+  window.launcher.onModProgress((info) => {
+    const mod = modState.find((m) => m.id === String(info.modId))
+    if (!mod) return
+
+    if (info.state === 'installed') {
+      setStatus('Installed ' + (info.name || mod.name) + '.', 'ok')
+      refreshMods()
+      return
+    }
+
+    mod.state = info.state
+    if (info.state === 'failed') setStatus(info.error, 'error')
+    renderMods()
   })
 
   $('openInstallDir').addEventListener('click', () => window.launcher.openInstallDir())
@@ -1456,6 +1702,8 @@
     await checkUpdates()
     await checkTailscale()
     await checkServer()
+    await refreshMods()
+    await refreshNexus()
 
     // Keep the online badge and player count honest while the launcher sits open -
     // people leave it running, and a stale "offline" would be worse than no badge.

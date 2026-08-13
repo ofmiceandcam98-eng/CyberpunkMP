@@ -34,6 +34,19 @@ contextBridge.exposeInMainWorld('launcher', {
   // not just that the recorded version matches.
   verifyInstall: () => ipcRenderer.invoke('update:verify'),
 
+  // The curated Nexus mod list, and the Nexus account used to fetch from it.
+  // The API key is never handed to the page - only whether one is stored, and the name.
+  listMods: () => ipcRenderer.invoke('mods:list'),
+  openMod: (id) => ipcRenderer.invoke('mods:open', id),
+  deleteMod: (id) => ipcRenderer.invoke('mods:delete', id),
+  onModProgress: (callback) => {
+    ipcRenderer.on('mod-progress', (_e, info) => callback(info))
+  },
+
+  nexusSignIn: (key) => ipcRenderer.invoke('nexus:signIn', key),
+  nexusStatus: () => ipcRenderer.invoke('nexus:status'),
+  nexusSignOut: () => ipcRenderer.invoke('nexus:signOut'),
+
   // Desktop + Start Menu shortcuts. Asked once on first run; this is the way back.
   createShortcuts: () => ipcRenderer.invoke('shortcuts:create'),
 

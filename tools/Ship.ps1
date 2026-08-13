@@ -341,6 +341,16 @@ if ($Mod) {
     $uploads += (Join-Path $Repo "distrib\launcher\mod\CyberpunkMP.dll")
     Ok "mod payload staged"
 
+    # The curated Nexus mod list. Published as a release asset on purpose: the list is
+    # decided by people, not by a build, and changing which mods the server expects must
+    # not require shipping a new launcher to everyone.
+    $modlist = Join-Path $Repo "publish\modlist.json"
+    if (Test-Path $modlist) {
+        $uploads += $modlist
+        $count = @((Get-Content $modlist -Raw -Encoding UTF8 | ConvertFrom-Json).mods).Count
+        Ok "mod list staged ($count mod(s))"
+    }
+
     # FullInstall.zip - what a NEW player gets. Rebuilt every ship.
     #
     # This is the launcher's "Install everything" download, and it went missing entirely
