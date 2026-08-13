@@ -1,0 +1,257 @@
+================================================================================
+  CyberpunkMP  -  Night City Online build
+  Built 2026-08-11  for Cyberpunk 2077 patch 2.31
+================================================================================
+
+  Discord:  https://discord.gg/M9NSWsndC7
+
+  This is a work-in-progress multiplayer mod. It is not finished. There is a
+  known crash when a second player spawns - see KNOWN ISSUES at the bottom.
+  If you hit it, your log is genuinely useful to us. Instructions for that are
+  in section 5.
+
+
+--------------------------------------------------------------------------------
+  0. BEFORE YOU START
+--------------------------------------------------------------------------------
+
+  * You need Cyberpunk 2077 on PC, patch 2.31. Steam, GOG and Epic all work.
+    Check your version at the bottom-left of the main menu.
+
+  * BACK UP YOUR GAME FOLDER, or at least these subfolders:
+        bin\x64
+        engine
+        r6
+        red4ext
+    Nothing here touches your saves, but a clean way back is worth two minutes.
+
+  * ONLY IF YOU HAVE CYBER ENGINE TWEAKS: disable it.
+    CET running alongside this mod has caused a full GPU hard-lock that needed
+    a power cycle to recover from. To disable without uninstalling, rename:
+        bin\x64\version.dll   ->   bin\x64\version.dll.off
+
+    IF THAT FILE DOES NOT EXIST, YOU DO NOT HAVE CET. Skip this step.
+    Most people do not have it unless they installed it on purpose. Other
+    signs of it: a bin\x64\plugins\cyber_engine_tweaks\ folder, or the "~"
+    key opening a console overlay in game.
+
+  * Vanilla stability first. If your game crashes without any mods installed,
+    fix that before adding this - otherwise you will spend a night chasing the
+    wrong bug. (One of us already did.)
+
+
+--------------------------------------------------------------------------------
+  1. INSTALL THE PREREQUISITES
+--------------------------------------------------------------------------------
+
+  Everything in the "prerequisites" folder is a separate, independently
+  maintained mod that this one is built on top of. Install ALL SIX, in this
+  order. Each one is a zip - extract it into your Cyberpunk 2077 folder so its
+  contents merge with what is already there.
+
+      1. RED4ext-1.29.1.zip
+      2. redscript-0.5.31.zip
+      3. Codeware-1.18.0.zip
+      4. ArchiveXL-1.26.0.zip
+      5. TweakXL-1.11.1.zip
+      6. InputLoader-0.2.3.zip
+
+  Your game folder is wherever Cyberpunk2077.exe lives, for example:
+      C:\Program Files (x86)\Steam\steamapps\common\Cyberpunk 2077
+
+  These versions are the September 2025 wave and are the ones verified working
+  together on 2.31. Mixing in older or newer builds is the most common cause of
+  "it just won't start".
+
+
+--------------------------------------------------------------------------------
+  2. INSTALL THE MOD
+--------------------------------------------------------------------------------
+
+  Copy the "mod" folder from this zip into:
+
+      <your game folder>\red4ext\plugins\
+
+  Then RENAME it to:
+
+      zzzCyberpunkMP
+
+  So you end up with:
+
+      Cyberpunk 2077\red4ext\plugins\zzzCyberpunkMP\CyberpunkMP.dll
+      Cyberpunk 2077\red4ext\plugins\zzzCyberpunkMP\assets\
+      Cyberpunk 2077\red4ext\plugins\zzzCyberpunkMP\Rpc\
+
+  The "zzz" prefix is not decoration - it makes this load last, after the
+  libraries it depends on.
+
+
+--------------------------------------------------------------------------------
+  3. EASIEST: USE THE LAUNCHER, AND SKIP THE NEXT SECTION
+--------------------------------------------------------------------------------
+
+  Ask in the Discord for "Play Night City Online.bat". It is a single file, it
+  can sit anywhere (Desktop is fine), and it needs nothing else next to it.
+
+  Open it in Notepad once and put the server address between the quotes on the
+  SERVER= line. Then just double-click it whenever you want to play.
+
+  Every time you run it, it:
+    - updates the mod to the current build automatically
+    - starts the game with the correct flags already applied
+
+  That means you never set launch options, and you can never be running an old
+  build without knowing. If you use it, SKIP SECTION 4 entirely.
+
+  Section 4 is for setting it up by hand instead.
+
+
+--------------------------------------------------------------------------------
+  4. SET YOUR LAUNCH OPTIONS (only if you are NOT using the launcher)
+--------------------------------------------------------------------------------
+
+  The mod stays completely dormant unless you launch with --online. Without it
+  the game runs exactly as normal, which is a handy way to test that your
+  install did not break anything.
+
+  Steam:  right-click the game -> Properties -> General -> Launch Options
+  GOG:    Settings -> Features -> add to the command line
+  Epic:   Settings -> Cyberpunk 2077 -> Additional Command Line Arguments
+
+  Paste this, substituting the server address:
+
+      --online --ip=SERVER_ADDRESS_HERE --port=11778
+
+  For a server on your own machine:
+
+      --online --ip=127.0.0.1 --port=11778
+
+  *** THE "=" SIGNS MATTER. ***
+  Writing "--ip 1.2.3.4" with a space instead of "=" silently fails. The game
+  strips it, the mod never sees it, you connect to 127.0.0.1 instead, and you
+  time out with no error explaining why. This cost us several hours. Use "=".
+
+  Two dashes on --online, not one.
+
+
+--------------------------------------------------------------------------------
+  4. CONNECTING TO EACH OTHER
+--------------------------------------------------------------------------------
+
+  ONE person hosts. EVERYONE ELSE just joins.
+
+  If you are JOINING (this is almost certainly you):
+      Nothing extra to do. Follow sections 1-3, put the host's address in your
+      launch options, and start the game. There is no server to run, nothing to
+      install beyond the above, and no passwords to set. This package does not
+      even include the server.
+
+  If you are HOSTING:
+      You need the server build, which is not in this zip - it comes from
+      building the project, or from whoever runs the community server. The
+      server is a separate program you leave running in its own console window
+      while people play.
+
+  The server listens on UDP port 11778.
+
+  Over the internet, the easiest route is Tailscale (free, no port forwarding):
+  everyone installs it, joins the same tailnet, and the host shares their
+  Tailscale IP. Hamachi also works.
+
+  If people cannot connect to your server, check the firewall FIRST. Windows
+  auto-creates rules scoped to the "Public" profile, but Tailscale registers as
+  "Private", so inbound traffic gets dropped with no message anywhere. The host
+  needs to run this once, in an ADMIN PowerShell:
+
+      New-NetFirewallRule -DisplayName "CyberpunkMP server" -Direction Inbound `
+          -Protocol UDP -LocalPort 11778 -Action Allow -Profile Any
+
+  Note: "ping" failing does NOT mean the tunnel is broken. Windows blocks
+  inbound ICMP by default. Use "tailscale ping <address>" instead.
+
+
+--------------------------------------------------------------------------------
+  5. IF IT CRASHES - PLEASE SEND US THE LOG
+--------------------------------------------------------------------------------
+
+  This is the single most useful thing you can do for the project.
+
+  The mod writes one log file per launch to:
+
+      <game>\red4ext\plugins\zzzCyberpunkMP\logs\
+
+  Files are named CyberpunkMP_<date>_<time>.log. Crashes no longer overwrite
+  each other, so the file from the session that crashed is still there. Grab
+  the most recent one and post the WHOLE FILE in the Discord.
+
+  Not a screenshot, and not just the last few lines - the ordering across the
+  whole log is what we read.
+
+  If you want it handed to you automatically, run tools\CrashWatch.ps1 from the
+  project repo before you start the game. It detects the crash, saves the log to
+  your Documents folder, tells you which internal checkpoint was reached last,
+  and opens it.
+
+
+--------------------------------------------------------------------------------
+  6. KNOWN ISSUES
+--------------------------------------------------------------------------------
+
+  * CRASH ON REMOTE PLAYER SPAWN.  When a second player's character appears,
+    one client can die with no error dialog. This is the bug we are actively
+    hunting and it is why your logs matter. Narrowed to about ten lines of code
+    as of this build.
+
+  * Remote players have no clothes or weapons. Item names come back empty on
+    patch 2.31, so gear does not transfer. Purely cosmetic. Known, understood,
+    queued behind the crash.
+
+  * Remote player movement speed is reported as nonsense, which makes their
+    animations look wrong. Suspected structure offset change in 2.31.
+
+  * The "/" key does not open chat. The mod ships an interface file from patch
+    2.2 which is what registers that key. There is a debug menu bar as a
+    workaround while online.
+
+
+--------------------------------------------------------------------------------
+  7. UNINSTALLING
+--------------------------------------------------------------------------------
+
+  Delete the zzzCyberpunkMP folder from red4ext\plugins, and remove --online
+  from your launch options. The prerequisite mods are harmless to leave in
+  place; they are used by plenty of other mods.
+
+  Renaming the folder does NOT disable it - RED4ext scans every subfolder for
+  DLLs. Move it out of plugins\ or delete it.
+
+
+--------------------------------------------------------------------------------
+  8. CREDITS AND LICENSES
+--------------------------------------------------------------------------------
+
+  CyberpunkMP itself is the work of Tilted Phoques and contributors:
+      https://github.com/tiltedphoques/CyberpunkMP
+
+  This package is an unofficial build for game patch 2.31, plus fixes needed to
+  make it run on that patch. It is not released by Tilted Phoques.
+
+  The "prerequisites" folder redistributes six independent mods, unmodified.
+  Every one is MIT licensed, and the full license text for each is included in
+  the LICENSES folder. All credit for these belongs to their authors:
+
+      RED4ext        Octavian Dima     https://github.com/WopsS/RED4ext
+      redscript      jac3km4           https://github.com/jac3km4/redscript
+      Codeware       Pavel Siberx      https://github.com/psiberx/cp2077-codeware
+      ArchiveXL      Pavel Siberx      https://github.com/psiberx/cp2077-archive-xl
+      TweakXL        Pavel Siberx      https://github.com/psiberx/cp2077-tweak-xl
+      Input Loader   Jack Humbert      https://github.com/jackhumbert/input_loader
+
+  They are bundled purely so you can get running in one step. If you would
+  rather download them yourself from the links above, that works exactly the
+  same - just match the version numbers in section 1.
+
+
+================================================================================
+  Questions, bug reports, logs:  https://discord.gg/M9NSWsndC7
+================================================================================

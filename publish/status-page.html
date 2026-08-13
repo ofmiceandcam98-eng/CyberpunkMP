@@ -1,0 +1,1054 @@
+<title>CyberpunkMP — Project Status</title>
+
+<style>
+  :root {
+    --ground:      #F3F3EF;
+    --surface:     #FFFFFF;
+    --surface-alt: #ECEBE3;
+    --line:        #D6D5C9;
+    --line-soft:   #E4E3D9;
+    --ink:         #17160F;
+    --ink-mid:     #4E4C40;
+    --ink-soft:    #74715F;
+    --accent:      #9A8100;
+    --accent-mark: #FCEE0A;
+    --ok:          #2F7A4C;
+    --ok-bg:       #E2F0E6;
+    --bad:         #A8321F;
+    --bad-bg:      #F7E3DE;
+    --idle:        #6B6858;
+    --idle-bg:     #E7E6DC;
+
+    --mono: ui-monospace, "Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, Roboto, sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground:      #121210;
+      --surface:     #1A1A16;
+      --surface-alt: #212119;
+      --line:        #343329;
+      --line-soft:   #29281F;
+      --ink:         #EEEDE2;
+      --ink-mid:     #B3B0A0;
+      --ink-soft:    #86836F;
+      --accent:      #FCEE0A;
+      --accent-mark: #FCEE0A;
+      --ok:          #6DC98C;
+      --ok-bg:       #17301F;
+      --bad:         #F0705A;
+      --bad-bg:      #351812;
+      --idle:        #8C8974;
+      --idle-bg:     #24241C;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:      #121210;
+    --surface:     #1A1A16;
+    --surface-alt: #212119;
+    --line:        #343329;
+    --line-soft:   #29281F;
+    --ink:         #EEEDE2;
+    --ink-mid:     #B3B0A0;
+    --ink-soft:    #86836F;
+    --accent:      #FCEE0A;
+    --accent-mark: #FCEE0A;
+    --ok:          #6DC98C;
+    --ok-bg:       #17301F;
+    --bad:         #F0705A;
+    --bad-bg:      #351812;
+    --idle:        #8C8974;
+    --idle-bg:     #24241C;
+  }
+
+  :root[data-theme="light"] {
+    --ground:      #F3F3EF;
+    --surface:     #FFFFFF;
+    --surface-alt: #ECEBE3;
+    --line:        #D6D5C9;
+    --line-soft:   #E4E3D9;
+    --ink:         #17160F;
+    --ink-mid:     #4E4C40;
+    --ink-soft:    #74715F;
+    --accent:      #9A8100;
+    --accent-mark: #FCEE0A;
+    --ok:          #2F7A4C;
+    --ok-bg:       #E2F0E6;
+    --bad:         #A8321F;
+    --bad-bg:      #F7E3DE;
+    --idle:        #6B6858;
+    --idle-bg:     #E7E6DC;
+  }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 62rem;
+    margin: 0 auto;
+    padding: 3rem 1.5rem 6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 3.5rem;
+  }
+
+  /* ---------- masthead ---------- */
+
+  .mast { display: flex; flex-direction: column; gap: 1rem; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+  }
+  .eyebrow::after {
+    content: "";
+    flex: 1;
+    height: 2px;
+    background: var(--accent-mark);
+    opacity: 0.55;
+  }
+
+  h1 {
+    font-family: var(--mono);
+    font-size: clamp(2rem, 5.5vw, 3.1rem);
+    font-weight: 700;
+    letter-spacing: -0.035em;
+    line-height: 1.04;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .standfirst {
+    font-size: 1.09rem;
+    color: var(--ink-mid);
+    max-width: 60ch;
+    text-wrap: pretty;
+  }
+
+  .meta {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--ink-soft);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.4rem;
+    padding-top: 0.4rem;
+    border-top: 1px solid var(--line-soft);
+  }
+  .meta b { color: var(--ink-mid); font-weight: 700; }
+
+  /* ---------- sections ---------- */
+
+  section { display: flex; flex-direction: column; gap: 1.25rem; }
+
+  h2 {
+    font-family: var(--mono);
+    font-size: 1.32rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0;
+    padding-left: 0.85rem;
+    border-left: 3px solid var(--accent-mark);
+    text-wrap: balance;
+  }
+
+  h3 {
+    font-family: var(--mono);
+    font-size: 0.95rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    margin: 0;
+    color: var(--ink);
+  }
+
+  p { margin: 0; max-width: 68ch; text-wrap: pretty; }
+  .lede { color: var(--ink-mid); }
+
+  a { color: var(--accent); text-underline-offset: 3px; }
+  a:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent-mark);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.86em;
+    background: var(--surface-alt);
+    border: 1px solid var(--line-soft);
+    border-radius: 3px;
+    padding: 0.08em 0.34em;
+  }
+
+  pre {
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    line-height: 1.65;
+    background: var(--surface-alt);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent-mark);
+    border-radius: 4px;
+    padding: 0.9rem 1.1rem;
+    overflow-x: auto;
+    margin: 0;
+  }
+  pre code { background: none; border: none; padding: 0; font-size: inherit; }
+
+  /* ---------- status grid ---------- */
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    gap: 0.75rem;
+  }
+
+  .cell {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 0.85rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .cell .name {
+    font-family: var(--mono);
+    font-size: 0.88rem;
+    font-weight: 700;
+  }
+  .cell .note {
+    font-size: 0.85rem;
+    color: var(--ink-soft);
+    line-height: 1.45;
+  }
+
+  .chip {
+    align-self: flex-start;
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 0.16rem 0.5rem;
+    border-radius: 3px;
+  }
+  .chip.ok   { color: var(--ok);   background: var(--ok-bg);   }
+  .chip.bad  { color: var(--bad);  background: var(--bad-bg);  }
+  .chip.idle { color: var(--idle); background: var(--idle-bg); }
+
+  /* ---------- callout ---------- */
+
+  .callout {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--bad);
+    border-radius: 5px;
+    padding: 1.1rem 1.3rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+  .callout.neutral { border-left-color: var(--accent-mark); }
+  .callout .tag {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+
+  /* ---------- tables ---------- */
+
+  .scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); }
+
+  table { border-collapse: collapse; width: 100%; font-size: 0.88rem; min-width: 34rem; }
+  thead th {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    text-align: left;
+    padding: 0.7rem 1rem;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  tbody td {
+    padding: 0.68rem 1rem;
+    border-bottom: 1px solid var(--line-soft);
+    vertical-align: top;
+    line-height: 1.5;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.num {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .struck { color: var(--ink-soft); }
+  .struck .what { text-decoration: line-through; text-decoration-thickness: 1px; }
+
+  /* ---------- steps ---------- */
+
+  ol.steps { margin: 0; padding: 0; list-style: none; counter-reset: s; display: flex; flex-direction: column; gap: 0.7rem; }
+  ol.steps li {
+    counter-increment: s;
+    display: grid;
+    grid-template-columns: 1.9rem 1fr;
+    gap: 0.75rem;
+    align-items: start;
+  }
+  ol.steps li::before {
+    content: counter(s, decimal-leading-zero);
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    font-weight: 700;
+    color: var(--accent);
+    padding-top: 0.28rem;
+    font-variant-numeric: tabular-nums;
+  }
+  ol.steps li > div { display: flex; flex-direction: column; gap: 0.45rem; min-width: 0; }
+
+  ul.plain { margin: 0; padding-left: 1.15rem; display: flex; flex-direction: column; gap: 0.45rem; }
+  ul.plain li { padding-left: 0.2rem; }
+
+  .split { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 1.5rem; align-items: start; }
+
+  /* ---------- roadmap stages ---------- */
+
+  .stage {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 1.1rem 1.3rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+  }
+  .stage-head { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; }
+  .stage-id {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+  .stage h3 { font-size: 1.05rem; }
+
+  /* ---------- download ---------- */
+
+  .download {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent-mark);
+    border-radius: 5px;
+    padding: 1.3rem 1.4rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+  }
+  .btn-row { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+  .btn {
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-decoration: none;
+    padding: 0.6rem 1.1rem;
+    border-radius: 4px;
+    border: 1px solid var(--line);
+    background: var(--surface-alt);
+    color: var(--ink);
+    transition: border-color 120ms ease, transform 120ms ease;
+  }
+  .btn:hover { border-color: var(--accent-mark); }
+  .btn:active { transform: translateY(1px); }
+  .btn.primary {
+    background: var(--accent-mark);
+    border-color: var(--accent-mark);
+    color: #17160F;
+  }
+  .filemeta {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--ink-soft);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem 1.2rem;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 1.2rem 1.3rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+  }
+
+  footer {
+    border-top: 1px solid var(--line);
+    padding-top: 1.2rem;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--ink-soft);
+    line-height: 1.6;
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="mast">
+    <div class="eyebrow">Status brief</div>
+    <h1>CyberpunkMP on&nbsp;2.31</h1>
+    <p class="standfirst">
+      Multiplayer for Cyberpunk 2077. Two players can connect, authenticate, and see each
+      other move. One crash stands between us and playable sessions — and we have it narrowed
+      to about ten lines of code.
+    </p>
+    <div class="meta">
+      <span><b>Updated</b> 13 Aug 2026</span>
+      <span><b>Game patch</b> 2.31</span>
+      <span><b>Upstream targets</b> 2.2</span>
+      <span><b>Base</b> tiltedphoques/CyberpunkMP</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>Get the build</h2>
+
+    <div class="download">
+      <p>
+        The download link below always points at the latest release, so it stays correct as we
+        ship new builds — bookmark it rather than any individual file.
+      </p>
+      <div class="btn-row">
+        <a class="btn primary" href="https://github.com/ofmiceandcam98-eng/CyberpunkMP/releases/latest">Download latest build</a>
+        <a class="btn" href="https://github.com/ofmiceandcam98-eng/CyberpunkMP/releases/download/test-2026.08.12-probes/NightCityOnline-Setup.exe">Get the launcher</a>
+        <a class="btn" href="https://discord.gg/M9NSWsndC7">Join the Discord</a>
+      </div>
+      <div class="filemeta">
+        <span>CyberpunkMP-NightCity-2026-08-11.zip</span>
+        <span>8.3 MB</span>
+        <span>for game patch 2.31</span>
+        <span>MIT-licensed prerequisites bundled</span>
+      </div>
+    </div>
+
+    <div class="callout neutral">
+      <span class="tag">After the first install, use the launcher</span>
+      <p>
+        Once the mod is installed, start the game through the <b>Night City Online launcher</b>
+        from then on. It handles four things you would otherwise get wrong:
+      </p>
+      <ul class="plain">
+        <li>Signs you in with Discord, and checks you are a member of the server.</li>
+        <li>Keeps your game files current, and refuses to launch if they are out of date.</li>
+        <li>
+          Passes the right launch flags automatically — the most common reason this mod
+          silently does nothing is a mistyped launch option.
+        </li>
+        <li>Shows whether the server is up and how many people are on it.</li>
+      </ul>
+      <p>
+        Windows will warn that it is unsigned the first time — <b>More info → Run anyway</b>.
+        That is expected for an app without a paid code-signing certificate.
+      </p>
+      <p>
+        There is also a <code>PlayNightCityOnline.bat</code> on the release as a fallback for
+        anyone who would rather not run a launcher. It updates and launches, and nothing else.
+      </p>
+    </div>
+
+    <h3>Installing it the first time</h3>
+    <p class="lede">
+      Full instructions ship inside the zip as <code>INSTALL.txt</code>. The short version:
+    </p>
+
+    <ol class="steps">
+      <li><div>
+        <span>
+          <b>Back up</b> <code>bin\x64</code>, <code>engine</code>, <code>r6</code> and
+          <code>red4ext</code> from your game folder. Your saves are not touched, but a way
+          back is worth two minutes.
+        </span>
+      </div></li>
+      <li><div>
+        <span>
+          <b>Only if you have Cyber Engine Tweaks:</b> disable it. Rename
+          <code>bin\x64\version.dll</code> to <code>version.dll.off</code>. CET running
+          alongside this mod has caused a full GPU hard-lock needing a power cycle.
+        </span>
+        <span>
+          <b>If that file does not exist, you do not have CET — skip this step.</b> Most people
+          do not have it unless they installed it deliberately. Other signs of it: a
+          <code>bin\x64\plugins\cyber_engine_tweaks\</code> folder, or <code>~</code> opening a
+          console overlay in game.
+        </span>
+      </div></li>
+      <li><div>
+        <span>
+          <b>Install all six prerequisites</b> from the <code>prerequisites</code> folder, in
+          the order listed in INSTALL.txt. Extract each into your Cyberpunk 2077 folder. These
+          exact versions are the ones verified on 2.31 — mixing versions is the most common
+          reason it won't start.
+        </span>
+      </div></li>
+      <li><div>
+        <span>
+          <b>Copy the <code>mod</code> folder</b> into <code>red4ext\plugins\</code> and rename
+          it to <code>zzzCyberpunkMP</code>. The <code>zzz</code> makes it load after the
+          libraries it depends on.
+        </span>
+      </div></li>
+      <li><div>
+        <span><b>Add launch options</b> in Steam, GOG or Epic:</span>
+<pre><code>--online --ip=SERVER_ADDRESS --port=11778</code></pre>
+        <span>
+          The <code>=</code> signs are not optional. Writing <code>--ip 1.2.3.4</code> with a
+          space silently fails — you connect to localhost and time out with no error anywhere
+          explaining why. Without <code>--online</code> the mod stays dormant and your game runs
+          exactly as normal, which is a useful way to check nothing broke.
+        </span>
+      </div></li>
+    </ol>
+
+    <div class="callout neutral">
+      <span class="tag">Linux and Steam Deck</span>
+      <p>
+        <b>Untested — but there is no known reason it should not work.</b> Cyberpunk runs through
+        Proton, which is a Windows environment, so the mod does not need a Linux build; it needs
+        to load inside the Proton prefix. Everything it is built on — RED4ext, redscript,
+        Codeware, TweakXL — is commonly used under Proton already.
+      </p>
+      <p>
+        The install steps translate directly: same prerequisites, same folder layout, same launch
+        options. If you try it, tell us how it goes either way — you would be the first, and
+        "it worked" is worth as much as a bug report.
+      </p>
+      <p>
+        <b>Hosting a server on Linux is properly supported</b>, not just tolerated: the server
+        builds natively on Linux in CI, and the repository ships a Docker Compose setup for it.
+      </p>
+    </div>
+
+    <div class="callout neutral">
+      <span class="tag">Connecting to each other</span>
+      <p>
+        The server listens on UDP <code>11778</code>. Tailscale is the easiest route with no
+        port forwarding. If nobody can reach your server, check the firewall first: Windows
+        auto-creates rules scoped to the <em>Public</em> profile, but Tailscale registers as
+        <em>Private</em>, so traffic is dropped silently. Also note that <code>ping</code>
+        failing proves nothing — Windows blocks inbound ICMP by default.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Where we are</h2>
+    <p class="lede">
+      Upstream targets game patch 2.2 and does not run on current Cyberpunk. Getting it onto
+      2.31 took a fix to how the mod resolves type names — without it the game refuses to
+      start. That is solved. What remains is a crash when a second player spawns.
+    </p>
+
+    <div class="grid">
+      <div class="cell">
+        <span class="chip ok">Working</span>
+        <span class="name">Mod loads on 2.31</span>
+        <span class="note">Zero script validation errors. Required a two-line fix to the bundled RedLib type-name resolver.</span>
+      </div>
+      <div class="cell">
+        <span class="chip ok">Working</span>
+        <span class="name">Connect &amp; authenticate</span>
+        <span class="note">Client reaches the server, server authorises, player enters the world. Works over Tailscale between machines.</span>
+      </div>
+      <div class="cell">
+        <span class="chip ok">Working</span>
+        <span class="name">Position sync</span>
+        <span class="note">Remote players move correctly. Fixed by reading <code>worldTransform</code> instead of <code>localTransform</code>.</span>
+      </div>
+      <div class="cell">
+        <span class="chip ok">Working</span>
+        <span class="name">Server plugin hot reload</span>
+        <span class="note">Rebuild a gamemode plugin and it reloads without restarting the server.</span>
+      </div>
+      <div class="cell">
+        <span class="chip ok">Fixed</span>
+        <span class="name">Remote player spawn crash</span>
+        <span class="note">Found and fixed 12 Aug. A movement update arriving before the puppet was fully registered hit a null pointer. Awaiting confirmation from a two-player session.</span>
+      </div>
+      <div class="cell">
+        <span class="chip ok">Working</span>
+        <span class="name">Join from the main menu</span>
+        <span class="note">A <b>MULTIPLAYER</b> entry sits beside Continue and Load Game. It opens the game's own save picker; choose a save and you arrive already connected. No launch flags, no in-game server browser.</span>
+      </div>
+      <div class="cell">
+        <span class="chip ok">Working</span>
+        <span class="name">Launcher self-update check</span>
+        <span class="note">The launcher checks its own version against the release on every start, not just the mod's, and says so when it is behind.</span>
+      </div>
+      <div class="cell">
+        <span class="chip ok">Working</span>
+        <span class="name">Discord sign-in</span>
+        <span class="note">The launcher verifies your Discord account and Night City Online membership. Your in-game identity is established by the server, not claimed by your PC.</span>
+      </div>
+      <div class="cell">
+        <span class="chip ok">Working</span>
+        <span class="name">Moderation</span>
+        <span class="note">Kick and ban in game, gated by your Discord role. A Discord ban removes you from the server too, within two minutes if you are already playing.</span>
+      </div>
+      <div class="cell">
+        <span class="chip bad">Broken</span>
+        <span class="name">Equipment sync</span>
+        <span class="note">Remote players render with a body but no gear. Cosmetic, understood, not the crash.</span>
+      </div>
+      <div class="cell">
+        <span class="chip idle">Unverified</span>
+        <span class="name">Movement speed</span>
+        <span class="note">Arrives as garbage (~3e8 for a walking player). Suspect a struct offset moved on 2.31. Matters for interpolation later.</span>
+      </div>
+      <div class="cell">
+        <span class="chip idle">Known issue</span>
+        <span class="name">CET incompatibility</span>
+        <span class="note">Cyber Engine Tweaks installed alongside the mod caused a full GPU hard-lock. Keep CET disabled.</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>The blocker: remote spawn crash</h2>
+
+    <p class="lede">
+      When a second player joins, one client dies. No RED4ext crash report, no exception
+      dialog — a raw access violation. It has flipped between machines, so it is not
+      hardware- or install-specific.
+    </p>
+
+    <div class="callout" style="border-left-color: var(--ok)">
+      <span class="tag">Solved — 12 August</span>
+      <p>
+        <b>A movement update arriving before the puppet was ready.</b> When a remote player
+        spawns, the client creates the puppet and then finishes registering it a fraction of a
+        second later. A real player is transmitting movement the entire time, so their first
+        update reliably landed inside that gap — and the code handling it assumed the
+        registration had already happened. It hadn't, so it read from nothing and the game died.
+      </p>
+      <p>
+        The fix does two things: refuse to act on an update for a puppet that isn't ready, and
+        register it up front so early movement is stored rather than thrown away. Guarding alone
+        would have discarded the first fraction of a second of someone's movement and made them
+        snap into place on arrival.
+      </p>
+      <p>
+        <b>Why it took so long:</b> the test tool built to reproduce it spawned a fake player —
+        and fake players never move. It could never have triggered the bug. Meanwhile every real
+        player carried both movement and appearance data, so the appearance data looked like the
+        culprit for days. It was a coincidence.
+      </p>
+      <p>
+        Still needs confirming in a real two-player session before it can be called done.
+      </p>
+    </div>
+
+    <div class="callout">
+      <span class="tag">How it was found</span>
+      <p>
+        The client is now instrumented with 21 numbered checkpoints across the whole spawn
+        path. A single session captured a <em>surviving</em> puppet and a <em>crashing</em>
+        one side by side, which is what made this readable:
+      </p>
+<pre><code>puppet that lived   PROBE 1..10   spawn
+                    PROBE 21      appearance callback   (+41ms)
+                    PROBE 17..20  animation attach      (+43ms)
+                    PROBE 11..16  promotion poll        (+184ms)
+
+puppet that died    PROBE 1..10   spawn
+                    &lt;log ends&gt;                          (+40ms)</code></pre>
+      <p>
+        Identical code, identical puppet type, opposite outcomes. The crash lands in the
+        window where the <b>game</b> asynchronously assembles the entity — before any mod
+        code touches it again. That is why the checkpoints simply stop: there is nothing of
+        ours left running in there to report.
+      </p>
+      <p>
+        The logging sink flushes on every message, so a log that stops is a real execution
+        boundary, not a lost buffer.
+      </p>
+    </div>
+
+    <h3>Already ruled out — please don't re-suggest these</h3>
+    <p class="lede">
+      Each was tested with an instrumented build. Every one cost a two-machine session to
+      disprove. If you want to revive one, bring new measurement.
+    </p>
+
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Hypothesis</th><th>How it was disproved</th></tr>
+        </thead>
+        <tbody>
+          <tr class="struck">
+            <td class="what">Connecting automatically once the world is ready</td>
+            <td>Tried on 13 Aug and reverted the same night. Cyberpunk's <b>main menu is itself a world</b>, so the hook fired 0.4s after startup and connected before any save existed. The server then streamed players into a world with no game in it. Joining must be an explicit choice.</td>
+          </tr>
+          <tr class="struck">
+            <td class="what">Hardcoded <code>displayName.unk08</code> write corrupts memory</td>
+            <td>Probes placed either side of the write. Log reads <code>displayName.unk08 write survived</code>.</td>
+          </tr>
+          <tr class="struck">
+            <td class="what">Failed <code>ItemID_Create</code> / equipment data</td>
+            <td>Those 8 warnings appear on the <em>surviving</em> client and are followed by more work. The code already skips past each failure.</td>
+          </tr>
+          <tr class="struck">
+            <td class="what">Character appearance (ccstate) payload</td>
+            <td>Built with appearance data stripped. Confirmed <code>ccstate 0 bytes</code> crossed the wire. A client still crashed.</td>
+          </tr>
+          <tr class="struck">
+            <td class="what">The animation-thread hook</td>
+            <td>Compiled the hook body out entirely. Receiver still crashed.</td>
+          </tr>
+          <tr class="struck">
+            <td class="what">Phantom Liberty ownership mismatch</td>
+            <td>Both players own the DLC. Do not spend money on this.</td>
+          </tr>
+          <tr class="struck">
+            <td class="what">Crash is inside <code>ApplyAppearance()</code></td>
+            <td>Completes normally on surviving puppets, and is never even reached on crashing ones.</td>
+          </tr>
+          <tr class="struck">
+            <td class="what">Anything inside <code>Spawn()</code> itself</td>
+            <td>All ten checkpoints inside it fire every single time, including on the puppet that then dies.</td>
+          </tr>
+          <tr class="struck">
+            <td class="what"><code>make_alive()</code> with an out-of-range entity id</td>
+            <td>The client reserves ids 10,000,000–20,000,000 and is handed id <code>213</code>. Logged surviving it repeatedly.</td>
+          </tr>
+          <tr class="struck">
+            <td class="what">Mutating the entity's tag array mid-assembly</td>
+            <td>Checkpoints either side of <code>tags.Add()</code> both fire on surviving puppets.</td>
+          </tr>
+          <tr class="struck">
+            <td class="what">Duplicate animation-controller attachment</td>
+            <td>Counted them: exactly one attach queued per puppet, and every one completed.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>What is left</h3>
+    <p class="lede">
+      Everything the mod does during a spawn has now been measured and cleared. What remains is
+      the game's own asynchronous entity construction — the roughly 40&nbsp;ms between our
+      <code>Spawn()</code> returning and the engine's <em>entity attached</em> callback firing.
+      No mod code runs in that window, which is exactly why adding more checkpoints has stopped
+      being useful.
+    </p>
+    <ul class="plain">
+      <li>
+        <b>Puppet mesh construction</b> is the strongest remaining candidate. Remote players are
+        built on the game's <code>MaMuppet</code> / <code>WaMuppet</code> character records —
+        the bodies the character creator uses. Whether those still assemble correctly on 2.31 is
+        unverified.
+      </li>
+      <li>
+        <b>Placement</b> is not yet separated from timing. Puppets that arrive far away survive;
+        puppets that arrive next to you do not. Neither has ever actually been seen in-world, so
+        it is still open whether the trigger is the game streaming the puppet in, or something
+        about mid-session spawns generally.
+      </li>
+    </ul>
+
+    <div class="download">
+      <p>
+        <b>Running the diagnostic build is the most useful thing anyone can do right now.</b>
+        It is the normal build plus 21 checkpoints through the spawn path, so a crash log points
+        at the exact statement instead of just saying "it crashed".
+      </p>
+      <div class="btn-row">
+        <a class="btn primary" href="https://github.com/ofmiceandcam98-eng/CyberpunkMP/releases/tag/test-2026.08.12-probes">Get the diagnostic build</a>
+      </div>
+      <div class="filemeta">
+        <span>replaces one file: CyberpunkMP.dll</span>
+        <span>4.1 MB</span>
+        <span>install the normal release first</span>
+      </div>
+      <p>
+        <b>Easier:</b> if you use <code>Play Night City Online.bat</code>, you already have this
+        — it pulls the current diagnostic build every time you launch. Nothing to download by
+        hand and no way to end up on a stale one.
+      </p>
+      <p>
+        Then send us your log <b>whether it crashed or not</b> — a clean session is as useful as
+        a crash. Everything understood so far came from one log that happened to contain a
+        surviving player and a crashing player side by side.
+      </p>
+    </div>
+
+    <div class="callout neutral">
+      <span class="tag">Solo reproduction now works</span>
+      <p>
+        A debug command spawns a fake remote player, so the crash can be reproduced without a
+        second person. It was silently broken until 12 August — the spawn broadcast deliberately
+        skips the entity's owner, and the fake player was owned by whoever summoned it, so the
+        one client that needed the message was the only one excluded from it.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>How to help</h2>
+
+    <div class="split">
+
+      <div class="panel">
+        <h3>If you're testing</h3>
+        <p class="lede">The single most valuable thing right now is a crash log with probe numbers in it.</p>
+        <ol class="steps">
+          <li><div>
+            <span>Disable Cyber Engine Tweaks. It hard-locks the machine alongside this mod.</span>
+          </div></li>
+          <li><div>
+            <span>Launch with the <code>=</code> form. The space-separated form silently does nothing and you will connect to localhost instead:</span>
+<pre><code>--online --ip=&lt;server&gt; --port=11778</code></pre>
+          </div></li>
+          <li><div>
+            <span>Spawn into the world, then reproduce. With a second player, just have them join. Solo, type <code>/dummy</code> in chat to fabricate a fake remote player that drives the same code path.</span>
+          </div></li>
+          <li><div>
+            <span>Grab the log. The mod writes one timestamped file per launch into a <code>logs\</code> folder next to the mod DLL, so crashes no longer overwrite each other.</span>
+            <span>
+              Ignore the file size Explorer shows — Windows reports a stale size while the game
+              holds the file open, so a full log can look empty.
+            </span>
+          </div></li>
+          <li><div>
+            <span>Post the whole file. Not a screenshot, not the last few lines — the ordering across the whole log is what we read.</span>
+          </div></li>
+        </ol>
+      </div>
+
+      <div class="panel">
+        <h3>If you're coding</h3>
+        <p class="lede">Two traps have each burned a full day. Please read these before building.</p>
+        <ul class="plain">
+          <li>
+            <b>Upstream <code>main</code> does not build from a clean clone.</b> Its unpinned
+            dependencies now resolve too new. CI passes only because it restores a cached
+            package set. You need <code>protobuf-cpp 29.3</code> and Windows SDK
+            <code>10.0.22621.0</code>; SDK 10.0.26100 breaks the build.
+          </li>
+          <li>
+            <b>Building is not deploying.</b> The install step needs its output prefix spelled
+            out, or it prints <code>install ok!</code> while writing somewhere the game never
+            reads — and you test yesterday's binary:
+          </li>
+        </ul>
+<pre><code>xmake build -j 4 Client
+xmake install -o distrib Client</code></pre>
+        <p class="lede">
+          Always confirm the timestamp on the deployed DLL actually moved.
+        </p>
+      </div>
+
+    </div>
+
+    <div class="callout neutral">
+      <span class="tag">Ground rule</span>
+      <p>
+        Please don't propose a fix for the spawn crash until a probe log exists. Six theories
+        have already been burned by reasoning ahead of measurement, and each one cost a real
+        test session. Once we have the probe number, the fix will be obvious — and it will be
+        correct.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Roadmap</h2>
+    <p class="lede">
+      Ordered by dependency, not ambition. Each stage unblocks the next, and nothing below
+      stage one is worth starting until the crash is closed — an unstable session makes every
+      other bug unreproducible.
+    </p>
+
+    <div class="stage">
+      <div class="stage-head">
+        <span class="stage-id">Stage 1</span>
+        <span class="chip bad">Blocking</span>
+      </div>
+      <h3>A session that doesn't crash</h3>
+      <ul class="plain">
+        <li>Identify the failing statement from a probe log, and fix it.</li>
+        <li>Strip the temporary probes once the cause is known.</li>
+        <li>Confirm two players can stay connected for a sustained session.</li>
+      </ul>
+    </div>
+
+    <div class="stage">
+      <div class="stage-head">
+        <span class="stage-id">Stage 2</span>
+        <span class="chip idle">Next</span>
+      </div>
+      <h3>Players who look and move right</h3>
+      <ul class="plain">
+        <li>Equipment sync — replace the debug helper that returns empty item names on 2.31.</li>
+        <li>Movement speed — currently arrives as garbage, suspect a struct offset moved.</li>
+        <li>Interpolation quality, once speed is trustworthy.</li>
+        <li>Restore the <code>/</code> chat hotkey, which a 2.2-era interface override broke.</li>
+      </ul>
+    </div>
+
+    <div class="stage">
+      <div class="stage-head">
+        <span class="stage-id">Stage 3</span>
+        <span class="chip ok">In progress</span>
+      </div>
+      <h3>Joining a server from the main menu</h3>
+      <p class="lede">
+        You used to launch with command-line flags, load a singleplayer save, then open a
+        server browser attached to the in-game HUD. The first two steps are gone.
+      </p>
+      <ul class="plain">
+        <li>
+          <b>A Multiplayer entry on the title screen — done, 13 Aug.</b> It sits alongside
+          Continue and Load Game, and opens the game's own Load Game screen rather than a
+          copy of it. Pick a save and you arrive connected. The decision is carried across
+          the save load by the network system, which is the one object that survives a world
+          change — script state does not.
+        </li>
+        <li>
+          <b>A character chooser</b>, so your multiplayer identity stops being whatever
+          singleplayer save you happened to load. This is the largest piece here: it needs
+          server-side persistence to be real, so it lands alongside <em>Server durability</em>
+          below.
+        </li>
+        <li>
+          <b>A proper launcher — done.</b> Night City Online is a real Windows application:
+          Discord sign-in, membership check, mod install and update, file verification, server
+          status and player count, patch notes, and a self-update check. It refuses to launch
+          when your files are out of date, because a mismatched client is the fastest way to
+          produce a confusing crash.
+        </li>
+        <li>
+          <s>An in-game Start Server button</s> — deliberately not planned. Supervising an
+          external server process from inside the game means handling crashes, port
+          conflicts, and orphaned processes on exit. A desktop shortcut does the same job
+          with none of that.
+        </li>
+      </ul>
+    </div>
+
+    <div class="stage">
+      <div class="stage-head">
+        <span class="stage-id">Stage 4</span>
+        <span class="chip idle">Designed</span>
+      </div>
+      <h3>Gameplay primitives</h3>
+      <p class="lede">
+        Both borrowed from CyberMP, which solved these already. Designs exist; neither is built.
+      </p>
+      <ul class="plain">
+        <li>
+          <b>Event veto.</b> A way for server logic to cancel a game event before it happens —
+          starting with combat, so damage is authoritative rather than whatever each client
+          decided locally.
+        </li>
+        <li>
+          <b>Typed RPC router.</b> Today every new network message means editing the protocol
+          definition and regenerating bindings. A dispatch layer over the existing generic call
+          would let gamemode authors add events without touching the build.
+        </li>
+      </ul>
+    </div>
+
+    <div class="stage">
+      <div class="stage-head">
+        <span class="stage-id">Stage 5</span>
+        <span class="chip idle">Researched</span>
+      </div>
+      <h3>Server durability</h3>
+      <p class="lede">
+        Patterns taken from SkyMP, a mature Skyrim multiplayer project with years of production
+        use. Worth copying rather than rediscovering.
+      </p>
+      <ul class="plain">
+        <li>Movement validation with snap-back, so a client cannot teleport itself.</li>
+        <li>Interest management — only send a player what is near them, instead of everything.</li>
+        <li>Persistence, so a server remembers players between restarts.</li>
+        <li>
+          A transport abstraction with a mock, so networking logic becomes testable without
+          two machines and a copy of the game.
+        </li>
+      </ul>
+    </div>
+
+    <div class="stage">
+      <div class="stage-head">
+        <span class="stage-id">Ongoing</span>
+        <span class="chip ok">Active</span>
+      </div>
+      <h3>Getting fixes upstream</h3>
+      <p class="lede">
+        The 2.31 compatibility fix and the build repairs are not project-specific — they help
+        anyone trying to run this mod today. Several pull requests are open against the
+        upstream repository.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Known cosmetic issues</h2>
+    <ul class="plain">
+      <li>
+        <b>Remote players have no gear.</b> Item names are built with a debug helper that
+        returns empty strings on 2.31, so equipment serialises blank and every remote spawn
+        logs eight failed item creations. Harmless, well understood, low priority until the
+        crash is fixed.
+      </li>
+      <li>
+        <b>The <code>/</code> chat hotkey doesn't open the HUD.</b> The mod ships an archive
+        overriding a 2.2-era interface file, which is what registers the key listener. There is
+        a debug menu bar as a workaround.
+      </li>
+    </ul>
+  </section>
+
+  <footer>
+    <p style="max-width:70ch">
+      Everything above is either measured or explicitly marked unverified. Where something is a
+      guess, it says so. If you find a claim here that contradicts what you observe, that is
+      worth raising — several entries on this page exist because an earlier confident conclusion
+      turned out to be wrong.
+    </p>
+    <p style="margin-top:0.9rem">
+      Night City Online — <a href="https://discord.gg/M9NSWsndC7">discord.gg/M9NSWsndC7</a>
+    </p>
+  </footer>
+
+</div>

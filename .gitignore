@@ -29,8 +29,15 @@ distrib/*
 # not listed here; .gitignore has no effect on already-tracked files anyway.)
 ANTIGRAVITY_NOTES.md
 CYBERPUNKMP_BRIEFING.md
-# Sources for the public status page / release notes - fork-specific
-publish/
+# publish/ is TRACKED. It holds the status page, install instructions, release notes,
+# the to-do list, and the licence texts for the six bundled mods - which are the
+# condition that makes redistributing them legitimate. All of that existed only on one
+# machine, with no copy anywhere, after a day's work had already been lost once to a
+# stray git reset.
+#
+# Only the build OUTPUT is ignored: FullInstall.zip is reassembled from
+# publish/fullinstall-base + the current build on every ship.
+publish/FullInstall.zip
 code/client/Archives/CyberpunkMP.zip
 Cyberpunk2077.exe*
 imgui.ini
