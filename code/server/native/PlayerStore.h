@@ -33,7 +33,20 @@ struct PlayerRecord
 
     int64_t LastSeen{0};    // unix seconds
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(PlayerRecord, DiscordId, Username, X, Y, Z, Yaw, LastSeen)
+    // Jail.
+    //
+    // Persisted for the same reason bans are: a sentence that ends when you alt-F4 is not
+    // a sentence. Quitting, crashing, or waiting out a server restart must not release
+    // anyone - otherwise the first thing every jailed player learns is to close the game.
+    int64_t JailedUntil{0};   // unix seconds; 0 means not jailed
+    float JailX{0.f};
+    float JailY{0.f};
+    float JailZ{0.f};
+    std::string JailedBy;
+    std::string JailReason;
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(PlayerRecord, DiscordId, Username, X, Y, Z, Yaw, LastSeen,
+                                                JailedUntil, JailX, JailY, JailZ, JailedBy, JailReason)
 };
 
 struct PlayerStore
@@ -105,6 +118,64 @@ struct PlayerStore
             return nullptr;
 
         for (const auto& record : m_records)
+        {
+            if (record.DiscordId == acDiscordId)
+                return &record;
+        }
+
+        return nullptr;
+    }
+
+    // Jail is written through immediately rather than waiting for the next timed flush.
+    // Thirty seconds is a fine window to lose a position in; it is not a fine window in
+    // which a sentence can vanish because the server went down.
+    void SetJail(const std::string& acDiscordId, const std::string& acUsername,
+                 int64_t aUntil, const glm::vec3& acCell,
+                 const std::string& acBy, const std::string& acReason)
+    {
+        if (acDiscordId.empty())
+            return;
+
+        auto* pRecord = FindMutable(acDiscordId);
+
+        if (!pRecord)
+        {
+            m_records.push_back({acDiscordId, acUsername});
+            pRecord = &m_records.back();
+        }
+
+        pRecord->Username = acUsername;
+        pRecord->JailedUntil = aUntil;
+        pRecord->JailX = acCell.x;
+        pRecord->JailY = acCell.y;
+        pRecord->JailZ = acCell.z;
+        pRecord->JailedBy = acBy;
+        pRecord->JailReason = acReason;
+
+        m_dirty = true;
+        Flush();
+    }
+
+    void ClearJail(const std::string& acDiscordId)
+    {
+        auto* pRecord = FindMutable(acDiscordId);
+        if (!pRecord)
+            return;
+
+        pRecord->JailedUntil = 0;
+        pRecord->JailedBy.clear();
+        pRecord->JailReason.clear();
+
+        m_dirty = true;
+        Flush();
+    }
+
+    PlayerRecord* FindMutable(const std::string& acDiscordId)
+    {
+        if (acDiscordId.empty())
+            return nullptr;
+
+        for (auto& record : m_records)
         {
             if (record.DiscordId == acDiscordId)
                 return &record;

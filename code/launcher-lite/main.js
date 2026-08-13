@@ -1602,6 +1602,101 @@ function saveNexusKey (key) {
   return true
 }
 
+/**
+ * Sign in through Nexus itself, rather than asking anyone to find an API key.
+ *
+ * Nexus's SSO works over a WebSocket rather than a redirect, which is why it looks
+ * nothing like the Discord flow internally:
+ *
+ *   1. open a socket to sso.nexusmods.com and send a UUID we generated
+ *   2. open the Nexus authorise page in the browser with that same UUID
+ *   3. the player presses Authorise there
+ *   4. the API key arrives back down the socket we are still holding open
+ *
+ * The socket must stay open across the whole thing - it is the only channel the key
+ * comes back on. There is no callback URL to listen on, so the local HTTP server used
+ * for Discord is no help here.
+ *
+ * The key is never shown to the player and never reaches the page. It is stored the same
+ * way as the Discord token: encrypted with DPAPI, tied to this Windows account.
+ */
+ipcMain.handle('nexus:ssoLogin', async () => {
+  const uuid = crypto.randomUUID()
+
+  return new Promise((resolve) => {
+    let socket
+    let settled = false
+
+    const finish = (result) => {
+      if (settled) return
+      settled = true
+      try { socket?.close() } catch {}
+      resolve(result)
+    }
+
+    // Nobody should be left staring at a spinner because they closed the browser tab.
+    const timeout = setTimeout(() => {
+      finish({ ok: false, error: 'Timed out waiting for Nexus. Try again, or paste an API key instead.' })
+    }, 180000)
+
+    try {
+      socket = new WebSocket('wss://sso.nexusmods.com')
+    } catch (err) {
+      clearTimeout(timeout)
+      return finish({ ok: false, error: `Could not reach Nexus: ${err.message}` })
+    }
+
+    socket.addEventListener('open', () => {
+      socket.send(JSON.stringify({ id: uuid, token: null, protocol: 2 }))
+
+      // Opened only after the socket is up. Sending someone to the authorise page before
+      // we are listening means approving into a void.
+      shell.openExternal(`https://www.nexusmods.com/sso?id=${uuid}&application=nightcityonline`)
+    })
+
+    socket.addEventListener('message', async (event) => {
+      let payload
+      try {
+        payload = JSON.parse(event.data)
+      } catch {
+        return
+      }
+
+      if (payload.success === false) {
+        clearTimeout(timeout)
+        return finish({ ok: false, error: payload.error || 'Nexus refused the sign-in.' })
+      }
+
+      const apiKey = payload?.data?.api_key
+      if (!apiKey) return   // the connection_token message - not the key yet
+
+      clearTimeout(timeout)
+
+      try {
+        const who = await axios.get('https://api.nexusmods.com/v1/users/validate.json', {
+          headers: { apikey: apiKey, 'User-Agent': 'NightCityOnline-Launcher/1.0' },
+          timeout: 15000
+        })
+
+        if (!saveNexusKey(apiKey)) {
+          return finish({ ok: false, error: 'Encrypted storage is unavailable, so the key was not saved.' })
+        }
+
+        saveSettings({ nexusName: who.data?.name || 'Nexus user' })
+
+        finish({ ok: true, name: who.data?.name, premium: Boolean(who.data?.is_premium) })
+      } catch (err) {
+        finish({ ok: false, error: `Nexus returned a key but rejected it: ${err.message}` })
+      }
+    })
+
+    socket.addEventListener('error', () => {
+      clearTimeout(timeout)
+      finish({ ok: false, error: 'Lost the connection to Nexus. Try again, or paste an API key instead.' })
+    })
+  })
+})
+
 // Validates the key by asking Nexus who it belongs to, rather than storing whatever was
 // pasted and failing later at download time with something unhelpful.
 ipcMain.handle('nexus:signIn', async (_event, key) => {
@@ -1695,24 +1790,80 @@ function describeInstalledMod (mod, installed, gameDir) {
   }
 }
 
+/**
+ * Puts the list into install order - requirements before the things that need them.
+ *
+ * A mod installed before its framework does not fail in any helpful way: the game starts
+ * and the mod is quietly absent, or it crashes somewhere unrelated hours later. Ordering
+ * the list is half the fix; refusing to install out of order is the other half, because a
+ * sorted list someone can click out of order is only a suggestion.
+ *
+ * A dependency cycle would loop forever, so anything still unplaced after a full pass is
+ * appended as-is. A bad list should render awkwardly, not hang the launcher.
+ */
+function sortByDependencies (mods) {
+  const byId = new Map(mods.map((m) => [String(m.nexusModId), m]))
+  const placed = new Set()
+  const ordered = []
+
+  const place = (mod, seen) => {
+    const id = String(mod.nexusModId)
+    if (placed.has(id) || seen.has(id)) return
+
+    seen.add(id)
+
+    for (const need of mod.requires || []) {
+      const dependency = byId.get(String(need))
+      if (dependency) place(dependency, seen)
+    }
+
+    if (!placed.has(id)) {
+      placed.add(id)
+      ordered.push(mod)
+    }
+  }
+
+  for (const mod of mods) place(mod, new Set())
+
+  // Anything a cycle kept out.
+  for (const mod of mods) {
+    if (!placed.has(String(mod.nexusModId))) ordered.push(mod)
+  }
+
+  return ordered
+}
+
 ipcMain.handle('mods:list', async () => {
   try {
     const gameDir = findGameDir()
     if (!gameDir) return { ok: false, error: 'Cyberpunk 2077 not found. Set it in Settings.' }
 
-    const mods = await fetchModList()
+    const mods = sortByDependencies(await fetchModList())
     const installed = loadInstalledMods()
+
+    const states = new Map()
+    for (const mod of mods) {
+      states.set(String(mod.nexusModId), describeInstalledMod(mod, installed, gameDir))
+    }
 
     return {
       ok: true,
-      mods: mods.map((mod) => ({
-        id: String(mod.nexusModId),
-        name: mod.name,
-        summary: mod.summary || '',
-        required: mod.required !== false,
-        nexusUrl: `https://www.nexusmods.com/cyberpunk2077/mods/${mod.nexusModId}`,
-        ...describeInstalledMod(mod, installed, gameDir)
-      }))
+      mods: mods.map((mod) => {
+        // Named, not numbered. "Needs mod 107" tells nobody anything.
+        const missing = (mod.requires || [])
+          .filter((need) => states.get(String(need))?.state !== 'installed')
+          .map((need) => mods.find((m) => String(m.nexusModId) === String(need))?.name || `mod ${need}`)
+
+        return {
+          id: String(mod.nexusModId),
+          name: mod.name,
+          summary: mod.summary || '',
+          required: mod.required !== false,
+          blockedBy: missing,
+          nexusUrl: `https://www.nexusmods.com/cyberpunk2077/mods/${mod.nexusModId}`,
+          ...states.get(String(mod.nexusModId))
+        }
+      })
     }
   } catch (err) {
     // An unreachable list must not stop anyone playing - they may already have every
@@ -1728,6 +1879,24 @@ ipcMain.handle('mods:open', async (_event, modId) => {
   const mod = mods.find((m) => String(m.nexusModId) === String(modId))
   if (!mod) return { ok: false, error: 'That mod is not on the list any more.' }
 
+  // Requirements are checked HERE, not only in the page. Hiding a button is a hint; this
+  // is the rule. Nothing stops someone reaching this handler another way, and installing
+  // a mod before its framework fails silently rather than loudly.
+  const gameDir = findGameDir()
+  const installed = loadInstalledMods()
+
+  const missing = (mod.requires || [])
+    .filter((need) => {
+      const dependency = mods.find((m) => String(m.nexusModId) === String(need))
+      return !dependency || !gameDir ||
+             describeInstalledMod(dependency, installed, gameDir).state !== 'installed'
+    })
+    .map((need) => mods.find((m) => String(m.nexusModId) === String(need))?.name || `mod ${need}`)
+
+  if (missing.length > 0) {
+    return { ok: false, error: `Install ${missing.join(' and ')} first - ${mod.name} needs it.` }
+  }
+
   await shell.openExternal(`https://www.nexusmods.com/cyberpunk2077/mods/${mod.nexusModId}?tab=files&file_id=${mod.nexusFileId}`)
   return { ok: true }
 })
@@ -1740,11 +1909,26 @@ ipcMain.handle('mods:delete', async (_event, modId) => {
   const record = installed[String(modId)]
   if (!record) return { ok: false, error: 'That mod is not recorded as installed.' }
 
+  // Warn if anything installed depends on this. Removing a framework from underneath
+  // three working mods breaks all three, and the breakage shows up later as those mods
+  // misbehaving - never as "you removed the thing they needed".
+  const mods = await fetchModList().catch(() => [])
+  const dependents = mods
+    .filter((m) => (m.requires || []).some((need) => String(need) === String(modId)))
+    .filter((m) => installed[String(m.nexusModId)])
+    .map((m) => m.name)
+
+  const detail = [`${(record.files || []).length} file(s) will be deleted from your game folder.`]
+  if (dependents.length > 0) {
+    detail.push('')
+    detail.push(`WARNING: ${dependents.join(', ')} need${dependents.length === 1 ? 's' : ''} this and will stop working.`)
+  }
+
   const { response } = await dialog.showMessageBox(mainWindow, {
     type: 'warning',
     title: 'Remove mod',
     message: `Remove ${record.name || 'this mod'}?`,
-    detail: `${(record.files || []).length} file(s) will be deleted from your game folder.`,
+    detail: detail.join('\n'),
     buttons: ['Remove', 'Cancel'],
     defaultId: 1,
     cancelId: 1,

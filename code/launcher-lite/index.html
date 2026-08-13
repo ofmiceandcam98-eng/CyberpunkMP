@@ -501,15 +501,23 @@
             <div>
               <div class="tool-name">Nexus Mods account</div>
               <div class="tool-desc">
-                Needed to download the server's mod list. Paste your personal API key from
-                <b>nexusmods.com &rarr; Account Settings &rarr; API Keys</b>. It is stored
-                encrypted on this PC and never leaves it.
+                Needed to download the server's mod list. Signing in opens Nexus in your
+                browser — press Authorise there and you are done. Nothing is typed, and the
+                key is stored encrypted on this PC.
                 <div style="margin-top:.4rem"><span id="nexusState">Not signed in</span></div>
-                <input id="nexusKey" type="password" placeholder="Nexus API key"
-                       style="margin-top:.4rem;width:100%;padding:.35rem .5rem;border-radius:4px;border:1px solid rgba(255,255,255,.14);background:rgba(0,0,0,.25);color:inherit;font-size:.75rem">
+
+                <!-- Kept as a fallback. Nexus SSO depends on their service being up and
+                     on this app being one it will talk to; when it is not, pasting a key
+                     still works and is better than being stuck. -->
+                <details style="margin-top:.5rem">
+                  <summary style="cursor:pointer;font-size:.7rem">Sign in with a key instead</summary>
+                  <input id="nexusKey" type="password" placeholder="Nexus API key"
+                         style="margin-top:.4rem;width:100%;padding:.35rem .5rem;border-radius:4px;border:1px solid rgba(255,255,255,.14);background:rgba(0,0,0,.25);color:inherit;font-size:.75rem">
+                  <button class="mod-btn" id="nexusSave" style="margin-top:.35rem">Save key</button>
+                </details>
               </div>
             </div>
-            <button class="action ghost" id="nexusSave">Save</button>
+            <button class="action ghost" id="nexusLogin">Sign in</button>
           </div>
 
           <div class="tool">
@@ -1408,10 +1416,31 @@
   async function refreshNexus () {
     const status = await window.launcher.nexusStatus()
     $('nexusState').textContent = status.signedIn
-      ? 'Signed in as ' + (status.name || 'Nexus user')
+      ? '✓ Signed in as ' + (status.name || 'Nexus user')
       : 'Not signed in'
-    $('nexusSave').textContent = status.signedIn ? 'Replace key' : 'Save'
+    $('nexusLogin').textContent = status.signedIn ? 'Sign in again' : 'Sign in'
   }
+
+  $('nexusLogin').addEventListener('click', async () => {
+    const btn = $('nexusLogin')
+    btn.disabled = true
+    btn.textContent = 'Waiting for Nexus...'
+    setSettingsStatus('Nexus opened in your browser - press Authorise there.')
+
+    const result = await window.launcher.nexusSsoLogin()
+
+    btn.disabled = false
+
+    if (result.ok) {
+      setSettingsStatus(
+        'Signed in as ' + result.name + (result.premium ? ' (Premium)' : ' (free account - installs open Nexus)'),
+        'ok')
+    } else {
+      setSettingsStatus(result.error, 'error')
+    }
+
+    await refreshNexus()
+  })
 
   $('nexusSave').addEventListener('click', async () => {
     const key = $('nexusKey').value
@@ -1521,9 +1550,19 @@
       }
       row.appendChild(badge)
 
+      // Blocked by a missing requirement: say which one, and offer no button. An
+      // Install button that refuses when pressed is worse than no button.
+      const blocked = mod.state !== 'installed' && (mod.blockedBy || []).length > 0
+
+      if (blocked) {
+        badge.className = 'mod-badge missing'
+        badge.textContent = 'NEEDS ' + mod.blockedBy[0].toUpperCase()
+        badge.title = 'Install ' + mod.blockedBy.join(' and ') + ' first'
+      }
+
       // The install button is REMOVED once installed rather than disabled. A greyed
       // button still reads as something you are supposed to press.
-      if (mod.state !== 'installed' && mod.state !== 'downloading') {
+      if (!blocked && mod.state !== 'installed' && mod.state !== 'downloading') {
         const install = document.createElement('button')
         install.className = 'mod-btn'
         install.textContent = 'Install'

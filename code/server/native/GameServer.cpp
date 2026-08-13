@@ -2,6 +2,7 @@
 
 #include <Components/PlayerComponent.h>
 #include <Components/MovementComponent.h>
+#include "Systems/ChatSystem.h"   // jail radius and the chat channel ids
 
 #include "Core/Filesystem.h"
 #include "Game/Level.h"
@@ -97,6 +98,7 @@ void GameServer::OnUpdate()
     ReportPlayerConnections(now);
     ReverifyPlayers(now);
     SavePlayerPositions(now);
+    EnforceJail(now);
 
     m_pWorld->Update(std::chrono::duration_cast<std::chrono::duration<float>>(delta).count());
 }
@@ -126,6 +128,78 @@ void GameServer::SavePlayerPositions(std::chrono::steady_clock::time_point aNow)
         });
 
     m_players.Flush();
+}
+
+void GameServer::EnforceJail(std::chrono::steady_clock::time_point aNow)
+{
+    // Once a second. Often enough that walking out is pointless, rarely enough that it
+    // costs nothing - and slow enough that the teleport reads as being dragged back
+    // rather than as the game stuttering.
+    if (std::chrono::duration_cast<std::chrono::milliseconds>(aNow - m_lastJailCheck).count() < 1000)
+        return;
+
+    m_lastJailCheck = aNow;
+
+    const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+
+    Vector<std::pair<ConnectionId, glm::vec3>> toReturn;
+    Vector<std::pair<ConnectionId, std::string>> toRelease;
+
+    m_pWorld->each(
+        [&](flecs::entity, const PlayerComponent& aPlayer)
+        {
+            const auto* pRecord = m_players.Find(aPlayer.DiscordId);
+            if (!pRecord || pRecord->JailedUntil == 0)
+                return;
+
+            // Sentence served. Released wherever they are - dragging someone back to the
+            // cell to let them out of it would be a strange last act.
+            if (seconds >= pRecord->JailedUntil)
+            {
+                toRelease.emplace_back(aPlayer.Connection, aPlayer.DiscordId);
+                return;
+            }
+
+            const auto* pMovement = aPlayer.Puppet ? aPlayer.Puppet.get<MovementComponent>() : nullptr;
+            if (!pMovement)
+                return;
+
+            const glm::vec3 cell{pRecord->JailX, pRecord->JailY, pRecord->JailZ};
+
+            if (glm::distance(pMovement->Position, cell) > kJailRadius)
+                toReturn.emplace_back(aPlayer.Connection, cell);
+        });
+
+    // Sent outside the iteration. Sending while walking the world is asking for trouble
+    // if a handler ever touches the entity list.
+    for (const auto& [connection, cell] : toReturn)
+    {
+        server::NotifyTeleport teleport;
+
+        common::Vector3 position;
+        position.set_x(cell.x);
+        position.set_y(cell.y);
+        position.set_z(cell.z);
+        teleport.set_position(position);
+        teleport.set_rotation(0.f);
+
+        Send(connection, teleport);
+    }
+
+    for (const auto& [connection, discordId] : toRelease)
+    {
+        m_players.ClearJail(discordId);
+
+        server::ChatMessage message;
+        message.set_username("SERVER");
+        message.set_message("Your sentence is served. You are free to go.");
+        message.set_channel(ChatChannel::kServer);
+
+        Send(connection, message);
+
+        spdlog::info("Released {} from jail", discordId);
+    }
 }
 
 void GameServer::ReverifyPlayers(std::chrono::steady_clock::time_point aNow)

@@ -400,6 +400,162 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         return true;
     }
 
+    // --------------------------------------------------------------- /jail ----
+    //
+    // The cell is wherever the staff member is standing. No configuration, no coordinates
+    // to look up - walk into the room you want to use as a cell, bring them, and jail
+    // them. Any building in Night City becomes a holding cell.
+    if (command == "/jail")
+    {
+        if (!acSender.HasAtLeast(EPermissionLevel::kModerator))
+            return deny(EPermissionLevel::kModerator);
+
+        if (target.empty())
+        {
+            Tell(acSender, "Usage: /jail <player> <minutes> [reason]");
+            return true;
+        }
+
+        const auto victim = findPlayer(target);
+        if (!victim)
+        {
+            Tell(acSender, fmt::format("No player called '{}' is online.", target));
+            return true;
+        }
+
+        auto* pVictim = victim.get_mut<PlayerComponent>();
+
+        if (pVictim->Level >= acSender.Level)
+        {
+            Tell(acSender, "You cannot jail someone at or above your own rank.");
+            return true;
+        }
+
+        if (pVictim->DiscordId.empty())
+        {
+            // Nothing durable to hold them by. A sentence that cannot survive a reconnect
+            // is not one, so say so rather than pretending.
+            Tell(acSender, "That player has no verified Discord account, so a sentence could not be kept.");
+            return true;
+        }
+
+        // "/jail bob 15 breaking character" - minutes first, the rest is the reason.
+        int minutes = 0;
+        std::string reason;
+        {
+            const auto space = rest.find(' ');
+            const auto minutesText = space == std::string::npos ? rest : rest.substr(0, space);
+
+            try { minutes = std::stoi(minutesText); } catch (...) { minutes = 0; }
+
+            if (space != std::string::npos)
+                reason = rest.substr(space + 1);
+        }
+
+        if (minutes <= 0)
+        {
+            Tell(acSender, "Usage: /jail <player> <minutes> [reason]");
+            return true;
+        }
+
+        // Capped. An accidental extra digit should not sentence somebody to a week.
+        minutes = std::min(minutes, 1440);
+
+        const auto* pCell = acSender.Puppet ? acSender.Puppet.get<MovementComponent>() : nullptr;
+        if (!pCell)
+        {
+            Tell(acSender, "Stand where you want the cell to be, then jail them.");
+            return true;
+        }
+
+        // Where they were arrested, so /unjail and the end of the sentence can put them
+        // back. Same mechanism /tp uses.
+        if (const auto* pTheirs = pVictim->Puppet ? pVictim->Puppet.get<MovementComponent>() : nullptr)
+        {
+            pVictim->ReturnPosition = pTheirs->Position;
+            pVictim->ReturnRotation = pTheirs->Rotation;
+            pVictim->HasReturnPoint = true;
+        }
+
+        const auto until = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count() + (minutes * 60);
+
+        GServer->GetPlayerStore().SetJail(pVictim->DiscordId, pVictim->Username, until,
+                                          pCell->Position, acSender.Username, reason);
+
+        // Straight into the cell. EnforceJail would drag them there within the second
+        // anyway; doing it now means the sentence starts where it should.
+        server::NotifyTeleport teleport;
+        common::Vector3 position;
+        position.set_x(pCell->Position.x);
+        position.set_y(pCell->Position.y);
+        position.set_z(pCell->Position.z);
+        teleport.set_position(position);
+        teleport.set_rotation(pCell->Rotation.z);
+        GServer->Send(pVictim->Connection, teleport);
+
+        spdlog::info("{} jailed {} for {} minutes ({})", acSender.Username, pVictim->Username, minutes, reason);
+
+        Broadcast("SERVER", fmt::format("{} was jailed for {} minute(s) by {}{}", pVictim->Username, minutes,
+                                        acSender.Username, reason.empty() ? "" : (" - " + reason)).c_str());
+
+        Tell(*pVictim, fmt::format("You are jailed for {} minute(s). Leaving the cell will put you back in it.",
+                                   minutes));
+        return true;
+    }
+
+    // ------------------------------------------------------------- /unjail ----
+    if (command == "/unjail")
+    {
+        if (!acSender.HasAtLeast(EPermissionLevel::kModerator))
+            return deny(EPermissionLevel::kModerator);
+
+        if (target.empty())
+        {
+            Tell(acSender, "Usage: /unjail <player>");
+            return true;
+        }
+
+        const auto victim = findPlayer(target);
+        if (!victim)
+        {
+            Tell(acSender, fmt::format("No player called '{}' is online.", target));
+            return true;
+        }
+
+        auto* pVictim = victim.get_mut<PlayerComponent>();
+        const auto* pRecord = GServer->GetPlayerStore().Find(pVictim->DiscordId);
+
+        if (!pRecord || pRecord->JailedUntil == 0)
+        {
+            Tell(acSender, fmt::format("{} is not jailed.", pVictim->Username));
+            return true;
+        }
+
+        GServer->GetPlayerStore().ClearJail(pVictim->DiscordId);
+
+        // Released back where they were arrested, if that is still known.
+        if (pVictim->HasReturnPoint)
+        {
+            server::NotifyTeleport teleport;
+            common::Vector3 position;
+            position.set_x(pVictim->ReturnPosition.x);
+            position.set_y(pVictim->ReturnPosition.y);
+            position.set_z(pVictim->ReturnPosition.z);
+            teleport.set_position(position);
+            teleport.set_rotation(pVictim->ReturnRotation.z);
+            GServer->Send(pVictim->Connection, teleport);
+
+            pVictim->HasReturnPoint = false;
+        }
+
+        spdlog::info("{} released {} from jail", acSender.Username, pVictim->Username);
+
+        Broadcast("SERVER", fmt::format("{} was released by {}", pVictim->Username, acSender.Username).c_str());
+        Tell(*pVictim, "You have been released.");
+        return true;
+    }
+
     // ------------------------------------------------------------- /return ----
     //
     // Puts someone back where /tp took them from. The counterpart to a summon: staff
@@ -472,7 +628,11 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         Tell(acSender, "Other: /who");
 
         if (acSender.HasAtLeast(EPermissionLevel::kModerator))
+        {
             Tell(acSender, "Staff: /kick <player> [reason], /bans");
+            Tell(acSender, "       /jail <player> <minutes> [reason] - cell is where you stand");
+            Tell(acSender, "       /unjail <player>");
+        }
 
         if (acSender.HasAtLeast(EPermissionLevel::kAdmin))
             Tell(acSender, "Admin: /ban <player> [reason], /unban <discord id>, /tp <player>, /return <player>");

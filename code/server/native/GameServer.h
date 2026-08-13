@@ -118,6 +118,14 @@ private:
     // rather than a session. Disconnects save immediately and do not wait for this.
     void SavePlayerPositions(std::chrono::steady_clock::time_point aNow);
 
+    // Keeps jailed players in their cell, and lets them out when the time is up.
+    //
+    // The cell is a rule, not a room. Cyberpunk's doors are not synchronised - every
+    // client has its own - so a real cell door would hold nobody. What the server DOES
+    // know, every tick, is where everyone is, so the sentence is enforced by putting
+    // anyone who wanders too far straight back.
+    void EnforceJail(std::chrono::steady_clock::time_point aNow);
+
 public:
     BanList& GetBanList() noexcept { return m_bans; }
     PlayerStore& GetPlayerStore() noexcept { return m_players; }
@@ -135,6 +143,7 @@ private:
     BanList m_bans;
     PlayerStore m_players;
     std::chrono::steady_clock::time_point m_lastPlayerSave;
+    std::chrono::steady_clock::time_point m_lastJailCheck;
     entt::dispatcher m_dispatcher;
 
     Config m_config;

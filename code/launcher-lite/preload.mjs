@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld('launcher', {
     ipcRenderer.on('mod-progress', (_e, info) => callback(info))
   },
 
+  nexusSsoLogin: () => ipcRenderer.invoke('nexus:ssoLogin'),
   nexusSignIn: (key) => ipcRenderer.invoke('nexus:signIn', key),
   nexusStatus: () => ipcRenderer.invoke('nexus:status'),
   nexusSignOut: () => ipcRenderer.invoke('nexus:signOut'),

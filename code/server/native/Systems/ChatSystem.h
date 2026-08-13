@@ -36,6 +36,14 @@ constexpr uint32_t kServer = 4;
 // broken and can shove each other - close enough to be obviously deliberate.
 constexpr float kTeleportDistance = 5.f;
 
+// How far a jailed player may stray before the server puts them back.
+//
+// Bigger than a cell on purpose. Cyberpunk positions jitter, floors are uneven, and a
+// tight leash would yank someone every time they shifted their feet - which reads as the
+// game being broken rather than as being locked up. Roomy enough to move around in,
+// small enough that leaving is not possible.
+constexpr float kJailRadius = 12.f;
+
 struct World;
 struct ChatSystem
 {
