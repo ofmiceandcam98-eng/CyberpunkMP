@@ -443,6 +443,27 @@
 
           <div class="tool">
             <div>
+              <div class="tool-name">Launcher folder</div>
+              <div class="tool-desc">
+                Opens where the launcher is installed. The uninstaller lives here too.
+              </div>
+            </div>
+            <button class="action ghost" id="openInstallDir">Open</button>
+          </div>
+
+          <div class="tool">
+            <div>
+              <div class="tool-name">Uninstall launcher</div>
+              <div class="tool-desc">
+                Removes the launcher from this PC. Your game and the mod are left alone -
+                use "Remove mod" above if you want that gone as well.
+              </div>
+            </div>
+            <button class="action ghost" id="uninstallLauncher">Uninstall</button>
+          </div>
+
+          <div class="tool">
+            <div>
               <div class="tool-name">Verify game files</div>
               <div class="tool-desc">
                 Checks the mod files are present and current. Reports everything wrong at
@@ -1213,6 +1234,14 @@
     } else {
       setSettingsStatus(result.error, 'error')
     }
+  })
+
+  $('openInstallDir').addEventListener('click', () => window.launcher.openInstallDir())
+
+  $('uninstallLauncher').addEventListener('click', async () => {
+    const result = await window.launcher.uninstallLauncher()
+    // On success the launcher is already quitting, so there is nothing to report.
+    if (!result.ok && result.error) setSettingsStatus(result.error, 'error')
   })
 
   $('viewGameDir').addEventListener('click', () => window.launcher.openFolder('game'))

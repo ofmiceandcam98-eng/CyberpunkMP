@@ -118,6 +118,19 @@ void ImGuiService::OnRenderInit()
             IMGUI_CHECKVERSION();
             ImGui::CreateContext();
 
+            // Keep our hands off the OS cursor.
+            //
+            // The Win32 backend re-applies a cursor shape every single NewFrame. Left
+            // alone it calls SetCursor(IDC_ARROW) forever, which paints a plain white
+            // Windows arrow in the middle of the screen - sitting on top of the crosshair
+            // during play, and on top of the game's own cursor in menus. The game already
+            // decides when a cursor should exist and what it should look like; this
+            // overlay has no business overriding that.
+            //
+            // Our own windows stay usable because MouseDrawCursor below makes ImGui draw
+            // its cursor INTO the overlay, so it exists only while ImGui wants the mouse.
+            ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+
             // TODO - make this configurable eventually and overridable by mods for themselves easily
             // setup CET default style
             ImGui::StyleColorsDark(&m_styleReference);
@@ -271,6 +284,13 @@ void ImGuiService::PrepareUpdate()
 
     DXGI_SWAP_CHAIN_DESC sdesc;
     GetSwapChain()->GetDesc(&sdesc);
+
+    // Draw a cursor only while our own UI actually wants the mouse. WantCaptureMouse is
+    // last frame's answer, which is exactly right here: it is set while the pointer is
+    // over an ImGui window, and a single frame of lag entering or leaving one is
+    // invisible. During normal play nothing is hovered, so nothing is drawn and the
+    // crosshair is left alone.
+    ImGui::GetIO().MouseDrawCursor = ImGui::GetIO().WantCaptureMouse;
 
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();

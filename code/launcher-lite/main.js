@@ -1517,6 +1517,56 @@ ipcMain.handle('discord:logout', () => {
   return { ok: true }
 })
 
+// Opens the folder the launcher is actually installed in. It lives under AppData, which
+// nobody should be expected to go digging through.
+ipcMain.handle('launcher:openInstallDir', async () => {
+  await shell.openPath(path.dirname(process.execPath))
+  return { ok: true }
+})
+
+/**
+ * Removes the launcher itself.
+ *
+ * NSIS puts an uninstaller next to the exe, but it is buried in AppData where nobody
+ * will find it. This is the same uninstaller, reachable from inside the thing being
+ * uninstalled.
+ *
+ * Two things this must get right. It confirms first - it is irreversible and one click
+ * from a settings screen. And it QUITS: Windows cannot delete a running executable, so
+ * an uninstaller launched from a live launcher would half-finish and leave the install
+ * broken rather than gone.
+ */
+ipcMain.handle('launcher:uninstall', async () => {
+  const dir = path.dirname(process.execPath)
+  const uninstaller = path.join(dir, 'Uninstall Night City Online Launcher.exe')
+
+  if (!existsSync(uninstaller)) {
+    return {
+      ok: false,
+      error: 'No uninstaller here - this looks like the portable build. Just delete the .exe.'
+    }
+  }
+
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    title: 'Uninstall Night City Online Launcher',
+    message: 'Remove the launcher from this PC?',
+    detail: 'This removes the launcher only. The mod stays installed in your game folder, ' +
+            'and Cyberpunk 2077 is not touched. Use "Remove mod" first if you want that gone too.',
+    buttons: ['Uninstall', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true
+  })
+
+  if (response !== 0) return { ok: false }
+
+  spawn(uninstaller, [], { detached: true, stdio: 'ignore' }).unref()
+  app.quit()
+
+  return { ok: true }
+})
+
 // Re-runnable from Settings, because the first-run question is asked exactly once and
 // "No thanks" is easy to click by reflex.
 ipcMain.handle('shortcuts:create', async () => {
