@@ -654,7 +654,14 @@
       <span class="sep">Â·</span>
       <button class="linkbtn" data-link="discord">Discord</button>
     </div>
-    <div style="margin-top:.4rem">Your Discord ID is used to identify you in game.</div>
+    <!-- The LAUNCHER's own version, which is not the same number as the mod's.
+         It was only ever shown inside Settings, so the gate above reading
+         "Up to date - v0.1.6" was the only version on screen - and that one is the
+         mod's. Two different things called v0.1.6 is a coincidence that will not
+         survive the next mod-only ship. -->
+    <div style="margin-top:.4rem">
+      Your Discord ID is used to identify you in game. <span class="sep">Â·</span> <span id="footerVersion"></span>
+    </div>
   </footer>
 
 <script>
@@ -990,13 +997,15 @@
 
     if (updateState.upToDate) {
       dot.className = 'dot on'
-      text.textContent = 'Up to date' + (updateState.version ? ' - ' + updateState.version : '')
+      // Says MOD explicitly. This line reports the mod's version, and sat directly above
+      // a launcher that showed no version of its own - so it read as the launcher's.
+      text.textContent = 'Mod up to date' + (updateState.version ? ' - ' + updateState.version : '')
       // Nothing to do, so the button is not shown at all. A permanently disabled
       // "Update" button invites people to keep pressing it wondering what is broken.
       updateBtn.style.display = 'none'
     } else {
       dot.className = 'dot'
-      text.textContent = 'Update required' + (updateState.version ? ' - ' + updateState.version : '')
+      text.textContent = 'Mod update required' + (updateState.version ? ' - ' + updateState.version : '')
       updateBtn.style.display = 'inline-block'
       updateBtn.disabled = false
     }
@@ -1424,6 +1433,16 @@
 
   ;(async () => {
     render(null)
+
+    // Own version first, before anything that can fail. If the update check or the
+    // server ping throws, the one number that identifies this build is still on screen -
+    // which is exactly when someone is about to ask what version they are running.
+    try {
+      const paths = await window.launcher.getPaths()
+      $('footerVersion').textContent = 'Launcher v' + paths.appVersion
+    } catch {
+      $('footerVersion').textContent = ''
+    }
 
     // Restore a previous sign-in first, so a returning player lands on "Ready to
     // play" instead of signing in again every single launch.

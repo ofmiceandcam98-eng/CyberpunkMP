@@ -17,6 +17,15 @@ struct PlayerComponent
     // join - which is no use at all if they are already in and causing the problem.
     std::string DiscordToken;
 
+    // Where this player was standing before staff teleported them.
+    //
+    // Being summoned across the map is disruptive on a roleplay server - someone may be
+    // mid-scene, or halfway through a drive. Recording the spot is what makes /tp
+    // reversible rather than something that costs the player their evening.
+    bool HasReturnPoint{false};
+    glm::vec3 ReturnPosition{};
+    glm::vec3 ReturnRotation{};
+
     const char* GetUsername() const;
 
     const char* GetDiscordId() const { return DiscordId.c_str(); }

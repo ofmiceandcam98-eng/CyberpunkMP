@@ -1747,7 +1747,10 @@ ipcMain.handle('tailscale:download', async () => {
 ipcMain.handle('links:open', async (_event, which) => {
   const links = {
     release: 'https://github.com/ofmiceandcam98-eng/CyberpunkMP/releases/latest',
-    diagnostic: 'https://github.com/ofmiceandcam98-eng/CyberpunkMP/releases/tag/test-2026.08.12-probes',
+    // Was pinned to an old probe build, which went stale the moment releases became
+    // versioned - it offered people a build from days earlier as if it were current.
+    // The diagnostics now ship in every build, behind the developer overlay.
+    diagnostic: 'https://github.com/ofmiceandcam98-eng/CyberpunkMP/releases/latest',
     discord: DISCORD_INVITE,
     tailscale: TAILSCALE_DOWNLOAD
   }

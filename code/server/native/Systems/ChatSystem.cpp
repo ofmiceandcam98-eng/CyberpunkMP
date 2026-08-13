@@ -357,6 +357,20 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             return true;
         }
 
+        // Remember where they were BEFORE moving them, so /return can undo this.
+        //
+        // Recorded from the server's own copy of their position rather than asking the
+        // client, and only overwritten when there is a real position to record - so
+        // teleporting someone twice in a row still returns them to where they actually
+        // started, not to the last place staff dragged them.
+        if (const auto* pTheirs = pVictim->Puppet.get<MovementComponent>())
+        {
+            auto* pVictimMutable = victim.get_mut<PlayerComponent>();
+            pVictimMutable->ReturnPosition = pTheirs->Position;
+            pVictimMutable->ReturnRotation = pTheirs->Rotation;
+            pVictimMutable->HasReturnPoint = true;
+        }
+
         // Yaw is rotation about Z, and Cyberpunk's world is Y-forward at yaw 0, so the
         // facing vector is (-sin, cos). Getting this backwards would still place them the
         // right distance away, just behind - worth an eyeball on the first use.
@@ -386,6 +400,60 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         return true;
     }
 
+    // ------------------------------------------------------------- /return ----
+    //
+    // Puts someone back where /tp took them from. The counterpart to a summon: staff
+    // pulling a player out of whatever they were doing should be able to undo it.
+    if (command == "/return")
+    {
+        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
+            return deny(EPermissionLevel::kAdmin);
+
+        if (target.empty())
+        {
+            Tell(acSender, "Usage: /return <player>");
+            return true;
+        }
+
+        const auto victim = findPlayer(target);
+        if (!victim)
+        {
+            Tell(acSender, fmt::format("No player called '{}' is online.", target));
+            return true;
+        }
+
+        auto* pVictim = victim.get_mut<PlayerComponent>();
+
+        if (!pVictim->HasReturnPoint)
+        {
+            Tell(acSender, fmt::format("{} has not been teleported, so there is nowhere to send them back to.",
+                                       pVictim->Username));
+            return true;
+        }
+
+        server::NotifyTeleport teleport;
+
+        common::Vector3 position;
+        position.set_x(pVictim->ReturnPosition.x);
+        position.set_y(pVictim->ReturnPosition.y);
+        position.set_z(pVictim->ReturnPosition.z);
+        teleport.set_position(position);
+        teleport.set_rotation(pVictim->ReturnRotation.z);
+
+        GServer->Send(pVictim->Connection, teleport);
+
+        // Cleared so a second /return does not silently send them to a stale spot they
+        // may have long since walked away from.
+        pVictim->HasReturnPoint = false;
+
+        spdlog::info("{} returned {} to ({:.1f}, {:.1f}, {:.1f})", acSender.Username, pVictim->Username,
+                     pVictim->ReturnPosition.x, pVictim->ReturnPosition.y, pVictim->ReturnPosition.z);
+
+        Tell(acSender, fmt::format("Sent {} back.", pVictim->Username));
+        Tell(*pVictim, "You were sent back to where you were.");
+        return true;
+    }
+
     // --------------------------------------------------------------- /help ----
     //
     // Nobody discovers a chat channel by accident, and an unlisted feature may as well
@@ -407,7 +475,7 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             Tell(acSender, "Staff: /kick <player> [reason], /bans");
 
         if (acSender.HasAtLeast(EPermissionLevel::kAdmin))
-            Tell(acSender, "Admin: /ban <player> [reason], /unban <discord id>, /tp <player>");
+            Tell(acSender, "Admin: /ban <player> [reason], /unban <discord id>, /tp <player>, /return <player>");
 
         return true;
     }

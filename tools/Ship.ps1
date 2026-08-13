@@ -60,6 +60,25 @@ function Ok    { param($T) Write-Host "  OK  $T" -ForegroundColor Green }
 function Warn  { param($T) Write-Host "  !!  $T" -ForegroundColor Yellow }
 function Die   { param($T) Write-Host "`nSTOPPED: $T" -ForegroundColor Red; exit 1 }
 
+# Runs a native command without PowerShell treating its stderr as fatal.
+#
+# PowerShell 5.1 wraps a native program's stderr in ErrorRecords, and this script runs
+# with $ErrorActionPreference='Stop', which turns those into terminating errors. Anything
+# a tool prints to stderr - including perfectly normal progress and "not found" answers -
+# therefore kills the script where it stands.
+#
+# This has now broken two ships. Once probing for a release that did not exist, where the
+# expected answer was fatal. Once on a network timeout inside a RETRY LOOP, where the
+# throw jumped clean over the retry and out of the script - so the loop that existed
+# specifically to survive that failure never ran even once.
+function Invoke-Native {
+    param([scriptblock]$Command)
+
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & $Command } finally { $ErrorActionPreference = $previous }
+}
+
 Set-Location $Repo
 
 # ---------------------------------------------------------------------------
@@ -146,25 +165,13 @@ if ($Mod) {
         $dll = Get-Item "distrib\launcher\mod\CyberpunkMP.dll"
         Ok "built $([math]::Round($dll.Length/1MB,2)) MB at $($dll.LastWriteTime.ToString('HH:mm:ss'))"
 
-        # Force the scripts across. `xmake install` refreshes the DLL but was caught
-        # leaving edited .reds files behind at their previous contents, which is the worst
-        # possible failure: the build succeeds, the version number moves, the DLL is new,
-        # and the script half of the mod is silently whatever it was last time. That looks
-        # exactly like a redscript change that "did not work" and sends you debugging code
-        # the game never received. Copying is cheap; guessing is not.
-        Copy-Item "code\assets\redscript\*" -Destination "distrib\launcher\mod\assets\redscript\" -Recurse -Force
-
-        $stale = @()
-        Get-ChildItem "code\assets\redscript" -Recurse -Filter *.reds | ForEach-Object {
-            $relative = $_.FullName.Substring((Resolve-Path "code\assets\redscript").Path.Length + 1)
-            $shipped = "distrib\launcher\mod\assets\redscript\$relative"
-            if (-not (Test-Path $shipped)) { $stale += "$relative (missing)" }
-            elseif ((Get-FileHash $_.FullName).Hash -ne (Get-FileHash $shipped).Hash) { $stale += $relative }
-        }
-        if ($stale.Count -gt 0) { Die "scripts did not ship: $($stale -join ', ')" }
-        Ok "scripts match source"
-
-        # Actually COMPILE the redscript, using the game's own compiler.
+        # COMPILE FIRST, deploy second.
+        #
+        # distrib is the junction target - writing there IS writing to the game's plugin
+        # folder. Deploying before the check meant broken scripts sat in their live
+        # location for however long the check took, and launching the game in that window
+        # produced a compilation-error dialog for a state that was fixed a minute later.
+        # Nothing reaches the install until it is known to compile.
         #
         # This exists because a single bad .reds file does not fail quietly and locally -
         # redscript aborts the whole compilation, so the game starts with NO scripts at
@@ -194,7 +201,22 @@ if ($Mod) {
             #
             # zzzCyberpunkMP is excluded because it is a junction to distrib: including it
             # would compile our mod twice and collide on every definition.
-            $scriptPaths = @(Join-Path $Repo "distrib\launcher\mod\assets\redscript")
+            # Compile a COPY, never the deployed scripts.
+            #
+            # distrib is the junction target - it IS the game's plugin folder. Checking
+            # there meant the scripts had to be written to their live location before
+            # anyone knew whether they compiled, leaving a window where launching the game
+            # loaded a half-applied change. Cam hit exactly that: a compilation-error
+            # dialog for a broken intermediate state that was fixed a minute later.
+            #
+            # Staging first means the install is only ever written to by the copy above,
+            # after the code is known good.
+            $staged = Join-Path $scratch "redscript"
+            if (Test-Path $staged) { Remove-Item $staged -Recurse -Force }
+            New-Item -ItemType Directory -Force -Path $staged | Out-Null
+            Copy-Item (Join-Path $Repo "code\assets\redscript\*") $staged -Recurse -Force
+
+            $scriptPaths = @($staged)
             $scriptPaths += Get-ChildItem (Join-Path $GameDir "red4ext\plugins") -Directory |
                 Where-Object { $_.Name -ne 'zzzCyberpunkMP' -and (Test-Path (Join-Path $_.FullName 'Scripts')) } |
                 ForEach-Object { Join-Path $_.FullName 'Scripts' }
@@ -213,10 +235,27 @@ if ($Mod) {
 
             if ($LASTEXITCODE -ne 0) {
                 $sccOut | Where-Object { $_ -match 'ERROR|error' } | Select-Object -First 12 | ForEach-Object { Write-Host "      $_" -ForegroundColor Red }
-                Die "redscript does not compile - shipping this would disable every script in the mod"
+                Die "redscript does not compile - nothing was deployed, your install is untouched"
             }
             Ok "redscript compiles"
         }
+
+        # NOW deploy. `xmake install` refreshes the DLL but was caught leaving edited .reds
+        # files at their previous contents, which is the worst kind of failure: the build
+        # succeeds, the version moves, the DLL is new, and the script half of the mod is
+        # silently whatever it was last time. That looks exactly like a redscript change
+        # that "did not work" and sends you debugging code the game never received.
+        Copy-Item "code\assets\redscript\*" -Destination "distrib\launcher\mod\assets\redscript\" -Recurse -Force
+
+        $stale = @()
+        Get-ChildItem "code\assets\redscript" -Recurse -Filter *.reds | ForEach-Object {
+            $relative = $_.FullName.Substring((Resolve-Path "code\assets\redscript").Path.Length + 1)
+            $shipped = "distrib\launcher\mod\assets\redscript\$relative"
+            if (-not (Test-Path $shipped)) { $stale += "$relative (missing)" }
+            elseif ((Get-FileHash $_.FullName).Hash -ne (Get-FileHash $shipped).Hash) { $stale += $relative }
+        }
+        if ($stale.Count -gt 0) { Die "scripts did not ship: $($stale -join ', ')" }
+        Ok "scripts deployed and match source"
     }
 }
 
@@ -383,13 +422,19 @@ if ($existingTags -notcontains $Tag) {
 # Uploads are retried. These are ~100MB over a home connection, and a transient timeout
 # should cost a retry rather than the whole ship.
 $uploaded = $false
-foreach ($attempt in 1..3) {
-    gh release upload $Tag @uploads --repo $GhRepo --clobber 2>&1 | Select-Object -Last 1
+foreach ($attempt in 1..4) {
+    Invoke-Native { gh release upload $Tag @uploads --repo $GhRepo --clobber }
+
     if ($LASTEXITCODE -eq 0) { $uploaded = $true; break }
-    Warn "upload attempt $attempt failed - retrying"
-    Start-Sleep -Seconds 5
+
+    if ($attempt -lt 4) {
+        # Long enough for a DNS hiccup or a dropped route to recover. These are ~100MB
+        # uploads over a home connection; failing fast helps nobody.
+        Warn "upload attempt $attempt failed (exit $LASTEXITCODE) - retrying in 20s"
+        Start-Sleep -Seconds 20
+    }
 }
-if (-not $uploaded) { Die "upload failed after 3 attempts - $Tag is still a prerelease, so nothing is pointing at it" }
+if (-not $uploaded) { Die "upload failed after 4 attempts - $Tag is still a prerelease, so nothing is pointing at it" }
 
 # Confirm what is actually on the release, rather than assuming the upload worked.
 Step "Verify"
