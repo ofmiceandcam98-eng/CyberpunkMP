@@ -50,11 +50,23 @@ if ($release.draft) {
     exit 1
 }
 
-$asset = $release.assets | Select-Object -First 1
+# The thing a person should actually download, named explicitly.
+#
+# This used to take whatever asset happened to be FIRST, which is meaningless: on one
+# release that was the 8.3 MB install package, on the next it was the 4.1 MB DLL. The
+# announced size changed with no change in what was being offered, and the number
+# described a file nobody was meant to download.
+$preferred = @("NightCityOnline-Setup.exe", "FullInstall.zip")
+
+$asset = $null
+foreach ($name in $preferred) {
+    $asset = $release.assets | Where-Object { $_.name -eq $name } | Select-Object -First 1
+    if ($asset) { break }
+}
 
 if (-not $asset) {
-    Write-Host "That release has no attached file - nothing for anyone to download." -ForegroundColor Yellow
-    Write-Host "Attach the zip first, then run this again." -ForegroundColor DarkGray
+    Write-Host "That release has no installer attached - nothing for anyone to download." -ForegroundColor Yellow
+    Write-Host "Expected one of: $($preferred -join ', ')" -ForegroundColor DarkGray
     exit 1
 }
 
@@ -70,7 +82,9 @@ if ($Highlights) {
 }
 $body += "**[Download it here]($download)**"
 $body += ""
-$body += "Install steps are in ``INSTALL.txt`` inside the zip. If you crash, grab the log from ``red4ext\plugins\zzzCyberpunkMP\logs\`` and post the whole file - that is the most useful thing you can do for us right now."
+$body += "**New here?** Download the launcher, sign in with Discord, and press Install - it fetches the mod and everything it needs. You do not need to unzip anything by hand."
+$body += ""
+$body += "If you crash, grab the log from ``red4ext\plugins\zzzCyberpunkMP\logs\`` and post the whole file - that is the most useful thing you can do for us right now."
 
 $message = $body -join "`n"
 

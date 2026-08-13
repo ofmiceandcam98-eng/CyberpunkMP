@@ -538,7 +538,15 @@ async function installEverything (onProgress = () => {}) {
 
   onProgress('Downloading...')
 
-  const url = `https://github.com/${GITHUB_REPO}/releases/download/${RELEASE_TAG}/FullInstall.zip`
+  // /releases/latest/download/ is a permanent URL that always resolves to the newest
+  // release's asset of that name.
+  //
+  // This previously interpolated RELEASE_TAG - a constant that was DELETED when the
+  // update check moved to /releases/latest. Referencing it threw a ReferenceError before
+  // a single byte was fetched, so first-time install was broken outright for anyone on
+  // 0.1.4 or later. Nothing pointed at it because the launcher's own update path had
+  // stopped using tags, and nobody had done a fresh install since.
+  const url = `https://github.com/${GITHUB_REPO}/releases/latest/download/FullInstall.zip`
   const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 180000 })
   const buffer = Buffer.from(response.data)
 

@@ -98,6 +98,11 @@ public class ChatController extends inkHUDGameController {
             this.m_player.RegisterInputListener(this, n"ChatTop");
             this.m_player.RegisterInputListener(this, n"ChatBottom");
             this.m_player.RegisterInputListener(this, n"EnterChat");
+
+            // Mouse wheel, registered only while the chat input is open. Bound globally
+            // it would fight weapon switching during normal play; while the input is up
+            // the game is already in a modal context and the wheel has nothing else to do.
+            this.m_player.RegisterInputListener(this, n"mouse_wheel");
         } else {
             this.m_repeatingScrollActionEnabled = false;
             let targets = new inkWidgetsSet();
@@ -115,6 +120,7 @@ public class ChatController extends inkHUDGameController {
             this.m_player.UnregisterInputListener(this, n"ChatTop");
             this.m_player.UnregisterInputListener(this, n"ChatBottom");
             this.m_player.UnregisterInputListener(this, n"EnterChat");
+            this.m_player.UnregisterInputListener(this, n"mouse_wheel");
             this.m_input.SetText("");
             this.RequestSetFocus(null);
         }

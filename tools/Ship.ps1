@@ -336,6 +336,50 @@ if ($Mod) {
     $uploads += $payload
     $uploads += (Join-Path $Repo "distrib\launcher\mod\CyberpunkMP.dll")
     Ok "mod payload staged"
+
+    # FullInstall.zip - what a NEW player gets. Rebuilt every ship.
+    #
+    # This is the launcher's "Install everything" download, and it went missing entirely
+    # when releases became versioned: it lived only on one old tag, and the launcher was
+    # still building its URL from a constant that had been deleted. First-time install
+    # was broken outright and nothing surfaced it, because nobody does a fresh install
+    # while they already have one.
+    #
+    # Assembled rather than copied forward, so the mod inside is the build being shipped.
+    # The old zip carried a mod from days earlier, which meant a new player installed a
+    # stale build and was immediately asked to update.
+    $base = Join-Path $Repo "publish\fullinstall-base"
+    if (-not (Test-Path $base)) {
+        Warn "no publish\fullinstall-base - FullInstall.zip NOT shipped, new installs will fail"
+    } else {
+        $fullStage = Join-Path $env:TEMP ("fullinstall_" + (Get-Date -Format 'HHmmss'))
+        New-Item -ItemType Directory -Path $fullStage -Force | Out-Null
+
+        # The parts that do not change: prerequisites and their licence texts.
+        Copy-Item (Join-Path $base "*") $fullStage -Recurse -Force
+
+        # The part that does: this build's mod.
+        $modOut = Join-Path $fullStage "mod"
+        New-Item -ItemType Directory -Path $modOut -Force | Out-Null
+        Copy-Item "distrib\launcher\mod\CyberpunkMP.dll" $modOut
+        Copy-Item "distrib\launcher\mod\assets" (Join-Path $modOut "assets") -Recurse
+        Copy-Item "distrib\launcher\mod\Rpc"    (Join-Path $modOut "Rpc")    -Recurse
+
+        # Instructions ship INSIDE the package, where someone who downloaded a zip will
+        # actually look. The Discord post has told people to read this file for days
+        # while it was not there.
+        if (Test-Path (Join-Path $Repo "publish\INSTALL.txt")) {
+            Copy-Item (Join-Path $Repo "publish\INSTALL.txt") $fullStage
+        }
+
+        $fullZip = Join-Path $env:TEMP "FullInstall.zip"
+        if (Test-Path $fullZip) { Remove-Item -LiteralPath $fullZip -Force }
+        [System.IO.Compression.ZipFile]::CreateFromDirectory($fullStage, $fullZip,
+            [System.IO.Compression.CompressionLevel]::Optimal, $false)
+
+        $uploads += $fullZip
+        Ok "full install package assembled ($([math]::Round((Get-Item $fullZip).Length/1MB,1)) MB)"
+    }
 }
 
 if ($Launcher) {

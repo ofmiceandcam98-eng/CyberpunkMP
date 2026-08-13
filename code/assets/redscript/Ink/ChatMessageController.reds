@@ -26,38 +26,30 @@ public class ChatMessageController extends ListItemController {
         FTLog(s"[ChatMessageController] OnDataChanged");
         // super.OnDataChanged(value);
         this.m_data = value as ChatMessageData;
-        if this.m_data.m_needsAuthorLabel {
-            this.m_authorLabel.SetVisible(true);
-            this.m_authorLabel.SetText(this.m_data.m_author);
-            if this.m_data.m_isSelf {
-                // this.m_authorLabel.SetState(n"Player");
-                this.m_authorLabel.SetState(n"Quest");
-            } else {
-                this.m_authorLabel.SetState(n"Default");
-            }
-        } else {
-            this.m_authorLabel.SetVisible(false);
-        }
-        this.m_messageLabel.SetText(this.m_data.m_message);
-        this.ApplyChannelColor();
+        this.Apply();
     }
 
     public final func Refresh(value: ref<IScriptable>) -> Void {
-        // FTLog(s"[ChatMessageController] Refresh");
         this.m_data = value as ChatMessageData;
-        if this.m_data.m_needsAuthorLabel {
-            this.m_authorLabel.SetVisible(true);
-            this.m_authorLabel.SetText(this.m_data.m_author);
-            if this.m_data.m_isSelf {
-                // this.m_authorLabel.SetState(n"Player");
-                this.m_authorLabel.SetState(n"Quest");
-            } else {
-                this.m_authorLabel.SetState(n"Default");
-            }
-        } else {
-            this.m_authorLabel.SetVisible(false);
-        }
-        this.m_messageLabel.SetText(this.m_data.m_message);
+        this.Apply();
+    }
+
+    // One place that fills the row in, instead of the same block copied into
+    // OnDataChanged and Refresh. They had already drifted apart once.
+    private final func Apply() -> Void {
+        // The name goes INTO the message line, and the separate name widget is hidden.
+        //
+        // The two are separate widgets stacked vertically by the .inkwidget asset, so
+        // every message cost two lines and the chat box grew twice as fast as it needed
+        // to. Putting them side by side means editing that asset in WolvenKit; composing
+        // the text achieves the same reading - "name: what they said" on one line - with
+        // no asset work.
+        //
+        // The name is repeated on every line rather than grouped. In a log you scroll
+        // back through, a run of unattributed lines is ambiguous the moment it scrolls
+        // past the name that headed it.
+        this.m_authorLabel.SetVisible(false);
+        this.m_messageLabel.SetText(this.m_data.m_author + ": " + this.m_data.m_message);
         this.ApplyChannelColor();
     }
 
