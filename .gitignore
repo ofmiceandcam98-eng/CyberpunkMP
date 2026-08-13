@@ -44,3 +44,7 @@ plugins/
 # Discord credentials. The bot token is a password - never commit either of these.
 tools/.discord-webhook
 tools/.discord-bot
+
+# Which channel the to-do list lives in and which message to edit. Not a credential,
+# but it belongs with them rather than in the repo - it is specific to one Discord.
+tools/.discord-todo
