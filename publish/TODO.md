@@ -20,13 +20,16 @@
 ## In progress
 
 - 🧍 **In-game admin tools.** Done: `/tp`, `/return`, `/kick`, `/ban`, `/unban`, `/bans`, `/who`, `/help`.
-- 🧍 **Move the server off Cam's PC** — Oracle Cloud free tier, so it stays up whether or not he is. Script written, untested.
 
 ## Next up
 
 - 👥 **Character slots.** Your identity should be a character you made, not whichever singleplayer save you loaded. Server-side position saving landed first and is the foundation.
 - 🧍 **The `/` chat hotkey.** The mod overrides a 2.2-era interface file, which is what registers the key. Needs the game asset rebuilding — not a code fix.
 - 🧍 **Movement speed arrives as nonsense** (~3e8 for someone walking), so remote animations look wrong. Suspected struct offset change on 2.31.
+
+## Not right now
+
+- **Hosting the server somewhere other than Cam's PC.** It would mean the server is up whether or not he is. Shelved deliberately — the cloud setup is fiddly and there are better things to spend the time on while we are still finding crashes. The server runs on Cam's machine in the meantime.
 
 ## Known issues
 
