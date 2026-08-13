@@ -7,7 +7,6 @@
 - **Confirm the spawn crash is fixed.** A cause was found and fixed — a movement update arriving before the puppet finished building — but two real players have never been connected at once to prove it. **This is the most important open item.**
 - **Confirm chat ranges filter.** Local carries 30m, `/yell` 60m, `/whisper` 5m. Stand ~40m apart: local should be silent, `/yell` should carry.
 - **Confirm remote players show their gear.** Equipment used to be sent as item *names* built by a debug helper that returns empty strings in release builds, so everything arrived blank. It now travels as the real item id and the sending half is confirmed — whether it *appears* on someone else's screen is not.
-- **Confirm `/tp` and `/return`.** They work on paper. Whether they move the right player to the right spot facing the right way is a two-person question.
 
 ## 🧍 Can be done alone
 
@@ -33,7 +32,7 @@
 
 ## Known issues
 
-- ⚠️ **Keep Cyber Engine Tweaks disabled.** CET alongside this mod caused a full GPU hard-lock.
+*(No known blocking issues at the moment.)*
 
 ## ✅ Recently done
 
@@ -45,3 +44,7 @@
 - ~~Remote players sending blank equipment~~ — real item ids now go over the wire
 - ~~Mod drawing an empty overlay every frame~~ — no GPU work at all unless the dev overlay is on
 - ~~Input Loader's licence~~ — found and included; all six bundled mods now ship their licence text
+- ~~**Cyber Engine Tweaks now works.**~~ Confirmed. Keep the developer overlay OFF and CET can stay installed — so you keep your other mods
+- ~~`/tp` and `/return`~~ — confirmed working
+- ~~Position saving~~ — confirmed; quit and rejoin and you are put back
+- ~~Mouse wheel scrolls chat~~

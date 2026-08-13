@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "The curated mod list for Night City Online. Cam and the devs decide what is on it;",
+    "the launcher installs and verifies against it so everyone is running the same game.",
+    "",
+    "Published as a release asset, so the list can change without shipping a launcher.",
+    "",
+    "WHY EACH FIELD EXISTS",
+    "",
+    "  nexusModId / nexusFileId  identify the exact file on Nexus. Not the newest file -",
+    "                            a specific one, so a mod updating upstream does not",
+    "                            silently change what everyone is running mid-session.",
+    "",
+    "  sha256                    what actually got installed is checked against this.",
+    "                            Version strings lie: mods get re-uploaded under the same",
+    "                            version, and a half-finished download is still a file.",
+    "",
+    "  installPath               relative to the Cyberpunk 2077 folder.",
+    "",
+    "  required                  required mods block Play. Optional ones do not - cosmetic",
+    "                            choices should never stop someone joining.",
+    "",
+    "The six prerequisites are NOT here. They ship inside FullInstall.zip because they are",
+    "MIT licensed and redistributable. Nexus mods are not ours to redistribute, which is",
+    "the whole reason this list points at Nexus rather than hosting the files."
+  ],
+
+  "version": 1,
+  "game": "cyberpunk2077",
+  "updated": "2026-08-13",
+
+  "mods": []
+}

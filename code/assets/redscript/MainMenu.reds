@@ -26,9 +26,17 @@ import CyberpunkMP.World.*
 private func PopulateMenuItemList() -> Void {
     wrappedMethod();
 
-    // Added after the base items, so it sits below Load Game rather than displacing
-    // Continue - the one people reach for without reading.
-    this.AddMenuItem("MULTIPLAYER", n"OnMultiplayerJoin");
+    // Two ways in, because they answer different questions.
+    //
+    // CONTINUE is the one people want almost every time: the server already remembers
+    // where you were standing, so which save loads underneath barely matters - it gets
+    // overwritten by your real position on arrival. Making people pick a save first was
+    // an extra decision that changes nothing.
+    //
+    // LOAD GAME still exists for choosing WHICH character to bring, which is a real
+    // choice until proper character slots land.
+    this.AddMenuItem("MULTIPLAYER - CONTINUE", n"OnMultiplayerContinue");
+    this.AddMenuItem("MULTIPLAYER - LOAD GAME", n"OnMultiplayerJoin");
 
     // PopulateMenuItemList refreshes at its end, before our item existed. Without
     // refreshing again the entry is in the data but never drawn, which looks exactly
@@ -43,6 +51,25 @@ private func PopulateMenuItemList() -> Void {
 // like the mod simply did nothing. The .script dialect the game ships is not redscript.
 @wrapMethod(SingleplayerMenuGameController)
 protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool {
+    // Straight back in - no save picker.
+    //
+    // The most recent save is loaded purely as a vehicle to get into the world; the
+    // server replaces the position on arrival with wherever you actually were. That is
+    // what makes this "continue from the server" rather than "continue singleplayer".
+    if Equals(data.eventName, n"OnMultiplayerContinue") {
+        FTLog(s"[CyberpunkMP] Multiplayer CONTINUE selected from the main menu");
+
+        let network = GameInstance.GetNetworkWorldSystem();
+        if IsDefined(network) {
+            network.RequestJoin();
+        } else {
+            FTLogError(s"[CyberpunkMP] No NetworkWorldSystem in the menu - cannot arm the join");
+        }
+
+        this.GetSystemRequestsHandler().LoadLastCheckpoint(false);
+        return true;
+    }
+
     if Equals(data.eventName, n"OnMultiplayerJoin") {
         FTLog(s"[CyberpunkMP] Multiplayer selected from the main menu");
 
