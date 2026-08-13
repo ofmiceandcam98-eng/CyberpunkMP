@@ -13,6 +13,7 @@
  */
 
 import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } from 'electron'
+import electronUpdater from 'electron-updater'
 import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
 import AdmZip from 'adm-zip'
@@ -170,8 +171,14 @@ function getServerDir () {
 // ---------------------------------------------------------------------------
 
 const GITHUB_REPO = 'ofmiceandcam98-eng/CyberpunkMP'
-const RELEASE_TAG = 'test-2026.08.12-probes'
-const RELEASE_API = `https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${RELEASE_TAG}`
+
+// Whatever is newest, rather than a pinned tag.
+//
+// This used to point at one hardcoded release, which meant every version bump needed a
+// matching code change in a shipped binary - a launcher already in someone's hands could
+// never see a release published after it. Releases are now versioned (v0.1.4, v0.1.5...)
+// and this always resolves to the current one.
+const RELEASE_API = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`
 
 /**
  * Finds Cyberpunk, wherever it is.
@@ -1770,6 +1777,75 @@ ipcMain.handle('game:launch', () => {
 // Lifecycle
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Updating the launcher itself
+//
+// A running executable cannot overwrite itself, which is why the old check could only
+// nag. electron-updater gets around that the only way Windows allows: download the new
+// installer to a temp folder while the launcher runs, then hand over to it after the
+// launcher has exited. The swap happens in the gap between the two.
+//
+// Everything here is deliberately quiet. The download is automatic and silent, and the
+// only thing the player is ever asked is whether to restart now or later - because the
+// alternative is a launcher that interrupts you to demand permission to do the thing
+// you already wanted.
+// ---------------------------------------------------------------------------
+
+const { autoUpdater } = electronUpdater
+
+let updateReady = false
+
+function initAutoUpdater () {
+  // In development there is no app-update.yml, and electron-updater throws rather than
+  // shrugging. Nothing to update when running from source anyway.
+  if (!app.isPackaged) return
+
+  autoUpdater.autoDownload = true
+
+  // Install on quit rather than forcing a restart. Someone mid-session should not have
+  // their launcher yanked away because a release happened to land.
+  autoUpdater.autoInstallOnAppQuit = true
+
+  const send = (channel, payload) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload)
+  }
+
+  autoUpdater.on('update-available', (info) => {
+    send('launcher-update', { state: 'downloading', version: info.version })
+  })
+
+  autoUpdater.on('download-progress', (progress) => {
+    send('launcher-update', { state: 'downloading', percent: Math.round(progress.percent) })
+  })
+
+  autoUpdater.on('update-downloaded', (info) => {
+    updateReady = true
+    send('launcher-update', { state: 'ready', version: info.version })
+  })
+
+  autoUpdater.on('update-not-available', () => {
+    send('launcher-update', { state: 'current' })
+  })
+
+  // Never let an update failure become a visible error. Being unable to reach GitHub is
+  // not a reason to alarm someone who just wants to play - the launcher still works, it
+  // is simply not newer.
+  autoUpdater.on('error', (err) => {
+    console.error('[updater]', err?.message || err)
+    send('launcher-update', { state: 'current' })
+  })
+
+  autoUpdater.checkForUpdates().catch(() => {})
+}
+
+// Restart into the new version on demand. quitAndInstall closes the app and runs the
+// downloaded installer; there is nothing after it.
+ipcMain.handle('launcher:restartToUpdate', async () => {
+  if (!updateReady) return { ok: false, error: 'No update has finished downloading yet.' }
+  setImmediate(() => autoUpdater.quitAndInstall(false, true))
+  return { ok: true }
+})
+
 /**
  * Puts a shortcut where the player asked for one.
  *
@@ -1845,7 +1921,10 @@ app.whenReady().then(() => {
 
   // After the window exists, so the dialog has a parent to attach to rather than
   // appearing as a stray box with no launcher behind it.
-  mainWindow.once('ready-to-show', () => { offerShortcuts() })
+  mainWindow.once('ready-to-show', () => {
+    offerShortcuts()
+    initAutoUpdater()
+  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

@@ -41,6 +41,12 @@ contextBridge.exposeInMainWorld('launcher', {
   openInstallDir: () => ipcRenderer.invoke('launcher:openInstallDir'),
   uninstallLauncher: () => ipcRenderer.invoke('launcher:uninstall'),
 
+  // The launcher updating itself: progress reports in, restart request out.
+  onLauncherUpdate: (callback) => {
+    ipcRenderer.on('launcher-update', (_e, info) => callback(info))
+  },
+  restartToUpdate: () => ipcRenderer.invoke('launcher:restartToUpdate'),
+
   // Paths and state for the settings screen.
   getPaths: () => ipcRenderer.invoke('paths:get'),
   openFolder: (which) => ipcRenderer.invoke('paths:open', which),

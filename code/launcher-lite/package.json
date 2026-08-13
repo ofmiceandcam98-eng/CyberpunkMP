@@ -18,7 +18,8 @@
   },
   "dependencies": {
     "adm-zip": "^0.6.0",
-    "axios": "^1.7.9"
+    "axios": "^1.7.9",
+    "electron-updater": "^6.8.9"
   },
   "build": {
     "appId": "com.nightcityonline.launcher",
@@ -28,6 +29,13 @@
       "output": "dist",
       "buildResources": "build"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "ofmiceandcam98-eng",
+        "repo": "CyberpunkMP"
+      }
+    ],
     "files": [
       "main.js",
       "preload.mjs",

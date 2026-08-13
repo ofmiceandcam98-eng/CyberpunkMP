@@ -22,7 +22,25 @@ param(
     [switch]$Launcher,
     [switch]$Mod,
     [switch]$Server,
-    [switch]$WhatIf
+    [switch]$WhatIf,
+
+    # Which part of the version moves. patch for a fix, minor for a feature, major when
+    # something changes that people have to know about.
+    [ValidateSet('patch','minor','major')]
+    [string]$Bump = 'patch',
+
+    # Re-publish into the SAME version instead of cutting a new one. For fixing a bad
+    # upload, not for shipping changes - two different builds sharing a version number is
+    # how you end up unable to tell what someone is running.
+    [switch]$NoBump,
+
+    # Announcing is the default. Every build that reaches people should reach the Discord
+    # too, or #server-update quietly drifts out of step with what is actually live.
+    [switch]$NoAnnounce,
+
+    # Leads the Discord message. Without it the announcement is just the release notes,
+    # which is fine for a fix and thin for a breakthrough.
+    [string]$Highlights
 )
 
 $ErrorActionPreference = 'Stop'
@@ -30,7 +48,6 @@ $ErrorActionPreference = 'Stop'
 $Repo      = "C:\Users\Cam\OneDrive\Documents\GitHub\CyberpunkMP"
 $LauncherDir = Join-Path $Repo "code\launcher-lite"
 $XMake     = "C:\Users\Cam\scoop\shims\xmake.exe"
-$Tag       = "test-2026.08.12-probes"
 $GhRepo    = "ofmiceandcam98-eng/CyberpunkMP"
 $GameDir   = "C:\Program Files (x86)\Steam\steamapps\common\Cyberpunk 2077"
 
@@ -44,6 +61,43 @@ function Warn  { param($T) Write-Host "  !!  $T" -ForegroundColor Yellow }
 function Die   { param($T) Write-Host "`nSTOPPED: $T" -ForegroundColor Red; exit 1 }
 
 Set-Location $Repo
+
+# ---------------------------------------------------------------------------
+# Version
+#
+# One number for the whole project. The launcher's package.json holds it because
+# electron-builder must read it from there, and the release tag is that number with a v
+# in front - so "which build is this?" has exactly one answer, whether you are looking at
+# the launcher's title bar, a GitHub tag, or a Discord post.
+#
+# The bump happens HERE, before anything is built, because electron-builder stamps the
+# version into the installer filename and into latest.yml at package time. Bumping
+# afterwards would produce a release whose contents disagree with its name.
+# ---------------------------------------------------------------------------
+
+$pkgPath = Join-Path $LauncherDir "package.json"
+$version = (Get-Content $pkgPath -Raw -Encoding UTF8 | ConvertFrom-Json).version
+
+# Only a launcher build can move the version, because the version IS the launcher's
+# version as far as the auto-updater is concerned. Bumping it on a mod-only ship would
+# advertise a launcher release that was never built.
+if ($Launcher -and -not $NoBump -and -not $WhatIf) {
+    $parts = $version.Split('.')
+    switch ($Bump) {
+        'major' { $parts[0] = [int]$parts[0] + 1; $parts[1] = 0; $parts[2] = 0 }
+        'minor' { $parts[1] = [int]$parts[1] + 1; $parts[2] = 0 }
+        default { $parts[2] = [int]$parts[2] + 1 }
+    }
+    $version = $parts -join '.'
+
+    # Rewrite just the version line. Round-tripping through ConvertTo-Json would reformat
+    # the entire file and reorder the build config for no reason.
+    $raw = Get-Content $pkgPath -Raw -Encoding UTF8
+    $raw = $raw -replace '("version"\s*:\s*")[^"]+(")', "`${1}$version`${2}"
+    [System.IO.File]::WriteAllText($pkgPath, $raw, (New-Object System.Text.UTF8Encoding($false)))
+}
+
+$Tag = "v$version"
 
 # ---------------------------------------------------------------------------
 # Pre-flight. Cheap checks that catch the mistakes actually made before.
@@ -69,7 +123,10 @@ if ($Server) {
 }
 
 if ($Launcher) {
-    Get-Process NightCityOnline* -ErrorAction SilentlyContinue |
+    # Both names: the app was renamed to "Night City Online Launcher", and an old install
+    # still running under the previous name would block electron-builder just the same.
+    Get-Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.ProcessName -like 'NightCityOnline*' -or $_.ProcessName -like 'Night City Online*' } |
         Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 1
     Ok "launcher closed"
@@ -246,13 +303,16 @@ if ($Launcher) {
     # Take the version from package.json rather than repeating it here. electron-builder
     # stamps the installer filename with it, so a hardcoded number breaks this copy the
     # first time the version moves - silently shipping nothing, or the previous build.
-    $pkgVersion = (Get-Content (Join-Path $LauncherDir "package.json") -Raw -Encoding UTF8 | ConvertFrom-Json).version
-    $built = Join-Path $LauncherDir "dist\NightCityOnline-Setup-$pkgVersion.exe"
+    $built = Join-Path $LauncherDir "dist\NightCityOnline-Setup-$version.exe"
     if (-not (Test-Path $built)) { Die "no installer at '$built' - version changed without a rebuild?" }
 
-    # The BUILT filename carries the version; the PUBLISHED one deliberately does not.
-    # Every link already shared - status page, Discord, INSTALL.txt - points at these two
-    # stable names, so a version bump must not break them.
+    # The versioned filename goes up UNCHANGED, because latest.yml names it exactly and
+    # the auto-updater downloads it by that name. Rename it and self-update breaks with a
+    # 404 that looks like a network problem.
+    $uploads += $built
+
+    # A second copy under a stable name, for humans. Every link already shared - status
+    # page, Discord, INSTALL.txt - points at this, and a version bump must not break them.
     $setup = Join-Path $env:TEMP "NightCityOnline-Setup.exe"
     Copy-Item $built $setup -Force
     $uploads += $setup
@@ -264,23 +324,48 @@ if ($Launcher) {
         $uploads += $portable
     }
 
-    # How an installed launcher learns it is out of date: it looks for this marker on the
-    # release and reads the version out of the FILENAME, so the check costs no extra
-    # request. The old marker must be deleted or two versions would both look current -
-    # and the stale one would keep telling people they are fine.
-    $current = gh api "repos/$GhRepo/releases/tags/$Tag" | ConvertFrom-Json
-    foreach ($old in @($current.assets | Where-Object { $_.name -like 'launcher-version-*.txt' })) {
-        gh api -X DELETE "repos/$GhRepo/releases/assets/$($old.id)" 2>&1 | Out-Null
-    }
+    # latest.yml IS the auto-update mechanism: version, filename, and hash. Without it
+    # electron-updater has nothing to compare against and every launcher silently stays
+    # on the version it was installed at, which is the exact problem this replaced.
+    $latestYml = Join-Path $LauncherDir "dist\latest.yml"
+    if (-not (Test-Path $latestYml)) { Die "no latest.yml - is the github publish config still in package.json?" }
+    $uploads += $latestYml
 
-    $marker = Join-Path $env:TEMP "launcher-version-$pkgVersion.txt"
-    Set-Content -Path $marker -Value $pkgVersion -Encoding UTF8
+    # Kept for launchers too old to contain the auto-updater. They read the version out of
+    # this filename and tell their owner to download manually. Harmless once everyone is
+    # past 0.1.3, and the only thing those builds can still see.
+    $marker = Join-Path $env:TEMP "launcher-version-$version.txt"
+    Set-Content -Path $marker -Value $version -Encoding UTF8
     $uploads += $marker
 
-    Ok "launcher $pkgVersion staged"
+    Ok "launcher $version staged"
 }
 
 if ($uploads.Count -eq 0) { Warn "nothing to publish"; exit 0 }
+
+# Create the release if this version has never been published.
+#
+# Marked --latest deliberately. Everything downstream resolves through /releases/latest -
+# the auto-updater, the status page download button, the launcher's own links - so a
+# release that is not flagged latest is a release nobody receives. That already happened
+# once: a build sat published-but-not-latest while every download link quietly served an
+# older one.
+gh release view $Tag --repo $GhRepo > $null 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Step "Create release $Tag"
+    $branch = git rev-parse --abbrev-ref HEAD
+    gh release create $Tag --repo $GhRepo `
+        --target $branch `
+        --title "Night City Online $Tag" `
+        --notes-file (Join-Path $Repo "publish\release-notes.md") `
+        --latest 2>&1 | Select-Object -Last 1
+    if ($LASTEXITCODE -ne 0) { Die "could not create release $Tag" }
+    Ok "release created"
+} else {
+    # Existing release: refresh the notes so the launcher's patch-notes panel and the
+    # Discord post cannot disagree with what was actually written.
+    gh release edit $Tag --repo $GhRepo --notes-file (Join-Path $Repo "publish\release-notes.md") --latest 2>&1 | Out-Null
+}
 
 gh release upload $Tag @uploads --repo $GhRepo --clobber 2>&1 | Select-Object -Last 1
 if ($LASTEXITCODE -ne 0) { Die "upload failed" }
@@ -292,4 +377,32 @@ foreach ($asset in $release.assets) {
     "  {0,-34} {1,7} MB  {2}" -f $asset.name, [math]::Round($asset.size/1MB,1), $asset.updated_at
 }
 
-Write-Host "`nShipped." -ForegroundColor Green
+# The auto-updater cannot work without these two, and a release missing them fails in the
+# worst way: silently, on everyone else's machine, days later.
+if ($Launcher) {
+    $names = $release.assets.name
+    foreach ($required in @("latest.yml", "NightCityOnline-Setup-$version.exe")) {
+        if ($names -notcontains $required) { Die "release is missing $required - auto-update would be broken" }
+    }
+    Ok "auto-update assets present"
+}
+
+# ---------------------------------------------------------------------------
+# Announce
+# ---------------------------------------------------------------------------
+
+if (-not $NoAnnounce) {
+    Step "Announce"
+    $announce = @{ Tag = $Tag }
+    if ($Highlights) { $announce.Highlights = $Highlights }
+
+    & (Join-Path $Repo "tools\AnnounceRelease.ps1") @announce
+
+    if ($LASTEXITCODE -ne 0) {
+        # Not fatal. The build is already published and working; a failed Discord post is
+        # worth knowing about but is not a reason to treat the ship as failed.
+        Warn "announcement failed - post it by hand: tools\AnnounceRelease.ps1 -Tag $Tag"
+    }
+}
+
+Write-Host "`nShipped $Tag." -ForegroundColor Green

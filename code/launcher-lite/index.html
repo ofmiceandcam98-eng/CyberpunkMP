@@ -666,6 +666,10 @@
   let updateState = null
   let serverState = null
 
+  // Set from the main process as the launcher updates itself, not from any check we
+  // run here - the updater owns that state and reports on it.
+  let launcherUpdate = null
+
   function renderServerState () {
     const online = Boolean(serverState?.online)
     $('srvDot').className = 'dot' + (online ? ' on' : '')
@@ -996,17 +1000,47 @@
     const text = $('launcherText')
     const btn = $('getLauncher')
 
-    const info = updateState && updateState.launcher
-
-    if (!info || info.upToDate) {
+    const hide = () => {
       gate.style.display = 'none'
       btn.style.display = 'none'
-      return
     }
+
+    // The live updater wins over the version marker whenever it has said anything.
+    // The marker check is kept underneath purely so a launcher too old to contain the
+    // updater can still be told it is behind - after that it is dead weight.
+    if (launcherUpdate) {
+      if (launcherUpdate.state === 'current') return hide()
+
+      gate.style.display = 'flex'
+      dot.className = 'dot'
+
+      if (launcherUpdate.state === 'downloading') {
+        // No button while downloading. Nothing to press, and offering one invites
+        // someone to press it and wonder why nothing happened.
+        text.textContent = launcherUpdate.percent
+          ? 'Downloading launcher update... ' + launcherUpdate.percent + '%'
+          : 'Downloading launcher update...'
+        btn.style.display = 'none'
+        return
+      }
+
+      if (launcherUpdate.state === 'ready') {
+        dot.className = 'dot on'
+        text.textContent = 'Launcher update ready' +
+          (launcherUpdate.version ? ' - ' + launcherUpdate.version : '')
+        btn.textContent = 'Restart to update'
+        btn.style.display = 'inline-block'
+        return
+      }
+    }
+
+    const info = updateState && updateState.launcher
+    if (!info || info.upToDate) return hide()
 
     gate.style.display = 'flex'
     dot.className = 'dot'
     text.textContent = 'New launcher available - ' + info.available + ' (you have ' + info.current + ')'
+    btn.textContent = 'Download the new launcher'
     btn.style.display = 'inline-block'
   }
 
@@ -1096,11 +1130,27 @@
     render(signedInUser)
   }
 
-  // A running executable cannot overwrite itself, so this hands over to the release
-  // page rather than pretending to self-update.
   $('getLauncher').addEventListener('click', async () => {
+    // Once an update has downloaded, this restarts into it. The fallback only runs on a
+    // launcher old enough to have no updater in it, where a manual download is all there
+    // is - see renderLauncherState.
+    if (launcherUpdate && launcherUpdate.state === 'ready') {
+      const result = await window.launcher.restartToUpdate()
+      if (result.ok) {
+        setStatus('Restarting to install the update...', 'ok')
+      } else {
+        setStatus(result.error, 'error')
+      }
+      return
+    }
+
     await window.launcher.openLink('release')
     setStatus('Download the installer, run it, then reopen the launcher.', 'ok')
+  })
+
+  window.launcher.onLauncherUpdate((info) => {
+    launcherUpdate = info
+    renderLauncherState()
   })
 
   $('verify').addEventListener('click', async () => {
