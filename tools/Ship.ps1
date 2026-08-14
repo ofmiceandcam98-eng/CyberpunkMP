@@ -57,11 +57,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$Repo      = "C:\Users\Cam\OneDrive\Documents\GitHub\CyberpunkMP"
-$LauncherDir = Join-Path $Repo "code\launcher-lite"
-$XMake     = "C:\Users\Cam\scoop\shims\xmake.exe"
-$GhRepo    = "ofmiceandcam98-eng/CyberpunkMP"
-$GameDir   = "C:\Program Files (x86)\Steam\steamapps\common\Cyberpunk 2077"
+# Repo, LauncherDir, XMake, GhRepo and GameDir all come from here. They used to be absolute
+# paths to one person's PC, which was invisible while the project lived on one machine and
+# became a wall the moment a second contributor had a checkout.
+. (Join-Path $PSScriptRoot "Environment.ps1")
+
+Assert-XMake
+Assert-GameDir
 
 # Nothing selected means everything.
 $all = -not ($Launcher -or $Mod -or $Server)

@@ -10,6 +10,21 @@ your own.
 
 ---
 
+## First, tell the scripts about your machine
+
+```
+copy tools\ship.local.example.ps1 tools\ship.local.ps1
+```
+
+Then set `$GameDir` in it. That file is gitignored; the example documents every value.
+
+Everything else is derived — the repo root from git, xmake from PATH, the publish target
+from your git remote. The game install is the one thing that cannot be guessed reliably,
+and a script that silently finds the *wrong* Cyberpunk install is worse than one that asks.
+
+The same file also has commented-out overrides for xmake and the repo root, if a derivation
+guesses wrong on your setup.
+
 ## The build
 
 ```
@@ -149,6 +164,50 @@ Three rules it enforces, each of which exists because it was broken once:
   existence 404'd on `server.json` and reported the server offline.
 
 ---
+
+## Working from a second machine
+
+Most of this project runs anywhere. A few things are tied to the machine that hosts the
+server, and it is worth knowing which is which before you go looking for a bug that is
+really just "you are not the host".
+
+**Runs on any checkout**
+
+- Building the client, server and launcher
+- Editing redscript, and `tools\CheckScripts.ps1` to verify it
+- Running a server locally for your own testing
+- Branches, pull requests, code review
+- Posting to the coordination feed (needs the tailnet — see below)
+
+**Only on the host machine**
+
+- `tools\Ship.ps1` publishing a release. It uploads to the GitHub release everyone's
+  launcher reads from, so two people shipping would fight over `latest`.
+- Discord announcements, which need the bot token.
+- The live game server and the coordination API.
+- Testing with real players, since they connect to the host's address.
+
+**Getting on the tailnet.** The server and the coordination API are only reachable over
+Tailscale. Ask Cam for an invite, or use the button in the launcher once you are verified in
+the Discord. `tailscale status` hides shared devices — use `tailscale status --json` if you
+want to check whether you are actually connected to the right network.
+
+**Branches and PRs.** The host machine pushes to `main` directly, because shipping a release
+and updating `main` happen together there. From a second checkout, work on a branch and open
+a PR. That is not ceremony — it is the only way two people can work without one of them
+force-pushing over the other's `main`.
+
+**Secrets.** Nothing secret is in the repo, and the files that hold secrets are ignored.
+What each machine has to provide is documented by the committed `.example` templates:
+
+| Ignored file | Template | What it is |
+|---|---|---|
+| `tools\ship.local.ps1` | `tools\ship.local.example.ps1` | your game install and tool paths |
+| `config\server.json` | `config\server.example.json` | the game server's config |
+| `tools\.discord-bot` | `tools\.discord-bot.example` | bot token and announcement channel |
+| `tools\.discord-webhook` | `tools\.discord-webhook.example` | fallback announcement route |
+| `.env` | `.env.example` | admin credentials for docker compose |
+| `code\coord-api\data\` | — | coordination keys and message history, host only |
 
 ## Where things are
 

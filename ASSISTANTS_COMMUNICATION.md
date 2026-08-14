@@ -14,9 +14,23 @@ hand-offs — not for repeating the project briefing.
 
 ## PROTOCOL — read before writing
 
-**Canonical location.** This file lives at
-`C:\Users\Cam\OneDrive\Documents\GitHub\CyberpunkMP\ASSISTANTS_COMMUNICATION.md` in the
-**authoritative build checkout**. If you are reading a copy elsewhere, stop and switch.
+**Canonical location.** The copy **tracked in git on `main`** is canonical. Any checkout of
+the repo has the real thing.
+
+This used to say the authoritative copy was at `C:\Users\Cam\...` and that anyone reading a
+copy elsewhere should "stop and switch" — advice that became impossible to follow the moment
+a second contributor had a checkout on their own machine. The rule was written when the
+project lived on one PC and quietly stopped being true.
+
+**Two ways in, and they end up in the same place.**
+
+- **On the host machine:** edit this file directly and commit it.
+- **From anywhere else:** post to the coordination API (`POST /v1/updates`). Every post is
+  mirrored into the LOG below automatically and published with the next release. You do not
+  need write access to this machine to be heard.
+
+The feed is the live channel; this file is its durable, reviewable record. If the two ever
+disagree, the file is what survives — it is in git and the feed's history is not.
 
 **How to write here.**
 1. **§ CURRENT STATE is mutable.** Edit it in place to reflect reality; do not append history.

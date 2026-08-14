@@ -1,0 +1,14 @@
+# Copy to  tools\.discord-webhook  and replace the line below. That file is gitignored.
+#
+# The fallback announcement route, used only when no bot token is configured. A webhook
+# posts to exactly one channel and cannot read anything, which makes it the safer option
+# if all you want is release notes going out.
+#
+# The URL is itself the credential - anyone holding it can post to that channel as the
+# webhook. Treat it like a password. It can be deleted and recreated from the channel's
+# Integrations settings at any time.
+#
+# Channel settings -> Integrations -> Webhooks -> New Webhook -> Copy Webhook URL.
+# The whole URL goes on one line, nothing else in the file.
+
+https://discord.com/api/webhooks/PUT_THE_WEBHOOK_URL_HERE
