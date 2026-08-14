@@ -87,11 +87,35 @@ public native class NetworkWorldSystem extends IGameSystem {
 
         // Bring the person, not the car.
         //
-        // Teleporting someone who is driving drags the vehicle along with them, so
-        // summoning a player for a conversation parked their car on top of the admin who
-        // called them. Getting out first also leaves the car where its owner left it,
-        // which is what everyone else in the world can already see.
+        // Teleporting someone who is driving used to drag the vehicle with them AND break
+        // their position for everyone else. The second half is the part that was not
+        // obvious: while the client believes it is driving, UpdatePlayerLocation sends the
+        // VEHICLE's transform as the player's position. Move the player out from under
+        // that and every other client is told they are still wherever the car is - so the
+        // teleported player appears not to have moved, or to be somewhere they are not.
+        //
+        // So this is three separate things, and the first attempt only did the middle one:
+        //
+        //   1. tell the network we have left, which stops the car's transform being sent
+        //      as ours and tells the server to detach the puppet for everyone else
+        //   2. make the game actually take us out of the seat
+        //   3. only then move
         if VehicleComponent.IsMountedToVehicle(GetGameInstance(), player) {
+            FTLog(s"[NetworkWorldSystem] teleport while mounted - forcing an exit first");
+
+            // 1. The network's idea of where we are, corrected before anything moves.
+            let vehicles = this.GetVehicleSystem();
+            if IsDefined(vehicles) {
+                vehicles.OnVehicleExit();
+            }
+
+            // 2. Out of the seat, by both routes.
+            //
+            // The mounting facility is the clean way and it is not always enough - it
+            // negotiates rather than commands, and a vehicle mid-animation can simply not
+            // comply. The ExitVehicle AI event is what the mod already uses to get remote
+            // puppets out of cars, and it is the blunt one. Doing both means the polite
+            // path is tried and the forceful path is there when it is refused.
             let info = GameInstance.GetMountingFacility(GetGameInstance()).GetMountingInfoSingleWithObjects(player);
 
             let request = new UnmountingRequest();
@@ -100,14 +124,18 @@ public native class NetworkWorldSystem extends IGameSystem {
 
             GameInstance.GetMountingFacility(GetGameInstance()).Unmount(request);
 
-            // Unmounting is not instant. Teleporting in the same frame races the dismount
-            // animation and lands the player back in the seat at the destination, which
-            // is the bug wearing a different hat.
+            let exitEvent = new AIEvent();
+            exitEvent.name = n"ExitVehicle";
+            player.QueueEvent(exitEvent);
+
+            // 3. Unmounting is not instant. Teleporting in the same frame races the
+            // dismount and lands the player back in the seat at the destination, which is
+            // the same bug wearing a different hat.
             let delayed = new MpDelayedTeleportCallback();
             delayed.system = this;
             delayed.position = position;
             delayed.yaw = yaw;
-            GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(delayed, 0.35, false);
+            GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(delayed, 0.5, false);
             return;
         }
 
@@ -132,6 +160,16 @@ public native class NetworkWorldSystem extends IGameSystem {
 
         FTLog(s"[NetworkWorldSystem] teleporting to \(position.X), \(position.Y), \(position.Z)");
         GameInstance.GetTeleportationFacility(GetGameInstance()).Teleport(player, position, angles);
+
+        // Belt and braces. If the forced exit above did not take, the client would keep
+        // reporting the car's position as the player's from the other side of the map -
+        // and the symptom of that is not "still in a car", it is "this player is
+        // desynchronised for everybody", which is far harder to recognise for what it is.
+        let vehicles = this.GetVehicleSystem();
+        if IsDefined(vehicles) && VehicleComponent.IsMountedToVehicle(GetGameInstance(), player) {
+            FTLogWarning(s"[NetworkWorldSystem] still mounted after teleporting - clearing the vehicle link anyway");
+            vehicles.OnVehicleExit();
+        }
     }
 
     // Puts a downed player back on their feet at the server's respawn point.
