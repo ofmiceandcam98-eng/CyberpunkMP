@@ -4,6 +4,10 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.4
+
+- **The coordination API starts with the game server.** It was started by hand, so it died on every reboot — and when it is down the far end gets a bare connection-refused with no way to tell whether the service is off, the machine is off, or their key is wrong. It had already died once unnoticed. It now has its own row in the admin panel showing how many keys are in use, and its own Start/Stop, because rebuilding the game server should not silence the channel.
+
 ## What changed — v0.3.3
 
 - **The death screen is blocked at the engine level now, not by scripts.** Two previous attempts hooked `OnDeath` and put a floor under the health pool. Both are conventions the game's own scripts follow, and anything that sets the dead state directly — a scripted kill, falling out of the world, drowning — walked straight past them. The player is now flagged `Immortal`, which the engine checks *before* entering the dead state. Damage still lands and health still drops, so you still get downed and respawned; the death menu is simply never asked for.

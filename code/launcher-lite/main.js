@@ -1697,6 +1697,130 @@ function stopServer () {
  * bind port 11778 while the old one still holds it, and you get a confusing bind error
  * that looks like a config problem.
  */
+// ---------------------------------------------------------------------------
+// The coordination API
+//
+// The assistants working on the mod talk to each other through a small service on this
+// machine (code/coord-api). It was started by hand, which meant it quietly died on every
+// reboot - and when it is down, the far end gets a bare connection-refused with no way to
+// tell whether the service is off, the machine is off, or their key is wrong.
+//
+// Started alongside the game server, because the two are up and down together in practice:
+// both live on this machine and both only matter while it is on.
+//
+// Only ever visible to an admin, and only when the source is actually present - a player
+// running the launcher on their own PC has no repo and no business starting this.
+// ---------------------------------------------------------------------------
+
+const COORD_PORT = 11780
+
+function coordApiPath () {
+  if (process.env.NCO_COORD_API) return process.env.NCO_COORD_API
+
+  // The server lives at <repo>/build/windows/x64/release, so the repo root is four
+  // levels up. Derived rather than configured: one path to be wrong instead of two.
+  const candidates = [
+    path.resolve(getServerDir(), '..', '..', '..', '..', 'code', 'coord-api', 'server.js'),
+    path.resolve(__dirname, '..', 'coord-api', 'server.js')
+  ]
+
+  return candidates.find((candidate) => existsSync(candidate)) || null
+}
+
+/**
+ * Is the service actually answering?
+ *
+ * Asks it, rather than looking for a node process. Node runs on this machine for half a
+ * dozen reasons and finding one proves nothing about whether THIS service is up - which is
+ * exactly the confusion this panel exists to remove.
+ */
+async function getCoordStatus () {
+  const script = coordApiPath()
+
+  try {
+    const response = await axios.get(`http://127.0.0.1:${COORD_PORT}/health`, { timeout: 2000 })
+    return {
+      available: Boolean(script),
+      running: true,
+      participants: response.data?.participants ?? null,
+      max: response.data?.max ?? null,
+      baseUrl: response.data?.baseUrl ?? null
+    }
+  } catch {
+    return { available: Boolean(script), running: false }
+  }
+}
+
+function startCoordApi () {
+  const script = coordApiPath()
+  if (!script) throw new Error('The coordination API source is not on this machine.')
+
+  // A real window, titled, for the same reason the game server gets one: when it exits
+  // immediately there has to be somewhere the reason is written down.
+  const child = spawn(`start "Coordination API" node "${script}"`, {
+    cwd: path.dirname(script),
+    detached: true,
+    stdio: 'ignore',
+    shell: true,
+    windowsHide: false
+  })
+
+  child.unref()
+
+  return { started: true, script }
+}
+
+async function stopCoordApi () {
+  // Found by port rather than by name. Killing every node process on the machine to stop
+  // one service would take out whatever else the user happens to be running.
+  return new Promise((resolve) => {
+    const check = spawn('netstat', ['-ano', '-p', 'TCP'], { windowsHide: true })
+
+    let output = ''
+    check.stdout.on('data', (chunk) => { output += chunk.toString() })
+
+    check.on('close', () => {
+      const pids = new Set()
+
+      for (const line of output.split('\n')) {
+        if (!line.includes(`:${COORD_PORT}`) || !line.includes('LISTENING')) continue
+        const pid = line.trim().split(/\s+/).pop()
+        if (pid && pid !== '0') pids.add(pid)
+      }
+
+      if (!pids.size) return resolve({ stopped: false, reason: 'not running' })
+
+      for (const pid of pids) {
+        spawn('taskkill', ['/PID', pid, '/T', '/F'], { windowsHide: true })
+      }
+
+      resolve({ stopped: true, pids: [...pids] })
+    })
+
+    check.on('error', () => resolve({ stopped: false, reason: 'could not look up the port' }))
+  })
+}
+
+/**
+ * Best effort, and deliberately never fatal.
+ *
+ * Whether the assistants can talk to each other has nothing to do with whether players can
+ * join, so a failure here must not turn into a failure to start the game server.
+ */
+async function startCoordApiQuietly () {
+  try {
+    if (!coordApiPath()) return
+
+    const status = await getCoordStatus()
+    if (status.running) return
+
+    startCoordApi()
+    console.log('[coord] started alongside the game server')
+  } catch (err) {
+    console.warn('[coord] could not start:', err.message)
+  }
+}
+
 async function restartServer () {
   await stopServer()
 
@@ -1728,7 +1852,35 @@ ipcMain.handle('server:status', async () => {
 ipcMain.handle('server:start', async () => {
   if (!isAdmin()) return { ok: false, error: 'Not permitted' }
   try {
-    return { ok: true, ...startServer() }
+    const result = startServer()
+
+    // Alongside, not before: the game server is what people are waiting on.
+    startCoordApiQuietly()
+
+    return { ok: true, ...result }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
+ipcMain.handle('coord:status', async () => {
+  if (!isAdmin()) return { ok: false, error: 'Not permitted' }
+  return { ok: true, ...(await getCoordStatus()) }
+})
+
+ipcMain.handle('coord:start', async () => {
+  if (!isAdmin()) return { ok: false, error: 'Not permitted' }
+  try {
+    return { ok: true, ...startCoordApi() }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
+ipcMain.handle('coord:stop', async () => {
+  if (!isAdmin()) return { ok: false, error: 'Not permitted' }
+  try {
+    return { ok: true, ...(await stopCoordApi()) }
   } catch (err) {
     return { ok: false, error: err.message }
   }
@@ -1746,7 +1898,14 @@ ipcMain.handle('server:stop', async () => {
 ipcMain.handle('server:restart', async () => {
   if (!isAdmin()) return { ok: false, error: 'Not permitted' }
   try {
-    return { ok: true, ...(await restartServer()) }
+    const result = await restartServer()
+
+    // Deliberately not stopped by server:stop. Rebuilding the game server should not
+    // silence the channel the assistants are talking on - but a restart is a good moment
+    // to bring it back if it had died.
+    startCoordApiQuietly()
+
+    return { ok: true, ...result }
   } catch (err) {
     return { ok: false, error: err.message }
   }
