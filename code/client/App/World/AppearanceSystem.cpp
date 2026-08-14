@@ -123,11 +123,6 @@ void AddItems(Red::Handle<Red::game::Object> & object, Red::DynArray<Red::TweakD
 
         auto placementSlot = placementSlotHandle.instance->recordID;
 
-        Red::CString str;
-        Red::CallStatic("gamedataTDBIDHelper", "ToStringDEBUG", str, item);
-        Red::CString placementStr;
-        Red::CallStatic("gamedataTDBIDHelper", "ToStringDEBUG", placementStr, placementSlot);
-
         auto appearanceName = EvalCName(&item_record.instance->appearanceName);
         std::string appearance = appearanceName.ToString();
         // auto suffixes = EvalArrayTweakDBID(&item_record.instance->appearanceSuffixes);
@@ -156,10 +151,13 @@ void AddItems(Red::Handle<Red::game::Object> & object, Red::DynArray<Red::TweakD
         //         }
         //     }
         // }
-        spdlog::info("Adding {} to {} with \"{}\"", str.c_str(), placementStr.c_str(), appearance);
+        // The two ToStringDEBUG calls that used to log the item and slot names here are
+        // gone. TweakDB's debug name table is stripped from release builds, so both
+        // returned an empty string on 2.31 - two TweakDB lookups per item per spawn to
+        // print nothing.
         Red::CString redAppStr;
         GetItemAppearanceName(&redAppStr, object, object, item_record, itemID);
-        spdlog::info("* computed suffix: {}", redAppStr.c_str());
+        spdlog::info("[Appearance] {}{}", appearance, redAppStr.c_str());
         appearance.append(redAppStr.c_str());
 
         appearanceName = appearance.c_str();

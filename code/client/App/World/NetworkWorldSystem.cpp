@@ -54,14 +54,8 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
     // customization state uninitialized, and reading it would be undefined.
     bool isBodyGenderMale = true;
 
-    // The customization state is scoped deliberately. It used to live until Spawn()
-    // returned, meaning its handle was RELEASED immediately after [PROBE 10] logged - which
-    // is exactly where crashing clients go silent.
-    //
-    // Every puppet that survived carried an EMPTY ccstate, so this object was created and
-    // released without ever being deserialised. The one that crashed carried 6352 bytes,
-    // so it was populated first. Releasing a populated state is therefore the last thing
-    // that happens before the crash, and nothing had ever measured it.
+    // The customization state is scoped deliberately, so its handle is released here
+    // rather than surviving to the end of Spawn().
     {
         Red::Handle<game::ui::CharacterCustomizationState> stateHandle;
         CreateHandle_CharacterCustomizationState(&stateHandle);
@@ -83,18 +77,9 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
             spdlog::warn("[Spawn] remote player sent no ccstate - spawning with default appearance");
         }
 
-        spdlog::info("[PROBE 23] releasing customization state ({} bytes deserialised)", aCcstate.size());
     }
 
-    spdlog::info("[PROBE 24] customization state released cleanly");
-
-    // TEMPORARY [PROBE 22]. Every puppet that survived so far carried no appearance data and
-    // therefore defaulted to male / MaMuppet. The first one with real appearance data crashed,
-    // from across the map, which rules out proximity. Gender is the one thing real ccstate
-    // changes about the entity actually built, so record which record we are asking for.
     const auto& record = isBodyGenderMale ? Settings::Get().puppetRecordMale : Settings::Get().puppetRecordFemale;
-
-    spdlog::info("[PROBE 22] creating puppet: isBodyGenderMale={} -> record {}", isBodyGenderMale, record.c_str());
 
     if (!Red::Detail::CallFunctionWithArgs(m_pCreatePuppet, handle, id, aPosition, aRotation, isBodyGenderMale,
                                            Red::CString(record.c_str())))
@@ -102,11 +87,6 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
         spdlog::error("[Spawn] CreatePuppet call failed for remote id {}", aServerId);
         return false;
     }
-
-    // TEMPORARY [PROBE] lines bisect the remote-spawn crash. Both crash logs end at
-    // AddEntity's first log line, so the fault is somewhere in this block. Strip these
-    // once the culprit is identified.
-    spdlog::info("[PROBE 1] puppet created, entity id {:x} - calling AddEntity", id.hash);
 
     auto apprSystem = Red::GetGameSystem<NetworkWorldSystem>()->GetAppearanceSystem();
     apprSystem->AddEntity(id, aEquipment, aCcstate);
@@ -116,32 +96,18 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
     // built from.
     apprSystem->SetEntityName(id, acUsername);
 
-    spdlog::info("[PROBE 5] AddEntity returned");
-
     if (!id.IsDynamic())
     {
-        spdlog::warn("[PROBE 6] entity id is NOT dynamic - bailing out of Spawn");
+        spdlog::warn("[Spawn] entity id is not dynamic - bailing out for remote id {}", aServerId);
         return false;
     }
-
-    spdlog::info("[PROBE 6] entity id is dynamic");
 
     // Register BEFORE the entity finishes assembling. The animation-thread hook
     // identifies our puppets through this registry instead of reading the entity's
     // tag array off-thread, which was racing against the main thread's setup.
     App::PuppetRegistry::Add(id.hash);
 
-    spdlog::info("[PROBE 7] PuppetRegistry::Add done");
-
-    // Split from the emplace below so the two can be told apart. The low 32 bits are
-    // the flecs id proper and the high 32 are its generation counter; set_entity_range
-    // above declares 10'000'000-20'000'000, and server ids routinely fall outside it.
-    spdlog::info("[PROBE 8] calling make_alive({}) - low32 {}, generation {}", aServerId,
-                 static_cast<uint32_t>(aServerId), static_cast<uint32_t>(aServerId >> 32));
-
     auto spawned = make_alive(aServerId);
-
-    spdlog::info("[PROBE 9] make_alive returned - calling emplace<SpawningComponent>");
 
     spawned.emplace<SpawningComponent>(id);
 
@@ -154,8 +120,6 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
     // player's movement and make them snap on arrival. Adding it here means their very
     // first update is buffered.
     spawned.add<InterpolationComponent>();
-
-    spdlog::info("[PROBE 10] Spawn complete for remote id {}", aServerId);
 
     return true;
 }
@@ -653,35 +617,20 @@ void NetworkWorldSystem::OnConnected()
         .write<SpawningComponent>()
         .each([this](flecs::entity aEntity, SpawningComponent& aSpawning)
         {
-            // TEMPORARY [PROBE 11..16]. Spawn() itself is cleared - a solo /dummy run
-            // reached [PROBE 10] and then died, so the fault is here or later, while the
-            // game is still assembling the entity asynchronously.
-            spdlog::info("[PROBE 11] poll: resolving entity {:x}", aSpawning.Id.hash);
-
             const auto pEntity = GetEntity(aSpawning.Id);
 
             if (!pEntity)
                 return;
 
-            spdlog::info("[PROBE 12] poll: GetEntity returned a handle");
-
             if (const auto pOwner = Red::Cast<Red::GameObject>(pEntity))
             {
-                spdlog::info("[PROBE 13] poll: cast to GameObject ok - reading tags");
-
                 if (pOwner->tags.Contains("CyberpunkMP.Vehicle"))
                     return;
 
-                spdlog::info("[PROBE 14] poll: tags read ok - promoting to EntityComponent");
+                aEntity.emplace<EntityComponent>(aSpawning.Id, false, aSpawning.Controller);
+                aEntity.remove<SpawningComponent>();
 
-                 aEntity.emplace<EntityComponent>(aSpawning.Id, false, aSpawning.Controller);
-                 aEntity.remove<SpawningComponent>();
-
-                spdlog::info("[PROBE 15] poll: promoted - about to MUTATE tags array");
-
-                 pOwner->tags.Add("CyberpunkMP.Puppet");
-
-                spdlog::info("[PROBE 16] poll: tags.Add survived - entity fully promoted");
+                pOwner->tags.Add("CyberpunkMP.Puppet");
             }
         });
 
