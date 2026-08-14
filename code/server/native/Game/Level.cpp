@@ -335,6 +335,12 @@ void Level::HandleMoveEntityRequest(PacketEvent<client::MoveEntityRequest>& aMes
     component.Velocity = aMessage.get_speed();
     component.Tick = aMessage.get_tick();
 
+    // Carried forward, because the component is replaced wholesale below rather than
+    // edited. Interest management sends only every Nth update to distant players, and a
+    // sequence that reset to zero on every packet would make "every 4th" mean "every one".
+    if (const auto* pPrevious = target.get<MovementComponent>())
+        component.Sequence = pPrevious->Sequence + 1;
+
     // Dropped, not clamped. See Validation.h - a non-finite position does not crash
     // anything, it silently switches off every system that measures distance, and then
     // gets written to the persistent store on disconnect so it survives a restart.
