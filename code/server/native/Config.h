@@ -94,7 +94,19 @@ struct Config : IConfig
     uint16_t Port{11778};
     uint16_t WebPort{11779};
     uint16_t TickRate{60};
-    uint16_t UpdateRate{10};
+
+    // Position updates per second, per player.
+    //
+    // This is the ceiling on how smooth anyone else can possibly look: at 10 there was a
+    // hundred milliseconds between samples, and the client's simulation delay is derived
+    // from it too (50ms + 1500/rate), so a low rate cost both smoothness AND
+    // responsiveness. Interpolation can hide the gap but it cannot invent detail that was
+    // never sent, and Cam's group described the result as other players teleporting
+    // rather than walking.
+    //
+    // A MoveEntityRequest is a few dozen bytes. Thirty of them a second, per player, is
+    // nothing next to what the connection already carries.
+    uint16_t UpdateRate{30};
     std::string Password{};
     FlecsConfig Flecs{};
     DiscordConfig Discord{};

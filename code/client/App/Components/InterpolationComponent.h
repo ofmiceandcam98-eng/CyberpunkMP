@@ -11,5 +11,20 @@ struct InterpolationComponent
     };
 
     List<Timepoint> TimePoints{};
+
+    // The network sample BEHIND render time. Interpolation runs between this and the
+    // first sample ahead of it, which is what makes movement come out at a constant speed
+    // across each segment.
+    //
+    // This used to be overwritten every frame with the pose we had just drawn, so each
+    // frame started from wherever the last one finished and covered a fraction of the
+    // REMAINING distance. That accelerates into every target and then starts over at the
+    // next one, which is what Cam and his friends were seeing as other players
+    // "teleporting" rather than walking.
     Timepoint PreviousFrame{};
+    bool HasPrevious{false};
+
+    // Render time as of the last frame. The vehicle path needs a frame delta, which used
+    // to fall out of PreviousFrame back when that was rewritten every frame.
+    float LastRenderTick{0.f};
 };
