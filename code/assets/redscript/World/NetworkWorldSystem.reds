@@ -22,6 +22,12 @@ public native class NetworkWorldSystem extends IGameSystem {
         let blackboardSystem: ref<BlackboardSystem> = GameInstance.GetBlackboardSystem(GetGameInstance());
         let blackboard: ref<IBlackboard> = blackboardSystem.Get(GetAllBlackboardDefs().UIGameData);
         blackboard.SetBool(GetAllBlackboardDefs().UIGameData.UIMultiplayerConnectedToServer, true, true);
+
+        // The usual order is player-attaches-then-connects, so this is where the health
+        // floor that stops anyone flatlining actually gets armed - see Death.reds. Arming
+        // it in PlayerPuppet.OnGameAttached alone only covered loading a save while
+        // already connected, which is the rarer half.
+        MpArmDeathFloor(GetPlayer(GetGameInstance()) as PlayerPuppet);
     }
 
     public func OnDisconnected(reason: Uint32) -> Void {
@@ -79,8 +85,50 @@ public native class NetworkWorldSystem extends IGameSystem {
             return;
         }
 
+        // Bring the person, not the car.
+        //
+        // Teleporting someone who is driving drags the vehicle along with them, so
+        // summoning a player for a conversation parked their car on top of the admin who
+        // called them. Getting out first also leaves the car where its owner left it,
+        // which is what everyone else in the world can already see.
+        if VehicleComponent.IsMountedToVehicle(GetGameInstance(), player) {
+            let info = GameInstance.GetMountingFacility(GetGameInstance()).GetMountingInfoSingleWithObjects(player);
+
+            let request = new UnmountingRequest();
+            request.lowLevelMountingInfo = info;
+            request.mountData = new MountEventData();
+
+            GameInstance.GetMountingFacility(GetGameInstance()).Unmount(request);
+
+            // Unmounting is not instant. Teleporting in the same frame races the dismount
+            // animation and lands the player back in the seat at the destination, which
+            // is the bug wearing a different hat.
+            let delayed = new MpDelayedTeleportCallback();
+            delayed.system = this;
+            delayed.position = position;
+            delayed.yaw = yaw;
+            GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(delayed, 0.35, false);
+            return;
+        }
+
+        this.DoTeleport(position, yaw);
+    }
+
+    public func DoTeleport(position: Vector4, yaw: Float) -> Void {
+        let player = GetPlayer(GetGameInstance());
+        if !IsDefined(player) {
+            return;
+        }
+
         // The wire carries radians; EulerAngles is in degrees.
-        let angles = new EulerAngles(0.0, 0.0, yaw * 57.2957795);
+        //
+        // Built field by field. redscript warns that passing arguments to a native
+        // struct's constructor is undefined behaviour when it has no script definition,
+        // and this one positions players - not somewhere to leave a shrug.
+        let angles = new EulerAngles();
+        angles.Roll = 0.0;
+        angles.Pitch = 0.0;
+        angles.Yaw = yaw * 57.2957795;
 
         FTLog(s"[NetworkWorldSystem] teleporting to \(position.X), \(position.Y), \(position.Z)");
         GameInstance.GetTeleportationFacility(GetGameInstance()).Teleport(player, position, angles);
@@ -111,6 +159,16 @@ public native class NetworkWorldSystem extends IGameSystem {
         // menu for the rest of the session.
         StatusEffectHelper.RemoveStatusEffect(player, t"GameplayRestriction.BlockAllMenu");
 
+        // Applied by the death flow when the player is downed. Left on, it keeps them
+        // limping and unable to fight after they are back on their feet.
+        StatusEffectHelper.RemoveStatusEffect(player, t"BaseStatusEffect.Defeated");
+
+        // Re-arm the health floor. A custom stat-pool limit is spent once it is reached,
+        // so without this only the FIRST death of a session is caught and every one after
+        // it flatlines normally. That asymmetry is what made v0.1.31 look like it worked
+        // for one player and not another.
+        MpArmDeathFloor(player as PlayerPuppet);
+
         // Asking the server where to go rather than deciding here. It owns the respawn
         // point, and it is the same teleport path /tp and /return already use - so this
         // adds no new way for a client to move itself anywhere it likes.
@@ -122,6 +180,18 @@ public native class NetworkWorldSystem extends IGameSystem {
 
     public func DeletePuppet(entityId: EntityID) {
         GameInstance.GetDynamicEntitySystem().DeleteEntity(entityId);
+    }
+}
+
+public class MpDelayedTeleportCallback extends DelayCallback {
+    public let system: wref<NetworkWorldSystem>;
+    public let position: Vector4;
+    public let yaw: Float;
+
+    public func Call() -> Void {
+        if IsDefined(this.system) {
+            this.system.DoTeleport(this.position, this.yaw);
+        }
     }
 }
 
