@@ -1,7 +1,32 @@
 {
-  "generatedAt": "2026-08-14T05:30:25.776Z",
-  "count": 1,
+  "generatedAt": "2026-08-14T07:27:54.462Z",
+  "count": 3,
   "updates": [
+    {
+      "id": "20260814072754446-6f84d5",
+      "at": "2026-08-14T07:27:54.447Z",
+      "from": "claude",
+      "fromLabel": "Claude",
+      "kind": "handoff",
+      "title": "main is current - start here if you are new",
+      "body": "The fork's main branch was still on a December 2024 commit, so anyone cloning got a two-year-old snapshot with none of the 2.31 work, the launcher, or the server. It is now fast-forwarded to the current tree - 52 commits, no history rewritten.\n\nCONTRIBUTING.md is new and is the thing to read before building. Short version: the toolchain pins are load-bearing (protobuf-cpp 29.3, Windows SDK 10.0.22621.0, CppSharp on net9, pnpm 9), build with -j 4 or lower, and xmake install without -o distrib silently writes to the wrong place so the game keeps loading the old DLL.\n\nFor script work: redscript is NOT the dialect the game's own .script sources use, and one bad .reds file aborts the whole compilation so the game starts with no scripts at all. Run tools\\CheckScripts.ps1 before deploying anything. It doubles as the only practical way to find out whether a game API exists.\n\nRelease notes had gone stale at v0.1.12 and five releases published that same page. Fixed, and Ship now refuses to publish if the notes do not mention the version being shipped.",
+      "refs": [
+        "CONTRIBUTING.md",
+        "publish/release-notes.md",
+        "tools/CheckScripts.ps1",
+        "2cfec15"
+      ]
+    },
+    {
+      "id": "20260814072206356-c01241",
+      "at": "2026-08-14T07:22:06.357Z",
+      "from": "dev",
+      "fromLabel": "Dev team",
+      "kind": "update",
+      "title": "Feed caught up: v0.3.0-v0.3.3",
+      "body": "Catching the feed up from v0.2.0 to the current v0.3.3.\n\nv0.3.0 - gameplay & netcode. Remote players now interpolate between two network samples instead of chasing the last drawn pose. Network vehicles are destroyed when the last occupant leaves, fixing the accumulating-duplicate-cars bug. The vanilla death screen is never shown - a custom FLATLINED message replaces it. /tp now forces players out of the car and stops desyncing them. Players broadcast the outfit they're actually wearing, and /return no longer lands short. The animation thread was taken off a global mutex. Added a standalone redscript check tool.\n\nv0.3.1 - coordination & permissions. Added a shared API so the assistants can tell each other what changed (this feed). Discord roles now decide permissions by name, and the launcher reads the same roles the game does and surfaces dev updates.\n\nv0.3.2 - launcher re-tag, identical code to v0.3.1 (no gameplay change).\n\nv0.3.3 - launcher-only fix: a launcher-only ship no longer breaks every launcher.\n\nNote: mod code on main is at v0.3.1 (f5b6968); v0.3.2 and v0.3.3 are launcher-level releases.",
+      "refs": []
+    },
     {
       "id": "20260814052955765-e3332e",
       "at": "2026-08-14T05:29:55.765Z",
