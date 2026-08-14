@@ -13,6 +13,7 @@
 #include "World.h"
 #include "PlayerManager.h"
 #include "Systems/ChatSystem.h"   // telling someone their seat is taken
+#include "Validation.h"           // sanity checks on anything a client sent
 
 
 constexpr static float sCellSize = 60 * 100;
@@ -209,6 +210,35 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
         return;
     }
 
+    // A spawn arrives once, and everything in it is stored and rebroadcast to every other
+    // client - so this is the packet where a bad value does the most damage and gets the
+    // least scrutiny.
+    if (!Validation::IsSanePosition(pos) || !Validation::IsSaneRotation(rot))
+    {
+        spdlog::warn("Refused a spawn from {} at a nonsense position ({}, {}, {})",
+                     pComponent->Username, pos.x, pos.y, pos.z);
+
+        // Answered rather than ignored. The client waits on this response and would hang
+        // at a black screen if we simply dropped it.
+        GServer->Send(aMessage.ConnectionId, response);
+        return;
+    }
+
+    // The appearance blob is relayed verbatim to everyone in range. Unbounded, it is a way
+    // to make one join allocate arbitrary memory on the server and on every other client.
+    // Real ones measure 6-9KB.
+    constexpr size_t kMaxCcstate = 256 * 1024;
+    constexpr size_t kMaxEquipment = 64;
+
+    if (ccstate.size() > kMaxCcstate || equipment.size() > kMaxEquipment)
+    {
+        spdlog::warn("Refused a spawn from {} - {} bytes of appearance, {} equipment item(s)",
+                     pComponent->Username, ccstate.size(), equipment.size());
+
+        GServer->Send(aMessage.ConnectionId, response);
+        return;
+    }
+
     if (IsDebug())
     {
         pos += glm::vec3(2, 0, 0);
@@ -304,6 +334,33 @@ void Level::HandleMoveEntityRequest(PacketEvent<client::MoveEntityRequest>& aMes
     component.Position = {pos.get_x(), pos.get_y(), pos.get_z()};
     component.Velocity = aMessage.get_speed();
     component.Tick = aMessage.get_tick();
+
+    // Dropped, not clamped. See Validation.h - a non-finite position does not crash
+    // anything, it silently switches off every system that measures distance, and then
+    // gets written to the persistent store on disconnect so it survives a restart.
+    //
+    // Keeping the last good position is right: this arrives thirty times a second, so
+    // discarding one is invisible, and inventing a position the player is not at would be
+    // a desync we would then have to debug.
+    if (!Validation::IsSanePosition(component.Position) ||
+        !Validation::IsSaneRotation(component.Rotation) ||
+        !Validation::IsSaneSpeed(component.Velocity))
+    {
+        // Rate-limited: a client stuck producing NaN would otherwise write thirty lines a
+        // second and bury everything else in the log.
+        static thread_local std::chrono::steady_clock::time_point s_lastComplaint{};
+        const auto now = std::chrono::steady_clock::now();
+
+        if (now - s_lastComplaint > std::chrono::seconds(5))
+        {
+            s_lastComplaint = now;
+            spdlog::warn("Dropped a nonsense movement packet from {} - pos ({}, {}, {}) speed {}",
+                         pPlayer->Username, component.Position.x, component.Position.y,
+                         component.Position.z, component.Velocity);
+        }
+
+        return;
+    }
 
     if constexpr (IsDebug())
     {

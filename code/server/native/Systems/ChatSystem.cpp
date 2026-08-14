@@ -906,11 +906,40 @@ void ChatSystem::HandleChatMessageRequest(const PacketEvent<client::ChatMessageR
     }
     auto* pPlayer = entity.get<PlayerComponent>();
 
-    spdlog::info("[chat] [{}]: {}", pPlayer->Username, aMessage.get_message());
+    // Length is checked before the message is logged, let alone broadcast.
+    //
+    // Chat is relayed verbatim to everyone in range and written to the log. With no cap, a
+    // single client could send a megabyte and have the server copy it to every player and
+    // to disk - a denial of service that costs the sender one packet, and needs no exploit
+    // beyond a text field with no maximum.
+    //
+    // 512 is far more than anyone types. Truncating rather than dropping keeps an
+    // over-long message readable instead of making it vanish with no explanation.
+    constexpr size_t kMaxChatLength = 512;
+
+    std::string line = aMessage.get_message().c_str();
+
+    if (line.size() > kMaxChatLength)
+    {
+        spdlog::warn("Truncated a {}-byte chat message from {}", line.size(), pPlayer->Username);
+        line.resize(kMaxChatLength);
+    }
+
+    // Control characters are stripped. They do nothing useful in a chat box and newlines
+    // in particular let one message forge several lines in the log, which is how a chat
+    // message starts pretending to be a server notice.
+    line.erase(std::remove_if(line.begin(), line.end(),
+                              [](unsigned char c) { return c < 0x20 && c != '\t'; }),
+               line.end());
+
+    if (line.empty())
+        return;
+
+    spdlog::info("[chat] [{}]: {}", pPlayer->Username, line);
 
     // Moderation commands. Every one of these checks the permission level the SERVER
     // derived from Discord at connect time - never anything the client said about itself.
-    if (HandleModerationCommand(entity, *pPlayer, aMessage.get_message().c_str()))
+    if (HandleModerationCommand(entity, *pPlayer, line))
         return;
 
     // Debug command: spawn a fake remote player next to the sender.
@@ -920,7 +949,7 @@ void ChatSystem::HandleChatMessageRequest(const PacketEvent<client::ChatMessageR
     // NotifyCharacterLoad for any entity with a MovementComponent, so a fabricated
     // one drives exactly the same client path - letting a single player reproduce
     // the crash on demand with a debugger attached.
-    if (aMessage.get_message() == "/dummy")
+    if (line == "/dummy")
     {
         auto* pOwnPuppet = pPlayer->Puppet ? pPlayer->Puppet.get<MovementComponent>() : nullptr;
         if (!pOwnPuppet)
@@ -979,7 +1008,7 @@ void ChatSystem::HandleChatMessageRequest(const PacketEvent<client::ChatMessageR
     bool everyone = false;
     uint32_t channel = ChatChannel::kLocal;
 
-    if (!ResolveChannel(*pPlayer, aMessage.get_message().c_str(), text, range, everyone, channel))
+    if (!ResolveChannel(*pPlayer, line, text, range, everyone, channel))
         return; // Refused or misused - ResolveChannel already said why.
 
     if (everyone)
