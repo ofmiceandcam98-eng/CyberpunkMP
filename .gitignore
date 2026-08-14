@@ -55,3 +55,9 @@ tools/.discord-bot
 # Which channel the to-do list lives in and which message to edit. Not a credential,
 # but it belongs with them rather than in the repo - it is specific to one Discord.
 tools/.discord-todo
+
+# Coordination API state. participants.json holds the API keys and updates.jsonl the full
+# message history; both are specific to this machine. The PUBLISHED slice of the history
+# lives in publish/ and is tracked deliberately - that is the copy the launcher and the
+# GitHub page read.
+code/coord-api/data/
