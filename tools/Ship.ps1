@@ -24,10 +24,18 @@ param(
     [switch]$Server,
     [switch]$WhatIf,
 
-    # Which part of the version moves. patch for a fix, minor for a feature, major when
-    # something changes that people have to know about.
+    # Which part of the version moves.
+    #
+    # PATCH ONLY until this is genuinely 1.0-ready - Cam's call, 2026-08-14. Version
+    # numbers are a promise about maturity, and arriving at 1.0 while players are still
+    # finding crashes spends that promise on nothing. Passing -Bump minor or major now
+    # requires -IKnowThisIsNotOneOh, which exists to make it a decision rather than a
+    # habit.
     [ValidateSet('patch','minor','major')]
     [string]$Bump = 'patch',
+
+    # Required to move anything but the patch number. See above.
+    [switch]$IKnowThisIsNotOneOh,
 
     # Re-publish into the SAME version instead of cutting a new one. For fixing a bad
     # upload, not for shipping changes - two different builds sharing a version number is
@@ -105,6 +113,11 @@ Set-Location $Repo
 
 $pkgPath = Join-Path $LauncherDir "package.json"
 $version = (Get-Content $pkgPath -Raw -Encoding UTF8 | ConvertFrom-Json).version
+
+# Patch only, until this is 1.0-ready. See the -Bump parameter.
+if ($Bump -ne 'patch' -and -not $IKnowThisIsNotOneOh) {
+    Die "-Bump $Bump is held back while this is in beta. Patch releases only until 1.0-ready; pass -IKnowThisIsNotOneOh if you really mean it."
+}
 
 # Only a launcher build can move the version, because the version IS the launcher's
 # version as far as the auto-updater is concerned. Bumping it on a mod-only ship would
@@ -574,7 +587,7 @@ if ($existingTags -notcontains $Tag) {
     $branch = git rev-parse --abbrev-ref HEAD
     gh release create $Tag --repo $GhRepo `
         --target $branch `
-        --title "Night City Online $Tag" `
+        --title "Night City Online BETA $Tag" `
         --notes-file (Join-Path $Repo "publish\release-notes.md") `
         --prerelease 2>&1 | Select-Object -Last 1
     if ($LASTEXITCODE -ne 0) { Die "could not create release $Tag" }

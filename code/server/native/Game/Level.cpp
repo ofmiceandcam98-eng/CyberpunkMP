@@ -12,6 +12,7 @@
 #include "GameServer.h"
 #include "World.h"
 #include "PlayerManager.h"
+#include "Systems/ChatSystem.h"   // telling someone their seat is taken
 
 
 constexpr static float sCellSize = 60 * 100;
@@ -372,7 +373,42 @@ void Level::HandleEnterVehicleRequest(PacketEvent<client::EnterVehicleRequest>& 
         spdlog::info("Player {:x} spawned and entered vehicle {:x}", aMessage.get_id(), vehicle.id());
     }
 
-    target.set<AttachmentComponent>({vehicle, aMessage.get_sit_id()});
+    // One person per seat.
+    //
+    // Nothing checked this. Each client decides its own seat locally, and two people
+    // getting into the same car from opposite sides can both report seat_front_left -
+    // whereupon the server replicated two puppets into one seat and they rendered inside
+    // each other. That is what "four people cannot fit in a four-door car" looks like from
+    // the inside: the seats are there, they were just all being asked for at once.
+    //
+    // Refused rather than silently reassigned. Being told the seat is taken is something a
+    // player can act on; being moved somewhere they did not choose is not.
+    const auto requestedSeat = aMessage.get_sit_id();
+    bool seatTaken = false;
+
+    GetWorld()->each(
+        [vehicle, requestedSeat, target, &seatTaken](flecs::entity aOccupant, const AttachmentComponent& aAttachment)
+        {
+            if (aOccupant == target)
+                return;
+
+            if (aAttachment.Parent == vehicle && aAttachment.SlotId == requestedSeat)
+                seatTaken = true;
+        });
+
+    if (seatTaken)
+    {
+        spdlog::info("Player {:x} tried to take an occupied seat in vehicle {:x}", aMessage.get_id(), vehicle.id());
+
+        // Told, then left alone. The client is already sitting there locally, so saying
+        // nothing would leave them looking at a seat the server disagrees about.
+        if (auto* pChat = GetWorld()->get_mut<ChatSystem>())
+            pChat->Tell(*pPlayer, "Someone is already in that seat - try another door.");
+
+        return;
+    }
+
+    target.set<AttachmentComponent>({vehicle, requestedSeat});
 }
 
 void Level::HandleExitVehicleRequest(PacketEvent<client::ExitVehicleRequest>& aMessage) noexcept

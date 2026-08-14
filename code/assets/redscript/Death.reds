@@ -35,6 +35,60 @@ import CyberpunkMP.World.*
 // handling is too tight to rely on.
 public static func MpDeathFloor() -> Float = 1.0
 
+// Who is asking for immortality, so removing it cannot revoke somebody else's.
+//
+// God mode is reference-counted by source: a quest that made the player immortal for a
+// scene keeps its own claim, and dropping ours does not touch it.
+public static func MpGodModeSource() -> CName = n"CyberpunkMP.NoFlatline"
+
+// The engine's own "this entity cannot die" flag, and the reason this file is on its third
+// attempt.
+//
+// The first two tries were both script-level: wrap OnDeath, then put a custom floor under
+// the health pool. Both are conventions the game's own scripts follow, and both can be
+// walked past - by a scripted kill, by falling out of the world, by anything that sets the
+// dead state directly rather than draining health into it. Players kept reaching FLATLINED
+// and the only options there rebuild the world, which ends the session for everyone.
+//
+// Immortal is not a convention. It is checked by the engine before the death state is
+// entered at all, which is why the game itself uses it to protect the player during
+// scripted sequences. Damage still lands and health still drops - so the stat-pool
+// listener below still fires and still gives us the "downed" moment to respawn on - but
+// the dead state is never reached, so nothing ever asks for the death menu.
+public func MpApplyImmortality(player: ref<PlayerPuppet>) -> Void {
+    if !IsDefined(player) {
+        return;
+    }
+
+    let system = GameInstance.GetNetworkWorldSystem();
+    if !IsDefined(system) || !system.IsConnected() {
+        return;
+    }
+
+    let gods = GameInstance.GetGodModeSystem(player.GetGame());
+    gods.AddGodMode(player.GetEntityID(), gameGodModeType.Immortal, MpGodModeSource());
+
+    FTLog(s"[Death] immortality applied - the death menu can no longer be reached");
+}
+
+// Given back on disconnect. Someone who plays the game normally afterwards should be able
+// to die in it, and an unkillable player who never asked for one is a bug even though it
+// looks like a small one.
+public func MpClearImmortality(player: ref<PlayerPuppet>) -> Void {
+    if !IsDefined(player) {
+        return;
+    }
+
+    let gods = GameInstance.GetGodModeSystem(player.GetGame());
+    gods.RemoveGodMode(player.GetEntityID(), gameGodModeType.Immortal, MpGodModeSource());
+
+    let pools = GameInstance.GetStatPoolsSystem(player.GetGame());
+    pools.RequestSettingStatPoolValueCustomLimit(Cast<StatsObjectID>(player.GetEntityID()),
+                                                 gamedataStatPoolType.Health, 0.0, null);
+
+    FTLog(s"[Death] immortality removed - singleplayer death is back to normal");
+}
+
 // Puts the floor under the player's health and starts listening for it.
 //
 // Only while connected. Applying this in singleplayer would quietly make Cam immortal in
@@ -49,6 +103,10 @@ public func MpArmDeathFloor(player: ref<PlayerPuppet>) -> Void {
     if !IsDefined(system) || !system.IsConnected() {
         return;
     }
+
+    // The engine-level guarantee comes first. Everything below is what turns "cannot die"
+    // into "gets back up at the Afterlife".
+    MpApplyImmortality(player);
 
     let pools = GameInstance.GetStatPoolsSystem(player.GetGame());
     let id = Cast<StatsObjectID>(player.GetEntityID());
@@ -149,17 +207,35 @@ protected cb func OnInitialize() -> Bool {
         MpShowFlatlinedMessage();
         system.RevivePlayer();
 
-        // Give the menu system a moment to finish opening before asking it to close -
-        // m_menuEventDispatcher is not wired up yet at this point in OnInitialize.
-        let close = new MpCloseDeathMenuCallback();
-        close.controller = this;
-        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(close, 0.1, false);
+        // Immortality should mean nothing ever gets here. If it did, something walked past
+        // the engine's own death check and I want to know which build and which player -
+        // this line is the evidence.
+        MpApplyImmortality(this.GetPlayerControlledObject() as PlayerPuppet);
 
-        // The watchdog. If the close above does not take, put the menu back rather than
-        // leave someone stuck behind an invisible one.
-        let watchdog = new MpDeathMenuWatchdogCallback();
-        watchdog.controller = this;
-        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(watchdog, 3.0, false);
+        // Give the menu system a moment to finish opening before asking it to close -
+        // m_menuEventDispatcher is not wired up yet at this point in OnInitialize. Tried
+        // several times rather than once, because a single attempt against a menu that is
+        // still opening is a coin flip.
+        let attempt = 1;
+        while attempt <= 5 {
+            let close = new MpCloseDeathMenuCallback();
+            close.controller = this;
+            GameInstance.GetDelaySystem(GetGameInstance())
+                .DelayCallback(close, 0.1 * Cast<Float>(attempt), false);
+            attempt += 1;
+        }
+
+        // The failsafe, and it is deliberately slow.
+        //
+        // The previous version put the menu BACK after three seconds if it had not closed,
+        // which meant a failure to close showed up as FLATLINED appearing a moment late -
+        // indistinguishable from the bug it was meant to prevent, and quite possibly what
+        // Cam kept seeing. Eight seconds is long past any legitimate close, so if it fires
+        // at all something is badly wrong and a visible menu beats a player trapped behind
+        // an invisible one.
+        let failsafe = new MpDeathMenuWatchdogCallback();
+        failsafe.controller = this;
+        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(failsafe, 8.0, false);
 
         // Deliberately does NOT chain. The vanilla controller is never built, so there is
         // no FLATLINED text and no Load Last Checkpoint button to build it from.

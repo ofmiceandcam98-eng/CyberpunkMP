@@ -372,16 +372,88 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
 
     // ----------------------------------------------------------------- /tp ----
     //
-    // Brings someone to you rather than sending you to them: the person running the
-    // command is the one who chose where to stand.
+    // Two directions, because both are wanted for different reasons.
+    //
+    //   /tp <player>     brings them to you - you chose where to stand
+    //   /tp to <player>  sends you to them - you go and see what they are looking at
+    //
+    // Written as a word rather than a separate command so there is one thing to remember
+    // and one place to look in /help.
     if (command == "/tp")
     {
         if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
             return deny(EPermissionLevel::kAdmin);
 
+        const bool goToThem = (target == "to");
+
+        // Re-split when "to" ate the first word: the player's name is what follows it.
+        if (goToThem)
+        {
+            const auto nameStart = rest.find_first_not_of(' ');
+            target = (nameStart == std::string::npos) ? std::string{} : rest.substr(nameStart);
+
+            // A trailing word after the name would be a typo rather than a reason.
+            if (const auto space = target.find(' '); space != std::string::npos)
+                target = target.substr(0, space);
+        }
+
         if (target.empty())
         {
-            Tell(acSender, "Usage: /tp <player>");
+            Tell(acSender, "Usage: /tp <player>   (brings them to you)");
+            Tell(acSender, "       /tp to <player>   (sends you to them)");
+            return true;
+        }
+
+        if (goToThem)
+        {
+            const auto them = findPlayer(target);
+            if (!them)
+            {
+                Tell(acSender, fmt::format("No player called '{}' is online.", target));
+                return true;
+            }
+
+            const auto* pThem = them.get<PlayerComponent>();
+            const auto* pTheirs = pThem->Puppet ? pThem->Puppet.get<MovementComponent>() : nullptr;
+
+            if (!pTheirs)
+            {
+                Tell(acSender, fmt::format("{} has not spawned in yet.", pThem->Username));
+                return true;
+            }
+
+            // Remember where WE were, so /return brings us back. Same mechanism, applied
+            // to the person running the command instead of the person being moved.
+            if (const auto* pMine = acSender.Puppet ? acSender.Puppet.get<MovementComponent>() : nullptr)
+            {
+                auto* pSelf = aSender.get_mut<PlayerComponent>();
+                pSelf->ReturnPosition = pMine->Position;
+                pSelf->ReturnRotation = pMine->Rotation;
+                pSelf->HasReturnPoint = true;
+            }
+
+            // Beside them rather than on top of them. Two puppets sharing a spot look
+            // broken and shove each other apart.
+            const float theirYaw = pTheirs->Rotation.z;
+            const glm::vec3 theirForward{-std::sin(theirYaw), std::cos(theirYaw), 0.f};
+            const glm::vec3 destination = pTheirs->Position + theirForward * kTeleportDistance;
+
+            server::NotifyTeleport teleport;
+            common::Vector3 position;
+            position.set_x(destination.x);
+            position.set_y(destination.y);
+            position.set_z(destination.z);
+            teleport.set_position(position);
+
+            // Facing them, since you came to see what they are doing.
+            teleport.set_rotation(theirYaw + 3.14159265f);
+
+            GServer->Send(acSender.Connection, teleport);
+
+            spdlog::info("{} teleported to {}", acSender.Username, pThem->Username);
+
+            Tell(acSender, fmt::format("Went to {}. /return brings you back.", pThem->Username));
+            Tell(*pThem, fmt::format("{} teleported to you.", acSender.Username));
             return true;
         }
 
@@ -796,7 +868,12 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         }
 
         if (acSender.HasAtLeast(EPermissionLevel::kAdmin))
-            Tell(acSender, "Admin: /ban <player> [reason], /unban <discord id>, /tp <player>, /return <player>");
+        {
+            Tell(acSender, "Admin: /ban <player> [reason], /unban <discord id>");
+            Tell(acSender, "       /tp <player>    - brings them to you");
+            Tell(acSender, "       /tp to <player> - sends you to them");
+            Tell(acSender, "       /return <player>, /setspawn");
+        }
 
         return true;
     }

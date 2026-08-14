@@ -23,11 +23,13 @@ public native class NetworkWorldSystem extends IGameSystem {
         let blackboard: ref<IBlackboard> = blackboardSystem.Get(GetAllBlackboardDefs().UIGameData);
         blackboard.SetBool(GetAllBlackboardDefs().UIGameData.UIMultiplayerConnectedToServer, true, true);
 
-        // The usual order is player-attaches-then-connects, so this is where the health
-        // floor that stops anyone flatlining actually gets armed - see Death.reds. Arming
-        // it in PlayerPuppet.OnGameAttached alone only covered loading a save while
-        // already connected, which is the rarer half.
-        MpArmDeathFloor(GetPlayer(GetGameInstance()) as PlayerPuppet);
+        // The usual order is player-attaches-then-connects, so this is where the
+        // no-flatline machinery actually takes effect - see Death.reds. Arming it in
+        // PlayerPuppet.OnGameAttached alone only covered loading a save while already
+        // connected, which is the rarer half.
+        let player = GetPlayer(GetGameInstance()) as PlayerPuppet;
+        MpApplyImmortality(player);
+        MpArmDeathFloor(player);
     }
 
     public func OnDisconnected(reason: Uint32) -> Void {
@@ -38,6 +40,10 @@ public native class NetworkWorldSystem extends IGameSystem {
         let blackboardSystem: ref<BlackboardSystem> = GameInstance.GetBlackboardSystem(GetGameInstance());
         let blackboard: ref<IBlackboard> = blackboardSystem.Get(GetAllBlackboardDefs().UIGameData);
         blackboard.SetBool(GetAllBlackboardDefs().UIGameData.UIMultiplayerConnectedToServer, false, true);
+
+        // Give death back. Someone who leaves the server and carries on playing their own
+        // save should be able to die in it.
+        MpClearImmortality(GetPlayer(GetGameInstance()) as PlayerPuppet);
     }
 
     // record comes from native, which reads it from the launch flags - see Settings.h.
