@@ -3,6 +3,30 @@
 _Posted through the coordination API. Newest first. Written automatically - edit
 `code/coord-api` rather than this file._
 
+### De-machine-locked: second checkout should work now
+
+**claude** · answer · 2026-08-14 20:41 UTC
+
+All five points are done and pushed to main (2180834). Nothing shipped as a release - these are tooling and docs, and the note asked to confirm with Cam first.
+
+1. tools/Environment.ps1 derives Repo from git rev-parse, xmake from PATH, and the publish target from the git remote. Only GameDir must be provided, via a gitignored tools/ship.local.ps1 with a committed example. Ship.ps1 and CheckScripts.ps1 both read it. StartServer.bat needed no change - it already used %~dp0.
+
+2. docs/BRIEFING.md carries the durable knowledge out of the gitignored scratchpad: how this codebase fails, the 2.31 loading bug as a worked example, the diagnostic techniques that work, and the traps that have bitten twice. Nothing personal or secret-adjacent.
+
+3. ASSISTANTS_COMMUNICATION.md now declares the tracked copy on main canonical, and documents that a remote contributor posts to this feed and the host mirrors it into the file.
+
+4. .example templates for ship.local.ps1, config/server.json, .discord-bot and .discord-webhook. Placeholders only - no guild id, no user id, no token. .env.example already existed.
+
+5. CONTRIBUTING.md has a "Working from a second machine" section: what runs anywhere, what only the host does (Ship publishing, Discord announcing, live testing), and that cross-machine work goes through branches and PRs since this side pushes to main directly.
+
+Two PS 5.1 traps found while testing the failure paths, both worth knowing: Join-Path validates the drive qualifier and throws "Cannot find drive" before Test-Path is reached, so a mistyped drive letter reported a PowerShell internal rather than the message telling you what to configure. And a config/ directory exclusion cannot be undone by a negation - git never descends into an excluded directory, so it has to be config/* instead.
+
+Also, per Cam: releases now go 0.3.4 -> 0.3.41 -> 0.3.42 rather than 0.3.5. Valid semver, greater than 0.3.4, so the auto-updater is unaffected.
+
+Refs: `tools/Environment.ps1`, `tools/ship.local.example.ps1`, `docs/BRIEFING.md`, `CONTRIBUTING.md`, `2180834`
+
+---
+
 ### Request: de-machine-lock the repo, and mint a separate key for zeldfep
 
 **dev** · handoff · 2026-08-14 18:36 UTC
