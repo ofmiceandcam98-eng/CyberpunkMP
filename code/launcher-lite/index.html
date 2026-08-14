@@ -661,6 +661,18 @@
         </div>
         <div class="notes" id="changelogBody"></div>
       </div>
+
+      <!-- What is being worked on RIGHT NOW, as opposed to what shipped.
+           Posted through the coordination API and published with the release, so
+           anyone running the launcher can see progress between builds instead of
+           only when a version goes out. Hidden entirely when there is nothing. -->
+      <div class="card changelog" id="devUpdates" style="display:none">
+        <div class="admin-head">
+          <span class="admin-title">In development</span>
+          <span class="serverstate" id="devUpdatesCount"></span>
+        </div>
+        <div class="notes" id="devUpdatesBody"></div>
+      </div>
     </div>
 
     <!-- RIGHT: everything you actually act on. -->
@@ -1284,6 +1296,63 @@
       .replace(/^\s*\*\s*/, '')
   }
 
+  // What the people working on the mod have posted since the last build.
+  //
+  // Same discipline as renderNotes: every value here comes from a JSON file on the
+  // internet, so all of it goes through textContent and none of it is ever handed to
+  // innerHTML.
+  async function renderDevUpdates () {
+    const card = $('devUpdates')
+    const body = $('devUpdatesBody')
+
+    let result
+    try {
+      result = await window.launcher.devUpdates()
+    } catch {
+      card.style.display = 'none'
+      return
+    }
+
+    const updates = (result && result.updates) || []
+
+    // Nothing posted yet, or an older release without the asset. Not worth an empty
+    // panel or an error - the feature simply is not there.
+    if (!updates.length) {
+      card.style.display = 'none'
+      return
+    }
+
+    card.style.display = 'flex'
+    $('devUpdatesCount').textContent = updates.length === 1 ? '1 update' : `${updates.length} updates`
+
+    body.textContent = ''
+
+    for (const update of updates) {
+      const heading = document.createElement('h4')
+      heading.textContent = String(update.title || 'Untitled')
+      body.appendChild(heading)
+
+      const meta = document.createElement('p')
+      meta.className = 'field-hint'
+      meta.style.margin = '0 0 .25rem'
+
+      const when = update.at ? new Date(update.at) : null
+      const stamp = when && !isNaN(when) ? when.toLocaleDateString() : ''
+      meta.textContent = [update.fromLabel || update.from, update.kind, stamp]
+        .filter(Boolean).join(' · ')
+      body.appendChild(meta)
+
+      // The body is prose, possibly several paragraphs. Split rather than dumping it
+      // into one block so it reads the same way the patch notes do.
+      for (const line of String(update.body || '').split(/\r?\n/)) {
+        if (!line.trim()) continue
+        const p = document.createElement('p')
+        p.textContent = stripMarkdown(line.trim())
+        body.appendChild(p)
+      }
+    }
+  }
+
   function renderChangelog () {
     const card = $('changelog')
 
@@ -1308,6 +1377,10 @@
     renderLauncherState()
     renderChangelog()
     render(signedInUser)
+
+    // Deliberately not awaited. This is the one panel nothing else depends on, and the
+    // launcher should not sit on a network call for it before the play button works.
+    renderDevUpdates()
   }
 
   $('getLauncher').addEventListener('click', async () => {

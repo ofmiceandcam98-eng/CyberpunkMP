@@ -410,6 +410,34 @@ if ($Mod) {
         Warn "no publish\server.json - launchers will fall back to 127.0.0.1 and find nothing"
     }
 
+    # Which Discord roles grant what, written by the server itself.
+    #
+    # The launcher reads this so the controls it shows match the commands the game gives
+    # you. Before it existed the two decided permissions independently - Discord roles in
+    # game, a hardcoded list of one id in the launcher - and somebody with the dev role
+    # had staff commands in the world and no server controls in the launcher.
+    $roles = Join-Path $Repo "publish\roles.json"
+    if (Test-Path $roles) {
+        $uploads += $roles
+        $count = @((Get-Content $roles -Raw -Encoding UTF8 | ConvertFrom-Json).roles).Count
+        Ok "role map staged ($count role(s) grant something)"
+    } else {
+        Warn "no publish\roles.json - the launcher will fall back to the built-in admin list"
+    }
+
+    # What the assistants have been working on, from the coordination API.
+    #
+    # Carried onto every release deliberately. The launcher reads it from
+    # releases/latest/download/, so a new release without it would blank the "In
+    # development" panel until somebody happened to post again - the panel would look
+    # broken at exactly the moment there was most to say.
+    $devUpdates = Join-Path $Repo "publish\assistant-updates.json"
+    if (Test-Path $devUpdates) {
+        $uploads += $devUpdates
+        $count = @((Get-Content $devUpdates -Raw -Encoding UTF8 | ConvertFrom-Json).updates).Count
+        Ok "dev updates staged ($count entr$(if ($count -eq 1) { 'y' } else { 'ies' }))"
+    }
+
     # FullInstall.zip - what a NEW player gets. Rebuilt every ship.
     #
     # This is the launcher's "Install everything" download, and it went missing entirely

@@ -1362,6 +1362,19 @@ async function hydrateUserFromToken () {
       : `https://cdn.discordapp.com/embed/avatars/${(BigInt(user.id) >> 22n) % 6n}.png`
   }
 
+  // Resolve their Discord roles into a level, so the controls the launcher shows match
+  // the commands the game gives them. Deliberately not awaited: it is two network calls
+  // and nothing here should wait on Discord before the launcher is usable. The controls
+  // appear a moment later, once the answer arrives.
+  refreshUserLevel()
+    .then((level) => {
+      if (currentUser && level && level !== 'player') {
+        currentUser.isAdmin = isAdmin()
+        console.log(`[roles] ${currentUser.handle} resolved to ${level}`)
+      }
+    })
+    .catch(() => {})
+
   return currentUser
 }
 
@@ -1493,8 +1506,101 @@ async function launchGame () {
 // Server controls (admin only)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Discord roles, shared with the game
+//
+// Permissions used to be decided in two unrelated places: Discord roles in game, and a
+// hardcoded list of one Discord id here. So somebody with the dev role had staff commands
+// in the world and no server controls in the launcher that starts it.
+//
+// The server now publishes what each role resolves to as roles.json, alongside the release
+// - the same route modlist.json and server.json already take. Both halves read the same
+// table.
+//
+// ADMIN_DISCORD_IDS stays as a floor. If the role map is unreachable, or Discord is having
+// a bad day, Cam must not be locked out of the controls for his own server.
+// ---------------------------------------------------------------------------
+
+const ROLES_URL = `https://github.com/${GITHUB_REPO}/releases/latest/download/roles.json`
+
+const LEVELS = { player: 0, moderator: 1, admin: 2, owner: 3 }
+
+let roleMap = null            // { owner, roles: [{ id, name, level }] }
+let roleMapFetchedAt = 0
+
+async function getRoleMap () {
+  // Cached for ten minutes. Roles change rarely and this runs on every permission check.
+  if (roleMap && Date.now() - roleMapFetchedAt < 10 * 60 * 1000) return roleMap
+
+  try {
+    const response = await axios.get(ROLES_URL, {
+      timeout: 8000,
+      // 404 is an answer: no role map has been published yet.
+      validateStatus: (status) => status === 200 || status === 404
+    })
+
+    roleMap = response.status === 200 ? response.data : { roles: [] }
+  } catch {
+    roleMap = roleMap || { roles: [] }
+  }
+
+  roleMapFetchedAt = Date.now()
+  return roleMap
+}
+
+/**
+ * The signed-in user's permission level, from their Discord roles.
+ *
+ * Uses the same guilds.members.read scope the launcher already asks for, and the same
+ * member endpoint the game server uses - so the two cannot disagree about what somebody's
+ * roles are, only about how fresh the answer is.
+ */
+async function resolveUserLevel () {
+  if (!currentUser || !currentUser.id) return 'player'
+
+  const map = await getRoleMap()
+
+  if (map.owner && map.owner === currentUser.id) return 'owner'
+
+  const token = loadToken()
+  if (!token || !map.roles || !map.roles.length) return 'player'
+
+  let memberRoles = []
+  try {
+    const member = await axios.get(
+      `https://discord.com/api/v10/users/@me/guilds/${map.guildId || GUILD_ID}/member`,
+      { headers: { Authorization: `Bearer ${token}` }, timeout: 8000,
+        validateStatus: (status) => status === 200 || status === 404 })
+
+    if (member.status === 200 && Array.isArray(member.data?.roles)) memberRoles = member.data.roles
+  } catch {
+    return 'player'
+  }
+
+  let best = 'player'
+  for (const role of map.roles) {
+    if (!memberRoles.includes(role.id)) continue
+    if ((LEVELS[role.level] || 0) > (LEVELS[best] || 0)) best = role.level
+  }
+
+  return best
+}
+
+// The cached answer, refreshed after sign-in. isAdmin is called from synchronous paths -
+// including render - so it cannot await, and a permission check that fires a network
+// request per call would be its own problem.
+let cachedLevel = 'player'
+
+async function refreshUserLevel () {
+  cachedLevel = await resolveUserLevel()
+  return cachedLevel
+}
+
 function isAdmin () {
-  return Boolean(currentUser) && ADMIN_DISCORD_IDS.includes(currentUser.id)
+  if (!currentUser) return false
+  if (ADMIN_DISCORD_IDS.includes(currentUser.id)) return true
+
+  return (LEVELS[cachedLevel] || 0) >= LEVELS.admin
 }
 
 function serverExePath () {
@@ -2341,6 +2447,42 @@ ipcMain.handle('update:check', async () => {
     return { ok: true, ...lastUpdateCheck }
   } catch (err) {
     return { ok: false, error: err.message }
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Development updates
+//
+// The assistants working on the mod post what they changed to a small coordination API
+// (code/coord-api), which publishes the newest entries as a release asset. Reading it
+// from the same place as modlist.json and server.json means no new hosting and one
+// place to look when something does not arrive.
+//
+// Missing is the normal case, not an error: the asset only exists once somebody has
+// posted, and older releases will never have it. The panel simply stays hidden.
+// ---------------------------------------------------------------------------
+
+const DEV_UPDATES_URL = `https://github.com/${GITHUB_REPO}/releases/latest/download/assistant-updates.json`
+
+ipcMain.handle('devUpdates:list', async () => {
+  try {
+    const response = await axios.get(DEV_UPDATES_URL, {
+      timeout: 8000,
+      // A 404 is an answer, not a failure - it means nothing has been posted yet.
+      validateStatus: (status) => status === 200 || status === 404
+    })
+
+    if (response.status === 404) return { ok: true, updates: [] }
+
+    const updates = Array.isArray(response.data?.updates) ? response.data.updates : []
+
+    return {
+      ok: true,
+      generatedAt: response.data?.generatedAt || null,
+      updates: updates.slice(0, 25)
+    }
+  } catch (err) {
+    return { ok: false, error: err.message, updates: [] }
   }
 })
 

@@ -34,6 +34,10 @@ contextBridge.exposeInMainWorld('launcher', {
   // not just that the recorded version matches.
   verifyInstall: () => ipcRenderer.invoke('update:verify'),
 
+  // What the people working on the mod have been changing, posted through the
+  // coordination API and published with the release.
+  devUpdates: () => ipcRenderer.invoke('devUpdates:list'),
+
   // The curated Nexus mod list, and the Nexus account used to fetch from it.
   // The API key is never handed to the page - only whether one is stored, and the name.
   listMods: () => ipcRenderer.invoke('mods:list'),
