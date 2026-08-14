@@ -36,6 +36,14 @@ constexpr uint32_t kServer = 4;
 // broken and can shove each other - close enough to be obviously deliberate.
 constexpr float kTeleportDistance = 5.f;
 
+// How far short of their original spot /return puts someone.
+//
+// Not the exact spot. Whatever they were standing in or beside may have moved while they
+// were away, and materialising inside it drops people through the world. A few metres
+// behind their own footprints, still facing the way they were, is close enough to count
+// as "put back" and far enough not to land inside a car that has since parked there.
+constexpr float kReturnBackoff = 3.f;
+
 // How far a jailed player may stray before the server puts them back.
 //
 // Bigger than a cell on purpose. Cyberpunk positions jitter, floors are uneven, and a

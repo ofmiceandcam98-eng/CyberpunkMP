@@ -450,6 +450,71 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         return true;
     }
 
+    // --------------------------------------------------------------- /kill ----
+    //
+    // Sends someone to the respawn point immediately. Named /kill because that is what it
+    // is for in roleplay terms, but nothing actually dies - players cannot, by design, and
+    // a command that produced a FLATLINED screen would hand back the exact session-killer
+    // the rest of this work exists to remove.
+    if (command == "/kill")
+    {
+        if (!acSender.HasAtLeast(EPermissionLevel::kModerator))
+            return deny(EPermissionLevel::kModerator);
+
+        if (target.empty())
+        {
+            Tell(acSender, "Usage: /kill <player> [reason]");
+            return true;
+        }
+
+        const auto victim = findPlayer(target);
+        if (!victim)
+        {
+            Tell(acSender, fmt::format("No player called '{}' is online.", target));
+            return true;
+        }
+
+        auto* pVictim = victim.get_mut<PlayerComponent>();
+
+        if (victim != aSender && pVictim->Level >= acSender.Level)
+        {
+            Tell(acSender, "You cannot do that to someone at or above your own rank.");
+            return true;
+        }
+
+        glm::vec3 position;
+        float yaw = 0.f;
+
+        if (!GServer->GetRespawnPoint(position, yaw))
+        {
+            Tell(acSender, "No respawn point set - stand where you want it and run /setspawn first.");
+            return true;
+        }
+
+        // Jail wins, same as an ordinary death. Being killed should not be a way out.
+        if (const auto* pRecord = GServer->GetPlayerStore().Find(pVictim->DiscordId))
+        {
+            if (pRecord->JailedUntil > 0)
+                position = {pRecord->JailX, pRecord->JailY, pRecord->JailZ};
+        }
+
+        server::NotifyTeleport teleport;
+        common::Vector3 destination;
+        destination.set_x(position.x);
+        destination.set_y(position.y);
+        destination.set_z(position.z);
+        teleport.set_position(destination);
+        teleport.set_rotation(yaw);
+
+        GServer->Send(pVictim->Connection, teleport);
+
+        spdlog::info("{} killed {} ({})", acSender.Username, pVictim->Username, rest);
+
+        Broadcast("SERVER", fmt::format("{} was killed by {}{}", pVictim->Username, acSender.Username,
+                                        rest.empty() ? "" : (" - " + rest)).c_str());
+        return true;
+    }
+
     // ----------------------------------------------------------- /setspawn ----
     //
     // Where players reappear after dying. Recorded from where the admin is standing,
@@ -672,14 +737,24 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             return true;
         }
 
+        // A few metres short of where they were, facing the way they were facing.
+        //
+        // Landing on the exact spot is asking for trouble: whatever they were standing in
+        // or next to may have moved, and materialising inside it drops people through the
+        // world or wedges them in geometry. Arriving a short walk behind their own
+        // footprints reads as being put back without pretending the world stood still.
+        const float yaw = pVictim->ReturnRotation.z;
+        const glm::vec3 forward{-std::sin(yaw), std::cos(yaw), 0.f};
+        const glm::vec3 destination = pVictim->ReturnPosition - forward * kReturnBackoff;
+
         server::NotifyTeleport teleport;
 
         common::Vector3 position;
-        position.set_x(pVictim->ReturnPosition.x);
-        position.set_y(pVictim->ReturnPosition.y);
-        position.set_z(pVictim->ReturnPosition.z);
+        position.set_x(destination.x);
+        position.set_y(destination.y);
+        position.set_z(destination.z);
         teleport.set_position(position);
-        teleport.set_rotation(pVictim->ReturnRotation.z);
+        teleport.set_rotation(yaw);
 
         GServer->Send(pVictim->Connection, teleport);
 
@@ -688,7 +763,7 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         pVictim->HasReturnPoint = false;
 
         spdlog::info("{} returned {} to ({:.1f}, {:.1f}, {:.1f})", acSender.Username, pVictim->Username,
-                     pVictim->ReturnPosition.x, pVictim->ReturnPosition.y, pVictim->ReturnPosition.z);
+                     destination.x, destination.y, destination.z);
 
         Tell(acSender, fmt::format("Sent {} back.", pVictim->Username));
         Tell(*pVictim, "You were sent back to where you were.");
@@ -717,6 +792,7 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             Tell(acSender, "Staff: /kick <player> [reason], /bans");
             Tell(acSender, "       /jail <player> <minutes> [reason] - cell is where you stand");
             Tell(acSender, "       /unjail <player>");
+            Tell(acSender, "       /kill <player> [reason] - sends them to the respawn point");
         }
 
         if (acSender.HasAtLeast(EPermissionLevel::kAdmin))

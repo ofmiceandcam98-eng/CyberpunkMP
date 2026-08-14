@@ -87,19 +87,43 @@ public native class AppearanceSystem extends IScriptable {
         let player = GetPlayer(GetGameInstance());
         let items: array<Uint64>;
         let equipData: ref<EquipmentSystemPlayerData> = EquipmentSystem.GetData(player);
-        let equipAreas: array<SEquipArea>;
-        if IsDefined(equipData) {
-            equipAreas = equipData.GetPaperDollEquipAreas();
+
+        if !IsDefined(equipData) {
+            return items;
         }
+
+        // The Outfit slot, explicitly, and first.
+        //
+        // Since 2.0 a player wearing a wardrobe outfit has their individual clothing slots
+        // overridden by it, and the paperdoll list does not report the outfit itself - so
+        // everything we sent was whatever happened to be underneath, which on most saves
+        // is the q001 starting clothes. That is exactly the "outfit isn't synced at all,
+        // it only shows base clothes" report: the code was working, it was just reading
+        // the wrong wardrobe.
+        let areas: array<gamedataEquipmentArea> = [gamedataEquipmentArea.Outfit];
+
+        // Everything the inventory paperdoll shows - clothing, plus arm cyberware, which
+        // is where mantis blades and the like come from.
+        let equipAreas: array<SEquipArea> = equipData.GetPaperDollEquipAreas();
         let i: Int32 = 0;
         while i < ArraySize(equipAreas) {
-            let item = equipData.GetVisualItemInSlot(equipAreas[i].areaType);
+            ArrayPush(areas, equipAreas[i].areaType);
+            i += 1;
+        }
+
+        i = 0;
+        while i < ArraySize(areas) {
+            let item = equipData.GetVisualItemInSlot(areas[i]);
             let tdbid = ItemID.GetTDBID(item);
-            if TDBID.IsValid(tdbid) {
+
+            // Deduplicated: Outfit is listed by hand above and may also come back from
+            // the paperdoll, and sending an item twice makes the far side equip it twice.
+            if TDBID.IsValid(tdbid) && !ArrayContains(items, TDBID.ToNumber(tdbid)) {
                 ArrayPush(items, TDBID.ToNumber(tdbid));
             }
             i += 1;
         }
+
         return items;
     }
 
