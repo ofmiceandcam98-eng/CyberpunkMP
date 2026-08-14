@@ -441,7 +441,13 @@ void GameServer::OnDisconnection(ConnectionId aConnectionId, EDisconnectReason a
                 m_players.Flush();
             }
 
-            GetWorld()->get_mut<Level>()->Remove(pPlayerComponent->Puppet);
+            auto* pLevel = GetWorld()->get_mut<Level>();
+
+            pLevel->Remove(pPlayerComponent->Puppet);
+
+            // Before player.destruct(), which would take the cars with it without telling
+            // anybody - see Level::RemoveOwnedVehicles.
+            pLevel->RemoveOwnedVehicles(player);
         }
 
         player.destruct();

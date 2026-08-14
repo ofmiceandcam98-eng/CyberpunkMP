@@ -161,6 +161,32 @@ void Level::RemovePlayer(flecs::entity aEntity) noexcept
     aEntity.remove<LevelSystemTag>();
 }
 
+// Takes a leaving player's cars with them.
+//
+// Vehicles are created as children of whoever is driving, so flecs destroys them when the
+// player entity goes - silently. Everyone else's client had been told to spawn a copy and
+// is never told to remove it, so every disconnect while driving left a permanent
+// abandoned car in the other players' worlds. Routing it through Remove() sends the
+// unload first.
+void Level::RemoveOwnedVehicles(flecs::entity aPlayer) noexcept
+{
+    if (!aPlayer)
+        return;
+
+    Vector<flecs::entity> owned;
+
+    GetWorld()->each(
+        [aPlayer, &owned](flecs::entity aEntity, const VehicleComponent&)
+        {
+            if (aEntity.parent() == aPlayer)
+                owned.push_back(aEntity);
+        });
+
+    // Collected first. Destroying entities from inside the iteration would invalidate it.
+    for (auto vehicle : owned)
+        Remove(vehicle);
+}
+
 void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterRequest>& aMessage) noexcept
 {
     auto player = GetWorld()->get<PlayerManager>()->GetByConnectionId(aMessage.ConnectionId);
@@ -379,11 +405,49 @@ void Level::HandleExitVehicleRequest(PacketEvent<client::ExitVehicleRequest>& aM
         return;
     }
 
-    //if (auto* pAttachment = target.get<AttachmentComponent>())
-    //    pAttachment->Parent.destruct();
+    // Which vehicle they were in, before we forget.
+    flecs::entity vehicle;
+    if (const auto* pAttachment = target.get<AttachmentComponent>())
+        vehicle = pAttachment->Parent;
 
     // Start interpolation again
     target.remove<AttachmentComponent>();
+
+    ReleaseVehicleIfEmpty(vehicle);
+}
+
+// Destroys a network vehicle once nobody is sitting in it.
+//
+// Nothing used to. HandleEnterVehicleRequest creates a fresh entity for every car a
+// player gets into, so every entry told every other client to spawn another one, and
+// nothing ever told them to take it away. Get in and out of the same car three times and
+// everyone else has three copies of it stacked in the road - which is both the "it
+// duplicates it underneath the car" report and, with each copy carrying full physics, a
+// large part of why frames collapse while driving. One test session left seven.
+//
+// Passengers matter: the driver leaving must not delete a car with someone still in the
+// back, so this counts occupants rather than assuming.
+void Level::ReleaseVehicleIfEmpty(flecs::entity aVehicle) noexcept
+{
+    if (!aVehicle || !aVehicle.is_alive())
+        return;
+
+    if (!aVehicle.has<VehicleComponent>())
+        return;
+
+    bool occupied = false;
+
+    GetWorld()->each(
+        [aVehicle, &occupied](flecs::entity, const AttachmentComponent& aAttachment)
+        {
+            if (aAttachment.Parent == aVehicle)
+                occupied = true;
+        });
+
+    if (occupied)
+        return;
+
+    Remove(aVehicle);
 }
 
 server::NotifyCharacterLoad Level::Serialize(flecs::entity aEntity) noexcept
