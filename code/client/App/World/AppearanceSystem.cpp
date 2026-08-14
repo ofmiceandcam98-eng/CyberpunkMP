@@ -81,6 +81,17 @@ void AppearanceSystem::AddEntity(const Red::EntityID entityID, const Red::DynArr
     spdlog::info("[PROBE 4] AddEntity: both map writes done");
 }
 
+void AppearanceSystem::SetEntityName(Red::EntityID entityID, const std::string& acName)
+{
+    m_playerNames[entityID] = acName;
+}
+
+std::string AppearanceSystem::GetEntityName(Red::EntityID entityID) const
+{
+    const auto it = m_playerNames.find(entityID);
+    return it == m_playerNames.end() ? std::string() : it->second;
+}
+
 void AddItems(Red::Handle<Red::game::Object> & object, Red::DynArray<Red::TweakDBID> const & items, game::ui::CharacterCustomizationState const * state)
 {
     auto system = Red::GetGameSystem<Red::game::ITransactionSystem>();
@@ -208,10 +219,17 @@ bool AppearanceSystem::ApplyAppearance(Red::Handle<Red::game::Object> object)
         return false;
     }
 
-    // NOTE: leftover upstream debug code - sets every remote player's display name to
-    // "Test" by writing into a hand-mapped field. Verified NOT to be the spawn crash
-    // (execution reaches here fine), but it serves no purpose either.
-    object.instance->displayName.unk08 = Red::CString("Test");
+    // The name on the puppet.
+    //
+    // This was hardcoded to "Test" upstream. Left alone, the nameplate falls back to the
+    // TweakDB record the puppet was built from - Character.MaMuppet - which is why every
+    // remote player appeared as "Panam" regardless of who they were.
+    //
+    // The name comes from the server, which got it from Discord. A client never says who
+    // it is; it is told.
+    const auto name = GetEntityName(object.instance->id);
+    if (!name.empty())
+        object.instance->displayName.unk08 = Red::CString(name.c_str());
 
     spdlog::info("Loaded bytes: {}", bytes.size());
 

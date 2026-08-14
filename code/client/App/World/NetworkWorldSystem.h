@@ -19,7 +19,7 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
 
     NetworkWorldSystem();
 
-    bool Spawn(uint64_t aServerId, const Red::Vector4& aPosition, const Red::Quaternion& aRotation, const Red::DynArray<Red::TweakDBID>& aEquipment, const Vector<uint8_t> aCcstate);
+    bool Spawn(uint64_t aServerId, const Red::Vector4& aPosition, const Red::Quaternion& aRotation, const Red::DynArray<Red::TweakDBID>& aEquipment, const Vector<uint8_t> aCcstate, const std::string& acUsername = {});
     void DeSpawn(uint64_t aServerId) const;
 
     Red::Handle<Red::Entity> GetEntity(Red::EntityID aId) const;
@@ -70,6 +70,12 @@ protected:
 private:
     bool m_ready{false};
     bool m_joinRequested{false};
+
+    // For measuring our own speed from how far we actually moved - see
+    // UpdatePlayerLocation. Mutable because that function is const and only reports.
+    mutable glm::vec3 m_lastPosition{};
+    mutable std::chrono::steady_clock::time_point m_lastPositionAt{};
+    mutable bool m_hasLastPosition{false};
     Red::CBaseFunction* m_pCreatePuppet;
     Red::CBaseFunction* m_pDeletePuppet;
     std::optional<uint64_t> m_remotePlayerId;

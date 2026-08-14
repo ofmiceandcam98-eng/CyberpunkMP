@@ -84,10 +84,61 @@ function defaultServerDir () {
 
 const GAME_ARGS = []
 
-// Server to join. Empty means the client falls back to 127.0.0.1 - correct if you
-// are hosting, wrong (and silent) if you are joining someone.
-const SERVER_ADDRESS = process.env.MP_SERVER || ''
-const SERVER_PORT = process.env.MP_PORT || '11778'
+// Where the game server is.
+//
+// Resolved in this order, first one wins:
+//
+//   1. what the player set in Settings        - for testing, or a different server
+//   2. server.json published on the release   - what everyone actually uses
+//   3. MP_SERVER in the environment           - kept for whoever was relying on it
+//   4. 127.0.0.1                              - only correct if you ARE the host
+//
+// This used to be (3) or (4) with nothing in between, which meant the address existed on
+// exactly one machine. Every other player's launcher pinged their own PC, found nothing,
+// reported the server offline and refused to let them play - a hard block on everyone but
+// the host, with no error explaining it.
+let publishedServer = null
+
+async function fetchPublishedServer () {
+  if (publishedServer) return publishedServer
+
+  try {
+    // Built HERE, not at module scope. GITHUB_REPO is declared further down this file,
+    // and a const cannot be read before its declaration runs - doing so throws
+    // "Cannot access before initialization" during module load, which means the launcher
+    // does not start at all. A crash at import time shows as a raw Electron error dialog
+    // with a stack trace, not as anything a player can act on.
+    const response = await axios.get(`https://github.com/${GITHUB_REPO}/releases/latest/download/server.json`, {
+      headers: { 'User-Agent': 'NightCityOnline-Launcher' },
+      timeout: 10000
+    })
+
+    if (response.data?.host) publishedServer = response.data
+  } catch {
+    // Unreachable is survivable - a saved or environment address may still work.
+  }
+
+  return publishedServer
+}
+
+async function resolveServer () {
+  const settings = loadSettings()
+
+  if (settings.serverHost) {
+    return { host: settings.serverHost, port: settings.serverPort || 11778, source: 'settings' }
+  }
+
+  const published = await fetchPublishedServer()
+  if (published) {
+    return { host: published.host, port: published.port || 11778, source: 'published' }
+  }
+
+  if (process.env.MP_SERVER) {
+    return { host: process.env.MP_SERVER, port: process.env.MP_PORT || 11778, source: 'environment' }
+  }
+
+  return { host: '127.0.0.1', port: 11778, source: 'fallback' }
+}
 
 // ---------------------------------------------------------------------------
 // State held only in the main process
@@ -350,11 +401,12 @@ function getTailscaleStatus () {
  * Reaching it at all proves the server is running.
  */
 async function getGameServerStatus () {
-  const host = SERVER_ADDRESS || '127.0.0.1'
+  const server = await resolveServer()
+  const host = server.host
 
   try {
-    const response = await axios.get(`http://${host}:11778/api/v1/status/`, { timeout: 4000 })
-    return { online: true, players: response.data?.Players ?? 0, host }
+    const response = await axios.get(`http://${host}:${server.port}/api/v1/status/`, { timeout: 4000 })
+    return { online: true, players: response.data?.Players ?? 0, host, source: server.source }
   } catch {
     // Any failure - refused, timed out, no route - means players cannot get in.
     return { online: false, players: 0, host }
@@ -1232,7 +1284,9 @@ async function hydrateUserFromToken () {
 // Launching the game
 // ---------------------------------------------------------------------------
 
-function launchGame () {
+// async because the server address may need fetching. Everything it does was already
+// effectively asynchronous underneath; only the signature changed.
+async function launchGame () {
   if (!currentUser) {
     // Belt and braces. The button is disabled in the UI, but the UI is not a
     // security boundary - a renderer could send this message anyway.
@@ -1298,10 +1352,16 @@ function launchGame () {
     args.push('--debug')
   }
 
-  if (SERVER_ADDRESS) {
-    args.push(`--ip=${SERVER_ADDRESS}`)
-    args.push(`--port=${SERVER_PORT}`)
-  }
+  // ALWAYS pass the address, even the fallback.
+  //
+  // Previously this was only passed when an environment variable was set, so for everyone
+  // else the game silently used its own 127.0.0.1 default - connecting to their own PC
+  // and timing out with nothing in the log explaining why.
+  const server = await resolveServer()
+  args.push(`--ip=${server.host}`)
+  args.push(`--port=${server.port}`)
+
+  console.log(`[launch] server ${server.host}:${server.port} (from ${server.source})`)
 
   // detached + unref lets the game outlive the launcher. Without it, closing
   // the launcher would take the game down with it, and the launcher would sit
@@ -1767,6 +1827,74 @@ async function fetchModList () {
 }
 
 /**
+ * Fills in a mod's name and summary from Nexus.
+ *
+ * The curated list carries IDs, not names, and this is why: a name written into the list
+ * by hand is a name somebody had to read off a page and retype, which goes stale when the
+ * author renames the mod and is a guess if nobody checked. Nexus is the authority on what
+ * its own mods are called, so the launcher asks.
+ *
+ * Cached for the session. Twenty mods is twenty API calls per refresh otherwise, against
+ * an API with a daily limit.
+ */
+const modInfoCache = new Map()
+
+async function fetchModInfo (modId) {
+  if (modInfoCache.has(modId)) return modInfoCache.get(modId)
+
+  const apiKey = loadNexusKey()
+  if (!apiKey) return null
+
+  try {
+    const response = await axios.get(
+      `https://api.nexusmods.com/v1/games/cyberpunk2077/mods/${modId}.json`,
+      { headers: { apikey: apiKey, 'User-Agent': 'NightCityOnline-Launcher/1.0' }, timeout: 15000 }
+    )
+
+    const info = {
+      name: response.data?.name || null,
+      summary: response.data?.summary || '',
+      version: response.data?.version || null,
+      author: response.data?.author || null
+    }
+
+    modInfoCache.set(modId, info)
+    return info
+  } catch {
+    // Nexus being unreachable must not empty the list. Falling back to the id at least
+    // tells someone which mod is meant.
+    return null
+  }
+}
+
+/**
+ * Which file to install, when the list has not pinned one.
+ *
+ * Prefers the file Nexus marks as MAIN. A mod's file list is usually a main download plus
+ * optional patches and translations, and grabbing the newest of everything would install
+ * a Portuguese translation as if it were the mod.
+ */
+async function resolveMainFile (modId) {
+  const apiKey = loadNexusKey()
+  if (!apiKey) return null
+
+  try {
+    const response = await axios.get(
+      `https://api.nexusmods.com/v1/games/cyberpunk2077/mods/${modId}/files.json?category=main`,
+      { headers: { apikey: apiKey, 'User-Agent': 'NightCityOnline-Launcher/1.0' }, timeout: 15000 }
+    )
+
+    const files = response.data?.files || []
+    const main = files.filter((f) => f.category_name === 'MAIN')
+    const pick = (main.length > 0 ? main : files).sort((a, b) => (b.uploaded_timestamp || 0) - (a.uploaded_timestamp || 0))[0]
+
+    return pick ? { fileId: pick.file_id, version: pick.version, name: pick.file_name } : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * What is on disk, judged by what we recorded installing.
  *
  * Recording the files we extracted is what makes uninstall possible at all - without it
@@ -1838,7 +1966,15 @@ ipcMain.handle('mods:list', async () => {
     const gameDir = findGameDir()
     if (!gameDir) return { ok: false, error: 'Cyberpunk 2077 not found. Set it in Settings.' }
 
-    const mods = sortByDependencies(await fetchModList())
+    const all = sortByDependencies(await fetchModList())
+
+    // devOnly mods are filtered out entirely for players, not shown-and-refused. On this
+    // server the world is not synchronised, so a mod that changes it only changes it for
+    // whoever installed it - listing those to everyone would create a world only some
+    // people can see, which is worse than not offering it.
+    const isAdmin = currentUser && ADMIN_DISCORD_IDS.includes(currentUser.id)
+    const mods = all.filter((mod) => !mod.devOnly || isAdmin)
+
     const installed = loadInstalledMods()
 
     const states = new Map()
@@ -1846,19 +1982,33 @@ ipcMain.handle('mods:list', async () => {
       states.set(String(mod.nexusModId), describeInstalledMod(mod, installed, gameDir))
     }
 
+    // Names come from Nexus, in parallel - twenty sequential round trips is a visibly
+    // slow list.
+    const info = new Map()
+    await Promise.all(mods.map(async (mod) => {
+      info.set(String(mod.nexusModId), await fetchModInfo(mod.nexusModId))
+    }))
+
     return {
       ok: true,
+      signedIn: Boolean(loadNexusKey()),
       mods: mods.map((mod) => {
         // Named, not numbered. "Needs mod 107" tells nobody anything.
         const missing = (mod.requires || [])
           .filter((need) => states.get(String(need))?.state !== 'installed')
           .map((need) => mods.find((m) => String(m.nexusModId) === String(need))?.name || `mod ${need}`)
 
+        const nexus = info.get(String(mod.nexusModId))
+
         return {
           id: String(mod.nexusModId),
-          name: mod.name,
-          summary: mod.summary || '',
+          // Nexus first, then anything the list overrode, then the id. Never a guess.
+          name: nexus?.name || mod.name || `Nexus mod ${mod.nexusModId}`,
+          summary: mod.note || nexus?.summary || '',
+          author: nexus?.author || null,
+          latestVersion: nexus?.version || null,
           required: mod.required !== false,
+          devOnly: Boolean(mod.devOnly),
           blockedBy: missing,
           nexusUrl: `https://www.nexusmods.com/cyberpunk2077/mods/${mod.nexusModId}`,
           ...states.get(String(mod.nexusModId))
@@ -1870,6 +2020,54 @@ ipcMain.handle('mods:list', async () => {
     // mod installed. Report it and let the rest of the launcher carry on.
     return { ok: false, error: `Could not read the mod list: ${err.message}` }
   }
+})
+
+/**
+ * Checks every mod is actually intact, file by file.
+ *
+ * Different from the list, which asks "did we record installing this". This asks whether
+ * the files are still there and still what we wrote. People delete folders to fix things,
+ * a game update can overwrite them, and a download interrupted halfway still leaves a
+ * file behind. Any of those leave a mod that looks installed and is not.
+ */
+ipcMain.handle('mods:verify', async () => {
+  const gameDir = findGameDir()
+  if (!gameDir) return { ok: false, error: 'Cyberpunk 2077 not found. Set it in Settings.' }
+
+  const installed = loadInstalledMods()
+  const problems = []
+  let checked = 0
+  let intact = 0
+
+  for (const [modId, record] of Object.entries(installed)) {
+    checked++
+
+    const missing = (record.files || []).filter((relative) => !existsSync(path.join(gameDir, relative)))
+
+    if (missing.length > 0) {
+      problems.push({
+        id: modId,
+        name: record.name || `mod ${modId}`,
+        detail: `${missing.length} of ${record.files.length} file(s) missing`
+      })
+      continue
+    }
+
+    // Zero-length files are the signature of an interrupted write. They exist, so an
+    // existence check passes, and the mod is broken anyway.
+    const empty = (record.files || []).filter((relative) => {
+      try { return statSync(path.join(gameDir, relative)).size === 0 } catch { return true }
+    })
+
+    if (empty.length > 0) {
+      problems.push({ id: modId, name: record.name || `mod ${modId}`, detail: `${empty.length} empty file(s)` })
+      continue
+    }
+
+    intact++
+  }
+
+  return { ok: true, checked, intact, problems }
 })
 
 // Opens the mod's Nexus page. From there "Mod Manager Download" comes back to us as an
@@ -1897,7 +2095,20 @@ ipcMain.handle('mods:open', async (_event, modId) => {
     return { ok: false, error: `Install ${missing.join(' and ')} first - ${mod.name} needs it.` }
   }
 
-  await shell.openExternal(`https://www.nexusmods.com/cyberpunk2077/mods/${mod.nexusModId}?tab=files&file_id=${mod.nexusFileId}`)
+  // Land on the exact file where one is pinned; otherwise on the Files tab, resolving
+  // the main file if Nexus will tell us. Sending someone to a mod's description page
+  // leaves them hunting for the download button among optional patches.
+  let fileId = mod.nexusFileId
+  if (!fileId) {
+    const main = await resolveMainFile(mod.nexusModId)
+    fileId = main?.fileId
+  }
+
+  const url = fileId
+    ? `https://www.nexusmods.com/cyberpunk2077/mods/${mod.nexusModId}?tab=files&file_id=${fileId}`
+    : `https://www.nexusmods.com/cyberpunk2077/mods/${mod.nexusModId}?tab=files`
+
+  await shell.openExternal(url)
   return { ok: true }
 })
 
@@ -2162,7 +2373,10 @@ ipcMain.handle('links:open', async (_event, which) => {
     // The diagnostics now ship in every build, behind the developer overlay.
     diagnostic: 'https://github.com/ofmiceandcam98-eng/CyberpunkMP/releases/latest',
     discord: DISCORD_INVITE,
-    tailscale: TAILSCALE_DOWNLOAD
+    tailscale: TAILSCALE_DOWNLOAD,
+    // Straight to the API key section, not the account page. "Go to settings and find
+    // the API tab" is three more chances to end up somewhere else.
+    nexusApi: 'https://www.nexusmods.com/users/myaccount?tab=api+access'
   }
 
   const url = links[which]
@@ -2199,9 +2413,9 @@ ipcMain.handle('discord:openInvite', () => {
   return { ok: true }
 })
 
-ipcMain.handle('game:launch', () => {
+ipcMain.handle('game:launch', async () => {
   try {
-    return { ok: true, ...launchGame() }
+    return { ok: true, ...(await launchGame()) }
   } catch (err) {
     return { ok: false, error: err.message }
   }

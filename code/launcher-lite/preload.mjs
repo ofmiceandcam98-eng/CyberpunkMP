@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('launcher', {
   // The curated Nexus mod list, and the Nexus account used to fetch from it.
   // The API key is never handed to the page - only whether one is stored, and the name.
   listMods: () => ipcRenderer.invoke('mods:list'),
+  verifyMods: () => ipcRenderer.invoke('mods:verify'),
   openMod: (id) => ipcRenderer.invoke('mods:open', id),
   deleteMod: (id) => ipcRenderer.invoke('mods:delete', id),
   onModProgress: (callback) => {

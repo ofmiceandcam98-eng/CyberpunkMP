@@ -27,6 +27,14 @@ message NotifyCharacterLoad {
     // Raw TweakDBIDs - see the matching field in client.proto for why these are not names.
     repeated uint64 equipment = 5;
     bytes ccstate = 6;
+
+    // Who this is.
+    //
+    // Without it the client has no idea, and the nameplate falls back to whatever the
+    // TweakDB record it was built from is called - which is why every remote player
+    // showed up as "Panam". The server is the only thing that knows the real name, since
+    // it is the half that talked to Discord.
+    string username = 7;
 }
 
 message NotifyVehicleLoad {

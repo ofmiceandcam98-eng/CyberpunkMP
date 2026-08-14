@@ -1,0 +1,19 @@
+{
+  "_comment": [
+    "Where the game server is. Published as a release asset so every launcher finds it,",
+    "and so moving the server is one edit here rather than telling everyone a new address.",
+    "",
+    "This used to come from an MP_SERVER environment variable, which existed on exactly",
+    "one machine - Cam's. Everyone else's launcher checked 127.0.0.1, decided their own PC",
+    "was the server, reported it offline, and refused to let them play.",
+    "",
+    "host is a Tailscale address, so it only resolves for people on the tailnet. That is",
+    "the point: it is not a public server, and the launcher checks Tailscale is connected",
+    "before blaming the server for being down."
+  ],
+
+  "name": "Night City Online",
+  "host": "100.109.102.127",
+  "port": 11778,
+  "requiresTailscale": true
+}

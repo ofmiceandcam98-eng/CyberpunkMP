@@ -425,7 +425,14 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
 
         auto* pVictim = victim.get_mut<PlayerComponent>();
 
-        if (pVictim->Level >= acSender.Level)
+        // Jailing YOURSELF is always allowed.
+        //
+        // Rank protects rank, but it protected the owner from themselves - the highest
+        // rank on the server could not jail anybody at all, including their own
+        // character, which made this impossible to try without a second person. Locking
+        // yourself up harms nobody, and being able to test a punishment before using it
+        // on a player is worth more than the consistency.
+        if (victim != aSender && pVictim->Level >= acSender.Level)
         {
             Tell(acSender, "You cannot jail someone at or above your own rank.");
             return true;

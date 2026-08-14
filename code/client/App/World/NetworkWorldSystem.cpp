@@ -32,7 +32,7 @@ NetworkWorldSystem::NetworkWorldSystem()
     set_entity_range(10'000'000, 20'000'000);
 }
 
-bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition, const Red::Quaternion& aRotation, const Red::DynArray<Red::TweakDBID>& aEquipment, const Vector<uint8_t> aCcstate)
+bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition, const Red::Quaternion& aRotation, const Red::DynArray<Red::TweakDBID>& aEquipment, const Vector<uint8_t> aCcstate, const std::string& acUsername)
 {
     if (!m_ready)
         return false;
@@ -92,10 +92,12 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
     // therefore defaulted to male / MaMuppet. The first one with real appearance data crashed,
     // from across the map, which rules out proximity. Gender is the one thing real ccstate
     // changes about the entity actually built, so record which record we are asking for.
-    spdlog::info("[PROBE 22] creating puppet: isBodyGenderMale={} -> record {}", isBodyGenderMale,
-                 isBodyGenderMale ? "Character.MaMuppet" : "Character.WaMuppet");
+    const auto& record = isBodyGenderMale ? Settings::Get().puppetRecordMale : Settings::Get().puppetRecordFemale;
 
-    if (!Red::Detail::CallFunctionWithArgs(m_pCreatePuppet, handle, id, aPosition, aRotation, isBodyGenderMale))
+    spdlog::info("[PROBE 22] creating puppet: isBodyGenderMale={} -> record {}", isBodyGenderMale, record.c_str());
+
+    if (!Red::Detail::CallFunctionWithArgs(m_pCreatePuppet, handle, id, aPosition, aRotation, isBodyGenderMale,
+                                           Red::CString(record.c_str())))
     {
         spdlog::error("[Spawn] CreatePuppet call failed for remote id {}", aServerId);
         return false;
@@ -108,6 +110,11 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
 
     auto apprSystem = Red::GetGameSystem<NetworkWorldSystem>()->GetAppearanceSystem();
     apprSystem->AddEntity(id, aEquipment, aCcstate);
+
+    // Recorded BEFORE ApplyAppearance runs, since that is what reads it back to set the
+    // nameplate. Doing it afterwards leaves the puppet named after whatever record it was
+    // built from.
+    apprSystem->SetEntityName(id, acUsername);
 
     spdlog::info("[PROBE 5] AddEntity returned");
 
@@ -356,7 +363,7 @@ void NetworkWorldSystem::HandleCharacterLoad(const PacketEvent<server::NotifyCha
 
     auto ccstate = aMessage.get_ccstate();
 
-    Spawn(aMessage.get_id(), position, rotation, equipment, ccstate);
+    Spawn(aMessage.get_id(), position, rotation, equipment, ccstate, aMessage.get_username().c_str());
 }
 
 void NetworkWorldSystem::HandleEntityUnload(const PacketEvent<server::NotifyEntityUnload>& aMessage)
@@ -469,7 +476,45 @@ void NetworkWorldSystem::UpdatePlayerLocation() const
         // worldTransform on the next line - use it for position too.
         const auto cEntityPosition = puppet->placedComponent->worldTransform.Position;
         const auto cEntityRotation = eulerAngles(Game::ToGlm(puppet->placedComponent->worldTransform.Orientation));
-        float speed = puppet->moveComponent->speed.Magnitude();
+
+        // Speed is MEASURED, not read from the game.
+        //
+        // This used to be moveComponent->speed.Magnitude() - a field at a hand-mapped
+        // offset. That offset moved on 2.31, so it returned garbage around 3e8. The
+        // animation state machine compares against 3 m/s to walk and 5 to run, so an
+        // absurd value pinned every remote player past both thresholds forever and their
+        // animations never matched what they were doing.
+        //
+        // Distance over time needs no offsets and cannot break on a game update. The
+        // numbers are metres per second by construction, which is exactly what the state
+        // machine wants.
+        const glm::vec3 here{cEntityPosition.x, cEntityPosition.y, cEntityPosition.z};
+        const auto now = std::chrono::steady_clock::now();
+
+        float speed = 0.f;
+
+        if (m_hasLastPosition)
+        {
+            const float elapsed = std::chrono::duration<float>(now - m_lastPositionAt).count();
+
+            // Guard against a zero or absurdly small interval - dividing by it produces
+            // an infinity that behaves exactly like the bug this replaces.
+            if (elapsed > 0.001f)
+            {
+                speed = glm::distance(here, m_lastPosition) / elapsed;
+
+                // A teleport is not sprinting. Without this, /tp or a loading screen
+                // registers as several hundred metres per second and slams the puppet
+                // into a sprint animation on arrival.
+                constexpr float kFastestPlausible = 20.f;
+                if (speed > kFastestPlausible)
+                    speed = 0.f;
+            }
+        }
+
+        m_lastPosition = here;
+        m_lastPositionAt = now;
+        m_hasLastPosition = true;
 
         common::Vector3 pos;
         pos.set_x(cEntityPosition.x);

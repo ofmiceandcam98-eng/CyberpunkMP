@@ -7,18 +7,29 @@
     "",
     "WHY EACH FIELD EXISTS",
     "",
-    "  nexusModId / nexusFileId  identify the exact file on Nexus. Not the newest file -",
-    "                            a specific one, so a mod updating upstream does not",
-    "                            silently change what everyone is running mid-session.",
+    "  nexusModId    identifies the mod on Nexus. The launcher asks Nexus for the name,",
+    "                summary and current file, so nothing here has to be kept in step by",
+    "                hand - and nobody has to guess a name they have not read.",
     "",
-    "  sha256                    what actually got installed is checked against this.",
-    "                            Version strings lie: mods get re-uploaded under the same",
-    "                            version, and a half-finished download is still a file.",
+    "  nexusFileId   OPTIONAL. Pin this to freeze a mod at one exact file, so an upstream",
+    "                update cannot change what everyone is running mid-session. Left out,",
+    "                the launcher takes the current main file and records which one it",
+    "                installed, so a later change is still detectable.",
     "",
-    "  installPath               relative to the Cyberpunk 2077 folder.",
+    "  requires      nexusModIds this one needs first. A mod installed before its",
+    "                framework does not fail loudly - the game starts and the mod is",
+    "                simply absent, or crashes somewhere unrelated. The launcher sorts",
+    "                the list into install order and refuses to install anything whose",
+    "                requirements are missing.",
     "",
-    "  required                  required mods block Play. Optional ones do not - cosmetic",
-    "                            choices should never stop someone joining.",
+    "  required      required mods block Play. Optional ones do not - a cosmetic choice",
+    "                should never stop someone joining.",
+    "",
+    "  devOnly       shown and installable only to staff. For anything that would let a",
+    "                player change the world - which on this server only they would see,",
+    "                since the world is not synchronised.",
+    "",
+    "  sha256        OPTIONAL. Verified after install when present.",
     "",
     "The six prerequisites are NOT here. They ship inside FullInstall.zip because they are",
     "MIT licensed and redistributable. Nexus mods are not ours to redistribute, which is",
@@ -29,5 +40,21 @@
   "game": "cyberpunk2077",
   "updated": "2026-08-13",
 
-  "mods": []
+  "mods": [
+    {
+      "nexusModId": 3518,
+      "required": false,
+      "devOnly": true,
+      "note": "Cam: lock this to devs."
+    },
+    {
+      "nexusModId": 4198,
+      "required": false
+    },
+    {
+      "nexusModId": 22114,
+      "required": false,
+      "note": "Cam: good for police and prison RP."
+    }
+  ]
 }

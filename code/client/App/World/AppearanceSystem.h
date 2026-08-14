@@ -18,6 +18,11 @@ struct AppearanceSystem : RED4ext::IScriptable
 
     Red::DynArray<Red::TweakDBID> GetEntityItems(Red::EntityID &);
     void AddEntity(const Red::EntityID entityID, const Red::DynArray<Red::TweakDBID>& items, const Vector<uint8_t> ccstate);
+
+    // Who a puppet belongs to, so its nameplate can say so. Empty for anything that is
+    // not a player - server-spawned characters have no Discord account behind them.
+    void SetEntityName(Red::EntityID entityID, const std::string& acName);
+    std::string GetEntityName(Red::EntityID entityID) const;
     Vector<uint64_t> GetPlayerItems(Red::Handle<Red::GameObject> player);
     bool ApplyAppearance(Red::Handle<Red::GameObject> object);
 
@@ -27,6 +32,7 @@ struct AppearanceSystem : RED4ext::IScriptable
 private:
     Core::Map<Red::EntityID, Red::DynArray<Red::TweakDBID>> m_playerEquipment;
     Core::Map<Red::EntityID, Vector<uint8_t>> m_playerCcstate;
+    Core::Map<Red::EntityID, std::string> m_playerNames;
 };
 
 RTTI_DEFINE_CLASS(AppearanceSystem, { 

@@ -412,6 +412,17 @@ server::NotifyCharacterLoad Level::Serialize(flecs::entity aEntity) noexcept
         message.set_ccstate(pAppearanceComponent->ccstate);
     }
 
+    // The name lives on the PLAYER, not the puppet - the puppet is a child entity with no
+    // idea who owns it. Server-side and Discord-derived, so it cannot be spoofed by a
+    // client claiming to be someone else.
+    if (const auto owner = aEntity.parent())
+    {
+        if (const auto* pPlayerComponent = owner.get<PlayerComponent>())
+        {
+            message.set_username(pPlayerComponent->Username.c_str());
+        }
+    }
+
     message.set_id(aEntity);
 
     return message;

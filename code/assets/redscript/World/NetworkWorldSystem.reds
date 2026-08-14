@@ -34,15 +34,24 @@ public native class NetworkWorldSystem extends IGameSystem {
         blackboard.SetBool(GetAllBlackboardDefs().UIGameData.UIMultiplayerConnectedToServer, false, true);
     }
 
-    public func CreatePuppet(position: Vector4, rotation: Quaternion, isMale: Bool) -> EntityID {
+    // record comes from native, which reads it from the launch flags - see Settings.h.
+    // The muppet records are mannequins: a body and animations, and none of what the game
+    // needs to treat something as a target. Which record gives a puppet that is both
+    // stable AND shootable is trial and error, and every attempt costs two people being
+    // online, so it is switchable between launches rather than between releases.
+    public func CreatePuppet(position: Vector4, rotation: Quaternion, isMale: Bool, record: String) -> EntityID {
         let npcSpec = new DynamicEntitySpec();
 
-        if isMale {
-            npcSpec.recordID = t"Character.MaMuppet";
-        } else {
-            npcSpec.recordID = t"Character.WaMuppet";
-            // npcSpec.recordID = t"Character.Panam";
+        // An empty or misspelt record would produce an invalid id and spawn nothing at
+        // all, which looks exactly like the other player never joining. Fall back to the
+        // mannequin, which is at least known to work.
+        let id = TDBID.Create(record);
+        if !TDBID.IsValid(id) {
+            FTLogError(s"[NetworkWorldSystem] no such record '\(record)' - falling back to the muppet");
+            id = isMale ? t"Character.MaMuppet" : t"Character.WaMuppet";
         }
+
+        npcSpec.recordID = id;
         npcSpec.alwaysSpawned = true;
         npcSpec.position = position;
         npcSpec.orientation = rotation;

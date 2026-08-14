@@ -50,6 +50,28 @@ void Settings::Load()
             settings.discordName = (*name)[0].c_str();
     }
 
+    // Which record remote players are built from. See Settings.h - this exists so the
+    // record can be changed between launches instead of between releases, because
+    // finding one that is both stable and targetable is trial and error that costs two
+    // people being online for every attempt.
+    if (const auto record = launchParameters.Get("-puppet-record"); record)
+    {
+        if (record->size > 0)
+        {
+            settings.puppetRecordMale = (*record)[0].c_str();
+            settings.puppetRecordFemale = (*record)[0].c_str();
+        }
+    }
+
+    if (const auto record = launchParameters.Get("-puppet-record-female"); record)
+    {
+        if (record->size > 0)
+            settings.puppetRecordFemale = (*record)[0].c_str();
+    }
+
+    spdlog::info("Puppet records: male {} / female {}", settings.puppetRecordMale.c_str(),
+                 settings.puppetRecordFemale.c_str());
+
     spdlog::info("Display name: {}", settings.discordName.empty() ? "none - not launched from the launcher"
                                                                  : settings.discordName.c_str());
 

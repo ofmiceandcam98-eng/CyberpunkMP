@@ -501,23 +501,34 @@
             <div>
               <div class="tool-name">Nexus Mods account</div>
               <div class="tool-desc">
-                Needed to download the server's mod list. Signing in opens Nexus in your
-                browser — press Authorise there and you are done. Nothing is typed, and the
-                key is stored encrypted on this PC.
+                Needed to download the server's mod list.
+                <div style="margin-top:.35rem">
+                  <b>1.</b> Press <b>Get my key</b> — it opens your Nexus API page.<br>
+                  <b>2.</b> Scroll to <b>Personal API Key</b> and copy it.<br>
+                  <b>3.</b> Paste it below and press Save.
+                </div>
                 <div style="margin-top:.4rem"><span id="nexusState">Not signed in</span></div>
 
-                <!-- Kept as a fallback. Nexus SSO depends on their service being up and
-                     on this app being one it will talk to; when it is not, pasting a key
-                     still works and is better than being stuck. -->
+                <input id="nexusKey" type="password" placeholder="Paste your Nexus API key here"
+                       style="margin-top:.4rem;width:100%;padding:.35rem .5rem;border-radius:4px;border:1px solid rgba(255,255,255,.14);background:rgba(0,0,0,.25);color:inherit;font-size:.75rem">
+                <button class="mod-btn" id="nexusSave" style="margin-top:.35rem">Save key</button>
+
+                <!-- Nexus SSO - the one-click browser approval - only works for
+                     applications Nexus has approved, and rejects everything else with an
+                     unhelpful "problem authenticating your request". Kept because it
+                     starts working the moment they whitelist us, but not offered as the
+                     way in, because today it fails. -->
                 <details style="margin-top:.5rem">
-                  <summary style="cursor:pointer;font-size:.7rem">Sign in with a key instead</summary>
-                  <input id="nexusKey" type="password" placeholder="Nexus API key"
-                         style="margin-top:.4rem;width:100%;padding:.35rem .5rem;border-radius:4px;border:1px solid rgba(255,255,255,.14);background:rgba(0,0,0,.25);color:inherit;font-size:.75rem">
-                  <button class="mod-btn" id="nexusSave" style="margin-top:.35rem">Save key</button>
+                  <summary style="cursor:pointer;font-size:.7rem">One-click sign-in (needs Nexus approval)</summary>
+                  <div style="margin-top:.3rem;font-size:.68rem">
+                    Nexus only allows this for approved mod managers. It will fail until
+                    they whitelist Night City Online.
+                  </div>
+                  <button class="mod-btn" id="nexusLogin" style="margin-top:.35rem">Try it anyway</button>
                 </details>
               </div>
             </div>
-            <button class="action ghost" id="nexusLogin">Sign in</button>
+            <button class="action ghost" id="nexusGetKey">Get my key</button>
           </div>
 
           <div class="tool">
@@ -1418,8 +1429,12 @@
     $('nexusState').textContent = status.signedIn
       ? '✓ Signed in as ' + (status.name || 'Nexus user')
       : 'Not signed in'
-    $('nexusLogin').textContent = status.signedIn ? 'Sign in again' : 'Sign in'
   }
+
+  $('nexusGetKey').addEventListener('click', async () => {
+    await window.launcher.openLink('nexusApi')
+    setSettingsStatus('Scroll to "Personal API Key", copy it, and paste it below.')
+  })
 
   $('nexusLogin').addEventListener('click', async () => {
     const btn = $('nexusLogin')
@@ -1502,6 +1517,7 @@
   // --- mod list ---------------------------------------------------------------
 
   let modState = []
+  let modsSignedIn = null
 
   function renderMods () {
     const list = $('modList')
@@ -1512,7 +1528,9 @@
 
     if (modState.length === 0) {
       count.textContent = ''
-      hint.textContent = 'No mods are required yet. When the server adds some, they appear here.'
+      hint.textContent = modsSignedIn === false
+        ? 'Sign in to Nexus in Settings to see the mod list.'
+        : 'No mods are required yet. When the server adds some, they appear here.'
       return
     }
 
@@ -1599,6 +1617,7 @@
     const result = await window.launcher.listMods()
     if (result.ok) {
       modState = result.mods
+      modsSignedIn = result.signedIn
     } else {
       modState = []
       $('modHint').textContent = result.error
@@ -1607,8 +1626,29 @@
   }
 
   $('verifyAllMods').addEventListener('click', async () => {
-    $('modHint').textContent = 'Checking...'
+    const btn = $('verifyAllMods')
+    btn.disabled = true
+    $('modHint').textContent = 'Checking every file...'
+
+    const result = await window.launcher.verifyMods()
+    btn.disabled = false
+
+    if (!result.ok) {
+      $('modHint').textContent = result.error
+      return
+    }
+
     await refreshMods()
+
+    if (result.checked === 0) {
+      $('modHint').textContent = 'Nothing installed through the launcher yet.'
+    } else if (result.problems.length === 0) {
+      $('modHint').textContent = '✓ All ' + result.intact + ' installed mod(s) verified.'
+    } else {
+      // Names the broken ones. "3 problems found" leaves someone to work out which.
+      $('modHint').textContent = result.problems.length + ' problem(s): ' +
+        result.problems.map((p) => p.name + ' (' + p.detail + ')').join(', ')
+    }
   })
 
   window.launcher.onModProgress((info) => {
