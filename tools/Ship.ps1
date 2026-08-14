@@ -119,6 +119,34 @@ if ($Bump -ne 'patch' -and -not $IKnowThisIsNotOneOh) {
     Die "-Bump $Bump is held back while this is in beta. Patch releases only until 1.0-ready; pass -IKnowThisIsNotOneOh if you really mean it."
 }
 
+# The notes must mention the version being shipped.
+#
+# publish\release-notes.md is the body of EVERY release, and it is maintained by hand. It
+# stopped being updated at v0.1.12 and nobody noticed for five releases - so v0.2.0 through
+# v0.3.3 all published a page headed "What changed - v0.1.12", describing work from days
+# earlier. Anyone reading the releases to find out what shipped was told the wrong thing,
+# confidently, every time.
+#
+# Checked here rather than at the end, so the failure costs nothing but a moment's typing.
+$notesPath = Join-Path $Repo "publish\release-notes.md"
+if (-not $WhatIf -and -not $NoBump) {
+    $nextVersion = $version
+    if ($Launcher) {
+        $peek = $version.Split('.')
+        switch ($Bump) {
+            'major' { $peek[0] = [int]$peek[0] + 1; $peek[1] = 0; $peek[2] = 0 }
+            'minor' { $peek[1] = [int]$peek[1] + 1; $peek[2] = 0 }
+            default { $peek[2] = [int]$peek[2] + 1 }
+        }
+        $nextVersion = $peek -join '.'
+    }
+
+    $notes = if (Test-Path $notesPath) { Get-Content $notesPath -Raw -Encoding UTF8 } else { "" }
+    if ($notes -notmatch [regex]::Escape("v$nextVersion")) {
+        Die "publish\release-notes.md does not mention v$nextVersion. Every release publishes this file as its body - shipping now would put stale notes on the release page. Add a 'What changed - v$nextVersion' section first."
+    }
+}
+
 # Only a launcher build can move the version, because the version IS the launcher's
 # version as far as the auto-updater is concerned. Bumping it on a mod-only ship would
 # advertise a launcher release that was never built.

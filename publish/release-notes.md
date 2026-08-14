@@ -2,6 +2,34 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Discord — Night City Online:** https://discord.gg/M9NSWsndC7
 
+**Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
+
+## What changed — v0.3.3
+
+- **The death screen is blocked at the engine level now, not by scripts.** Two previous attempts hooked `OnDeath` and put a floor under the health pool. Both are conventions the game's own scripts follow, and anything that sets the dead state directly — a scripted kill, falling out of the world, drowning — walked straight past them. The player is now flagged `Immortal`, which the engine checks *before* entering the dead state. Damage still lands and health still drops, so you still get downed and respawned; the death menu is simply never asked for.
+- The backstop also lost a watchdog that put the menu **back** after three seconds if it had not closed — which turned a failed close into FLATLINED appearing slightly late, indistinguishable from the bug it was meant to prevent.
+- **`/tp to <player>`** sends you to them, the counterpart to `/tp <player>` bringing them to you. `/return` works in both directions.
+- **One person per seat.** Each client picks its own seat locally, so two people entering the same car from opposite doors could both claim `seat_front_left` and be replicated into each other. That is what "four people cannot fit in a four-door car" looked like from the inside.
+
+## What changed — v0.3.2
+
+- **A launcher-only release no longer breaks every launcher.** v0.3.1 published the installer and nothing else, and since `latest` had moved to it, every launcher 404'd on `server.json`, fell back to `127.0.0.1` and reported the server offline. Releases are now checked for completeness before being promoted.
+- Anyone with the **dev** Discord role gets the dev key and the Tailscale invite in Settings.
+
+## What changed — v0.3.0
+
+- **Discord roles decide permissions, by name.** The role mapping existed but was keyed on role snowflakes, so nobody ever configured it and the `dev` role granted nothing. Roles named `dev`, `admin`, `moderator` and so on now resolve with no configuration at all.
+- **The launcher reads the same roles the game does**, so the controls it shows match the commands you actually have.
+- **`/tp` takes people out of the car properly.** It also stops them desynchronising: while a client believes it is driving it sends the *vehicle's* position as the player's, so teleporting out from under that left everyone else seeing them where the car was.
+
+## What changed — v0.2.0
+
+- **Remote players move smoothly.** The interpolation was chasing the target from the last drawn pose rather than interpolating between two network samples, so it accelerated into every update and snapped at the next. Update rate also went from 10 to 30 per second.
+- **Cars stop duplicating.** Entering a car created a new server entity every single time and nothing ever destroyed it, so every entry told every other client to spawn another copy. One seven-minute session left seven of them stacked in the road — with full physics each, which is a large part of why frames collapsed while driving.
+- **Cyber Engine Tweaks works.** The old instruction to disable it is withdrawn; the console is available again.
+- A lock on the animation thread that every NPC in the city was queueing on is gone.
+- Player cap raised from 4 to 16.
+
 ## What changed — v0.1.12
 
 - **Cyber Engine Tweaks may now work alongside this mod — worth testing.** With the developer overlay off, the mod no longer creates *anything* on the graphics device and never takes part in a frame. CET draws its own overlay through the same path, and two overlays sharing one swapchain is what caused the GPU hard-lock. A mod that renders nothing cannot fight another renderer. **This is untested — if it hard-locks, tell us and turn CET back off.**

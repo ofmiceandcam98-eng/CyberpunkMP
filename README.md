@@ -1,4 +1,23 @@
-# Cyberpunk Multiplayer
+# Night City Online
+
+A fork of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) carrying the changes
+needed to run on **Cyberpunk 2077 patch 2.31**, plus a launcher, Discord-backed
+permissions, chat with range, and server-side persistence. Upstream targets patch 2.2 and
+will not start on current game versions.
+
+**Play:** [download the launcher](https://github.com/ofmiceandcam98-eng/CyberpunkMP/releases/latest)
+· **Discord:** https://discord.gg/M9NSWsndC7
+
+**Contribute:** read [CONTRIBUTING.md](CONTRIBUTING.md) first — the build has version pins
+that are load-bearing and a clean checkout of upstream does not compile. What is currently
+broken is tracked in [publish/TODO.md](publish/TODO.md).
+
+This is a **beta**. It works well enough for a group to play together and there are still
+rough edges; the to-do list is honest about which.
+
+---
+
+## About the upstream project
 
 **CyberpunkMP** is a multiplayer mod for Cyberpunk 2077, created by Tilted 
 Phoques SRL. This mod brings multiplayer functionality to the game, allowing 
