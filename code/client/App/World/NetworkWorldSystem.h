@@ -55,6 +55,10 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     void RequestJoin();
     bool ConsumeJoinRequest();
 
+    // Called from redscript when the local player is downed - see Death.reds.
+    void RequestRespawn();
+    bool IsConnected() const;
+
 protected:
     void OnWorldAttached(RED4ext::world::RuntimeScene* aScene) override;
     void OnAfterWorldDetach() override;
@@ -94,6 +98,8 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(Disconnect);
     RTTI_METHOD(RequestJoin);
     RTTI_METHOD(ConsumeJoinRequest);
+    RTTI_METHOD(RequestRespawn);
+    RTTI_METHOD(IsConnected);
     RTTI_METHOD(GetEntityIdByServerId);
     RTTI_METHOD(GetAppearanceSystem);
     RTTI_METHOD(GetInterpolationSystem);

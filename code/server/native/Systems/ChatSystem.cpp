@@ -13,6 +13,56 @@ ChatSystem::ChatSystem(gsl::not_null<World*> apWorld)
     : m_pWorld(apWorld)
 {
     GServer->RegisterHandler<&ChatSystem::HandleChatMessageRequest>(this);
+    GServer->RegisterHandler<&ChatSystem::HandleRespawnRequest>(this);
+}
+
+void ChatSystem::HandleRespawnRequest(const PacketEvent<client::RespawnRequest>& aMessage)
+{
+    auto* pPlayerManager = m_pWorld->get<PlayerManager>();
+
+    const auto entity = pPlayerManager->GetByConnectionId(aMessage.ConnectionId);
+    if (!entity || !entity.has<PlayerComponent>())
+        return;
+
+    auto* pPlayer = entity.get_mut<PlayerComponent>();
+
+    glm::vec3 position;
+    float yaw = 0.f;
+
+    if (!GServer->GetRespawnPoint(position, yaw))
+    {
+        // No respawn point set yet. Reviving where they fell is a worse outcome than the
+        // Afterlife but a far better one than lying dead waiting for a load screen, so
+        // the client has already healed them and this simply leaves them put.
+        Tell(*pPlayer, "You are back up. (No respawn point set - an admin can fix that with /setspawn.)");
+        spdlog::warn("{} respawned in place - no respawn point configured", pPlayer->Username);
+        return;
+    }
+
+    // A jailed player respawns in the cell, not at the Afterlife. Dying is not a way out
+    // of a sentence, and EnforceJail would drag them back within the second regardless -
+    // this just avoids the visible teleport across the map and straight back.
+    if (const auto* pRecord = GServer->GetPlayerStore().Find(pPlayer->DiscordId))
+    {
+        if (pRecord->JailedUntil > 0)
+        {
+            position = {pRecord->JailX, pRecord->JailY, pRecord->JailZ};
+            yaw = 0.f;
+        }
+    }
+
+    server::NotifyTeleport teleport;
+
+    common::Vector3 destination;
+    destination.set_x(position.x);
+    destination.set_y(position.y);
+    destination.set_z(position.z);
+    teleport.set_position(destination);
+    teleport.set_rotation(yaw);
+
+    GServer->Send(pPlayer->Connection, teleport);
+
+    spdlog::info("Respawned {} at ({:.1f}, {:.1f}, {:.1f})", pPlayer->Username, position.x, position.y, position.z);
 }
 
 void ChatSystem::Broadcast(String acUsername, String acMessage, uint32_t aChannel)
@@ -397,6 +447,34 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
 
         Tell(acSender, fmt::format("Brought {} to you.", pVictim->Username));
         Tell(*pVictim, fmt::format("You were teleported to {}.", acSender.Username));
+        return true;
+    }
+
+    // ----------------------------------------------------------- /setspawn ----
+    //
+    // Where players reappear after dying. Recorded from where the admin is standing,
+    // for the same reason /jail works that way: nobody should have to look up
+    // coordinates, and "stand in the Afterlife and run this" is a instruction anyone can
+    // follow. Persisted, so it survives a restart.
+    if (command == "/setspawn")
+    {
+        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
+            return deny(EPermissionLevel::kAdmin);
+
+        const auto* pMovement = acSender.Puppet ? acSender.Puppet.get<MovementComponent>() : nullptr;
+        if (!pMovement)
+        {
+            Tell(acSender, "Spawn into the world first, then stand where you want people to respawn.");
+            return true;
+        }
+
+        GServer->SetRespawnPoint(pMovement->Position, pMovement->Rotation.z);
+
+        spdlog::info("{} set the respawn point to ({:.1f}, {:.1f}, {:.1f})", acSender.Username,
+                     pMovement->Position.x, pMovement->Position.y, pMovement->Position.z);
+
+        Tell(acSender, fmt::format("Respawn point set here ({:.0f}, {:.0f}, {:.0f}). Players will reappear here when they die.",
+                                   pMovement->Position.x, pMovement->Position.y, pMovement->Position.z));
         return true;
     }
 

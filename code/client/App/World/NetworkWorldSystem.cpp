@@ -297,6 +297,24 @@ void NetworkWorldSystem::RequestJoin()
     m_joinRequested = true;
 }
 
+void NetworkWorldSystem::RequestRespawn()
+{
+    const auto& service = Core::Container::Get<NetworkService>();
+    if (!service || !service->IsConnected())
+        return;
+
+    spdlog::info("[NetworkWorldSystem] downed - asking the server where to respawn");
+
+    client::RespawnRequest request;
+    service->Send(request);
+}
+
+bool NetworkWorldSystem::IsConnected() const
+{
+    const auto& service = Core::Container::Get<NetworkService>();
+    return service && service->IsConnected();
+}
+
 bool NetworkWorldSystem::ConsumeJoinRequest()
 {
     // Deliberately one-shot. Loading a save from the MULTIPLAYER entry should connect;

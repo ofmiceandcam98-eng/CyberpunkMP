@@ -714,6 +714,11 @@
 
       <button class="action play" id="play" disabled>Launch Game</button>
 
+      <!-- Why the button is dead. A greyed-out Launch with no explanation is the most
+           frustrating thing a launcher can do - people conclude it is broken and leave,
+           when the answer is usually one sentence. -->
+      <div class="field-hint" id="playReason" style="text-align:center;margin-top:.35rem"></div>
+
       <div class="footlinks">
         <button class="linkbtn" id="pickGameDir">Game not found? Locate it</button>
         <span class="sep">Â·</span>
@@ -925,6 +930,35 @@
     const serverReady = Boolean(serverState?.online) || Boolean(user?.isAdmin)
 
     playBtn.disabled = !verified || !filesReady || !serverReady
+
+    // Say WHY, in the order someone has to fix them. Signing in first, then files, then
+    // the server - listing a server outage to someone who has not signed in yet sends
+    // them chasing the wrong thing.
+    const blockers = []
+
+    if (!signedIn) {
+      blockers.push('Sign in with Discord')
+    } else if (!user.isMember) {
+      blockers.push('Join the Night City Online Discord — press the button above')
+    }
+
+    if (!updateState) {
+      blockers.push('Still checking your files')
+    } else if (!updateState.installed) {
+      blockers.push('The mod is not installed — open Settings and press Install')
+    } else if (!(updateState.upToDate || updateState.offline)) {
+      blockers.push('Your mod is out of date — press Update')
+    }
+
+    if (!serverState) {
+      blockers.push('Still checking the server')
+    } else if (!serverState.online) {
+      blockers.push(user?.isAdmin
+        ? 'The server is offline — you can launch anyway, but nobody else can'
+        : 'The server is offline — ask in the Discord when it will be back')
+    }
+
+    $('playReason').textContent = blockers.length > 0 ? blockers.join('  ·  ') : ''
     $('join').style.display = signedIn && !user.isMember ? 'inline-block' : 'none'
     $('dot').className = 'dot' + (verified ? ' on' : '')
     $('account').className = 'account' + (signedIn ? ' visible' : '')

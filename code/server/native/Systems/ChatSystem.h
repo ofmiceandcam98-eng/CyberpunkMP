@@ -70,6 +70,9 @@ protected:
 
     void HandleChatMessageRequest(const PacketEvent<client::ChatMessageRequest>& aMessage);
 
+    // A downed player asking where to get up. The server decides - see /setspawn.
+    void HandleRespawnRequest(const PacketEvent<client::RespawnRequest>& aMessage);
+
     // Splits a chat channel prefix off the front of a line. Returns false when the line
     // named a channel the sender is not allowed to use, or gave it no text, having
     // already told them why.

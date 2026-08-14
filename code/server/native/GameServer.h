@@ -127,6 +127,11 @@ private:
     void EnforceJail(std::chrono::steady_clock::time_point aNow);
 
 public:
+    // Where players reappear after dying, set with /setspawn. Persisted alongside the
+    // player records so it survives a restart.
+    void SetRespawnPoint(const glm::vec3& acPosition, float aYaw);
+    bool GetRespawnPoint(glm::vec3& aPosition, float& aYaw) const;
+
     BanList& GetBanList() noexcept { return m_bans; }
     PlayerStore& GetPlayerStore() noexcept { return m_players; }
 
@@ -144,6 +149,11 @@ private:
     PlayerStore m_players;
     std::chrono::steady_clock::time_point m_lastPlayerSave;
     std::chrono::steady_clock::time_point m_lastJailCheck;
+
+    glm::vec3 m_respawnPosition{};
+    float m_respawnYaw{0.f};
+    bool m_hasRespawnPoint{false};
+    std::filesystem::path m_respawnPath;
     entt::dispatcher m_dispatcher;
 
     Config m_config;

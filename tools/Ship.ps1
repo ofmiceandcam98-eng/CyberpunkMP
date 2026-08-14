@@ -307,6 +307,54 @@ if ($Launcher) {
         pnpm run dist 2>&1 | Select-Object -Last 2
         if ($LASTEXITCODE -ne 0) { Pop-Location; Die "packaging failed" }
         Ok "packaged"
+
+        # SMOKE TEST: does the thing we just built actually start?
+        #
+        # `node --check` proves the file PARSES. It cannot catch anything that only fails
+        # when the module is executed - and the one that got through was exactly that: a
+        # const read before its declaration, which is valid syntax and throws on load.
+        # v0.1.18 shipped a launcher that could not open at all, for everybody, and every
+        # check passed.
+        #
+        # Starting it and seeing whether it is still alive a few seconds later is crude,
+        # but it is the difference between shipping a broken launcher and not.
+        $built = Join-Path $LauncherDir "dist\win-unpacked\Night City Online Launcher.exe"
+        if (-not (Test-Path $built)) {
+            Warn "no unpacked build to smoke test - skipping"
+        } else {
+            # Close any running launcher FIRST, immediately before the test.
+            #
+            # Pre-flight already does this, but the build between then and now takes
+            # minutes and people reopen the launcher in the meantime. The app holds a
+            # single-instance lock so nxm:// downloads reach the copy already open, so a
+            # second instance quits cleanly with code 0 - which this check read as "the
+            # launcher will not start for anyone" and refused to ship a perfectly good
+            # build.
+            Get-Process -ErrorAction SilentlyContinue |
+                Where-Object { $_.ProcessName -like 'Night City Online*' -or $_.ProcessName -like 'NightCityOnline*' } |
+                Stop-Process -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+
+            $proc = Start-Process -FilePath $built -PassThru -WindowStyle Minimized
+            Start-Sleep -Seconds 8
+
+            if ($proc.HasExited) {
+                Pop-Location
+
+                # Exit code 0 within seconds almost always means it lost the
+                # single-instance race to a copy that was reopened mid-build, not that it
+                # is broken. Say so, rather than sending someone hunting a startup crash
+                # that does not exist.
+                if ($proc.ExitCode -eq 0) {
+                    Die "the launcher exited cleanly on startup - close any running copy and ship again"
+                }
+
+                Die "the packaged launcher crashed on startup (code $($proc.ExitCode)) - it would not start for anyone"
+            }
+
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            Ok "launcher starts and stays running"
+        }
     }
 
     Pop-Location
@@ -349,6 +397,17 @@ if ($Mod) {
         $uploads += $modlist
         $count = @((Get-Content $modlist -Raw -Encoding UTF8 | ConvertFrom-Json).mods).Count
         Ok "mod list staged ($count mod(s))"
+    }
+
+    # Where the game server is. Published rather than compiled in, so moving the server
+    # is one edit here instead of a new launcher for everybody.
+    $serverConfig = Join-Path $Repo "publish\server.json"
+    if (Test-Path $serverConfig) {
+        $uploads += $serverConfig
+        $cfg = Get-Content $serverConfig -Raw -Encoding UTF8 | ConvertFrom-Json
+        Ok "server address staged ($($cfg.host):$($cfg.port))"
+    } else {
+        Warn "no publish\server.json - launchers will fall back to 127.0.0.1 and find nothing"
     }
 
     # FullInstall.zip - what a NEW player gets. Rebuilt every ship.

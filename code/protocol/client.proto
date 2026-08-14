@@ -54,6 +54,14 @@ message ChatMessageRequest {
     string message = 1;
 }
 
+// "I was downed - where do I get up?"
+//
+// Carries nothing on purpose. The client is not telling the server where to put it, only
+// that it needs putting somewhere; the server owns the respawn point. A client that could
+// name its own destination could teleport anywhere by claiming to have died.
+message RespawnRequest {
+}
+
 message RpcCall {
     uint32 id = 1;
 	bytes arguments = 2;
@@ -68,5 +76,6 @@ message Protocol {
         RpcCall rpc_call = 5;
         EnterVehicleRequest enter_vehicle_request = 6;
         ExitVehicleRequest exit_vehicle_request = 7;
+        RespawnRequest respawn_request = 8;
     }
 }

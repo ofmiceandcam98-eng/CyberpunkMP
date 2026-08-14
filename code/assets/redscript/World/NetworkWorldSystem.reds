@@ -86,6 +86,40 @@ public native class NetworkWorldSystem extends IGameSystem {
         GameInstance.GetTeleportationFacility(GetGameInstance()).Teleport(player, position, angles);
     }
 
+    // Puts a downed player back on their feet at the server's respawn point.
+    //
+    // Health first, then the move. Teleporting a player the game still considers dead
+    // leaves them face-down at the destination, which reads as the mod being broken
+    // rather than as respawning.
+    public func RevivePlayer() -> Void {
+        let player = GetPlayer(GetGameInstance());
+        if !IsDefined(player) {
+            return;
+        }
+
+        let game = player.GetGame();
+
+        // Back to full. RequestSettingStatPoolValue with the last argument true forces
+        // the value rather than treating it as a modifier, which is what actually clears
+        // the dead state.
+        GameInstance.GetStatPoolsSystem(game)
+            .RequestSettingStatPoolValue(Cast<StatsObjectID>(player.GetEntityID()),
+                                         gamedataStatPoolType.Health, 100.0, player, true);
+
+        // The death flow applies this to stop you opening menus while dead. It is not
+        // removed by healing, so anyone revived without this keeps a locked-out pause
+        // menu for the rest of the session.
+        StatusEffectHelper.RemoveStatusEffect(player, t"GameplayRestriction.BlockAllMenu");
+
+        // Asking the server where to go rather than deciding here. It owns the respawn
+        // point, and it is the same teleport path /tp and /return already use - so this
+        // adds no new way for a client to move itself anywhere it likes.
+        this.RequestRespawn();
+    }
+
+    public native func RequestRespawn() -> Void;
+    public native func IsConnected() -> Bool;
+
     public func DeletePuppet(entityId: EntityID) {
         GameInstance.GetDynamicEntitySystem().DeleteEntity(entityId);
     }

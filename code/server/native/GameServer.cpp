@@ -46,6 +46,27 @@ GameServer::GameServer()
 
         m_bans.Load(serverPath / "config" / "bans.json");
         m_players.Load(serverPath / "config" / "players.json");
+
+        m_respawnPath = serverPath / "config" / "respawn.json";
+        if (std::ifstream file(m_respawnPath); file.is_open())
+        {
+            try
+            {
+                const auto data = nlohmann::json::parse(file);
+                m_respawnPosition = {data.value("x", 0.f), data.value("y", 0.f), data.value("z", 0.f)};
+                m_respawnYaw = data.value("yaw", 0.f);
+                m_hasRespawnPoint = true;
+
+                spdlog::info("Respawn point loaded: ({:.1f}, {:.1f}, {:.1f})", m_respawnPosition.x,
+                             m_respawnPosition.y, m_respawnPosition.z);
+            }
+            catch (const std::exception& e)
+            {
+                // Not fatal. Without a respawn point players simply revive where they
+                // fell, which is worse than the Afterlife but not broken.
+                spdlog::error("Could not read {}: {}", m_respawnPath.string(), e.what());
+            }
+        }
     }
     catch (std::exception& e)
     {
@@ -128,6 +149,35 @@ void GameServer::SavePlayerPositions(std::chrono::steady_clock::time_point aNow)
         });
 
     m_players.Flush();
+}
+
+void GameServer::SetRespawnPoint(const glm::vec3& acPosition, float aYaw)
+{
+    m_respawnPosition = acPosition;
+    m_respawnYaw = aYaw;
+    m_hasRespawnPoint = true;
+
+    try
+    {
+        std::filesystem::create_directories(m_respawnPath.parent_path());
+
+        std::ofstream file(m_respawnPath);
+        file << nlohmann::json{{"x", acPosition.x}, {"y", acPosition.y}, {"z", acPosition.z}, {"yaw", aYaw}}.dump(2);
+    }
+    catch (const std::exception& e)
+    {
+        spdlog::error("Could not write {}: {}", m_respawnPath.string(), e.what());
+    }
+}
+
+bool GameServer::GetRespawnPoint(glm::vec3& aPosition, float& aYaw) const
+{
+    if (!m_hasRespawnPoint)
+        return false;
+
+    aPosition = m_respawnPosition;
+    aYaw = m_respawnYaw;
+    return true;
 }
 
 void GameServer::EnforceJail(std::chrono::steady_clock::time_point aNow)
