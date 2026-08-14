@@ -106,6 +106,29 @@ private:
     // two minutes either way, and local bans are checked separately and never cached.
     static constexpr auto kDiscordCacheTtl = std::chrono::minutes(3);
 
+    // The guild's roles, as id -> lowercased name.
+    //
+    // Lets the config name a role instead of quoting its snowflake, which is the
+    // difference between the role mapping being used and it sitting empty. Needs the bot
+    // token; without one this stays empty and only explicit ids resolve.
+    std::map<std::string, std::string> GetGuildRoleNames() const;
+
+    // Read from NCO_DISCORD_BOT_TOKEN or the file named by Discord.BotTokenFile. Never
+    // held in the config itself, never logged.
+    std::string GetBotToken() const;
+
+    // Writes the resolved role -> level map to Discord.RolesFile, so the launcher grants
+    // the same people the same controls the game does.
+    void WriteRolesFile(const std::map<std::string, std::string>& acRoleNames) const;
+
+    mutable std::mutex m_roleNameMutex;
+    mutable std::map<std::string, std::string> m_roleNames;
+    mutable std::chrono::steady_clock::time_point m_roleNamesExpire{};
+
+    // Roles are renamed and created rarely, and a stale name for a few minutes only
+    // delays a permission change that Discord itself takes a moment to propagate.
+    static constexpr auto kRoleNameTtl = std::chrono::minutes(10);
+
     // Logs per-player ping / packet loss on a slow heartbeat, so a laggy player can be
     // told apart from a struggling server.
     void ReportPlayerConnections(std::chrono::steady_clock::time_point aNow);

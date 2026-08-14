@@ -1,5 +1,11 @@
 #pragma once
 
+#include <algorithm>
+#include <cctype>
+#include <map>
+#include <string>
+#include <vector>
+
 #include "Scripting/IConfig.h"
 #include "PermissionLevel.h"
 
@@ -39,20 +45,92 @@ struct DiscordConfig
     // cannot be removed by someone editing roles in Discord.
     std::string OwnerId{};
 
-    // Discord role id -> permission level. Role ids, not names: names get renamed, and a
-    // rename should not silently grant or revoke anything.
+    // Discord role -> permission level. Keys may be a role ID or a role NAME.
     //
-    //   "Roles": { "1234567890": "admin", "9876543210": "moderator" }
+    //   "Roles": { "dev": "admin", "1234567890": "moderator" }
+    //
+    // Ids were originally the only option, on the reasoning that a rename should not
+    // silently grant or revoke anything. That reasoning was right and it made the feature
+    // unusable: nobody knows their role ids, the map stayed empty, and the "dev" role in
+    // Cam's Discord had no privileges in game for weeks because configuring it meant
+    // turning on Developer Mode and copying a snowflake.
+    //
+    // Names are resolved against the guild's real role list, fetched with the bot token,
+    // so a name here means the role that actually has that name right now. If no bot
+    // token is available only ids work, and every unmapped role id a player carries is
+    // logged so it can be copied from there.
     //
     // A player with several mapped roles gets the highest.
     std::map<std::string, std::string> Roles{};
+
+    // Where the bot token lives. Read by the server at runtime, never stored in this file
+    // - a token in a config that gets pasted into chat for debugging is a token that has
+    // to be regenerated. The environment variable NCO_DISCORD_BOT_TOKEN wins if set.
+    //
+    // tools/.discord-bot is where the Discord announcer already keeps it, and it is
+    // gitignored.
+    std::string BotTokenFile{};
+
+    // Where to write the resolved role -> level map, so the launcher can show the same
+    // people the same controls the game gives them.
+    //
+    // Contains role ids, names and levels - all of which are visible to any member of the
+    // Discord already - and no token. Point it at publish\roles.json and Ship publishes it
+    // with the release, which is how the launcher gets it.
+    std::string RolesFile{};
 
     bool IsEnabled() const { return Enabled; }
     const char* GetGuildId() const { return GuildId.c_str(); }
     bool GetRequireMembership() const { return RequireMembership; }
 
-    // Resolve a set of Discord role ids into a permission level.
-    EPermissionLevel ResolveLevel(const std::string& acUserId, const std::vector<std::string>& acRoleIds) const
+    static EPermissionLevel ParseLevel(const std::string& acName)
+    {
+        if (acName == "owner")     return EPermissionLevel::kOwner;
+        if (acName == "admin")     return EPermissionLevel::kAdmin;
+        if (acName == "moderator") return EPermissionLevel::kModerator;
+        return EPermissionLevel::kPlayer;
+    }
+
+    static std::string Lower(std::string aValue)
+    {
+        std::transform(aValue.begin(), aValue.end(), aValue.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return aValue;
+    }
+
+    // Roles that mean what they say, without anyone configuring anything.
+    //
+    // A server whose "dev" role does nothing until someone finds its snowflake is a server
+    // where the role does nothing, in practice, forever. Anything in Roles overrides these
+    // - this is a floor, not a ceiling.
+    //
+    // Only someone who can already manage roles in the Discord can create a role with one
+    // of these names, and they are trusted with far more than this by definition.
+    static EPermissionLevel DefaultForName(const std::string& acLowerName)
+    {
+        if (acLowerName == "owner")     return EPermissionLevel::kOwner;
+
+        if (acLowerName == "dev" || acLowerName == "devs" || acLowerName == "developer" ||
+            acLowerName == "developers" || acLowerName == "admin" || acLowerName == "admins" ||
+            acLowerName == "administrator")
+            return EPermissionLevel::kAdmin;
+
+        if (acLowerName == "mod" || acLowerName == "mods" || acLowerName == "moderator" ||
+            acLowerName == "moderators" || acLowerName == "staff")
+            return EPermissionLevel::kModerator;
+
+        return EPermissionLevel::kPlayer;
+    }
+
+    /**
+     * Resolve a player's Discord roles into a permission level.
+     *
+     * acRoleNames maps role id -> lowercased role name, as fetched from the guild. It may
+     * be empty, in which case only id entries in Roles can match.
+     */
+    EPermissionLevel ResolveLevel(const std::string& acUserId,
+                                  const std::vector<std::string>& acRoleIds,
+                                  const std::map<std::string, std::string>& acRoleNames = {}) const
     {
         if (!OwnerId.empty() && acUserId == OwnerId)
             return EPermissionLevel::kOwner;
@@ -61,15 +139,20 @@ struct DiscordConfig
 
         for (const auto& roleId : acRoleIds)
         {
-            const auto it = Roles.find(roleId);
-            if (it == Roles.end())
-                continue;
-
             auto mapped = EPermissionLevel::kPlayer;
 
-            if (it->second == "owner")          mapped = EPermissionLevel::kOwner;
-            else if (it->second == "admin")     mapped = EPermissionLevel::kAdmin;
-            else if (it->second == "moderator") mapped = EPermissionLevel::kModerator;
+            // An explicit id entry is the most specific thing anyone can write, so it wins.
+            if (const auto byId = Roles.find(roleId); byId != Roles.end())
+            {
+                mapped = ParseLevel(Lower(byId->second));
+            }
+            else if (const auto named = acRoleNames.find(roleId); named != acRoleNames.end())
+            {
+                if (const auto byName = Roles.find(named->second); byName != Roles.end())
+                    mapped = ParseLevel(Lower(byName->second));
+                else
+                    mapped = DefaultForName(named->second);
+            }
 
             // Highest wins, so adding a junior role never demotes anyone.
             if (mapped > level)
@@ -79,7 +162,7 @@ struct DiscordConfig
         return level;
     }
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(DiscordConfig, Enabled, GuildId, RequireMembership, OwnerId, Roles)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(DiscordConfig, Enabled, GuildId, RequireMembership, OwnerId, Roles, BotTokenFile, RolesFile)
 };
 
 struct Config : IConfig

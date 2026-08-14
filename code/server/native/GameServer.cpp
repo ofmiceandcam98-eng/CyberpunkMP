@@ -1,5 +1,7 @@
 #include "GameServer.h"
 
+#include <cstdlib>   // getenv, for the bot token
+
 #include <Components/PlayerComponent.h>
 #include <Components/MovementComponent.h>
 #include "Systems/ChatSystem.h"   // jail radius and the chat channel ids
@@ -88,6 +90,28 @@ GameServer::GameServer()
     RegisterHandler<&GameServer::HandleAuthentication>(this);
 
     spdlog::info("Server started on port {}", GetPort());
+
+    // Pull the guild's roles now rather than waiting for the first player.
+    //
+    // It is only needed when somebody connects, but doing it lazily means roles.json does
+    // not exist until then - so the owner has no way to check the role mapping is working
+    // short of asking a friend to join. Detached because it is a network call and nothing
+    // here should wait on Discord.
+    if (m_config.Discord.Enabled && !m_config.Discord.GuildId.empty())
+    {
+        std::thread(
+            [this]()
+            {
+                const auto names = GetGuildRoleNames();
+
+                if (names.empty())
+                    spdlog::info("No Discord role names available - only role IDS in the config will grant anything. "
+                                 "Set Discord.BotTokenFile to use names.");
+                else
+                    spdlog::info("Loaded {} Discord role name(s)", names.size());
+            })
+            .detach();
+    }
 }
 
 GameServer::~GameServer()
@@ -614,6 +638,210 @@ std::string DerivePlayerId(const std::string& acSnowflake)
     return std::to_string(hash % 900000u + 100000u);
 }
 
+// See the header. The token is read at the moment it is needed and dropped again; it is
+// never stored in the config, never cached, and never logged.
+std::string GameServer::GetBotToken() const
+{
+    // _dupenv_s rather than getenv: MSVC deprecates the latter, and a warning on every
+    // build is a warning nobody reads by the third one.
+#ifdef _WIN32
+    {
+        char* value = nullptr;
+        size_t length = 0;
+        if (_dupenv_s(&value, &length, "NCO_DISCORD_BOT_TOKEN") == 0 && value)
+        {
+            std::string token(value);
+            free(value);
+            if (!token.empty())
+                return token;
+        }
+    }
+#else
+    if (const char* fromEnv = std::getenv("NCO_DISCORD_BOT_TOKEN"); fromEnv && *fromEnv)
+        return fromEnv;
+#endif
+
+    if (m_config.Discord.BotTokenFile.empty())
+        return {};
+
+    std::ifstream file(m_config.Discord.BotTokenFile);
+    if (!file)
+        return {};
+
+    // Same format tools\DiscordNotify.ps1 already uses: `token=` and `channel=` lines,
+    // with `#` comments. Reading the first line raw - which is what this did first - picks
+    // up a comment and produces a 401 that looks exactly like a revoked bot.
+    //
+    // A file holding nothing but the token on one line also works, because somebody will
+    // eventually create one that way.
+    auto trim = [](std::string value)
+    {
+        const auto first = value.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos)
+            return std::string{};
+
+        const auto last = value.find_last_not_of(" \t\r\n");
+        value = value.substr(first, last - first + 1);
+
+        // A UTF-8 BOM from an editor is invisible and turns a valid token into a 401.
+        if (value.size() >= 3 && static_cast<unsigned char>(value[0]) == 0xEF &&
+            static_cast<unsigned char>(value[1]) == 0xBB && static_cast<unsigned char>(value[2]) == 0xBF)
+            value.erase(0, 3);
+
+        return value;
+    };
+
+    std::string bare;
+    std::string line;
+
+    while (std::getline(file, line))
+    {
+        const auto trimmed = trim(line);
+        if (trimmed.empty() || trimmed.front() == '#')
+            continue;
+
+        const auto equals = trimmed.find('=');
+        if (equals == std::string::npos)
+        {
+            if (bare.empty())
+                bare = trimmed;
+            continue;
+        }
+
+        if (DiscordConfig::Lower(trim(trimmed.substr(0, equals))) == "token")
+            return trim(trimmed.substr(equals + 1));
+    }
+
+    return bare;
+}
+
+std::map<std::string, std::string> GameServer::GetGuildRoleNames() const
+{
+    {
+        std::lock_guard lock(m_roleNameMutex);
+        if (std::chrono::steady_clock::now() < m_roleNamesExpire)
+            return m_roleNames;
+    }
+
+    std::map<std::string, std::string> names;
+
+    const auto token = GetBotToken();
+
+    if (!token.empty() && !m_config.Discord.GuildId.empty())
+    {
+        httplib::Client roleClient("https://discord.com");
+        roleClient.set_connection_timeout(5);
+        roleClient.set_read_timeout(5);
+
+        const httplib::Headers botHeaders{
+            {"Authorization", "Bot " + token},
+            {"User-Agent", "CyberpunkMP-Server (https://github.com/ofmiceandcam98-eng/CyberpunkMP, 1.0)"}};
+
+        const auto roles = roleClient.Get("/api/v10/guilds/" + m_config.Discord.GuildId + "/roles", botHeaders);
+
+        if (roles && roles->status == 200)
+        {
+            try
+            {
+                for (const auto& role : nlohmann::json::parse(roles->body))
+                {
+                    if (!role.contains("id") || !role.contains("name"))
+                        continue;
+
+                    names[role["id"].get<std::string>()] = DiscordConfig::Lower(role["name"].get<std::string>());
+                }
+            }
+            catch (const std::exception& e)
+            {
+                spdlog::warn("Could not parse the guild role list: {}", e.what());
+            }
+        }
+        else if (roles)
+        {
+            // Deliberately prints no part of the token.
+            spdlog::warn("Discord guild roles returned {} - role NAMES will not resolve, only ids", roles->status);
+        }
+    }
+
+    // Cached even when empty, so a server with no bot token does not attempt this on every
+    // single connection.
+    {
+        std::lock_guard lock(m_roleNameMutex);
+        m_roleNames = names;
+        m_roleNamesExpire = std::chrono::steady_clock::now() + kRoleNameTtl;
+    }
+
+    WriteRolesFile(names);
+
+    return names;
+}
+
+// Publishes what each role resolves to, for the launcher.
+//
+// Discord roles decided permissions in game and a hardcoded list of one Discord id decided
+// them in the launcher, so somebody with the dev role had staff commands in the world and
+// no server controls in the launcher that started it. Writing the resolved map out means
+// both halves answer from the same table.
+//
+// Ids, names and levels only. Nothing here is a secret - every member of the Discord can
+// already see who has which role.
+void GameServer::WriteRolesFile(const std::map<std::string, std::string>& acRoleNames) const
+{
+    if (m_config.Discord.RolesFile.empty())
+        return;
+
+    try
+    {
+        nlohmann::json roles = nlohmann::json::array();
+
+        for (const auto& [id, name] : acRoleNames)
+        {
+            const auto level = m_config.Discord.ResolveLevel({}, {id}, acRoleNames);
+
+            // Only the ones that grant something. A guild's full role list is mostly
+            // colours and pings, and publishing it would bury the three that matter.
+            if (level == EPermissionLevel::kPlayer)
+                continue;
+
+            roles.push_back({{"id", id}, {"name", name}, {"level", ToString(level)}});
+        }
+
+        // Formatted by hand. fmt's chrono support needs <fmt/chrono.h>, and without it
+        // fmt::gmtime resolves to the CRT's and fails to compile in a way that reads like
+        // a type error rather than a missing include.
+        char stamp[32] = {};
+        const std::time_t nowSeconds = std::time(nullptr);
+        std::tm utc{};
+#ifdef _WIN32
+        gmtime_s(&utc, &nowSeconds);
+#else
+        gmtime_r(&nowSeconds, &utc);
+#endif
+        std::strftime(stamp, sizeof(stamp), "%Y-%m-%dT%H:%M:%SZ", &utc);
+
+        nlohmann::json document;
+        document["generatedAt"] = stamp;
+        document["guildId"] = m_config.Discord.GuildId;
+        document["owner"] = m_config.Discord.OwnerId;
+        document["roles"] = roles;
+
+        std::ofstream out(m_config.Discord.RolesFile);
+        if (!out)
+        {
+            spdlog::warn("Could not open {} to publish the role map", m_config.Discord.RolesFile);
+            return;
+        }
+
+        out << document.dump(2);
+
+        spdlog::info("Published {} role mapping(s) to {}", roles.size(), m_config.Discord.RolesFile);
+    }
+    catch (const std::exception& e)
+    {
+        spdlog::warn("Could not write the role map: {}", e.what());
+    }
+}
+
 GameServer::EDiscordAuthResult GameServer::VerifyDiscordToken(const std::string& acToken,
                                                               DiscordIdentity& aOutIdentity) const
 {
@@ -785,7 +1013,32 @@ GameServer::EDiscordAuthResult GameServer::VerifyDiscordToken(const std::string&
         spdlog::warn("Could not parse Discord roles for {}: {}", aOutIdentity.Username, e.what());
     }
 
-    aOutIdentity.Level = m_config.Discord.ResolveLevel(aOutIdentity.Id, aOutIdentity.RoleIds);
+    const auto roleNames = GetGuildRoleNames();
+
+    aOutIdentity.Level = m_config.Discord.ResolveLevel(aOutIdentity.Id, aOutIdentity.RoleIds, roleNames);
+
+    // Say what was seen and what it resolved to.
+    //
+    // Permissions that silently do nothing are the worst kind: the role exists in Discord,
+    // it looks right, and the only evidence that it never reached the server is a player
+    // being told "you do not have permission" for something they should be able to do.
+    // Naming the roles here turns that into one line of log - and where no name is known,
+    // printing the raw id means the manual config route is a copy and paste.
+    if (!aOutIdentity.RoleIds.empty())
+    {
+        std::string described;
+        for (const auto& roleId : aOutIdentity.RoleIds)
+        {
+            if (!described.empty())
+                described += ", ";
+
+            const auto named = roleNames.find(roleId);
+            described += (named != roleNames.end()) ? named->second : ("id:" + roleId);
+        }
+
+        spdlog::info("{} has Discord role(s) [{}] -> {}", aOutIdentity.Username, described,
+                     ToString(aOutIdentity.Level));
+    }
 
     // Remember this, so a reconnect or the re-verification sweep does not spend two
     // more API calls on an answer we already have.
