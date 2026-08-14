@@ -37,9 +37,26 @@ $script:XMake = (Get-Command xmake -ErrorAction SilentlyContinue).Source
 
 # Whichever remote points at a fork of this project. Falls back to `origin` so a plain
 # clone still works; publishing targets are checked before use in Ship.ps1 anyway.
+#
+# The existing remotes are LISTED first rather than asking for each by name. `git remote
+# get-url` writes to stderr when the remote does not exist, and PowerShell 5.1 wraps a
+# native command's stderr in an ErrorRecord - which under $ErrorActionPreference='Stop'
+# (which every caller sets) is a TERMINATING error.
+#
+# That failed on a fresh clone and nowhere else: this machine has a `fork` remote so the
+# call never wrote to stderr here. It would have hit a second contributor on their first
+# command and nobody else. Found by actually cloning rather than by reasoning about it.
 $script:GhRepo = $null
+
+$remotes = @()
+try { $remotes = @(& git remote 2>$null) } catch { }
+
 foreach ($remote in @('fork', 'origin')) {
-    $url = (& git remote get-url $remote 2>$null)
+    if ($remotes -notcontains $remote) { continue }
+
+    $url = $null
+    try { $url = (& git remote get-url $remote 2>$null) } catch { }
+
     if ($url -and $url -match 'github\.com[:/](?<owner>[^/]+)/(?<name>[^/.]+)') {
         $script:GhRepo = "$($Matches.owner)/$($Matches.name)"
         break
