@@ -362,6 +362,23 @@
   .tool-desc { font-size: .72rem; color: var(--ink-dim); line-height: 1.45; margin-top: .15rem; }
   .ghost { background: #22262e; color: var(--ink); white-space: nowrap; }
 
+  /* Shown in full and selectable on purpose: the whole point is to copy it out into
+     another tool. Wraps rather than scrolls, so nothing is silently cut off. */
+  .devkey {
+    margin-top: .5rem;
+    padding: .45rem .6rem;
+    background: #0c0e13;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: .72rem;
+    color: var(--accent, #fcee0a);
+    user-select: all;
+    word-break: break-all;
+    white-space: pre-wrap;
+    line-height: 1.5;
+  }
+
   footer {
     padding: .75rem 1.5rem;
     border-top: 1px solid var(--line);
@@ -601,6 +618,37 @@
           </div>
         </section>
 
+        <!-- DEV TOOLS
+             Hidden unless the published role map says this account is a dev. The key it
+             reveals is for the coordination API the assistants use to tell each other what
+             changed - see code/coord-api. -->
+        <section class="panel" id="devPanel" style="display:none">
+          <h3>Dev</h3>
+
+          <div class="tool">
+            <div style="min-width:0">
+              <div class="tool-name">Dev key</div>
+              <div class="tool-desc">
+                Paste this into your Claude so it can read and post updates alongside the
+                others. Base URL and usage are shown once you reveal it.
+              </div>
+              <div class="devkey" id="devKeyValue" style="display:none"></div>
+            </div>
+            <button class="action ghost" id="revealDevKey">Reveal</button>
+          </div>
+
+          <div class="tool">
+            <div>
+              <div class="tool-name">Join the Tailscale network</div>
+              <div class="tool-desc">
+                Opens Cam's invite. You need this before the server or the dev key will
+                reach you.
+              </div>
+            </div>
+            <button class="action ghost" id="openTailscaleInvite">Open invite</button>
+          </div>
+        </section>
+
         <!-- REMOVE -->
         <section class="panel danger">
           <h3>Remove data</h3>
@@ -719,6 +767,12 @@
       </div>
 
       <button class="action join" id="getTailscale" style="display:none">Get Tailscale</button>
+
+      <!-- Joining Cam's network. Shown once we know they are in the Discord, and only
+           while they are not already on the tailnet - once connected it is noise.
+           Installing Tailscale and being invited to the network are two separate steps
+           and people were only ever told about the first. -->
+      <button class="action join" id="joinTailnet" style="display:none">Join the server's network</button>
 
       <div class="btn-row">
         <button class="action verify" id="verify">Verify files</button>
@@ -890,6 +944,31 @@
     text.textContent = 'Tailscale connected - ' + tailscaleState.ip
   }
 
+  // Being on Tailscale and being on THIS tailnet are different things, and the launcher
+  // only ever told people about the first. Someone can have it installed, signed in and
+  // connected to their own network, see a green light here, and still not reach the
+  // server - which reads as the server being broken.
+  //
+  // Offered to anyone verified in the Discord, and hidden once they are already on the
+  // right network, where it would only be one more button to wonder about.
+  function renderTailnetInvite () {
+    const btn = $('joinTailnet')
+    const verified = Boolean(signedInUser && signedInUser.isMember)
+
+    // Reaching the server is the proof they are on the right tailnet - nothing else
+    // distinguishes "connected to Tailscale" from "connected to CAM's Tailscale".
+    const alreadyOnIt = Boolean(serverState && serverState.online)
+
+    btn.style.display = verified && !alreadyOnIt ? 'inline-block' : 'none'
+  }
+
+  $('joinTailnet').addEventListener('click', async () => {
+    const result = await window.launcher.openTailscaleInvite()
+    setStatus(result.ok
+      ? 'Accept the invite in your browser, then reopen this launcher.'
+      : result.error, result.ok ? 'ok' : 'bad')
+  })
+
   // Footer download links. The handler sends a NAME, never a URL, so nothing here
   // can be turned into "open whatever page I like".
   document.querySelectorAll('[data-link]').forEach((el) => {
@@ -1008,6 +1087,8 @@
         'Your Discord account is verified, but you are not in Night City Online. ' +
         'Join, then sign in again.'
     }
+
+    renderTailnetInvite()
   }
 
   // If the preload failed to load, window.launcher does not exist and every button
@@ -1508,7 +1589,65 @@
     // Install is only meaningful when it is not already there; Reinstall covers the
     // rest. Showing both as equally available invites people to pick the wrong one.
     $('installAll').textContent = paths.modDir ? 'Reinstall all' : 'Install'
+
+    // The dev section rides on the same answer that decides the server controls, so a
+    // dev sees the same launcher Cam does.
+    const debug = await window.launcher.getDebugMode()
+    $('devPanel').style.display = debug && debug.admin ? 'block' : 'none'
+
+    // Re-hidden every time settings opens. A key left on screen from ten minutes ago is
+    // a key in the next screenshot.
+    $('devKeyValue').style.display = 'none'
+    $('devKeyValue').textContent = ''
+    $('revealDevKey').textContent = 'Reveal'
+    $('revealDevKey').disabled = false
   }
+
+  $('revealDevKey').addEventListener('click', async () => {
+    const box = $('devKeyValue')
+    const button = $('revealDevKey')
+
+    button.disabled = true
+    button.textContent = 'Fetching...'
+
+    const result = await window.launcher.devKey()
+
+    if (!result.ok) {
+      button.disabled = false
+      button.textContent = 'Reveal'
+      setSettingsStatus(result.error, 'bad')
+      return
+    }
+
+    // Everything the other end needs, in one block to copy: the key, where to send it,
+    // and the two calls that matter. Handing over a bare key means a second round of
+    // questions about what to do with it.
+    box.textContent =
+      `Key       ${result.key}\n` +
+      `Base URL  ${result.baseUrl}\n\n` +
+      `Read:  GET  ${result.baseUrl}/v1/updates?limit=10\n` +
+      `Post:  POST ${result.baseUrl}/v1/updates  {"title","body","kind"}\n` +
+      `Auth:  Authorization: Bearer <key>`
+
+    box.style.display = 'block'
+    button.textContent = 'Copy'
+    button.disabled = false
+
+    button.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(box.textContent)
+        setSettingsStatus('Dev key copied.', 'good')
+      } catch {
+        setSettingsStatus('Select the text above and copy it.', '')
+      }
+    }
+  })
+
+  $('openTailscaleInvite').addEventListener('click', async () => {
+    const result = await window.launcher.openTailscaleInvite()
+    if (!result.ok) setSettingsStatus(result.error, 'bad')
+    else setSettingsStatus('Invite opened in your browser.', 'good')
+  })
 
   function openSettings () {
     $('settingsModal').style.display = 'flex'

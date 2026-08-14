@@ -38,6 +38,13 @@ contextBridge.exposeInMainWorld('launcher', {
   // coordination API and published with the release.
   devUpdates: () => ipcRenderer.invoke('devUpdates:list'),
 
+  // The coordination key, for anyone the role map says is a dev. Fetched on demand
+  // rather than pushed, so it is never sitting in the page for someone screen-sharing.
+  devKey: () => ipcRenderer.invoke('devKey:fetch'),
+
+  // Opens the invite to Cam's tailnet in the real browser.
+  openTailscaleInvite: () => ipcRenderer.invoke('tailscale:invite'),
+
   // The curated Nexus mod list, and the Nexus account used to fetch from it.
   // The API key is never handed to the page - only whether one is stored, and the name.
   listMods: () => ipcRenderer.invoke('mods:list'),

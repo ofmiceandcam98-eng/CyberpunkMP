@@ -15,5 +15,19 @@
   "name": "Night City Online",
   "host": "100.109.102.127",
   "port": 11778,
-  "requiresTailscale": true
+  "requiresTailscale": true,
+
+  "_coordComment": [
+    "The assistant coordination API, on the same machine. Anyone with the dev role can",
+    "fetch their key from it through the launcher's settings; it is not published",
+    "anywhere public, because a key that ships with the installer is a key everyone has."
+  ],
+  "coordPort": 11780,
+
+  "_tailscaleComment": [
+    "Invite to Cam's tailnet, so joining is a button rather than a link he has to send",
+    "by hand every time. The launcher only shows it to people it has already verified",
+    "are in the Discord - see the note in index.html."
+  ],
+  "tailscaleInvite": "https://login.tailscale.com/admin/invite/cZRsnu3szrEVp3H89kz121"
 }

@@ -92,6 +92,13 @@ const MAX_UPDATE_LENGTH = 20_000
 
 const KINDS = ['update', 'question', 'answer', 'decision', 'warning', 'handoff']
 
+// The shared key handed to anyone with the dev role, through the launcher's settings.
+//
+// Shared on purpose: a per-person key would need somebody to issue one every time a friend
+// offers to help, which is the chore this removes. Everything they post is attributed to
+// this participant rather than to them individually - worth knowing when reading the feed.
+const DEV_PARTICIPANT_ID = 'dev'
+
 // ---------------------------------------------------------------------------
 // Arguments
 // ---------------------------------------------------------------------------
@@ -454,6 +461,95 @@ function withinRate (id, limit = 60, windowMs = 60_000) {
 // Routes
 // ---------------------------------------------------------------------------
 
+/**
+ * Hands a verified dev their key.
+ *
+ * The one endpoint that does not need a key, because it is how you get one. Cam's friends
+ * are helping write this and each of them needs the key in their own Claude; relaying it
+ * by hand every time is exactly the sort of chore that stops happening after the second
+ * person.
+ *
+ * Identity is decided by Discord, not by the caller: the launcher sends the OAuth token it
+ * already holds, this asks Discord who it belongs to and what roles they have in the
+ * guild, and checks those against the role map the game server publishes. Same source of
+ * truth as the in-game permissions, so the two cannot disagree about who is a dev.
+ */
+async function handleDevKey (req, res) {
+  let body
+  try {
+    body = await readBody(req)
+  } catch (error) {
+    return send(res, 400, { error: error.message })
+  }
+
+  const token = String(body.discordToken || '').trim()
+  if (!token) return send(res, 400, { error: 'A Discord token is required.' })
+
+  // The role map the game server writes. No map means nothing to verify against, and
+  // handing out a key on that basis would defeat the point of asking.
+  let roleMap
+  try {
+    roleMap = JSON.parse(fs.readFileSync(path.join(PUBLISH_DIR, 'roles.json'), 'utf8'))
+  } catch {
+    return send(res, 503, { error: 'The role map is not available yet. Start the game server once.' })
+  }
+
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    'User-Agent': 'CyberpunkMP-Coord (https://github.com/ofmiceandcam98-eng/CyberpunkMP, 1.0)'
+  }
+
+  let identity
+  try {
+    const me = await fetch('https://discord.com/api/v10/users/@me', { headers })
+    if (!me.ok) return send(res, 401, { error: 'That Discord sign-in is not valid.' })
+    identity = await me.json()
+  } catch {
+    return send(res, 503, { error: 'Could not reach Discord.' })
+  }
+
+  // The owner always qualifies, whatever the roles say.
+  let qualifies = roleMap.owner && roleMap.owner === identity.id
+
+  if (!qualifies) {
+    try {
+      const member = await fetch(
+        `https://discord.com/api/v10/users/@me/guilds/${roleMap.guildId}/member`, { headers })
+
+      if (member.status === 404) return send(res, 403, { error: 'You are not in the Discord.' })
+      if (!member.ok) return send(res, 401, { error: 'That Discord sign-in is not valid.' })
+
+      const held = (await member.json()).roles || []
+      const granting = (roleMap.roles || [])
+        .filter((role) => role.level === 'admin' || role.level === 'owner')
+        .map((role) => role.id)
+
+      qualifies = held.some((id) => granting.includes(id))
+    } catch {
+      return send(res, 503, { error: 'Could not reach Discord.' })
+    }
+  }
+
+  if (!qualifies) {
+    return send(res, 403, { error: 'The dev key is for people with the dev role. Ask Cam.' })
+  }
+
+  const participant = loadParticipants().find((p) => !p.revoked && p.id === DEV_PARTICIPANT_ID)
+  if (!participant) {
+    return send(res, 503, { error: `No "${DEV_PARTICIPANT_ID}" key exists yet. Create one in the console.` })
+  }
+
+  console.log(`[dev-key] issued to ${identity.username || identity.id}`)
+
+  return send(res, 200, {
+    ok: true,
+    id: participant.id,
+    label: participant.label,
+    key: participant.key,
+    baseUrl: `http://${findTailscaleAddress() || 'localhost'}:${PORT}`
+  })
+}
+
 async function handleApi (req, res, url) {
   const key = extractKey(req, url)
   const participant = findParticipantByKey(key)
@@ -622,6 +718,9 @@ const server = http.createServer(async (req, res) => {
       const page = fs.readFileSync(path.join(__dirname, 'console.html'), 'utf8')
       return send(res, 200, page)
     }
+
+    // Before the key check below, because this is how a dev gets a key in the first place.
+    if (url.pathname === '/v1/dev-key' && req.method === 'POST') return handleDevKey(req, res)
 
     if (url.pathname.startsWith('/admin/')) return handleAdmin(req, res, url)
     if (url.pathname.startsWith('/v1/')) return handleApi(req, res, url)

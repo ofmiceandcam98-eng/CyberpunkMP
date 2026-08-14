@@ -2612,6 +2612,72 @@ ipcMain.handle('tailscale:download', async () => {
   return { ok: true }
 })
 
+/**
+ * Opens the invite to Cam's tailnet.
+ *
+ * Published in server.json rather than compiled in, so revoking or regenerating it is one
+ * edit rather than a new launcher for everybody - which matters, because an invite link
+ * that cannot be rotated is one you can never take back.
+ *
+ * The button is only shown to people the launcher has verified are in the Discord. That is
+ * a courtesy, not a wall: server.json is a public release asset, so anyone determined to
+ * find the link can. Treat this as "saves Cam sending it by hand", not as access control.
+ */
+ipcMain.handle('tailscale:invite', async () => {
+  const published = await fetchPublishedServer()
+  const invite = published?.tailscaleInvite
+
+  if (!invite) return { ok: false, error: 'No invite link is published yet.' }
+
+  await shell.openExternal(invite)
+  return { ok: true }
+})
+
+// ---------------------------------------------------------------------------
+// The dev key
+//
+// Cam's friends are helping write this, and each of them needs the coordination key in
+// their own Claude. Relaying it by hand is the sort of chore that stops happening after
+// the second person, so the launcher fetches it for anyone the role map says is a dev.
+//
+// The key never touches the renderer until it has been asked for, and the Discord token
+// never leaves the main process except to Discord itself and to Cam's own coordination
+// service.
+// ---------------------------------------------------------------------------
+
+ipcMain.handle('devKey:fetch', async () => {
+  if (!isAdmin()) return { ok: false, error: 'The dev key is for people with the dev role.' }
+
+  const token = loadToken()
+  if (!token) return { ok: false, error: 'Sign in with Discord first.' }
+
+  const published = await fetchPublishedServer()
+  const host = loadSettings().serverHost || published?.host
+  const port = published?.coordPort || 11780
+
+  if (!host) return { ok: false, error: 'No server address is published yet.' }
+
+  try {
+    const response = await axios.post(
+      `http://${host}:${port}/v1/dev-key`,
+      { discordToken: token },
+      { timeout: 8000, validateStatus: () => true })
+
+    if (response.status !== 200) {
+      return { ok: false, error: response.data?.error || `The coordination service answered ${response.status}.` }
+    }
+
+    return { ok: true, key: response.data.key, baseUrl: response.data.baseUrl, id: response.data.id }
+  } catch (err) {
+    // Almost always this: the service is only reachable over Tailscale, and only while
+    // Cam's machine is on. Saying so beats a raw connection error.
+    return {
+      ok: false,
+      error: 'Could not reach the coordination service. It needs Tailscale connected and Cam\'s PC on.'
+    }
+  }
+})
+
 // Opens a download page in the user's real browser. Nothing is fetched by the
 // launcher here - these are first-time installs the player performs themselves.
 ipcMain.handle('links:open', async (_event, which) => {
