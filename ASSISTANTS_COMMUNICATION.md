@@ -170,3 +170,265 @@ CONFIDENCE: VERIFIED (reflog, commit contents, channel read-back, and secret sca
 directly).
 
 Signed: Claude
+
+---
+
+### 2026-08-12 — Claude
+
+Long session. The crash was found and fixed; the rest is new infrastructure.
+
+**THE SPAWN CRASH IS FIXED. Cause VERIFIED by probe logs; fix NOT yet confirmed live.**
+
+`InterpolationSystem::HandleNotifyEntityMove` dereferenced `get_mut<InterpolationComponent>()`
+with no null check. That component is added by an observer on `EntityComponent`, which only
+arrives when the promotion poll runs - up to **200ms** after the puppet spawns. A real player
+transmits movement continuously, so their first update reliably landed inside that window and
+dereferenced null.
+
+It never reproduced with `/dummy` because **fabricated players never move**. That is why every
+appearance-data theory looked so convincing: real players have movement *and* ccstate, dummies
+have neither, so the ccstate correlation was coincidental. Probes 22/23/24 each cleared a
+theory before this became visible.
+
+Fixed twice over: a null guard, and `InterpolationComponent` is now added at spawn so early
+movement is buffered rather than dropped (guarding alone would silently discard the first
+fifth of a second of a player's movement and make them snap into place).
+
+Everything below is built and deployed but **unverified end to end**:
+
+- **Discord identity.** Launcher does OAuth with PKCE - no client secret, because a secret
+  shipped to players is not a secret. Token goes launcher -> game -> server, and the SERVER
+  asks Discord who it belongs to. The client never asserts identity.
+- **Role-based permissions.** Discord role ids -> moderator/admin/owner in `config/server.json`.
+  Ordered levels, highest wins, `OwnerId` (Cam: `566025915839283220`) always full access.
+- **Moderation.** `/kick` (moderator), `/ban` `/unban` (admin), `/bans`, `/who`. Bans key on
+  Discord id - the only identifier a player cannot change - and persist to `config/bans.json`.
+  Rank protects rank: nobody can act on someone at or above their own level.
+- **Discord bans propagate.** Banned in Discord -> rejected at connect, and kicked within two
+  minutes if already in-game. Role changes propagate the same way. Runs off the game thread;
+  an unreachable Discord kicks **nobody**, because an outage emptying the server is worse than
+  a banned player lingering.
+- **Launcher** (`code/launcher-lite/`, Electron): sign-in, update gating, admin server
+  start/stop/restart, patch notes, Tailscale detection. Published as `.exe` on the release.
+- **Connection health** surfaced client and server side. GameNetworkingSockets measured ping
+  and loss all along; nothing read it.
+- **Per-launch client logs**, so a crash log is no longer destroyed by relaunching.
+
+**The player-facing id is NOT the Discord snowflake.** `DerivePlayerId` hashes it to six
+digits. A snowflake is a permanent handle on someone's real account and ends up in screenshots
+and pasted logs. Both sides must produce the same number - same salt
+(`cyberpunkmp-player-id-v1`), same FNV-1a, same modulus - or a player's launcher id will not
+match the server log and moderation reports become untraceable. Verified matching (`984682`).
+
+Bugs worth remembering, every one found by running something rather than reading it:
+- `Join-Path` **throws** on a drive that does not exist, and Steam's library list routinely
+  names unplugged drives. Use string concatenation.
+- Node's `isDirectory()` is **false for a junction**. `zzzCyberpunkMP` is a junction in a dev
+  install, so filtering on it made the launcher conclude the mod was not installed.
+- `Get-Content` without `-Encoding UTF8` reads BOM-less UTF-8 as ANSI, turning an em dash into
+  `a€"`, which Discord rejects with a bare 400 and no explanation.
+- `$args` is a PowerShell automatic variable; assigning to it corrupts the call.
+- ESM preload needs `sandbox: false` **and** the `.mjs` extension, or it never loads and every
+  button silently does nothing.
+- `NLOHMANN_DEFINE_TYPE_INTRUSIVE` throws on a missing key - adding a config field would have
+  stopped every existing server from starting. Use `_WITH_DEFAULT`.
+- Passing a quoted title through `cmd /c start` from Node breaks: Node re-escapes, cmd splits
+  it, and you get "Windows cannot find 'Server\'". Spawn the exe directly with `detached: true`.
+
+**Cam is moving the server to Oracle Cloud.** Note the Linux CI builds `x64` only, so the
+Always-Free ARM shape needs an unproven `aarch64` build. Oracle images also ship restrictive
+`iptables` on top of cloud Security Lists - both must open UDP 11778.
+
+CONFIDENCE: VERIFIED for everything that builds and for the probe evidence. UNVERIFIED for
+live two-player behaviour, which still needs a second person.
+
+Signed: Claude
+
+---
+
+### 2026-08-13 — Claude
+
+**Discord identity is LIVE and PROVEN.** Server log, real connection:
+
+```
+Authorised noremacxxi [player 984682] (discord 566025915839283220) as owner
+[chat] [noremacxxi]: hello
+```
+
+`Discord.Enabled` is now `true` in `config/server.json`. Consequences: only members of
+guild `1536257549832167506` can connect, and `PlayNightCityOnline.bat` no longer works
+because it launches without a token. The launcher is the only way in.
+
+Note `OwnerId` grants PERMISSIONS, not access - verified by reading the auth path. Any
+guild member connects as `kPlayer`. The server is open to the community, not to Cam alone.
+
+Names use the Discord **handle** (`noremacxxi`), not `global_name`. Handles are unique;
+display names are not, and anyone can change theirs to match someone else's. For chat and
+moderation logs the name has to identify one person.
+
+**Discord API rate limiting is handled.** Successful verifications are cached for 3 minutes
+keyed on the token, and a 429 falls back to a cached identity even if expired. Only
+successes are cached - caching a rejection would lock someone out over a transient blip,
+and caching "not a member" would mean joining the Discord did not take effect. Local bans
+are never cached, so `/ban` stays instant.
+
+**MAIN MENU RESEARCH - done, not yet implemented.** This is the next task and the expensive
+part is finished. The game ships its own script source at
+`<game>\tools\redmod\scripts\`, which is authoritative for this patch - use it rather than
+guessing at signatures.
+
+- `cyberpunk/UI/fullscreen/pregame/singleplayerMenu.script:843` -
+  `SingleplayerMenuGameController.PopulateMenuItemList()` is where Continue / New Game /
+  Load Game / Settings / Credits are added.
+- `cyberpunk/UI/menus/menuItemListGameController.script:56` -
+  `AddMenuItem(const label: ref<String>, spawnEvent: CName)` pushes a
+  `PauseMenuListItemData` with `action = PauseMenuAction.OpenSubMenu`.
+- `cyberpunk/UI/fullscreen/pregame/preGameScenarios.script:190` -
+  `MenuScenario_SingleplayerMenu` receives those events as `protected event OnNewGame()`
+  (line 308) and friends.
+
+So: `@wrapMethod(SingleplayerMenuGameController) PopulateMenuItemList` to add the item, and
+`@addMethod(MenuScenario_SingleplayerMenu)` for the handler. `PopulateMenuItemList` calls
+`m_menuListController.Refresh()` at its end, so an item added after `wrappedMethod()` needs
+a further refresh.
+
+**Risk worth stating: a redscript compile error stops the game launching entirely** - RED4ext
+aborts on script validation failure. Recoverable by deleting the file, but it is a brick
+rather than a bug, so this deserves a fresh head rather than a tired one.
+
+CONFIDENCE: VERIFIED for the Discord chain (read from a live server log). The menu API is
+VERIFIED from the game's own source but the implementation is UNWRITTEN.
+
+Signed: Claude
+
+---
+
+### 2026-08-13 (late) — Claude
+
+**Main menu MULTIPLAYER entry — written, deployed, UNTESTED since the fix.**
+`code/assets/redscript/MainMenu.reds`.
+
+First attempt failed to compile: `UNRESOLVED_FN` on `GetSystemRequestsHandler()`. It reads
+like a global in the game's source but is a **method** on `widgetController`
+(`core/ui/baseControllers/widgetController.script:84`), so it only resolves on classes that
+inherit it. `SingleplayerMenuGameController` does; `MenuScenario_SingleplayerMenu` does not.
+Everything now lives on the controller, hooking `PopulateMenuItemList` and
+`HandleMenuItemActivate`.
+
+Severity was milder than expected: the dialog said *"the game will start but no scripts will
+take effect"*, so a bad hook degrades rather than bricking. Still recoverable by deleting
+the file.
+
+**The client now auto-connects on world attach** when launched with `--online` and an
+address. That is what makes the menu entry land somewhere, and it removes the Connect-button
+step from the normal flow.
+
+**Crash logs now surface themselves.** The launcher watches the game it started; on a
+failure exit code it copies the newest log to the Desktop as
+`NightCityOnline-CRASH-<timestamp>.log`, puts the path on the clipboard, and offers to open
+it. Access violations are named explicitly. Nobody - Cam included - should have to hunt
+through Program Files for a file whose name they do not know.
+
+**`tools\Ship.ps1`** now does build → package → publish → verify in one command, and refuses
+to publish anything failing its checks. Every check in it corresponds to a mistake actually
+made during this session. Use it instead of running the steps by hand.
+
+**Still unverified, and it is the same thing as yesterday:** the spawn-crash fix has never
+been tested with a real second player. `/dummy` no longer reproduces it where it did before,
+which is real evidence, but a dummy generates far less movement than a person and movement
+is what the bug fed on. **One live join settles it.**
+
+Cam's own theory is that the crash relates to being pushed into a world instantly rather
+than loading in. The evidence does not support it as the cause - connect-time spawns
+survived while mid-session ones crashed, which is the opposite of what it predicts - but the
+main-menu path now exists, so it is directly testable.
+
+**Next feature, agreed but deferred:** a connect/character-selection screen like SkyMP's
+(login → connect → character slots, with a server access tier shown). The real work is
+character records attached to a Discord id plus persistence to store them, not the panel.
+The foundation is right - players are already keyed on Discord id and roles already resolve
+to tiers - so it is additive rather than a rewrite.
+
+CONFIDENCE: VERIFIED for what builds and publishes. UNVERIFIED for the menu entry in game
+and for live two-player behaviour.
+
+Signed: Claude
+
+### 2026-08-13 (night) - Claude
+
+**THE SPAWN CRASH IS FIXED. VERIFIED WITH TWO REAL PLAYERS.**
+
+This was the blocker for the whole project and it is closed. Cam and one other player were
+connected simultaneously; the remote puppet spawned, all 24 probes fired in order, and the
+client survived thirteen further minutes. The fix was the null-component guard in
+InterpolationSystem::HandleNotifyEntityMove - a movement update arriving before the puppet
+finished being built. CONFIDENCE: VERIFIED, live, two players.
+
+Equipment is fixed too, same session: eight real items resolved and applied. The cause was
+that item names were built with TDBID.ToStringDEBUG, which reads TweakDB's debug name table
+- stripped from release builds, so every name was an empty string. Equipment now travels as
+the numeric TweakDBID. CONFIDENCE: sending side VERIFIED; whether gear renders on the OTHER
+player's screen is still unconfirmed.
+
+**Also verified live:** /tp, /return, server-side position saving across a crash, and Cyber
+Engine Tweaks running alongside the mod.
+
+CET DESERVES ATTENTION. It is no longer incompatible. With the developer overlay off the
+mod creates NOTHING on the D3D12 device - no descriptor heap, no command list, no ImGui
+context - and never takes part in a frame. Two overlays sharing one swapchain was the
+hard-lock. Players keep their other mods now, which matters because most Cyberpunk mods
+depend on CET. Remove the "keep CET disabled" warning wherever it still appears.
+
+**Panam.** Every remote player was labelled Panam. Not a fallback and not a bug in the name
+plumbing: Character.MaMuppet and Character.WaMuppet INHERIT FROM Character.Panam in the
+mod's own tweak file, so they inherit her display name. The nameplate reads the character
+record BEFORE the entity's own display name, which is why setting the entity name had no
+visible effect at all. Fixed by blanking displayName/fullDisplayName on those records.
+Worth knowing generally: entity-level name writes lose to record-level names.
+
+**Movement speed.** Read from moveComponent->speed, a hand-mapped offset that moved on
+2.31, returning about 3e8. The animation state machine compares against 3 m/s to walk and 5
+to run, so every remote player was pinned past both thresholds permanently. Now MEASURED
+from distance over time - no offsets, cannot break on a game update, metres per second by
+construction. Teleports are clamped out so arriving does not read as a sprint.
+
+**Death and the desync.** A player died, loaded a save, and the session broke for both of
+them: loading detaches and rebuilds the world while the server still holds the old puppet,
+so everyone else watches a frozen copy. Death now heals and moves the player to a
+server-owned respawn point (/setspawn records it from where the admin stands). Load Game is
+also removed from the pause menu entirely while connected - hooked at AddMenuItem so the
+item is never created. Both routes to that desync are closed. CONFIDENCE: UNVERIFIED in
+game.
+
+**Shooting each other is NOT solved and is bigger than it looks.** Puppets are built from
+mannequin records with no health or hit detection, so they cannot be targeted. Which record
+is both stable and targetable is trial and error, and every attempt costs two people being
+online - so the record is now a LAUNCH FLAG (--puppet-record=), not a rebuild. First
+candidate to try: Character.Player_Puppet_Base. Even once targetable, damage would not
+register without server arbitration, because combat is entirely client-side.
+
+**THE WORLD IS NOT SHARED. This shapes every feature request.** Thirteen message types and
+two server systems, none of which touch the world. Players, vehicles, chat, teleports sync.
+NPCs, traffic, time of day, weather, doors, loot, quests and combat do NOT. Each player has
+their own Night City with other players painted into it. Prison RP works through
+server-enforced rules over positions (/jail drags you back if you leave the cell), not
+through doors, because a door is closed only for the person who closed it.
+
+**Two traps I hit twice each - please avoid repeating them.**
+
+redscript is NOT the game's .script dialect. Copying a signature out of redmod\scripts
+compiles nowhere: `data : PauseMenuListItemData` must be `ref<...>`, and
+`const label : ref<String>` must be `script_ref<String>`. Getting it wrong aborts ALL
+redscript compilation, so the game starts with no scripts at all while the C++ half keeps
+running - it looks exactly like the change doing nothing. tools/Ship.ps1 now compiles with
+the game's own scc.exe before publishing.
+
+Do not edit code/assets while a ship is running. Ship.ps1 deploys scripts to the live game
+folder after its compile gate, so a file created mid-flight reaches Cam's install unchecked.
+That happened tonight and gave him a compilation-error dialog.
+
+**Cam's GPU crashes are NOT the mod.** Three of them, one at the MAIN MENU with no
+connection, no remote player, our renderer disabled and CET absent. AMD RX 5700 XT, a card
+with a long history of DX12 instability. Do not spend time hunting these in mod code.
+
+Signed: Claude

@@ -306,6 +306,15 @@ function gameExecutable () {
 // Finds the installed mod folder. Named zzzCyberpunkMP by convention, but RED4ext
 // loads any subfolder, so look for the DLL rather than trusting the name.
 function findModDir () {
+  // A folder the player pointed at themselves wins over anything found automatically.
+  //
+  // The search below is good but not infallible - an unusual install, a mod folder
+  // renamed, a drive the game was moved off. When it misses, the launcher says "not
+  // installed" about a mod sitting right there, and without this there is no way to
+  // argue with it.
+  const chosen = loadSettings().modDir
+  if (chosen && existsSync(path.join(chosen, 'CyberpunkMP.dll'))) return chosen
+
   const gameDir = findGameDir()
   if (!gameDir) return null
 
@@ -2164,6 +2173,28 @@ ipcMain.handle('mods:delete', async (_event, modId) => {
   saveInstalledMods(installed)
 
   return { ok: true, removed }
+})
+
+ipcMain.handle('mod:pickDir', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Where is the mod installed?',
+    properties: ['openDirectory'],
+    message: 'Pick the folder containing CyberpunkMP.dll (usually red4ext\\plugins\\zzzCyberpunkMP)'
+  })
+
+  if (result.canceled || result.filePaths.length === 0) return { ok: false }
+
+  const chosen = result.filePaths[0]
+
+  // Checked before it is saved. Accepting a folder without the DLL would replace a
+  // working automatic answer with a broken manual one, and the launcher would then
+  // insist the mod is missing while pointing at the folder the player just chose.
+  if (!existsSync(path.join(chosen, 'CyberpunkMP.dll'))) {
+    return { ok: false, error: 'No CyberpunkMP.dll in that folder - pick the one containing it, usually zzzCyberpunkMP.' }
+  }
+
+  saveSettings({ modDir: chosen })
+  return { ok: true, modDir: chosen }
 })
 
 // Opens the folder the launcher is actually installed in. It lives under AppData, which

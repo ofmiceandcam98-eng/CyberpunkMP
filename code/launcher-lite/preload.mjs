@@ -85,6 +85,7 @@ contextBridge.exposeInMainWorld('launcher', {
 
   // Manual fallback when the game cannot be found automatically.
   pickGameDir: () => ipcRenderer.invoke('game:pickDir'),
+  pickModDir: () => ipcRenderer.invoke('mod:pickDir'),
 
   // Opens a known download page in the user's browser. The renderer passes a NAME,
   // not a URL - so a compromised page cannot use this to open anything it likes.

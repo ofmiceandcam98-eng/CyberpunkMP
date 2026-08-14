@@ -478,6 +478,7 @@
             <div class="checks" id="modChecks"></div>
             <div class="field-actions">
               <button class="action ghost" id="viewModDir">View</button>
+              <button class="action ghost" id="browseModDir">Browse</button>
             </div>
           </div>
         </section>
@@ -1706,6 +1707,18 @@
     const result = await window.launcher.uninstallLauncher()
     // On success the launcher is already quitting, so there is nothing to report.
     if (!result.ok && result.error) setSettingsStatus(result.error, 'error')
+  })
+
+  $('browseModDir').addEventListener('click', async () => {
+    const result = await window.launcher.pickModDir()
+
+    if (result.ok) {
+      setSettingsStatus('Mod folder set to ' + result.modDir, 'ok')
+      await refreshSettings()
+      await checkUpdates()
+    } else if (result.error) {
+      setSettingsStatus(result.error, 'error')
+    }
   })
 
   $('viewGameDir').addEventListener('click', () => window.launcher.openFolder('game'))
