@@ -556,6 +556,32 @@ async function verifyInstall () {
     problems.push('No script files found - the install looks incomplete')
   }
 
+  // The mods this one is built on top of.
+  //
+  // Checked here because their absence does not look like their absence. Without
+  // Codeware, every script that imports it fails, redscript abandons the whole
+  // compilation, and the game starts with NO scripts at all - so there is no MULTIPLAYER
+  // entry, no chat, no other players, and nothing on screen mentioning Codeware. Verify
+  // used to pass that install cleanly, because the mod's own files were all present.
+  const gameDir = findGameDir()
+
+  if (gameDir) {
+    const prerequisites = [
+      ['RED4ext', path.join(gameDir, 'bin', 'x64', 'winmm.dll')],
+      ['redscript', path.join(gameDir, 'engine', 'tools', 'scc.exe')],
+      ['Codeware', path.join(gameDir, 'red4ext', 'plugins', 'Codeware', 'Codeware.dll')],
+      ['ArchiveXL', path.join(gameDir, 'red4ext', 'plugins', 'ArchiveXL', 'ArchiveXL.dll')],
+      ['TweakXL', path.join(gameDir, 'red4ext', 'plugins', 'TweakXL', 'TweakXL.dll')],
+      ['Input Loader', path.join(gameDir, 'red4ext', 'plugins', 'input_loader', 'input_loader.dll')]
+    ]
+
+    const missing = prerequisites.filter(([, file]) => !existsSync(file)).map(([name]) => name)
+
+    if (missing.length > 0) {
+      problems.push(`Missing required mods: ${missing.join(', ')}. Use "Install everything" in Settings.`)
+    }
+  }
+
   // Now the version question, separately from the integrity one.
   const update = await checkForUpdates()
   lastUpdateCheck = update
@@ -617,17 +643,39 @@ async function installEverything (onProgress = () => {}) {
 
   const pkg = new AdmZip(buffer)
 
+  // Zip entry paths use whatever separator the tool that made them wrote.
+  //
+  // THIS IS THE BUG THAT BROKE EVERY NEW INSTALL. The package stores entries as
+  // "prerequisites\Codeware-1.18.0.zip" with a BACKSLASH, and this code filtered on
+  // startsWith('prerequisites/') with a forward slash. That matched nothing - both for
+  // the prerequisites and for the mod - so "Install everything" extracted precisely
+  // zero files and reported success.
+  //
+  // The result was a player with no Codeware, no Input Loader and no mod, whose game
+  // then failed to compile any redscript and showed them nothing at all. It looked like
+  // five unrelated faults and was one line.
+  const normalise = (name) => name.replace(/\\/g, '/')
+
   // --- prerequisites ------------------------------------------------------
   // Each is its own zip nested inside the package. Extract them into the game
   // root, where their internal paths (bin\x64\..., red4ext\...) land correctly.
-  const prereqs = pkg.getEntries().filter((e) => e.entryName.startsWith('prerequisites/') && !e.isDirectory)
+  const prereqs = pkg.getEntries().filter((e) => !e.isDirectory && normalise(e.entryName).startsWith('prerequisites/'))
+
+  // Refuse to continue rather than "succeed" having done nothing. A silent no-op is the
+  // failure mode that cost a player their evening; an error naming the problem does not.
+  if (prereqs.length === 0) {
+    throw new Error('The install package has no prerequisites in it. This is a packaging fault - please report it.')
+  }
+
+  const installed = []
 
   for (const entry of prereqs) {
-    const name = path.basename(entry.entryName)
+    const name = path.basename(normalise(entry.entryName))
     onProgress(`Installing ${name.replace(/\.zip$/, '')}...`)
 
     const inner = new AdmZip(entry.getData())
     inner.extractAllTo(gameDir, true)
+    installed.push(name.replace(/\.zip$/, ''))
   }
 
   // --- the mod ------------------------------------------------------------
@@ -636,14 +684,42 @@ async function installEverything (onProgress = () => {}) {
   const modTarget = path.join(gameDir, 'red4ext', 'plugins', 'zzzCyberpunkMP')
   mkdirSync(modTarget, { recursive: true })
 
-  for (const entry of pkg.getEntries()) {
-    if (entry.isDirectory || !entry.entryName.startsWith('mod/')) continue
+  let modFiles = 0
 
-    const relative = entry.entryName.slice('mod/'.length)
-    const dest = path.join(modTarget, relative.replace(/\//g, path.sep))
+  for (const entry of pkg.getEntries()) {
+    const relative = normalise(entry.entryName)
+    if (entry.isDirectory || !relative.startsWith('mod/')) continue
+
+    const dest = path.join(modTarget, relative.slice('mod/'.length).replace(/\//g, path.sep))
 
     mkdirSync(path.dirname(dest), { recursive: true })
     writeFileSync(dest, entry.getData())
+    modFiles++
+  }
+
+  if (modFiles === 0) {
+    throw new Error('The install package has no mod files in it. This is a packaging fault - please report it.')
+  }
+
+  // --- prove it actually landed -------------------------------------------
+  //
+  // Checked on disk, not inferred from "the loop ran". Every symptom this bug produced
+  // came from believing an install had happened when it had not, so the install now ends
+  // by looking.
+  const mustExist = {
+    'the mod': path.join(modTarget, 'CyberpunkMP.dll'),
+    'RED4ext': path.join(gameDir, 'bin', 'x64', 'winmm.dll'),
+    'Codeware': path.join(gameDir, 'red4ext', 'plugins', 'Codeware', 'Codeware.dll'),
+    'ArchiveXL': path.join(gameDir, 'red4ext', 'plugins', 'ArchiveXL', 'ArchiveXL.dll'),
+    'TweakXL': path.join(gameDir, 'red4ext', 'plugins', 'TweakXL', 'TweakXL.dll'),
+    'Input Loader': path.join(gameDir, 'red4ext', 'plugins', 'input_loader', 'input_loader.dll')
+  }
+
+  const absent = Object.entries(mustExist).filter(([, p]) => !existsSync(p)).map(([label]) => label)
+
+  if (absent.length > 0) {
+    throw new Error(`Installed, but these are missing afterwards: ${absent.join(', ')}. ` +
+                    'Check the game folder is writable and that no anti-virus removed them.')
   }
 
   // Record what was installed so the update check has something to compare against.
@@ -654,7 +730,7 @@ async function installEverything (onProgress = () => {}) {
 
   onProgress('Done')
 
-  return { installed: true, gameDir, modDir: modTarget, prerequisites: prereqs.length }
+  return { installed: true, gameDir, modDir: modTarget, prerequisites: installed.length, modFiles, components: installed }
 }
 
 /**

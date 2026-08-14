@@ -1749,6 +1749,12 @@
       return
     }
 
+    // Says what actually landed. "Done" was indistinguishable from "did nothing and
+    // said done", which is exactly what this used to do.
+    setSettingsStatus(
+      'Installed ' + result.modFiles + ' mod file(s) and ' + result.prerequisites +
+      ' prerequisite(s): ' + (result.components || []).join(', '), 'ok')
+
     setSettingsStatus(`Installed ${result.prerequisites} required mods and the multiplayer mod.`, 'ok')
     await refreshSettings()
     await checkUpdates()
