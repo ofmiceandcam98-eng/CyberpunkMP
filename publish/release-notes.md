@@ -59,7 +59,9 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 ## This is a work in progress
 
-There is a **known crash when a second player spawns.** A likely cause has been found and fixed — a null component was being written to during the spawn handshake — but **this has not yet been confirmed with two real players**, so treat it as unproven. If you crash, your log is genuinely useful — see below.
+The **crash when a second player spawned** is fixed and confirmed with real players — a null component was being written to during the spawn handshake.
+
+Still rough: vehicles are only loosely synchronised, so riding as a passenger in someone else's car is buggy, and other players' clothing does not always match what they are actually wearing.
 
 ## What's in the zip
 
@@ -71,10 +73,9 @@ There is a **known crash when a second player spawns.** A likely cause has been 
 ## Quick start
 
 1. Back up `bin\x64`, `engine`, `r6` and `red4ext` from your game folder.
-2. **Disable Cyber Engine Tweaks** — CET alongside this mod has caused a full GPU hard-lock. Rename `bin\x64\version.dll` to `version.dll.off`.
-3. Extract all six prerequisite zips into your Cyberpunk 2077 folder.
-4. Copy `mod` into `red4ext\plugins\` and rename it `zzzCyberpunkMP`.
-5. Add launch options:
+2. Extract all six prerequisite zips into your Cyberpunk 2077 folder.
+3. Copy `mod` into `red4ext\plugins\` and rename it `zzzCyberpunkMP`.
+4. Add launch options:
 
 ```
 --online --ip=SERVER_ADDRESS --port=11778

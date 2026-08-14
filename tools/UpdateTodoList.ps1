@@ -80,9 +80,60 @@ $body = Get-Content $source -Raw -Encoding UTF8
 # embed description allows 4096. It also renders with a title and a coloured edge,
 # which matters for something meant to be scanned rather than read - and the bot
 # already has Embed Links, so this needs no new permission.
-if ($body.Length -gt 4096) {
-    $body = $body.Substring(0, 4096 - 120) + "`n`n_(truncated - ask in chat for the rest)_"
-    Write-Host "TODO.md is over Discord's 4096 character embed limit - truncated." -ForegroundColor Yellow
+# Split across embeds rather than truncating.
+#
+# One embed description caps at 4096 characters, but a message carries up to ten of them.
+# Cutting the list off instead meant the bottom sections - Known issues, In progress -
+# silently vanished from the channel the moment the list grew, and the only signal was a
+# warning in a terminal nobody was watching. A to-do list that quietly drops items is
+# worse than no to-do list.
+#
+# Split on the "## " headings so a section is never cut mid-sentence.
+function Split-IntoEmbedChunks {
+    param([string]$Text, [int]$Limit = 4000)
+
+    $chunks = @()
+    $current = ""
+
+    foreach ($section in ($Text -split "(?m)^(?=## )")) {
+        if ($section.Length -eq 0) { continue }
+
+        # A single section larger than the limit is broken on line boundaries. Nothing in
+        # this file is close, but a hard cut is still better than a rejected request.
+        if ($section.Length -gt $Limit) {
+            if ($current) { $chunks += $current; $current = "" }
+
+            $line_buffer = ""
+            foreach ($line in ($section -split "`n")) {
+                if (($line_buffer.Length + $line.Length + 1) -gt $Limit) {
+                    $chunks += $line_buffer
+                    $line_buffer = ""
+                }
+                $line_buffer += $line + "`n"
+            }
+            if ($line_buffer) { $chunks += $line_buffer }
+            continue
+        }
+
+        if (($current.Length + $section.Length) -gt $Limit) {
+            $chunks += $current
+            $current = $section
+        } else {
+            $current += $section
+        }
+    }
+
+    if ($current) { $chunks += $current }
+
+    return $chunks
+}
+
+$chunks = @(Split-IntoEmbedChunks -Text $body)
+
+# Ten embeds per message is the hard ceiling.
+if ($chunks.Count -gt 10) {
+    $chunks = $chunks[0..9]
+    Write-Host "TODO.md needs more than ten embeds - the tail was dropped. Trim it." -ForegroundColor Yellow
 }
 
 # The JSON is built by hand, deliberately.
@@ -126,12 +177,21 @@ $footer = "Updated automatically - " + (Get-Date -Format "d MMM yyyy, HH:mm")
 
 # content is cleared explicitly: editing a message that previously had plain text would
 # otherwise leave that text sitting above the embed forever.
-$payload = '{"content":"","embeds":[{' +
-           '"title":'       + (ConvertTo-JsonString $title)  + ',' +
-           '"description":' + (ConvertTo-JsonString $body)   + ',' +
-           '"color":16632664,' +
-           '"footer":{"text":' + (ConvertTo-JsonString $footer) + '}' +
-           '}]}'
+#
+# The title goes on the first embed and the footer on the last, so a list split across
+# several still reads as one block rather than as several separate posts.
+$embeds = @()
+for ($i = 0; $i -lt $chunks.Count; $i++) {
+    $parts = @()
+    if ($i -eq 0) { $parts += '"title":' + (ConvertTo-JsonString $title) }
+    $parts += '"description":' + (ConvertTo-JsonString $chunks[$i])
+    $parts += '"color":16632664'
+    if ($i -eq $chunks.Count - 1) { $parts += '"footer":{"text":' + (ConvertTo-JsonString $footer) + '}' }
+
+    $embeds += '{' + ($parts -join ',') + '}'
+}
+
+$payload = '{"content":"","embeds":[' + ($embeds -join ',') + ']}'
 
 if ($DryRun) {
     Write-Host "--- would send to channel $Channel ---" -ForegroundColor Cyan

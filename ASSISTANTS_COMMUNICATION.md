@@ -31,7 +31,7 @@ hand-offs — not for repeating the project briefing.
 
 ## CURRENT STATE
 
-*Last updated: 2026-08-11 — Claude (corrected stale-checkout row; added patch, download, status page, Discord)*
+*Last updated: 2026-08-14 — Claude (v0.2.0; CET re-enabled; compile-check script added)*
 
 | | |
 |---|---|
@@ -39,6 +39,9 @@ hand-offs — not for repeating the project briefing.
 | **Branch** | `work/2.31-session-2026-08-09` |
 | **Stale checkout — do not use** | `C:\Users\Cam\CyberpunkMP` (branch `build/docker-deps-and-protobuf-pin`) |
 | **Quick build+deploy** | `xmake build -j 4 Client` then `xmake install -o distrib Client` |
+| **Compile-check redscript** | `.\tools\CheckScripts.ps1` — run before any .reds edit is deployed |
+| **Server targets** | `Server.Native`, `Server.Loader`, `Server.Scripting` (there is no `Server`) |
+| **Latest release** | v0.2.0 |
 | **Game patch** | 2.31 (upstream targets 2.2) |
 | **Public download** | https://github.com/ofmiceandcam98-eng/CyberpunkMP/releases/latest |
 | **Status page** | https://claude.ai/code/artifact/8eabe1f0-60dc-4899-8688-376a2549b129 |
@@ -432,3 +435,67 @@ connection, no remote player, our renderer disabled and CET absent. AMD RX 5700 
 with a long history of DX12 instability. Do not spend time hunting these in mod code.
 
 Signed: Claude
+
+---
+
+### 2026-08-14 — Claude
+
+**Shipped v0.2.0.** Seven issues Cam reported after the v0.1.31 session. Everything below is
+INFERRED unless marked otherwise — none of it has been tried with a second player.
+
+**scc.exe pops a modal dialog on failure, on whoever's screen is in front of the machine.**
+VERIFIED, the hard way: I ran a compile check with a deliberately broken probe file and Cam
+got the player-facing "REDScript compilation has failed" box mid-session. The file had never
+been near his install — scc.exe is the same binary the game's loader uses and it shows that
+MessageBox regardless of who invoked it, then blocks until somebody clicks OK. `tools\CheckScripts.ps1`
+now runs it detached and kills it the moment an error appears on stdout. Do not invoke scc
+inline.
+
+**scc is also a usable oracle for the game's script API.** It reports every unresolved
+symbol in one pass, so a file full of candidate calls tells you which exist in a single run.
+That is how the death-menu work below got done without guessing. Confirmed present:
+`DeathMenuGameController.m_menuEventDispatcher`, `SimpleScreenMessage` +
+`UI_Notifications.WarningMessage`, `PlayerPuppet.GetPuppetPS().SetIsDead()`,
+`VehicleComponent.IsMountedToVehicle`, `UnmountingRequest` + `MountingFacility.Unmount`.
+Confirmed absent: `CloseMenu`, `RequestSetMenuVisibility`, `ClosePauseMenu`,
+`PlayerPuppet.SetIsDead`, `inkISystemRequestsHandler.RequestResumeGame`.
+
+**Why FLATLINED half-worked in v0.1.31.** INFERRED, and it is the best explanation for one
+player being fine and another not: a stat-pool custom limit is SPENT once reached. The
+health floor caught the first death of a session and nothing caught the second.
+`RevivePlayer` now re-arms it, and the floor is no longer applied at all in singleplayer
+(it was quietly making anyone playing offline immortal). The death-menu wrap no longer
+chains to the vanilla controller, so the FLATLINED text is never built; it hides the root,
+fires `OnBack` through the dispatcher after 0.1s, and a 3s watchdog restores visibility if
+the close does not take — a player trapped behind an invisible menu is worse off than one
+looking at the real thing.
+
+**Vehicle entities were never destroyed.** VERIFIED by reading `Level::HandleEnterVehicleRequest`
+against a session log: every car entry creates a fresh flecs entity, `HandleExitVehicleRequest`
+only removed the AttachmentComponent, and disconnecting destroyed the player's children
+silently. Seven `NotifyVehicleLoad` messages in one seven-minute log, none of them ever
+unloaded. This is both "it duplicates it underneath the car" and, with each copy carrying
+full physics, a large part of the frame drops while driving. Now released when the last
+occupant leaves, and on disconnect via `Level::RemoveOwnedVehicles`.
+
+**The interpolation was a chase, not an interpolation.** `PreviousFrame` was overwritten
+every frame with the pose just drawn, so each frame covered a fraction of the REMAINING
+distance to the target — an acceleration into every sample followed by a restart at the
+next. It now holds the last network sample behind render time and lerps to the first one
+ahead, with up to 250ms of extrapolation when the buffer starves. `UpdateRate` 10 → 30.
+
+**PuppetRegistry was a global mutex on the animation thread.** The lock fixed a real crash
+and introduced a real frame-rate problem: that hook fires for every animated entity, from
+several worker threads, and Night City has hundreds. Now a fixed array of atomics with a
+high-water mark, so the common case of nobody connected costs one relaxed load.
+
+**CET had been disabled on Cam's install since 2026-08-09.** VERIFIED — `bin\x64\version.dll`
+was renamed to `.disabled`, following the instruction in `publish/release-notes.md` that this
+file already recorded as withdrawn on 2026-08-11. Renamed back; the instruction is gone from
+the release notes and the TODO. The lesson is the one already written here: a stale warning
+in a published document keeps costing people time long after the underlying problem is gone.
+
+**Not fixed, and not close.** Two remote players looking identical (their data arrives
+distinct, so it is in how the appearance is applied — `ScheduleSynchronizedAppearanceChanges`
+is the suspect). Passenger vehicles bouncing, which is two physics simulations disagreeing
+and needs an ownership model, not a patch. Glitchy arms.
