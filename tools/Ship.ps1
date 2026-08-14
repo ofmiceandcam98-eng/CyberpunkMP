@@ -78,9 +78,14 @@ function Die   { param($T) Write-Host "`nSTOPPED: $T" -ForegroundColor Red; exit
 function Invoke-Native {
     param([scriptblock]$Command)
 
-    $previous = $ErrorActionPreference
+    # The odd name is deliberate. A scriptblock passed in here is EXECUTED here, so any
+    # variable it reads resolves against this function's scope first - and this one used a
+    # local called $previous. A caller that passed { & gh release download $previous ... }
+    # got this function's saved preference string as the tag, and gh answered "release not
+    # found" about a release that plainly existed.
+    $__invokeNativeSavedPreference = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    try { & $Command } finally { $ErrorActionPreference = $previous }
+    try { & $Command } finally { $ErrorActionPreference = $__invokeNativeSavedPreference }
 }
 
 Set-Location $Repo
@@ -389,55 +394,6 @@ if ($Mod) {
     $uploads += (Join-Path $Repo "distrib\launcher\mod\CyberpunkMP.dll")
     Ok "mod payload staged"
 
-    # The curated Nexus mod list. Published as a release asset on purpose: the list is
-    # decided by people, not by a build, and changing which mods the server expects must
-    # not require shipping a new launcher to everyone.
-    $modlist = Join-Path $Repo "publish\modlist.json"
-    if (Test-Path $modlist) {
-        $uploads += $modlist
-        $count = @((Get-Content $modlist -Raw -Encoding UTF8 | ConvertFrom-Json).mods).Count
-        Ok "mod list staged ($count mod(s))"
-    }
-
-    # Where the game server is. Published rather than compiled in, so moving the server
-    # is one edit here instead of a new launcher for everybody.
-    $serverConfig = Join-Path $Repo "publish\server.json"
-    if (Test-Path $serverConfig) {
-        $uploads += $serverConfig
-        $cfg = Get-Content $serverConfig -Raw -Encoding UTF8 | ConvertFrom-Json
-        Ok "server address staged ($($cfg.host):$($cfg.port))"
-    } else {
-        Warn "no publish\server.json - launchers will fall back to 127.0.0.1 and find nothing"
-    }
-
-    # Which Discord roles grant what, written by the server itself.
-    #
-    # The launcher reads this so the controls it shows match the commands the game gives
-    # you. Before it existed the two decided permissions independently - Discord roles in
-    # game, a hardcoded list of one id in the launcher - and somebody with the dev role
-    # had staff commands in the world and no server controls in the launcher.
-    $roles = Join-Path $Repo "publish\roles.json"
-    if (Test-Path $roles) {
-        $uploads += $roles
-        $count = @((Get-Content $roles -Raw -Encoding UTF8 | ConvertFrom-Json).roles).Count
-        Ok "role map staged ($count role(s) grant something)"
-    } else {
-        Warn "no publish\roles.json - the launcher will fall back to the built-in admin list"
-    }
-
-    # What the assistants have been working on, from the coordination API.
-    #
-    # Carried onto every release deliberately. The launcher reads it from
-    # releases/latest/download/, so a new release without it would blank the "In
-    # development" panel until somebody happened to post again - the panel would look
-    # broken at exactly the moment there was most to say.
-    $devUpdates = Join-Path $Repo "publish\assistant-updates.json"
-    if (Test-Path $devUpdates) {
-        $uploads += $devUpdates
-        $count = @((Get-Content $devUpdates -Raw -Encoding UTF8 | ConvertFrom-Json).updates).Count
-        Ok "dev updates staged ($count entr$(if ($count -eq 1) { 'y' } else { 'ies' }))"
-    }
-
     # FullInstall.zip - what a NEW player gets. Rebuilt every ship.
     #
     # This is the launcher's "Install everything" download, and it went missing entirely
@@ -480,6 +436,66 @@ if ($Mod) {
 
         $uploads += $fullZip
         Ok "full install package assembled ($([math]::Round((Get-Item $fullZip).Length/1MB,1)) MB)"
+    }
+}
+
+# ---------------------------------------------------------------------------
+# EVERY release carries the whole runtime set, whatever was actually rebuilt.
+#
+# "releases/latest/download/<name>" is how the launcher finds all of this, and `latest`
+# moves to whatever was published last. A launcher-only ship used to publish ONLY the
+# installer - so the moment v0.3.1 went out, every launcher in existence got a 404 for
+# server.json, fell back to 127.0.0.1, decided its own PC was the server and reported it
+# offline. The mod update check broke the same way.
+#
+# Nothing about that ship was wrong except what it left out, and it looked completely
+# clean: every check passed. So completeness cannot be a property of which switches were
+# passed - it has to be checked here, every time.
+# ---------------------------------------------------------------------------
+
+# The small published files, which are decided by people rather than by a build.
+$sideFiles = @(
+    @{ Path = "publish\modlist.json";            Label = "mod list";       Required = $false },
+    @{ Path = "publish\server.json";             Label = "server address"; Required = $true  },
+    @{ Path = "publish\roles.json";              Label = "role map";       Required = $false },
+    @{ Path = "publish\assistant-updates.json";  Label = "dev updates";    Required = $false }
+)
+
+foreach ($side in $sideFiles) {
+    $full = Join-Path $Repo $side.Path
+    if (Test-Path $full) {
+        $uploads += $full
+        Ok "$($side.Label) staged"
+    } elseif ($side.Required) {
+        Die "missing $($side.Path) - every launcher would fall back to 127.0.0.1 and report the server offline"
+    } else {
+        Warn "no $($side.Path) - that feature will be inert for everyone"
+    }
+}
+
+# The mod artifacts. Rebuilt above when -Mod, carried forward from the previous release
+# otherwise, so a launcher-only ship never leaves players unable to update the mod.
+if (-not $Mod) {
+    $carry = Join-Path $env:TEMP ("ship_carry_" + (Get-Date -Format 'HHmmss'))
+    New-Item -ItemType Directory -Path $carry -Force | Out-Null
+
+    $carryFrom = Invoke-Native { & gh release view --repo $GhRepo --json tagName -q .tagName }
+
+    if (-not $carryFrom) {
+        Warn "no previous release to carry the mod forward from - this release will have no mod payload"
+    } else {
+        $carried = 0
+
+        foreach ($name in @("ModPayload.zip", "CyberpunkMP.dll", "FullInstall.zip")) {
+            Invoke-Native { & gh release download $carryFrom --repo $GhRepo --dir $carry --pattern $name } | Out-Null
+
+            $got = Join-Path $carry $name
+            if (Test-Path $got) { $uploads += $got; $carried++ }
+            else { Warn "could not carry $name forward from $carryFrom" }
+        }
+
+        if ($carried -gt 0) { Ok "$carried mod artifact(s) carried forward from $carryFrom" }
+        else { Warn "nothing could be carried forward from $carryFrom" }
     }
 }
 
@@ -605,6 +621,21 @@ if ($Launcher) {
 }
 
 if ($Mod -and $names -notcontains "ModPayload.zip") { Die "release is missing ModPayload.zip" }
+
+# The runtime set, checked BEFORE this tag becomes `latest`.
+#
+# Every one of these is fetched by the launcher from releases/latest/download/, so a
+# release without them does not fail here - it fails on everybody else's machine, quietly,
+# as "server offline" or a mod that will not update. That is exactly what v0.3.1 did, and
+# every check in this script passed while it happened.
+#
+# Checked against what GitHub actually has, not against what we meant to upload.
+foreach ($required in @("server.json", "modlist.json", "ModPayload.zip", "CyberpunkMP.dll")) {
+    if ($names -notcontains $required) {
+        Die "release is missing $required - promoting it would break every launcher. Nothing was promoted; $Tag is still a prerelease."
+    }
+}
+Ok "runtime assets complete"
 
 # Only NOW does this become the release everyone receives.
 gh release edit $Tag --repo $GhRepo --prerelease=false --latest 2>&1 | Out-Null
