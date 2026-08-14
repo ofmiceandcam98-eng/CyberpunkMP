@@ -275,10 +275,47 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
                      pSaved->X, pSaved->Y, pSaved->Z);
     }
 
+    // The server's character wins over whatever the client's save happens to contain.
+    //
+    // This is the line that ends the dependency on singleplayer saves. The client still
+    // loads A save, because Cyberpunk has no way to build a world without one - but which
+    // save that is stops mattering, because the appearance everyone SEES comes from here.
+    // The save becomes a world template rather than anybody's identity.
+    //
+    // A player with no character yet keeps what they arrived with, so this is inert until
+    // the creator exists and nothing breaks in the meantime.
+    Vector<uint8_t> appearance = ccstate;
+
+    if (const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(pComponent->DiscordId))
+    {
+        if (!pCharacter->Appearance.empty())
+        {
+            const auto stored = Base64::Decode(pCharacter->Appearance);
+
+            // A blob that decodes to nothing means the record is corrupt. Falling back to
+            // what the client sent gets them into the world looking wrong, which beats
+            // refusing to spawn them at all.
+            if (!stored.empty())
+            {
+                appearance.assign(stored.begin(), stored.end());
+
+                spdlog::info("Spawned {} as their saved character '{}' ({} bytes of appearance)",
+                             pComponent->Username,
+                             pCharacter->Name.empty() ? "unnamed" : pCharacter->Name,
+                             stored.size());
+            }
+            else
+            {
+                spdlog::warn("Stored appearance for {} did not decode - using the client's",
+                             pComponent->Username);
+            }
+        }
+    }
+
     pComponent->Puppet = GetWorld()->entity()
         .child_of(player)
         .set<MovementComponent>({pos, rot, {}})
-        .set<AppearanceComponent>({equipment, ccstate});
+        .set<AppearanceComponent>({equipment, appearance});
 
     response.set_id(pComponent->Puppet);
     GServer->Send(aMessage.ConnectionId, response);

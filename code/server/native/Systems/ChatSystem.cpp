@@ -4,6 +4,7 @@
 #include "Components/PlayerComponent.h"
 #include "Components/MovementComponent.h"
 #include "Components/AppearanceComponent.h"
+#include "CharacterRecord.h"
 #include "Components/CharacterComponent.h"
 #include "Game/Level.h"
 
@@ -839,6 +840,91 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
 
         Tell(acSender, fmt::format("Sent {} back.", pVictim->Username));
         Tell(*pVictim, "You were sent back to where you were.");
+        return true;
+    }
+
+    // ---------------------------------------------------------- /character ----
+    //
+    // The multiplayer character system, before it has a UI.
+    //
+    // Everything here is deliberately usable by one person with no second player and no
+    // launcher work: the point is to find out whether the storage half is right before
+    // building a creator on top of it. The creator replaces /character save, not the rest.
+    if (command == "/character" || command == "/char")
+    {
+        auto& store = GServer->GetPlayerStore();
+
+        if (target.empty() || target == "show")
+        {
+            const auto* pCharacter = store.FindCharacter(acSender.DiscordId);
+
+            if (!pCharacter)
+            {
+                Tell(acSender, "You have no multiplayer character yet.");
+                Tell(acSender, "  /character save <name>  - save how you look now as your character");
+                return true;
+            }
+
+            Tell(acSender, fmt::format("Character: {}", pCharacter->Name.empty() ? "unnamed" : pCharacter->Name));
+            Tell(acSender, fmt::format("  appearance {} bytes stored, {}",
+                                       Base64::Decode(pCharacter->Appearance).size(),
+                                       pCharacter->Initialised ? "initialised" : "not initialised yet"));
+            Tell(acSender, "  /character new <name>  - retire this one and start again");
+            return true;
+        }
+
+        // Captures whatever the player currently looks like as their character.
+        //
+        // A placeholder for the creator, and a real one: the appearance the client sent on
+        // spawn is exactly the blob the creator will produce, so this exercises the whole
+        // storage path end to end without any UI existing.
+        if (target == "save")
+        {
+            const auto* pAppearance = acSender.Puppet ? acSender.Puppet.get<AppearanceComponent>() : nullptr;
+
+            if (!pAppearance || pAppearance->ccstate.empty())
+            {
+                Tell(acSender, "You are not spawned in, so there is no appearance to save yet.");
+                return true;
+            }
+
+            CharacterRecord character;
+            character.Slot = 0;
+            character.Name = rest.empty() ? acSender.Username : rest;
+            character.Appearance = Base64::Encode(
+                std::vector<uint8_t>(pAppearance->ccstate.begin(), pAppearance->ccstate.end()));
+
+            // Carried over so saving again does not silently reset a character's
+            // progression back to "new" and re-grant the starting loadout.
+            if (const auto* pExisting = store.FindCharacter(acSender.DiscordId))
+            {
+                character.Level = pExisting->Level;
+                character.AttributePoints = pExisting->AttributePoints;
+                character.PerkPoints = pExisting->PerkPoints;
+                character.Initialised = pExisting->Initialised;
+                character.IsMale = pExisting->IsMale;
+            }
+
+            store.SaveCharacter(acSender.DiscordId, acSender.Username, character);
+
+            spdlog::info("{} saved character '{}' ({} bytes)", acSender.Username, character.Name,
+                         pAppearance->ccstate.size());
+
+            Tell(acSender, fmt::format("Saved as '{}'. You will look like this every time you join.",
+                                       character.Name));
+            return true;
+        }
+
+        if (target == "new")
+        {
+            if (store.RetireCharacter(acSender.DiscordId))
+                Tell(acSender, "Your old character has been retired - it is kept, not deleted.");
+
+            Tell(acSender, "Make yourself look how you want, then run /character save <name>.");
+            return true;
+        }
+
+        Tell(acSender, "Usage: /character [show | save <name> | new]");
         return true;
     }
 
