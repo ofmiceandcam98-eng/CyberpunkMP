@@ -1,5 +1,7 @@
 #pragma once
 
+#include <mutex>
+
 #include "Core/Stl.hpp"
 #include "Core/Hooking/HookingAgent.hpp"
 #include "RED4ext/Scripting/Natives/Generated/Vector4.hpp"
@@ -30,6 +32,13 @@ struct AppearanceSystem : RED4ext::IScriptable
     void OnBeforeWorldDetach(RED4ext::world::RuntimeScene* aScene);
 
 private:
+    // One lock for all three maps. They are written from the spawn path and read from
+    // redscript callbacks (GetEntityItems, ApplyAppearance) on other threads; concurrent
+    // access to an unordered map is undefined behaviour, and a rehash under a reader is a
+    // plausible mechanism for two remote players wearing each other's appearance. Every
+    // access copies out under the lock and works on the copy - nothing engine-facing runs
+    // while it is held. mutable so const readers (GetEntityName) can take it.
+    mutable std::mutex m_mapLock;
     Core::Map<Red::EntityID, Red::DynArray<Red::TweakDBID>> m_playerEquipment;
     Core::Map<Red::EntityID, Vector<uint8_t>> m_playerCcstate;
     Core::Map<Red::EntityID, std::string> m_playerNames;

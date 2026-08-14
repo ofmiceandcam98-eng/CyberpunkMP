@@ -37,9 +37,41 @@ void AppearanceSystem::OnBeforeWorldDetach(RED4ext::world::RuntimeScene* aScene)
     Red::CallVirtual(this, "OnBeforeWorldDetach");
 }
 
+// FNV-1a. Used only for the [Identity] log lines below: a cheap fingerprint of the
+// appearance data, so a session log can show whether the bytes ADDED for an entity are
+// the same bytes APPLIED to it. When two players render as each other, these hashes say
+// on which side of the map the swap happened - distinct at add + swapped at apply means
+// our maps; identical at both means the engine's appearance changer.
+static uint64_t HashBytes(const void* apData, size_t aSize)
+{
+    const auto* p = static_cast<const uint8_t*>(apData);
+    uint64_t hash = 0xcbf29ce484222325ULL;
+    for (size_t i = 0; i < aSize; ++i)
+    {
+        hash ^= p[i];
+        hash *= 0x100000001b3ULL;
+    }
+    return hash;
+}
+
+static uint64_t HashEquipment(const Red::DynArray<Red::TweakDBID>& aItems)
+{
+    uint64_t hash = 0xcbf29ce484222325ULL;
+    for (const auto& item : aItems)
+    {
+        hash ^= item.value;
+        hash *= 0x100000001b3ULL;
+    }
+    return hash;
+}
+
 Red::DynArray<Red::TweakDBID> AppearanceSystem::GetEntityItems(Red::EntityID & entityID)
 {
-    return m_playerEquipment[entityID];
+    std::lock_guard lock(m_mapLock);
+
+    // find, not operator[] - a read must not insert an empty entry for an unknown entity.
+    const auto it = m_playerEquipment.find(entityID);
+    return it == m_playerEquipment.end() ? Red::DynArray<Red::TweakDBID>() : it->second;
 }
 
 Vector<uint64_t> AppearanceSystem::GetPlayerItems(Red::Handle<Red::GameObject> player)
@@ -70,24 +102,33 @@ void AppearanceSystem::AddEntity(const Red::EntityID entityID, const Red::DynArr
     spdlog::info("Logging Entity Appearance: {}", entityID.hash);
 
     // TEMPORARY [PROBE] lines - see the matching block in NetworkWorldSystem::Spawn.
-    // These two maps have no mutex, and they are read from redscript callbacks
-    // (GetEntityItems, ApplyAppearance) while this writes them from the spawn path.
     spdlog::info("[PROBE 2] AddEntity: writing equipment map ({} items)", items.size);
-    m_playerEquipment[entityID] = items;
-
     spdlog::info("[PROBE 3] AddEntity: writing ccstate map ({} bytes)", ccstate.size());
-    m_playerCcstate[entityID] = ccstate;
+
+    {
+        std::lock_guard lock(m_mapLock);
+        m_playerEquipment[entityID] = items;
+        m_playerCcstate[entityID] = ccstate;
+    }
+
+    // The identity fingerprint for this entity, at the moment its data arrives. Compare
+    // against the matching 'apply' line - see HashBytes above.
+    spdlog::info("[Identity] add   entity {:x}: ccstate {} bytes hash={:016x}, equipment {} items hash={:016x}",
+                 entityID.hash, ccstate.size(), HashBytes(ccstate.data(), ccstate.size()),
+                 items.size, HashEquipment(items));
 
     spdlog::info("[PROBE 4] AddEntity: both map writes done");
 }
 
 void AppearanceSystem::SetEntityName(Red::EntityID entityID, const std::string& acName)
 {
+    std::lock_guard lock(m_mapLock);
     m_playerNames[entityID] = acName;
 }
 
 std::string AppearanceSystem::GetEntityName(Red::EntityID entityID) const
 {
+    std::lock_guard lock(m_mapLock);
     const auto it = m_playerNames.find(entityID);
     return it == m_playerNames.end() ? std::string() : it->second;
 }
@@ -204,18 +245,45 @@ bool AppearanceSystem::ApplyAppearance(Red::Handle<Red::game::Object> object)
         return false;
     }
 
-    if (m_playerCcstate.find(object.instance->id) == m_playerCcstate.end())
+    // One locked copy-out for everything this function needs from the maps. The rest of
+    // the function works on the copies, so nothing engine-facing runs under the lock -
+    // and GetEntityName is NOT called here because it takes the same (non-recursive)
+    // lock.
+    Vector<uint8_t> bytes;
+    Red::DynArray<Red::TweakDBID> items;
+    std::string name;
     {
-        // not our entity
-        return false;
+        std::lock_guard lock(m_mapLock);
+
+        const auto ccIt = m_playerCcstate.find(object.instance->id);
+        if (ccIt == m_playerCcstate.end())
+        {
+            // not our entity
+            return false;
+        }
+        bytes = ccIt->second;
+
+        const auto eqIt = m_playerEquipment.find(object.instance->id);
+        if (eqIt != m_playerEquipment.end())
+            items = eqIt->second;
+
+        const auto nameIt = m_playerNames.find(object.instance->id);
+        if (nameIt != m_playerNames.end())
+            name = nameIt->second;
     }
 
-    auto bytes = m_playerCcstate[object.instance->id];
     if (bytes.size() == 0)
     {
         spdlog::info("no bytes for {}", object->id.hash);
         return false;
     }
+
+    // The identity fingerprint at the moment of application. If two players render as
+    // each other and this line's hashes MATCH their 'add' lines, the swap happened
+    // downstream of us - in the engine's appearance changer. If they differ, it is ours.
+    spdlog::info("[Identity] apply entity {:x}: ccstate {} bytes hash={:016x}, equipment {} items hash={:016x}, name '{}'",
+                 object.instance->id.hash, bytes.size(), HashBytes(bytes.data(), bytes.size()),
+                 items.size, HashEquipment(items), name);
 
     // The name on the puppet.
     //
@@ -225,7 +293,6 @@ bool AppearanceSystem::ApplyAppearance(Red::Handle<Red::game::Object> object)
     //
     // The name comes from the server, which got it from Discord. A client never says who
     // it is; it is told.
-    const auto name = GetEntityName(object.instance->id);
     if (!name.empty())
         object.instance->displayName.unk08 = Red::CString(name.c_str());
 
@@ -265,8 +332,7 @@ bool AppearanceSystem::ApplyAppearance(Red::Handle<Red::game::Object> object)
     // old method
     // Red::CallVirtual(this, "AddItems", object);
 
-    // c++ method
-    auto items = m_playerEquipment[object.instance->id];
+    // c++ method - items were copied out under the lock at the top of this function
     // if (stateHandle.instance->isBodyGenderMale) {
     //     // items.PushBack("Items.PlayerMaTppHead");
     //     items.PushBack("Items.MuppetMaHead");
