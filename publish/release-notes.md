@@ -4,6 +4,13 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.43
+
+- **Ripperdocs, not the apartment mirror.** They change appearance too — everything except body gender — and they are everywhere, so "go to a ripperdoc" is a far easier instruction than "go home". The prompts say so now.
+- Diagnostics for the character creator. The mod writes what the game's customization system can actually do to the log on startup, so opening the creator automatically stops being guesswork.
+
+**Note on everyone looking the same:** the shipped world template is one character, so until you change your appearance you and everyone else are the same V. Visit a ripperdoc once and the server remembers you from then on, on any machine.
+
 ## What changed — v0.3.42
 
 - **Multiplayer no longer touches your own saves.** The mod ships a world template — Act 1 finished, level 15, standing free in Night City — and the launcher installs it and loads that instead. Your singleplayer saves are left alone entirely, and you no longer need a post-Act-1 save of your own to play.

@@ -360,7 +360,7 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
         if (auto* pChat = GetWorld()->get_mut<ChatSystem>())
         {
             pChat->Tell(*pComponent, "You have no character yet.");
-            pChat->Tell(*pComponent, "Find a mirror and change how you look - it saves by itself when you close it.");
+            pChat->Tell(*pComponent, "Visit any ripperdoc and change how you look - it saves by itself.");
             pChat->Tell(*pComponent, "Then choose what you are called with /name <name>.");
         }
 

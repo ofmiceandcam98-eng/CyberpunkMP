@@ -1062,7 +1062,7 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         // limitation showing through the design.
         if (target == "create" || target == "edit")
         {
-            Tell(acSender, "Use a mirror to change how you look - the one in V's apartment works.");
+            Tell(acSender, "Visit any ripperdoc and change how you look - they do appearance, not just cyberware.");
             Tell(acSender, "It saves by itself when you close it. Use /name to choose what you are called.");
             return true;
         }
@@ -1074,7 +1074,7 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             else
                 Tell(acSender, "You had no character yet, so there was nothing to retire.");
 
-            Tell(acSender, "Change how you look at a mirror - it saves by itself when you close it.");
+            Tell(acSender, "Change how you look at any ripperdoc - it saves by itself.");
             return true;
         }
 

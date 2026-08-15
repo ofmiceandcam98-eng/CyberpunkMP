@@ -221,6 +221,14 @@ void NetworkWorldSystem::OnWorldAttached(RED4ext::world::RuntimeScene* aScene)
     spdlog::info("[NetworkWorldSystem] OnWorldAttached");
     IGameSystem::OnWorldAttached(aScene);
 
+    // Deliberately here rather than on connect.
+    //
+    // RTTI is loaded with the game and has nothing to do with the server, so requiring a
+    // successful connection to read it made the diagnostic depend on the very thing that
+    // might be failing. A launch that only reaches the main menu now still answers the
+    // question.
+    DumpCustomizationApi();
+
     m_chatSystem->OnWorldAttached(aScene);
     m_appearanceSystem->OnWorldAttached(aScene);
     m_interpolationSystem->OnWorldAttached(aScene);
@@ -815,10 +823,6 @@ void NetworkWorldSystem::OnConnected()
         {
             UpdatePlayerLocation();
         });
-
-    // What the customization system really offers, written down once per session. See
-    // DumpCustomizationApi - this is how the creator stops being a guess.
-    DumpCustomizationApi();
 
     // Once a second is plenty - somebody adjusting their face is not in a hurry, and this
     // is a null check until they actually are at a mirror.
