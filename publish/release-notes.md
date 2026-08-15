@@ -4,6 +4,11 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.52
+
+- **The dev launcher appears for devs.** Access granted by a Discord role resolved *after* sign-in had already drawn the page, so the admin controls never showed up for anyone who was not on the hardcoded list. The page is now told when the role check finishes. Thanks to zeldfep for finding and fixing it.
+- **New characters arrive where `/setstart` says.** Server-side fix, already live — it was deciding "brand-new" from the account rather than the character, so it never fired for anyone who had connected before.
+
 ## What changed — v0.3.51
 
 - **Other players wear their clothes.** Equipping was nested inside the check for whether the puppet already *had* the item — so anything it was already carrying got skipped and left in the inventory instead of being put on. Remote players are built on an NPC record that ships with its own loadout, so that overlap was the normal case, not an edge case. Having an item and wearing it are now asked separately.
