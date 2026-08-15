@@ -4,6 +4,11 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.45
+
+- **MULTIPLAYER — NEW CHARACTER.** Runs the game's own New Game flow, so you get the real character creator — **including male or female**, which is the one thing no ripperdoc can change. Pick Phantom Liberty's start on the way through and you land past Act 1 at level 15, then connect straight to the server. **MULTIPLAYER** still drops you back in as you were.
+- Your appearance still saves itself, and the server still remembers you on any machine.
+
 ## What changed — v0.3.44
 
 - **Male or female.** Pick your body type in the launcher, under Settings → Character. It has to be chosen there rather than in game: ripperdocs change everything about how you look *except* body gender, and it is built into the world you load.

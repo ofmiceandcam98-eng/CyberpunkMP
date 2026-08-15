@@ -26,16 +26,19 @@ import CyberpunkMP.World.*
 private func PopulateMenuItemList() -> Void {
     wrappedMethod();
 
-    // One entry, because there is only one question now.
+    // Two entries, and this time they genuinely differ.
     //
-    // There used to be two - CONTINUE and LOAD GAME - because picking which save to bring
-    // decided which character you played. It does not any more: the server owns your
-    // appearance, your name and your position, and applies all three on arrival. Whichever
-    // save loads underneath is scenery.
+    // An earlier version had CONTINUE and LOAD GAME, which both loaded a save and differed only in
+    // whether you picked it - a choice that changed nothing once the server started owning
+    // appearance and position. That pair was rightly collapsed into one.
     //
-    // So offering a save picker was offering a choice that no longer changes anything,
-    // which is worse than offering nothing - it implies the decision matters.
+    // These two are different actions. PLAY drops you into the world. NEW CHARACTER runs
+    // the game's own New Game flow, which is the ONLY place body gender can be chosen -
+    // ripperdocs change everything about how you look except that, and the customization
+    // system is native-only so it cannot be opened on demand. Going through New Game is
+    // therefore the only route to real character creation that exists.
     this.AddMenuItem("MULTIPLAYER", n"OnMultiplayerContinue");
+    this.AddMenuItem("MULTIPLAYER - NEW CHARACTER", n"OnMultiplayerNewCharacter");
 
     // PopulateMenuItemList refreshes at its end, before our item existed. Without
     // refreshing again the entry is in the data but never drawn, which looks exactly
@@ -66,6 +69,40 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
         }
 
         this.GetSystemRequestsHandler().LoadLastCheckpoint(false);
+        return true;
+    }
+
+    // Real character creation, via the game's own New Game.
+    //
+    // This is the answer to something that looked unsolvable for most of a day: the
+    // character creator cannot be opened mid-session, because the customization system is
+    // native-only - verified against the 2.31 type hierarchy, which has no open event, no
+    // mirror class and no creator controller. So it cannot be brought to the player.
+    //
+    // The player can be brought to IT. New Game runs the creator as part of its normal
+    // flow, including body gender, which is the one thing no ripperdoc can change. Pick
+    // Phantom Liberty's start on the way through and it lands post-Act-1 at level 15 -
+    // the same state the shipped world templates were made from.
+    //
+    // The join is armed BEFORE the flow starts, on the game system that survives the load,
+    // so the connection happens once there is a real world to arrive in. Same mechanism as
+    // PLAY; only the route through the menus differs.
+    if Equals(data.eventName, n"OnMultiplayerNewCharacter") {
+        FTLog(s"[CyberpunkMP] MULTIPLAYER - NEW CHARACTER selected from the main menu");
+
+        let network = GameInstance.GetNetworkWorldSystem();
+        if IsDefined(network) {
+            network.RequestJoin();
+        } else {
+            FTLogError(s"[CyberpunkMP] No NetworkWorldSystem in the menu - cannot arm the join");
+        }
+
+        // Handed to the game's own New Game entry rather than starting one ourselves.
+        // RequestNewGame does not exist on the requests handler - checked - and this is the
+        // event the menu's own New Game item spawns, so it is the real flow with the real
+        // lifepath and creator screens.
+        this.m_menuEventDispatcher.SpawnEvent(n"OnNewGame");
+
         return true;
     }
 
