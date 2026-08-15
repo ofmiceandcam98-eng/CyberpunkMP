@@ -93,6 +93,22 @@ message NotifyTeleport {
     float rotation = 2;
 }
 
+// Tells a client to open the game's character creator.
+//
+// Server-driven on purpose: whether somebody needs a character is the server's business,
+// since it is the only side that knows what they already have. A client that opened this
+// for itself would be guessing.
+message OpenCharacterCreator {
+    // When true, do not open anything - just serialise the appearance the player has
+    // right now and send it back.
+    //
+    // Two jobs in one message because they are two halves of the same exchange. The
+    // creator gives no callback when it closes and there is no way to poll for it - there
+    // is no IsActive on the customization system - so the player says when they are done
+    // and this is what asks their client for the result.
+    bool capture_only = 1;
+}
+
 message RpcCall {
     uint32 id = 1;
 	bytes arguments = 2;
@@ -124,5 +140,6 @@ message Protocol {
         NotifyVehicleExit notify_vehicle_exit = 11;
         NotifyVehicleControlAssigned notify_vehicle_control_assigned = 12;
         NotifyTeleport notify_teleport = 13;
+        OpenCharacterCreator open_character_creator = 14;
     }
 }

@@ -27,6 +27,25 @@ message SpawnCharacterRequest {
     bytes ccstate = 6;
 }
 
+// Saves the player's appearance as their multiplayer character.
+//
+// Sent when the character creator closes, NOT on every spawn - the spawn message carries
+// an appearance too, but that one describes whoever the loaded save happens to contain.
+// This one is a deliberate "this is me", and it is the only one the server stores.
+message SaveCharacterRequest {
+    // The game's own CharacterCustomizationState, serialised. The server stores it
+    // opaquely and hands the same bytes back, so a game patch changing the format needs
+    // no server change.
+    bytes ccstate = 1;
+
+    // The character's name in the world, which is not the player's Discord name.
+    string name = 2;
+
+    // Kept out of the blob because the server needs it without parsing: it decides which
+    // puppet record other clients spawn for this player.
+    bool is_male = 3;
+}
+
 message MoveEntityRequest {
     bool unreliable = 1000; // This is just a tag to indicate that this message is unreliable
     uint64 id = 1;
@@ -77,5 +96,6 @@ message Protocol {
         EnterVehicleRequest enter_vehicle_request = 6;
         ExitVehicleRequest exit_vehicle_request = 7;
         RespawnRequest respawn_request = 8;
+        SaveCharacterRequest save_character_request = 9;
     }
 }

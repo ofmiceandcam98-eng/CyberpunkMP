@@ -57,6 +57,9 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
 
     // Called from redscript when the local player is downed - see Death.reds.
     void RequestRespawn();
+
+    // Stores the player's current appearance as their multiplayer character.
+    void SaveCharacterAppearance();
     bool IsConnected() const;
 
 protected:
@@ -67,6 +70,9 @@ protected:
     void HandleCharacterLoad(const PacketEvent<server::NotifyCharacterLoad>& aMessage);
     void HandleEntityUnload(const PacketEvent<server::NotifyEntityUnload>& aMessage);
     void HandleSpawnCharacterResponse(const PacketEvent<server::SpawnCharacterResponse>& aMessage);
+
+    // The server asking this client to make a character.
+    void HandleOpenCharacterCreator(const PacketEvent<server::OpenCharacterCreator>& aMessage);
     void HandleTeleport(const PacketEvent<server::NotifyTeleport>& aMessage);
 
     void UpdatePlayerLocation() const;
@@ -99,6 +105,7 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(RequestJoin);
     RTTI_METHOD(ConsumeJoinRequest);
     RTTI_METHOD(RequestRespawn);
+    RTTI_METHOD(SaveCharacterAppearance);
     RTTI_METHOD(IsConnected);
     RTTI_METHOD(GetEntityIdByServerId);
     RTTI_METHOD(GetAppearanceSystem);

@@ -12,6 +12,10 @@ struct PlayerComponent
     std::string DiscordId;
     EPermissionLevel Level{EPermissionLevel::kPlayer};
 
+    // The name typed with /character save, held until the client sends the appearance
+    // back. The reply carries no idea what the player typed, so it is remembered here.
+    std::string PendingCharacterName;
+
     // Kept so membership and roles can be re-checked while the player is connected.
     // Without this, a Discord ban would only take effect the next time they tried to
     // join - which is no use at all if they are already in and causing the problem.

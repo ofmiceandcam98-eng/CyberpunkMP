@@ -15,6 +15,87 @@ ChatSystem::ChatSystem(gsl::not_null<World*> apWorld)
 {
     GServer->RegisterHandler<&ChatSystem::HandleChatMessageRequest>(this);
     GServer->RegisterHandler<&ChatSystem::HandleRespawnRequest>(this);
+    GServer->RegisterHandler<&ChatSystem::HandleSaveCharacterRequest>(this);
+}
+
+void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharacterRequest>& aMessage)
+{
+    auto* pPlayerManager = m_pWorld->get<PlayerManager>();
+
+    const auto entity = pPlayerManager->GetByConnectionId(aMessage.ConnectionId);
+    if (!entity || !entity.has<PlayerComponent>())
+        return;
+
+    auto* pPlayer = entity.get_mut<PlayerComponent>();
+
+    // Identity comes from Discord, never from the client. Without a verified account there
+    // is nothing durable to key a character on, and storing one against a connection id
+    // would lose it the moment they reconnect.
+    if (pPlayer->DiscordId.empty())
+    {
+        Tell(*pPlayer, "Your Discord sign-in could not be verified, so a character cannot be saved.");
+        return;
+    }
+
+    const auto& blob = aMessage.get_ccstate();
+
+    // Same bound as the spawn path. This is stored and then relayed to every other client,
+    // so an unbounded blob is a way to make one save allocate arbitrary memory everywhere.
+    constexpr size_t kMaxCcstate = 256 * 1024;
+
+    if (blob.empty() || blob.size() > kMaxCcstate)
+    {
+        spdlog::warn("Refused a character save from {} - {} bytes of appearance",
+                     pPlayer->Username, blob.size());
+        Tell(*pPlayer, "That character could not be saved - the appearance data was not usable.");
+        return;
+    }
+
+    auto& store = GServer->GetPlayerStore();
+
+    CharacterRecord character;
+    character.Slot = 0;
+    character.IsMale = aMessage.get_is_male();
+    character.Appearance = Base64::Encode(std::vector<uint8_t>(blob.begin(), blob.end()));
+
+    // What they typed with /character save wins over the name the client offered, which is
+    // only their launcher display name. Falls back through the client's name to their
+    // Discord name, so a character always has something to be called.
+    std::string name = pPlayer->PendingCharacterName;
+    if (name.empty())
+        name = aMessage.get_name().c_str();
+    if (name.size() > 32)
+        name.resize(32);
+
+    // Consumed, so a later save without a name does not silently re-apply an old one.
+    pPlayer->PendingCharacterName.clear();
+
+    // An existing character keeps its name when the player is only editing their face.
+    if (name.empty())
+    {
+        if (const auto* pExisting = store.FindCharacter(pPlayer->DiscordId))
+            name = pExisting->Name;
+    }
+
+    character.Name = name.empty() ? pPlayer->Username : name;
+
+    // Progression carried forward, so editing your face does not reset your character and
+    // re-grant the starting loadout.
+    if (const auto* pExisting = store.FindCharacter(pPlayer->DiscordId))
+    {
+        character.Level = pExisting->Level;
+        character.AttributePoints = pExisting->AttributePoints;
+        character.PerkPoints = pExisting->PerkPoints;
+        character.Initialised = pExisting->Initialised;
+    }
+
+    store.SaveCharacter(pPlayer->DiscordId, pPlayer->Username, character);
+
+    spdlog::info("{} saved character '{}' from the creator ({} bytes)", pPlayer->Username,
+                 character.Name, blob.size());
+
+    Tell(*pPlayer, fmt::format("Character saved as '{}'. You will look like this every time you join.",
+                               character.Name));
 }
 
 void ChatSystem::HandleRespawnRequest(const PacketEvent<client::RespawnRequest>& aMessage)
@@ -873,45 +954,40 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             return true;
         }
 
-        // Captures whatever the player currently looks like as their character.
+        // Asks the client for the appearance it has RIGHT NOW.
         //
-        // A placeholder for the creator, and a real one: the appearance the client sent on
-        // spawn is exactly the blob the creator will produce, so this exercises the whole
-        // storage path end to end without any UI existing.
+        // Deliberately not read from the puppet's AppearanceComponent: that was captured
+        // at spawn, so it would save whatever they looked like when they joined and
+        // silently discard everything they just did in the creator. The client is the only
+        // side that knows the current state, so the client is asked.
+        //
+        // The name is remembered here and applied when the appearance comes back, because
+        // the reply carries no idea of what the player typed.
         if (target == "save")
         {
-            const auto* pAppearance = acSender.Puppet ? acSender.Puppet.get<AppearanceComponent>() : nullptr;
-
-            if (!pAppearance || pAppearance->ccstate.empty())
+            if (!rest.empty())
             {
-                Tell(acSender, "You are not spawned in, so there is no appearance to save yet.");
-                return true;
+                auto* pMutable = aSender.get_mut<PlayerComponent>();
+                pMutable->PendingCharacterName = rest.substr(0, 32);
             }
 
-            CharacterRecord character;
-            character.Slot = 0;
-            character.Name = rest.empty() ? acSender.Username : rest;
-            character.Appearance = Base64::Encode(
-                std::vector<uint8_t>(pAppearance->ccstate.begin(), pAppearance->ccstate.end()));
+            server::OpenCharacterCreator capture;
+            capture.set_capture_only(true);
+            GServer->Send(acSender.Connection, capture);
 
-            // Carried over so saving again does not silently reset a character's
-            // progression back to "new" and re-grant the starting loadout.
-            if (const auto* pExisting = store.FindCharacter(acSender.DiscordId))
-            {
-                character.Level = pExisting->Level;
-                character.AttributePoints = pExisting->AttributePoints;
-                character.PerkPoints = pExisting->PerkPoints;
-                character.Initialised = pExisting->Initialised;
-                character.IsMale = pExisting->IsMale;
-            }
+            return true;
+        }
 
-            store.SaveCharacter(acSender.DiscordId, acSender.Username, character);
-
-            spdlog::info("{} saved character '{}' ({} bytes)", acSender.Username, character.Name,
-                         pAppearance->ccstate.size());
-
-            Tell(acSender, fmt::format("Saved as '{}'. You will look like this every time you join.",
-                                       character.Name));
+        // How to change your appearance, until the creator can be opened on demand.
+        //
+        // Driving the game's creator directly is not possible from scripts - its system is
+        // native-only, which was checked against the 2.31 type hierarchy rather than
+        // assumed. The mirror is the game's own answer to the same problem and it already
+        // works in a live world, so it is what players are pointed at.
+        if (target == "create" || target == "edit")
+        {
+            Tell(acSender, "Use a mirror to change how you look - the one in V's apartment works.");
+            Tell(acSender, "When you are happy with it, run /character save <name>.");
             return true;
         }
 
@@ -919,12 +995,14 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         {
             if (store.RetireCharacter(acSender.DiscordId))
                 Tell(acSender, "Your old character has been retired - it is kept, not deleted.");
+            else
+                Tell(acSender, "You had no character yet, so there was nothing to retire.");
 
-            Tell(acSender, "Make yourself look how you want, then run /character save <name>.");
+            Tell(acSender, "Change how you look at a mirror, then run /character save <name>.");
             return true;
         }
 
-        Tell(acSender, "Usage: /character [show | save <name> | new]");
+        Tell(acSender, "Usage: /character [show | create | new | save <name>]");
         return true;
     }
 

@@ -222,6 +222,37 @@ public native class NetworkWorldSystem extends IGameSystem {
     public native func RequestRespawn() -> Void;
     public native func IsConnected() -> Bool;
 
+    // Sends the appearance the player currently has to the server, which stores it against
+    // their Discord id. Driven by /character save - see CharacterCreator.reds for why
+    // saving is explicit rather than detected.
+    public native func SaveCharacterAppearance() -> Void;
+
+    // Opening the game's creator on demand is NOT possible from here, and that is a
+    // settled question rather than an untried idea.
+    //
+    // gameuiCharacterCustomizationSystem is `importonly` and empty; its interface exposes
+    // exactly two methods to scripts - HasCharacterCustomizationComponent and GetState.
+    // Initialize, StartCustomization, EndCustomization, SetCustomizationState and IsActive
+    // are all native-only. There is no mirror class and no creator game controller in the
+    // type dump either. Verified against the 2.31 hierarchy, not guessed.
+    //
+    // So changing your appearance uses the game's own mirror - the one in V's apartment,
+    // which already works in a live world - and /character save then captures the result.
+    // Driving the creator directly needs native work on the C++ side, which already holds
+    // a real CharacterCustomizationSystem pointer for serialisation.
+    public func OpenCharacterCreator() -> Void {
+        let game = GetGameInstance();
+        let player = GetPlayer(game);
+
+        let system = GameInstance.GetCharacterCustomizationSystem(game);
+
+        if IsDefined(system) && IsDefined(player) && system.HasCharacterCustomizationComponent(player) {
+            FTLog(s"[Character] the player can be customised - use a mirror, then /character save");
+        } else {
+            FTLogWarning(s"[Character] this player has no customization component");
+        }
+    }
+
     public func DeletePuppet(entityId: EntityID) {
         GameInstance.GetDynamicEntitySystem().DeleteEntity(entityId);
     }

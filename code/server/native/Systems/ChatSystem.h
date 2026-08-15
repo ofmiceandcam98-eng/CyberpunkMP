@@ -81,6 +81,10 @@ protected:
     // A downed player asking where to get up. The server decides - see /setspawn.
     void HandleRespawnRequest(const PacketEvent<client::RespawnRequest>& aMessage);
 
+    // Stores what the character creator produced. The one message whose appearance the
+    // server keeps - the spawn message's describes whatever save the client loaded.
+    void HandleSaveCharacterRequest(const PacketEvent<client::SaveCharacterRequest>& aMessage);
+
     // Splits a chat channel prefix off the front of a line. Returns false when the line
     // named a channel the sender is not allowed to use, or gave it no text, having
     // already told them why.

@@ -273,6 +273,53 @@ void NetworkWorldSystem::RequestRespawn()
     service->Send(request);
 }
 
+/**
+ * Sends the player's current appearance to the server as their character.
+ *
+ * Called by the creator when it closes - see CharacterCreator.reds. The spawn path already
+ * serialises this exact blob, but that one describes whoever the loaded save contained;
+ * this is the deliberate "this is me", and the only one the server keeps.
+ */
+void NetworkWorldSystem::SaveCharacterAppearance()
+{
+    const auto& service = Core::Container::Get<NetworkService>();
+    if (!service || !service->IsConnected())
+    {
+        spdlog::warn("[Character] not connected - cannot save the character");
+        return;
+    }
+
+    auto ccSystem = Red::GetGameSystem<Red::game::ui::CharacterCustomizationSystem>();
+    auto stateHandle = GetCustomizationState(ccSystem);
+
+    // GetCustomizationState() returns a pointer that can never be null; the instance
+    // behind it can be, and is during ordinary gameplay. Serialising a null instance
+    // crashes the game, so the instance is what gets checked.
+    if (!stateHandle || !stateHandle->instance)
+    {
+        spdlog::error("[Character] no customization state to save");
+        return;
+    }
+
+    auto writer = CMPWriter();
+    CharacterCustomizationState_Serialize(stateHandle->instance, &writer);
+
+    if (writer.bytes.empty())
+    {
+        spdlog::error("[Character] the customization state serialised to nothing - not saving");
+        return;
+    }
+
+    client::SaveCharacterRequest request;
+    request.set_ccstate(writer.bytes);
+    request.set_is_male(stateHandle->instance->isBodyGenderMale);
+    request.set_name(Settings::Get().discordName.c_str());
+
+    service->Send(request);
+
+    spdlog::info("[Character] sent {} bytes of appearance to the server", writer.bytes.size());
+}
+
 bool NetworkWorldSystem::IsConnected() const
 {
     const auto& service = Core::Container::Get<NetworkService>();
@@ -351,6 +398,26 @@ void NetworkWorldSystem::HandleCharacterLoad(const PacketEvent<server::NotifyCha
 void NetworkWorldSystem::HandleEntityUnload(const PacketEvent<server::NotifyEntityUnload>& aMessage)
 {
     DeSpawn(aMessage.get_id());
+}
+
+/**
+ * The server has asked this client to make a character.
+ *
+ * Handed straight to redscript - the creator is script-side machinery, and driving the
+ * game's own UI from native would mean reimplementing what redscript can already call.
+ */
+void NetworkWorldSystem::HandleOpenCharacterCreator(const PacketEvent<server::OpenCharacterCreator>& aMessage)
+{
+    if (aMessage.get_capture_only())
+    {
+        spdlog::info("[Character] the server asked for our current appearance");
+        SaveCharacterAppearance();
+        return;
+    }
+
+    spdlog::info("[Character] the server asked us to open the character creator");
+
+    Red::CallVirtual(this, "OpenCharacterCreator");
 }
 
 void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::SpawnCharacterResponse>& aMessage)
@@ -560,6 +627,7 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleEntityUnload>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleTeleport>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleSpawnCharacterResponse>(this);
+    pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleOpenCharacterCreator>(this);
 
     m_remotePlayerId = std::nullopt;
 
