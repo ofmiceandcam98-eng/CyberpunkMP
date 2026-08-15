@@ -4,6 +4,10 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.51
+
+- **Other players wear their clothes.** Equipping was nested inside the check for whether the puppet already *had* the item — so anything it was already carrying got skipped and left in the inventory instead of being put on. Remote players are built on an NPC record that ships with its own loadout, so that overlap was the normal case, not an edge case. Having an item and wearing it are now asked separately.
+
 ## What changed — v0.3.50
 
 - **You are your own character again.** This was the big one. The launcher installs a starter save so new players skip Act 1 — and it was forcing that save to load on **every** launch, for everyone. Since it is one save built from one person's character, pressing MULTIPLAYER handed you *their* character, and it overwrote whatever you made through NEW CHARACTER. It is now only used until you have a character of your own, then your saves are left alone.
