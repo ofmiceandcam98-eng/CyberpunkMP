@@ -53,6 +53,19 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // attach and detach around them - which is exactly why OnInitialize runs once and
     // OnWorldAttached runs for every world. Script state does not survive; this does.
     void RequestJoin();
+
+    // Called from the main menu when MULTIPLAYER - NEW CHARACTER is chosen.
+    //
+    // The server captures an appearance on first spawn only for a player who has NO
+    // character, which means NEW CHARACTER could never actually replace one. Somebody with
+    // an existing character went through the whole creator, connected, and was spawned as
+    // the character they had just replaced - hyliangenesis built a male V and stayed female
+    // for a day, and their stored record never changed.
+    //
+    // The server cannot tell the difference on its own: from its side, a returning player
+    // and a player who just rebuilt themselves look identical. Only the client knows which
+    // menu entry was pressed, so the client is what says so.
+    void MarkNewCharacter();
     bool ConsumeJoinRequest();
 
     // Called from redscript when the local player is downed - see Death.reds.
@@ -88,6 +101,9 @@ protected:
     // The server asking this client to make a character.
     void HandleOpenCharacterCreator(const PacketEvent<server::OpenCharacterCreator>& aMessage);
     void HandleRequestCharacterName(const PacketEvent<server::RequestCharacterName>& aMessage);
+
+    // Set while a freshly created character is waiting to be sent to the server.
+    bool m_newCharacterPending{false};
     void HandleTeleport(const PacketEvent<server::NotifyTeleport>& aMessage);
 
     void UpdatePlayerLocation() const;
@@ -119,6 +135,7 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(Connect);
     RTTI_METHOD(Disconnect);
     RTTI_METHOD(RequestJoin);
+    RTTI_METHOD(MarkNewCharacter);
     RTTI_METHOD(ConsumeJoinRequest);
     RTTI_METHOD(RequestRespawn);
     RTTI_METHOD(SaveCharacterAppearance);

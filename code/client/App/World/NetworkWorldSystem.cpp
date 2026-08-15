@@ -269,6 +269,12 @@ void NetworkWorldSystem::RequestJoin()
     m_joinRequested = true;
 }
 
+void NetworkWorldSystem::MarkNewCharacter()
+{
+    spdlog::info("[Character] NEW CHARACTER chosen - this appearance will replace the stored one");
+    m_newCharacterPending = true;
+}
+
 void NetworkWorldSystem::RequestRespawn()
 {
     const auto& service = Core::Container::Get<NetworkService>();
@@ -599,6 +605,29 @@ void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::
     }
 
     SetRemotePlayerId(aMessage.get_id());
+
+    // A character made through NEW CHARACTER is sent up the moment we are in the world.
+    //
+    // The server only captures an appearance for a player with NO character, so replacing
+    // one was impossible: you went through the creator, connected, and were spawned as the
+    // character you had just replaced. hyliangenesis built a male V and stayed female for a
+    // day - their stored record was created on the 14th at 21:37 and never changed again,
+    // through several attempts.
+    //
+    // Sent from here because this is the first moment the world is real and the player is
+    // standing in it as whoever they just built. Reusing SaveCharacterRequest means no new
+    // message and no protocol change - the server already overwrites the stored character
+    // with what arrives, keeping level and perks.
+    //
+    // Cleared either way. A failed save must not leave the flag armed, or the next ordinary
+    // join would overwrite their character with whatever save happened to load.
+    if (m_newCharacterPending)
+    {
+        m_newCharacterPending = false;
+
+        spdlog::info("[Character] new character - sending this appearance to replace the stored one");
+        SaveCharacterAppearance();
+    }
 }
 
 static Core::RawFunc<

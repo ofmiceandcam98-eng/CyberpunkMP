@@ -4,6 +4,17 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.57
+
+- **Every character now has a permanent ID of its own.** It's generated once, never reused, and stays the same through renames, ripperdoc visits and reconnects — while still filed under the Discord account that owns it. It's the identifier that will carry inventory, cyberware and RP profiles later.
+- **Admin commands find people by any name they have.** `/tp`, `/kick`, `/ban` and the rest now accept a character name, a Discord name, a Discord ID, or a character ID. Character names win over account names, so the person you're standing in front of is the one you get.
+- **`/whois`** — shows a player's character name, account, and character ID. Moderator and above.
+
+## What changed — v0.3.56
+
+- **NEW CHARACTER actually replaces your character now.** It never could. The server only saved an appearance for a player who had *no* character, so anyone who already had one went through the whole creator, connected, and was spawned as the character they had just replaced — the creation was thrown away silently. That is why hyliangenesis built a male V and stayed female. The client now tells the server that what is arriving is a replacement.
+- Your character is still keyed to your Discord account, as it always has been — it follows you to any machine you sign in from.
+
 ## What changed — v0.3.55
 
 - Diagnostic build for the "everyone looks like me" bug. Your clothes, name and position all sync correctly — only the face and body don't, and each player sees the other wearing a whole copy of their own character. This build records the one measurement that separates the two possible causes. Play for a minute with someone else and send the client log.
