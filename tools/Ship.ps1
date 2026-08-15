@@ -516,6 +516,39 @@ foreach ($side in $sideFiles) {
     }
 }
 
+# The world template every player loads.
+#
+# Zipped here rather than stored zipped, so the save stays inspectable in the repo - being
+# able to read its metadata is how we know what state it is in. The launcher extracts it
+# into the player's saves folder and stamps it newest; see ensureTemplateSave.
+$templateDir = Join-Path $Repo "publish\character-template"
+if (Test-Path (Join-Path $templateDir "sav.dat")) {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+    $templateZip = Join-Path $env:TEMP "character-template.zip"
+    if (Test-Path $templateZip) { Remove-Item -LiteralPath $templateZip -Force }
+
+    # Staged WITHOUT the README. That folder becomes a save directory on the player's
+    # machine and Cyberpunk reads it looking for saves - a stray markdown file there is at
+    # best noise and at worst something the game tries to parse.
+    $templateStage = Join-Path $env:TEMP ("template_" + (Get-Date -Format 'HHmmss'))
+    if (Test-Path $templateStage) { Remove-Item -LiteralPath $templateStage -Recurse -Force }
+    New-Item -ItemType Directory -Path $templateStage -Force | Out-Null
+
+    foreach ($part in @("sav.dat", "metadata.9.json", "screenshot.png")) {
+        $from = Join-Path $templateDir $part
+        if (Test-Path $from) { Copy-Item $from $templateStage }
+    }
+
+    [System.IO.Compression.ZipFile]::CreateFromDirectory($templateStage, $templateZip,
+        [System.IO.Compression.CompressionLevel]::Optimal, $false)
+
+    $uploads += $templateZip
+    Ok "world template staged ($([math]::Round((Get-Item $templateZip).Length/1MB,1)) MB)"
+} else {
+    Warn "no publish\character-template\sav.dat - players will load their own saves instead"
+}
+
 # The mod artifacts. Rebuilt above when -Mod, carried forward from the previous release
 # otherwise, so a launcher-only ship never leaves players unable to update the mod.
 if (-not $Mod) {

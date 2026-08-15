@@ -16,6 +16,7 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } fr
 import electronUpdater from 'electron-updater'
 import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
+import fsp from 'node:fs/promises'
 import AdmZip from 'adm-zip'
 import http from 'node:http'
 import crypto from 'node:crypto'
@@ -1384,6 +1385,97 @@ async function hydrateUserFromToken () {
 
 // async because the server address may need fetching. Everything it does was already
 // effectively asynchronous underneath; only the signature changed.
+// ---------------------------------------------------------------------------
+// The world template
+//
+// Nobody should have to own a post-Act-1 save to play, and nobody's own save should be
+// touched. So the mod ships one, and every player loads that.
+//
+// The awkward part: there is NO way to load a save by name. The game exposes exactly one
+// load call to scripts - LoadLastCheckpoint - which was checked against the 2.31 type
+// hierarchy rather than assumed. So the template cannot be requested; it has to BE the
+// last checkpoint.
+//
+// Hence this. The template is installed as an ordinary save folder and its timestamps are
+// stamped to now immediately before the game starts, which makes it the newest save and
+// therefore the one LoadLastCheckpoint picks. The launcher runs before every launch, so it
+// is re-stamped every time and autosaves written during a session cannot displace it.
+//
+// It is a trick, and it is honest about being one. The alternative is finding the native
+// load-by-name function by offset, which is real reverse-engineering for a result this
+// achieves in twenty lines.
+// ---------------------------------------------------------------------------
+
+const TEMPLATE_SAVE_NAME = 'MultiplayerStart'
+const TEMPLATE_URL = `https://github.com/${GITHUB_REPO}/releases/latest/download/character-template.zip`
+
+function savesDir () {
+  // Not Documents. Cyberpunk uses the Saved Games known folder, under a CD Projekt Red
+  // subdirectory - which is not where the obvious guess puts it, and getting this wrong
+  // means silently installing the template somewhere the game never looks.
+  return path.join(app.getPath('home'), 'Saved Games', 'CD Projekt Red', 'Cyberpunk 2077')
+}
+
+function templateDir () {
+  return path.join(savesDir(), TEMPLATE_SAVE_NAME)
+}
+
+async function ensureTemplateSave () {
+  const target = templateDir()
+
+  if (existsSync(path.join(target, 'sav.dat'))) return { installed: true, fresh: false }
+
+  const saves = savesDir()
+  if (!existsSync(saves)) {
+    // No saves folder at all means the game has never been run. Creating it ourselves is
+    // fine - the game reads whatever is there.
+    await fsp.mkdir(saves, { recursive: true })
+  }
+
+  const response = await axios.get(TEMPLATE_URL, {
+    responseType: 'arraybuffer',
+    timeout: 60000,
+    validateStatus: (status) => status === 200 || status === 404
+  })
+
+  if (response.status === 404) return { installed: false, reason: 'no template published yet' }
+
+  const zipPath = path.join(app.getPath('temp'), 'character-template.zip')
+  await fsp.writeFile(zipPath, Buffer.from(response.data))
+
+  const zip = new AdmZip(zipPath)
+  await fsp.mkdir(target, { recursive: true })
+  zip.extractAllTo(target, true)
+
+  return { installed: existsSync(path.join(target, 'sav.dat')), fresh: true }
+}
+
+/**
+ * Makes the template the newest save, so LoadLastCheckpoint chooses it.
+ *
+ * Both the folder and the files inside it - the game sorts on one of them and which is not
+ * documented, so both are set rather than guessing and being subtly wrong.
+ */
+async function stampTemplateNewest () {
+  const target = templateDir()
+  if (!existsSync(target)) return false
+
+  // A minute ahead, not now. Some of these writes take a moment and an autosave landing in
+  // the same second would otherwise be a coin toss.
+  const when = new Date(Date.now() + 60_000)
+
+  try {
+    for (const entry of await fsp.readdir(target)) {
+      await fsp.utimes(path.join(target, entry), when, when)
+    }
+    await fsp.utimes(target, when, when)
+    return true
+  } catch (err) {
+    console.warn('[template] could not stamp:', err.message)
+    return false
+  }
+}
+
 async function launchGame () {
   if (!currentUser) {
     // Belt and braces. The button is disabled in the UI, but the UI is not a
@@ -1416,6 +1508,29 @@ async function launchGame () {
   // who should be allowed to launch into nothing.
   if (!lastServerStatus?.online && !isAdmin()) {
     throw new Error('The server is offline right now. Check the Discord for when it is back up.')
+  }
+
+  // The world template, installed and made the newest save, immediately before launch.
+  //
+  // This is what stops multiplayer touching anybody's own saves: MULTIPLAYER loads the
+  // last checkpoint, so making the template the last checkpoint means it loads that and
+  // leaves every save the player actually cares about alone.
+  //
+  // Deliberately not fatal. A player who cannot get the template still gets into the game
+  // on their own save - which is exactly how it worked before this existed - and the
+  // server still owns their character either way. Refusing to launch over it would trade a
+  // cosmetic problem for a total one.
+  try {
+    const template = await ensureTemplateSave()
+
+    if (template.installed) {
+      await stampTemplateNewest()
+      console.log('[template] ready - multiplayer will load it rather than a personal save')
+    } else {
+      console.warn('[template] not available:', template.reason || 'unknown')
+    }
+  } catch (err) {
+    console.warn('[template] could not be prepared:', err.message)
   }
 
   // Pass the TOKEN, not the id.

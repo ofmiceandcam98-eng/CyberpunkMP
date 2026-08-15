@@ -4,6 +4,12 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.42
+
+- **Multiplayer no longer touches your own saves.** The mod ships a world template — Act 1 finished, level 15, standing free in Night City — and the launcher installs it and loads that instead. Your singleplayer saves are left alone entirely, and you no longer need a post-Act-1 save of your own to play.
+- **Scanning someone shows their character's name**, not their Discord account name. Set yours with `/name`.
+- **New players are told they need a character** when they join, instead of silently playing as whoever the template contains.
+
 ## What changed — v0.3.41
 
 **Everyone must update.** The protocol changed, so older clients are refused at the handshake with "wrong client protocol identifier". The launcher will offer the update.
