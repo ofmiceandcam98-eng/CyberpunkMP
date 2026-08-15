@@ -57,15 +57,26 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$Repo      = "C:\Users\Cam\OneDrive\Documents\GitHub\CyberpunkMP"
-$LauncherDir = Join-Path $Repo "code\launcher-lite"
-$XMake     = "C:\Users\Cam\scoop\shims\xmake.exe"
-$GhRepo    = "ofmiceandcam98-eng/CyberpunkMP"
-$GameDir   = "C:\Program Files (x86)\Steam\steamapps\common\Cyberpunk 2077"
+# Repo, LauncherDir, XMake, GhRepo and GameDir all come from here. They used to be absolute
+# paths to one person's PC, which was invisible while the project lived on one machine and
+# became a wall the moment a second contributor had a checkout.
+. (Join-Path $PSScriptRoot "Environment.ps1")
 
-# Nothing selected means everything.
+Assert-XMake
+Assert-GameDir
+
+# Nothing selected means everything - INCLUDING the server.
+#
+# It used to mean launcher and mod only, which is wrong in the one case that matters most.
+# The client and server share code\protocol, so a change there has to reach both or the
+# halves disagree about what the other is saying. Shipping v0.3.48 hit exactly that: the
+# client went out with a new message the server had never been rebuilt to send, and the
+# feature simply did nothing with no error anywhere to explain why.
+#
+# "Everything" now means everything. -Launcher, -Mod and -Server still narrow it when that
+# is what you actually want.
 $all = -not ($Launcher -or $Mod -or $Server)
-if ($all) { $Launcher = $true; $Mod = $true }
+if ($all) { $Launcher = $true; $Mod = $true; $Server = $true }
 
 function Step  { param($T) Write-Host "`n=== $T" -ForegroundColor Cyan }
 function Ok    { param($T) Write-Host "  OK  $T" -ForegroundColor Green }
@@ -211,7 +222,26 @@ if ($Mod) {
     else {
         & $XMake build -j 4 Client 2>&1 | Select-Object -Last 3
         if ($LASTEXITCODE -ne 0) { Die "client build failed" }
-        & $XMake install -o distrib Client 2>&1 | Out-Null
+        # EVERY asset target, not just the DLL.
+        #
+        # Only Client was installed here, so Tweaks, Inputs and Archives never left the
+        # repo. Two real bugs lived in that gap for days and both looked like broken
+        # features rather than undeployed files:
+        #
+        #   Tweaks - Character.MaMuppet/WaMuppet inherit from Character.Panam, and the
+        #            fix that blanks her name was written, committed, and never shipped.
+        #            Every remote player kept showing up as PANAM, and scanning one
+        #            returned her affiliation and criminal record.
+        #   Inputs - the mouse-wheel chat bindings were declared and never deployed, so
+        #            scrolling could not have worked no matter what the handler did.
+        #
+        # Neither produced an error anywhere. The repo said fixed, the game said broken,
+        # and nothing in between said why. Install everything.
+        foreach ($target in @('Client', 'Archives', 'Inputs', 'Tweaks')) {
+            & $XMake install -o distrib $target 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) { Die "installing $target failed" }
+        }
+
         $dll = Get-Item "distrib\launcher\mod\CyberpunkMP.dll"
         Ok "built $([math]::Round($dll.Length/1MB,2)) MB at $($dll.LastWriteTime.ToString('HH:mm:ss'))"
 
@@ -306,6 +336,28 @@ if ($Mod) {
         }
         if ($stale.Count -gt 0) { Die "scripts did not ship: $($stale -join ', ')" }
         Ok "scripts deployed and match source"
+
+        # The same check for the assets that are NOT redscript.
+        #
+        # Redscript had this guard and the others did not, which is exactly why the gap
+        # went unnoticed for so long: the one asset class anybody verified was the one
+        # class that was fine. A stale tweak or input file is indistinguishable from a
+        # feature that does not work, and the game reports neither.
+        $staleAssets = @()
+        foreach ($pair in @(
+            @{ Source = "code\assets\Tweaks"; Shipped = "distrib\launcher\mod\assets\Tweaks"; Filter = "*.tweak" },
+            @{ Source = "code\assets\Inputs"; Shipped = "distrib\launcher\mod\assets\Inputs"; Filter = "*.xml" }
+        )) {
+            if (-not (Test-Path $pair.Source)) { continue }
+            Get-ChildItem $pair.Source -Recurse -Filter $pair.Filter | ForEach-Object {
+                $relative = $_.FullName.Substring((Resolve-Path $pair.Source).Path.Length + 1)
+                $shipped = Join-Path $pair.Shipped $relative
+                if (-not (Test-Path $shipped)) { $staleAssets += "$relative (missing)" }
+                elseif ((Get-FileHash $_.FullName).Hash -ne (Get-FileHash $shipped).Hash) { $staleAssets += $relative }
+            }
+        }
+        if ($staleAssets.Count -gt 0) { Die "assets did not ship: $($staleAssets -join ', ')" }
+        Ok "tweaks and inputs deployed and match source"
     }
 }
 
@@ -512,6 +564,58 @@ foreach ($side in $sideFiles) {
     } else {
         Warn "no $($side.Path) - that feature will be inert for everyone"
     }
+}
+
+# The world template every player loads.
+#
+# Zipped here rather than stored zipped, so the save stays inspectable in the repo - being
+# able to read its metadata is how we know what state it is in. The launcher extracts it
+# into the player's saves folder and stamps it newest; see ensureTemplateSave.
+# One per body type. Body gender cannot be changed in game - not at a ripperdoc, not at a
+# mirror - so the only way to offer both is to ship both worlds and let the launcher
+# install whichever was chosen.
+#
+# The male one is optional: while it does not exist the launcher shows that choice as
+# unavailable rather than pretending to honour it.
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+$templates = @(
+    @{ Dir = "publish\character-template";      Zip = "character-template.zip";      Label = "female" },
+    @{ Dir = "publish\character-template-male"; Zip = "character-template-male.zip"; Label = "male"   }
+)
+
+foreach ($template in $templates) {
+    $templateDir = Join-Path $Repo $template.Dir
+
+    if (-not (Test-Path (Join-Path $templateDir "sav.dat"))) {
+        if ($template.Label -eq "female") {
+            Warn "no $($template.Dir)\sav.dat - players will load their own saves instead"
+        } else {
+            Warn "no $($template.Label) template yet - that body type stays unavailable in the launcher"
+        }
+        continue
+    }
+
+    $templateZip = Join-Path $env:TEMP $template.Zip
+    if (Test-Path $templateZip) { Remove-Item -LiteralPath $templateZip -Force }
+
+    # Staged WITHOUT the README. That folder becomes a save directory on the player's
+    # machine and Cyberpunk reads it looking for saves - a stray markdown file there is at
+    # best noise and at worst something the game tries to parse.
+    $templateStage = Join-Path $env:TEMP ("template_" + $template.Label + "_" + (Get-Date -Format 'HHmmss'))
+    if (Test-Path $templateStage) { Remove-Item -LiteralPath $templateStage -Recurse -Force }
+    New-Item -ItemType Directory -Path $templateStage -Force | Out-Null
+
+    foreach ($part in @("sav.dat", "metadata.9.json", "screenshot.png")) {
+        $from = Join-Path $templateDir $part
+        if (Test-Path $from) { Copy-Item $from $templateStage }
+    }
+
+    [System.IO.Compression.ZipFile]::CreateFromDirectory($templateStage, $templateZip,
+        [System.IO.Compression.CompressionLevel]::Optimal, $false)
+
+    $uploads += $templateZip
+    Ok "$($template.Label) world template staged ($([math]::Round((Get-Item $templateZip).Length/1MB,1)) MB)"
 }
 
 # The mod artifacts. Rebuilt above when -Mod, carried forward from the previous release

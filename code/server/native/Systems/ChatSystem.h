@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Components/PlayerComponent.h"
+#include "CharacterRecord.h"
 
 // How far a line of chat carries, in metres.
 //
@@ -65,6 +66,11 @@ struct ChatSystem
     // something they were not allowed to, which is both noise and a small humiliation.
     void Tell(const PlayerComponent& acPlayer, const std::string& acMessage);
 
+    // Opens the character-name box on a player's client. Public because the spawn path in
+    // Level.cpp needs it too - that is the only route that ever reaches somebody whose
+    // character was made before the prompt existed.
+    void AskForCharacterName(const PlayerComponent& acPlayer, const CharacterRecord& acCharacter);
+
     // Only players whose puppet is within aRange of acOrigin.
     //
     // The sender is always included regardless of distance. Not seeing your own message
@@ -80,6 +86,10 @@ protected:
 
     // A downed player asking where to get up. The server decides - see /setspawn.
     void HandleRespawnRequest(const PacketEvent<client::RespawnRequest>& aMessage);
+
+    // Stores what the character creator produced. The one message whose appearance the
+    // server keeps - the spawn message's describes whatever save the client loaded.
+    void HandleSaveCharacterRequest(const PacketEvent<client::SaveCharacterRequest>& aMessage);
 
     // Splits a chat channel prefix off the front of a line. Returns false when the line
     // named a channel the sender is not allowed to use, or gave it no text, having

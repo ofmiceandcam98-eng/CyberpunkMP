@@ -13,6 +13,7 @@
 #include "World.h"
 #include "PlayerManager.h"
 #include "Systems/ChatSystem.h"   // telling someone their seat is taken
+#include "Validation.h"           // sanity checks on anything a client sent
 
 
 constexpr static float sCellSize = 60 * 100;
@@ -209,6 +210,35 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
         return;
     }
 
+    // A spawn arrives once, and everything in it is stored and rebroadcast to every other
+    // client - so this is the packet where a bad value does the most damage and gets the
+    // least scrutiny.
+    if (!Validation::IsSanePosition(pos) || !Validation::IsSaneRotation(rot))
+    {
+        spdlog::warn("Refused a spawn from {} at a nonsense position ({}, {}, {})",
+                     pComponent->Username, pos.x, pos.y, pos.z);
+
+        // Answered rather than ignored. The client waits on this response and would hang
+        // at a black screen if we simply dropped it.
+        GServer->Send(aMessage.ConnectionId, response);
+        return;
+    }
+
+    // The appearance blob is relayed verbatim to everyone in range. Unbounded, it is a way
+    // to make one join allocate arbitrary memory on the server and on every other client.
+    // Real ones measure 6-9KB.
+    constexpr size_t kMaxCcstate = 256 * 1024;
+    constexpr size_t kMaxEquipment = 64;
+
+    if (ccstate.size() > kMaxCcstate || equipment.size() > kMaxEquipment)
+    {
+        spdlog::warn("Refused a spawn from {} - {} bytes of appearance, {} equipment item(s)",
+                     pComponent->Username, ccstate.size(), equipment.size());
+
+        GServer->Send(aMessage.ConnectionId, response);
+        return;
+    }
+
     if (IsDebug())
     {
         pos += glm::vec3(2, 0, 0);
@@ -224,6 +254,38 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
     //
     // The server's record wins, and the client is asked to move itself - it owns its own
     // position, so editing our copy alone would be undone by its next update.
+    // A player the server has never seen starts where the server says, not where the world
+    // template happens to leave V standing.
+    //
+    // Checked BEFORE the saved-position branch below, and only when there is no record at
+    // all - a returning player is put back where they were, which is the whole point of
+    // the position store. Getting this order wrong would teleport everybody to the
+    // arrivals point on every single join.
+    glm::vec3 startPosition;
+    float startYaw = 0.f;
+
+    const bool isNewHere = GServer->GetPlayerStore().Find(pComponent->DiscordId) == nullptr;
+
+    if (isNewHere && GServer->GetStartPoint(startPosition, startYaw))
+    {
+        pos = startPosition;
+        rot = glm::vec3(0.f, 0.f, startYaw);
+
+        server::NotifyTeleport teleport;
+
+        common::Vector3 destination;
+        destination.set_x(startPosition.x);
+        destination.set_y(startPosition.y);
+        destination.set_z(startPosition.z);
+        teleport.set_position(destination);
+        teleport.set_rotation(startYaw);
+
+        GServer->Send(aMessage.ConnectionId, teleport);
+
+        spdlog::info("New arrival {} placed at the start point ({:.1f}, {:.1f}, {:.1f})",
+                     pComponent->Username, startPosition.x, startPosition.y, startPosition.z);
+    }
+
     const auto* pSaved = GServer->GetPlayerStore().Find(pComponent->DiscordId);
     if (pSaved)
     {
@@ -245,10 +307,91 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
                      pSaved->X, pSaved->Y, pSaved->Z);
     }
 
+    // The server's character wins over whatever the client's save happens to contain.
+    //
+    // This is the line that ends the dependency on singleplayer saves. The client still
+    // loads A save, because Cyberpunk has no way to build a world without one - but which
+    // save that is stops mattering, because the appearance everyone SEES comes from here.
+    // The save becomes a world template rather than anybody's identity.
+    //
+    // A player with no character yet keeps what they arrived with, so this is inert until
+    // the creator exists and nothing breaks in the meantime.
+    Vector<uint8_t> appearance = ccstate;
+
+    if (const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(pComponent->DiscordId))
+    {
+        if (!pCharacter->Appearance.empty())
+        {
+            const auto stored = Base64::Decode(pCharacter->Appearance);
+
+            // A blob that decodes to nothing means the record is corrupt. Falling back to
+            // what the client sent gets them into the world looking wrong, which beats
+            // refusing to spawn them at all.
+            if (!stored.empty())
+            {
+                appearance.assign(stored.begin(), stored.end());
+
+                spdlog::info("Spawned {} as their saved character '{}' ({} bytes of appearance)",
+                             pComponent->Username,
+                             pCharacter->Name.empty() ? "unnamed" : pCharacter->Name,
+                             stored.size());
+            }
+            else
+            {
+                spdlog::warn("Stored appearance for {} did not decode - using the client's",
+                             pComponent->Username);
+            }
+        }
+
+        // Ask on spawn if they still have not chosen a name.
+        //
+        // Asking only after the creator missed everybody who already had a character,
+        // which was every existing player - their character was made before the prompt
+        // existed, so the one moment that triggers it had already passed for them. This
+        // is the route that reaches them, and it stops as soon as they answer.
+        if (!pCharacter->NameChosen)
+        {
+            if (auto* pChat = GetWorld()->get_mut<ChatSystem>())
+                pChat->AskForCharacterName(*pComponent, *pCharacter);
+        }
+    }
+
     pComponent->Puppet = GetWorld()->entity()
         .child_of(player)
         .set<MovementComponent>({pos, rot, {}})
-        .set<AppearanceComponent>({equipment, ccstate});
+        .set<AppearanceComponent>({equipment, appearance});
+
+    // Somebody with no character is told, once, on arrival.
+    //
+    // The server is the only side that knows whether they have one, and a player who is
+    // silently playing as whoever the world template contains has no way to find out that
+    // is not who they are meant to be. Being asked is the difference between a system that
+    // exists and a system anybody uses.
+    if (!GServer->GetPlayerStore().HasCharacter(pComponent->DiscordId))
+    {
+        // Ask for whatever they are wearing right now, and keep it as their character.
+        //
+        // This is what makes MULTIPLAYER - NEW CHARACTER work. That flow runs the game's
+        // creator BEFORE the world exists and before anyone connects, so the client's
+        // appearance watcher - which only runs while connected - never sees the session at
+        // all. Somebody could spend ten minutes building a face and have none of it kept.
+        //
+        // Asking on first spawn catches it: by now they are standing in the world as
+        // whoever they just made. The reply carries the body gender too, which the server
+        // cannot read out of the appearance blob itself.
+        server::OpenCharacterCreator capture;
+        capture.set_capture_only(true);
+        GServer->Send(aMessage.ConnectionId, capture);
+
+        if (auto* pChat = GetWorld()->get_mut<ChatSystem>())
+        {
+            pChat->Tell(*pComponent, "Welcome. This is now your character - the server will remember you.");
+            pChat->Tell(*pComponent, "Choose what you are called with /name <name>.");
+            pChat->Tell(*pComponent, "Any ripperdoc can change how you look later, and it saves by itself.");
+        }
+
+        spdlog::info("{} has no character yet - capturing the one they arrived as", pComponent->Username);
+    }
 
     response.set_id(pComponent->Puppet);
     GServer->Send(aMessage.ConnectionId, response);
@@ -304,6 +447,39 @@ void Level::HandleMoveEntityRequest(PacketEvent<client::MoveEntityRequest>& aMes
     component.Position = {pos.get_x(), pos.get_y(), pos.get_z()};
     component.Velocity = aMessage.get_speed();
     component.Tick = aMessage.get_tick();
+
+    // Carried forward, because the component is replaced wholesale below rather than
+    // edited. Interest management sends only every Nth update to distant players, and a
+    // sequence that reset to zero on every packet would make "every 4th" mean "every one".
+    if (const auto* pPrevious = target.get<MovementComponent>())
+        component.Sequence = pPrevious->Sequence + 1;
+
+    // Dropped, not clamped. See Validation.h - a non-finite position does not crash
+    // anything, it silently switches off every system that measures distance, and then
+    // gets written to the persistent store on disconnect so it survives a restart.
+    //
+    // Keeping the last good position is right: this arrives thirty times a second, so
+    // discarding one is invisible, and inventing a position the player is not at would be
+    // a desync we would then have to debug.
+    if (!Validation::IsSanePosition(component.Position) ||
+        !Validation::IsSaneRotation(component.Rotation) ||
+        !Validation::IsSaneSpeed(component.Velocity))
+    {
+        // Rate-limited: a client stuck producing NaN would otherwise write thirty lines a
+        // second and bury everything else in the log.
+        static thread_local std::chrono::steady_clock::time_point s_lastComplaint{};
+        const auto now = std::chrono::steady_clock::now();
+
+        if (now - s_lastComplaint > std::chrono::seconds(5))
+        {
+            s_lastComplaint = now;
+            spdlog::warn("Dropped a nonsense movement packet from {} - pos ({}, {}, {}) speed {}",
+                         pPlayer->Username, component.Position.x, component.Position.y,
+                         component.Position.z, component.Velocity);
+        }
+
+        return;
+    }
 
     if constexpr (IsDebug())
     {
@@ -519,7 +695,19 @@ server::NotifyCharacterLoad Level::Serialize(flecs::entity aEntity) noexcept
     {
         if (const auto* pPlayerComponent = owner.get<PlayerComponent>())
         {
-            message.set_username(pPlayerComponent->Username.c_str());
+            // The CHARACTER's name, when they have one - this is what other players read
+            // off the nameplate when they scan someone.
+            //
+            // Falling back to the Discord name only until a character exists. Somebody
+            // being "noremacxxi" and their character being someone else is the whole
+            // point of roleplay; showing the account name over a character's head breaks
+            // it every time anybody looks at anybody.
+            const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(pPlayerComponent->DiscordId);
+
+            if (pCharacter && !pCharacter->Name.empty())
+                message.set_username(pCharacter->Name.c_str());
+            else
+                message.set_username(pPlayerComponent->Username.c_str());
         }
     }
 

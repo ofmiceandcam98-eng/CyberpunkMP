@@ -1,0 +1,20 @@
+# Copy to  tools\.discord-bot  and fill in. That file is gitignored.
+#
+# Used by tools\DiscordNotify.ps1 (release and patch announcements) and, for the token
+# only, by the game server to read the guild's role NAMES so "dev" can mean something
+# without anyone hunting for a role snowflake.
+#
+# The token is read at the moment it is needed and never stored in a config or logged.
+# Point Discord.BotTokenFile in the server config at this file.
+#
+# A BOT TOKEN IS A PASSWORD, and a stronger one than a webhook URL: it grants everything
+# the bot can reach, not just one channel. Never commit it. If one is ever pasted anywhere
+# public, regenerate it in the Developer Portal immediately - rotating is free and cheap.
+
+# From https://discord.com/developers/applications -> your app -> Bot -> Reset Token.
+# Needs the "Server Members Intent" if you want role resolution.
+token=PUT_THE_BOT_TOKEN_HERE
+
+# Right-click the channel in Discord (with Developer Mode on) -> Copy Channel ID.
+# This is where release announcements are posted.
+channel=PUT_THE_CHANNEL_ID_HERE

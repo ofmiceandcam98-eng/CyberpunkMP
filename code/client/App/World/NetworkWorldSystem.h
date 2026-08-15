@@ -57,6 +57,23 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
 
     // Called from redscript when the local player is downed - see Death.reds.
     void RequestRespawn();
+
+    // Stores the player's current appearance as their multiplayer character. A manual
+    // override; PollAppearanceChanges is what saves in normal use.
+    void SaveCharacterAppearance();
+
+    // Watches for the player finishing a mirror or creator session, and saves it for them.
+    void PollAppearanceChanges();
+
+    // Writes every native function on the customization system to the log, once, so the
+    // way to open the creator can be found rather than guessed at.
+    void DumpCustomizationApi() const;
+
+    // What they had while the customization state was still readable. Captured during the
+    // session because once it closes the instance is null and there is nothing to read.
+    Vector<uint8_t> m_pendingAppearance;
+    bool m_pendingIsMale{true};
+    bool m_wasCustomising{false};
     bool IsConnected() const;
 
 protected:
@@ -67,6 +84,10 @@ protected:
     void HandleCharacterLoad(const PacketEvent<server::NotifyCharacterLoad>& aMessage);
     void HandleEntityUnload(const PacketEvent<server::NotifyEntityUnload>& aMessage);
     void HandleSpawnCharacterResponse(const PacketEvent<server::SpawnCharacterResponse>& aMessage);
+
+    // The server asking this client to make a character.
+    void HandleOpenCharacterCreator(const PacketEvent<server::OpenCharacterCreator>& aMessage);
+    void HandleRequestCharacterName(const PacketEvent<server::RequestCharacterName>& aMessage);
     void HandleTeleport(const PacketEvent<server::NotifyTeleport>& aMessage);
 
     void UpdatePlayerLocation() const;
@@ -86,6 +107,7 @@ private:
     uint64_t m_lastTick;
     flecs::system m_updatePlayerLocation;
     flecs::system m_updateSpawningEntities;
+    flecs::system m_updateAppearance;
     Red::Handle<InterpolationSystem> m_interpolationSystem;
     Red::Handle<AppearanceSystem> m_appearanceSystem;
     Red::Handle<ChatSystem> m_chatSystem;
@@ -99,6 +121,7 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(RequestJoin);
     RTTI_METHOD(ConsumeJoinRequest);
     RTTI_METHOD(RequestRespawn);
+    RTTI_METHOD(SaveCharacterAppearance);
     RTTI_METHOD(IsConnected);
     RTTI_METHOD(GetEntityIdByServerId);
     RTTI_METHOD(GetAppearanceSystem);

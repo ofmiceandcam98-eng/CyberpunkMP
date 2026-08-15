@@ -44,9 +44,21 @@ imgui.ini
 
 # Local secrets / runtime state (docker compose)
 .env
-config/
+
+# config/* rather than config/ so the negation below can reach inside it. git cannot
+# re-include a file whose PARENT DIRECTORY is excluded - the directory is never descended
+# into, so the exception is never considered.
+config/*
+!config/server.example.json
+
 logs/
 plugins/
+
+# Each machine's own paths - game install, xmake, publish target. Not a secret, but
+# specific to one PC, which is exactly why it must not be committed: hardcoding these was
+# what made the tools refuse to run anywhere but the machine they were written on.
+# tools/ship.local.example.ps1 documents every value.
+tools/ship.local.ps1
 
 # Discord credentials. The bot token is a password - never commit either of these.
 tools/.discord-webhook

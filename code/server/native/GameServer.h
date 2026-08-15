@@ -155,6 +155,16 @@ public:
     void SetRespawnPoint(const glm::vec3& acPosition, float aYaw);
     bool GetRespawnPoint(glm::vec3& aPosition, float& aYaw) const;
 
+    // Where a brand-new character appears the first time.
+    //
+    // Deliberately separate from the respawn point. They answer different questions -
+    // "where does a new life begin" and "where do you wake up after being downed" - and a
+    // server will often want the first somewhere with a bit of ceremony and the second
+    // beside a ripperdoc. Making one serve both means changing where people respawn every
+    // time you move the arrivals point.
+    void SetStartPoint(const glm::vec3& acPosition, float aYaw);
+    bool GetStartPoint(glm::vec3& aPosition, float& aYaw) const;
+
     BanList& GetBanList() noexcept { return m_bans; }
     PlayerStore& GetPlayerStore() noexcept { return m_players; }
 
@@ -176,6 +186,11 @@ private:
     glm::vec3 m_respawnPosition{};
     float m_respawnYaw{0.f};
     bool m_hasRespawnPoint{false};
+
+    std::filesystem::path m_startPath;
+    glm::vec3 m_startPosition{};
+    float m_startYaw{0.f};
+    bool m_hasStartPoint{false};
     std::filesystem::path m_respawnPath;
     entt::dispatcher m_dispatcher;
 

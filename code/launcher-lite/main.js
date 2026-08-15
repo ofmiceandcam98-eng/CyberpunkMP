@@ -16,6 +16,7 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } fr
 import electronUpdater from 'electron-updater'
 import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
+import fsp from 'node:fs/promises'
 import AdmZip from 'adm-zip'
 import http from 'node:http'
 import crypto from 'node:crypto'
@@ -1384,6 +1385,143 @@ async function hydrateUserFromToken () {
 
 // async because the server address may need fetching. Everything it does was already
 // effectively asynchronous underneath; only the signature changed.
+// ---------------------------------------------------------------------------
+// The world template
+//
+// Nobody should have to own a post-Act-1 save to play, and nobody's own save should be
+// touched. So the mod ships one, and every player loads that.
+//
+// The awkward part: there is NO way to load a save by name. The game exposes exactly one
+// load call to scripts - LoadLastCheckpoint - which was checked against the 2.31 type
+// hierarchy rather than assumed. So the template cannot be requested; it has to BE the
+// last checkpoint.
+//
+// Hence this. The template is installed as an ordinary save folder and its timestamps are
+// stamped to now immediately before the game starts, which makes it the newest save and
+// therefore the one LoadLastCheckpoint picks. The launcher runs before every launch, so it
+// is re-stamped every time and autosaves written during a session cannot displace it.
+//
+// It is a trick, and it is honest about being one. The alternative is finding the native
+// load-by-name function by offset, which is real reverse-engineering for a result this
+// achieves in twenty lines.
+// ---------------------------------------------------------------------------
+
+const TEMPLATE_SAVE_NAME = 'MultiplayerStart'
+
+// Two templates, because body type cannot be changed in game.
+//
+// Ripperdocs change appearance - everything except body gender - and the mirror cannot
+// either. So the body a player has is decided entirely by which save the world was built
+// from, which means it has to be chosen BEFORE the game starts. There is nowhere else to
+// put this: by the time anybody is in the world it is already too late.
+//
+// Named separately rather than one file with a flag inside, so adding a template is
+// dropping a save into publish/ rather than a code change.
+const TEMPLATE_URLS = {
+  female: `https://github.com/${GITHUB_REPO}/releases/latest/download/character-template.zip`,
+  male: `https://github.com/${GITHUB_REPO}/releases/latest/download/character-template-male.zip`
+}
+
+// Which body the player asked for. Female is the default only because it is the template
+// that exists today, not as a statement about anything.
+function chosenBodyType () {
+  return loadSettings().bodyType === 'male' ? 'male' : 'female'
+}
+
+function savesDir () {
+  // Not Documents. Cyberpunk uses the Saved Games known folder, under a CD Projekt Red
+  // subdirectory - which is not where the obvious guess puts it, and getting this wrong
+  // means silently installing the template somewhere the game never looks.
+  return path.join(app.getPath('home'), 'Saved Games', 'CD Projekt Red', 'Cyberpunk 2077')
+}
+
+function templateDir () {
+  return path.join(savesDir(), TEMPLATE_SAVE_NAME)
+}
+
+async function ensureTemplateSave () {
+  const target = templateDir()
+  const wanted = chosenBodyType()
+
+  // Re-installed when the player changes body type, because the installed save IS the
+  // body. Checking only for existence would silently leave somebody who picked male
+  // playing the female template forever, with no way to tell why.
+  const stampPath = path.join(target, '.bodytype')
+  const installed = existsSync(path.join(target, 'sav.dat'))
+  const current = installed && existsSync(stampPath)
+    ? readFileSync(stampPath, 'utf8').trim()
+    : null
+
+  if (installed && current === wanted) return { installed: true, fresh: false, bodyType: wanted }
+
+  const saves = savesDir()
+  if (!existsSync(saves)) {
+    // No saves folder at all means the game has never been run. Creating it ourselves is
+    // fine - the game reads whatever is there.
+    await fsp.mkdir(saves, { recursive: true })
+  }
+
+  const response = await axios.get(TEMPLATE_URLS[wanted], {
+    responseType: 'arraybuffer',
+    timeout: 60000,
+    validateStatus: (status) => status === 200 || status === 404
+  })
+
+  // A body type with no template published yet. Falling back to the one that does exist
+  // beats refusing to launch - they play as the wrong body rather than not at all - but it
+  // is said out loud, because silently ignoring somebody's choice is worse than the wait.
+  if (response.status === 404) {
+    if (installed) {
+      return { installed: true, fresh: false, bodyType: current, requested: wanted, missing: true }
+    }
+    return { installed: false, reason: `no ${wanted} template published yet` }
+  }
+
+  const zipPath = path.join(app.getPath('temp'), `character-template-${wanted}.zip`)
+  await fsp.writeFile(zipPath, Buffer.from(response.data))
+
+  // Cleared first. Extracting over an existing template would leave the previous body's
+  // files behind when the two archives ever differ in contents.
+  if (installed) {
+    await fsp.rm(target, { recursive: true, force: true })
+  }
+
+  const zip = new AdmZip(zipPath)
+  await fsp.mkdir(target, { recursive: true })
+  zip.extractAllTo(target, true)
+
+  // Records WHICH body is installed, so a later change of mind is noticed.
+  await fsp.writeFile(stampPath, wanted)
+
+  return { installed: existsSync(path.join(target, 'sav.dat')), fresh: true, bodyType: wanted }
+}
+
+/**
+ * Makes the template the newest save, so LoadLastCheckpoint chooses it.
+ *
+ * Both the folder and the files inside it - the game sorts on one of them and which is not
+ * documented, so both are set rather than guessing and being subtly wrong.
+ */
+async function stampTemplateNewest () {
+  const target = templateDir()
+  if (!existsSync(target)) return false
+
+  // A minute ahead, not now. Some of these writes take a moment and an autosave landing in
+  // the same second would otherwise be a coin toss.
+  const when = new Date(Date.now() + 60_000)
+
+  try {
+    for (const entry of await fsp.readdir(target)) {
+      await fsp.utimes(path.join(target, entry), when, when)
+    }
+    await fsp.utimes(target, when, when)
+    return true
+  } catch (err) {
+    console.warn('[template] could not stamp:', err.message)
+    return false
+  }
+}
+
 async function launchGame () {
   if (!currentUser) {
     // Belt and braces. The button is disabled in the UI, but the UI is not a
@@ -1416,6 +1554,29 @@ async function launchGame () {
   // who should be allowed to launch into nothing.
   if (!lastServerStatus?.online && !isAdmin()) {
     throw new Error('The server is offline right now. Check the Discord for when it is back up.')
+  }
+
+  // The world template, installed and made the newest save, immediately before launch.
+  //
+  // This is what stops multiplayer touching anybody's own saves: MULTIPLAYER loads the
+  // last checkpoint, so making the template the last checkpoint means it loads that and
+  // leaves every save the player actually cares about alone.
+  //
+  // Deliberately not fatal. A player who cannot get the template still gets into the game
+  // on their own save - which is exactly how it worked before this existed - and the
+  // server still owns their character either way. Refusing to launch over it would trade a
+  // cosmetic problem for a total one.
+  try {
+    const template = await ensureTemplateSave()
+
+    if (template.installed) {
+      await stampTemplateNewest()
+      console.log('[template] ready - multiplayer will load it rather than a personal save')
+    } else {
+      console.warn('[template] not available:', template.reason || 'unknown')
+    }
+  } catch (err) {
+    console.warn('[template] could not be prepared:', err.message)
   }
 
   // Pass the TOKEN, not the id.
@@ -1697,6 +1858,130 @@ function stopServer () {
  * bind port 11778 while the old one still holds it, and you get a confusing bind error
  * that looks like a config problem.
  */
+// ---------------------------------------------------------------------------
+// The coordination API
+//
+// The assistants working on the mod talk to each other through a small service on this
+// machine (code/coord-api). It was started by hand, which meant it quietly died on every
+// reboot - and when it is down, the far end gets a bare connection-refused with no way to
+// tell whether the service is off, the machine is off, or their key is wrong.
+//
+// Started alongside the game server, because the two are up and down together in practice:
+// both live on this machine and both only matter while it is on.
+//
+// Only ever visible to an admin, and only when the source is actually present - a player
+// running the launcher on their own PC has no repo and no business starting this.
+// ---------------------------------------------------------------------------
+
+const COORD_PORT = 11780
+
+function coordApiPath () {
+  if (process.env.NCO_COORD_API) return process.env.NCO_COORD_API
+
+  // The server lives at <repo>/build/windows/x64/release, so the repo root is four
+  // levels up. Derived rather than configured: one path to be wrong instead of two.
+  const candidates = [
+    path.resolve(getServerDir(), '..', '..', '..', '..', 'code', 'coord-api', 'server.js'),
+    path.resolve(__dirname, '..', 'coord-api', 'server.js')
+  ]
+
+  return candidates.find((candidate) => existsSync(candidate)) || null
+}
+
+/**
+ * Is the service actually answering?
+ *
+ * Asks it, rather than looking for a node process. Node runs on this machine for half a
+ * dozen reasons and finding one proves nothing about whether THIS service is up - which is
+ * exactly the confusion this panel exists to remove.
+ */
+async function getCoordStatus () {
+  const script = coordApiPath()
+
+  try {
+    const response = await axios.get(`http://127.0.0.1:${COORD_PORT}/health`, { timeout: 2000 })
+    return {
+      available: Boolean(script),
+      running: true,
+      participants: response.data?.participants ?? null,
+      max: response.data?.max ?? null,
+      baseUrl: response.data?.baseUrl ?? null
+    }
+  } catch {
+    return { available: Boolean(script), running: false }
+  }
+}
+
+function startCoordApi () {
+  const script = coordApiPath()
+  if (!script) throw new Error('The coordination API source is not on this machine.')
+
+  // A real window, titled, for the same reason the game server gets one: when it exits
+  // immediately there has to be somewhere the reason is written down.
+  const child = spawn(`start "Coordination API" node "${script}"`, {
+    cwd: path.dirname(script),
+    detached: true,
+    stdio: 'ignore',
+    shell: true,
+    windowsHide: false
+  })
+
+  child.unref()
+
+  return { started: true, script }
+}
+
+async function stopCoordApi () {
+  // Found by port rather than by name. Killing every node process on the machine to stop
+  // one service would take out whatever else the user happens to be running.
+  return new Promise((resolve) => {
+    const check = spawn('netstat', ['-ano', '-p', 'TCP'], { windowsHide: true })
+
+    let output = ''
+    check.stdout.on('data', (chunk) => { output += chunk.toString() })
+
+    check.on('close', () => {
+      const pids = new Set()
+
+      for (const line of output.split('\n')) {
+        if (!line.includes(`:${COORD_PORT}`) || !line.includes('LISTENING')) continue
+        const pid = line.trim().split(/\s+/).pop()
+        if (pid && pid !== '0') pids.add(pid)
+      }
+
+      if (!pids.size) return resolve({ stopped: false, reason: 'not running' })
+
+      for (const pid of pids) {
+        spawn('taskkill', ['/PID', pid, '/T', '/F'], { windowsHide: true })
+      }
+
+      resolve({ stopped: true, pids: [...pids] })
+    })
+
+    check.on('error', () => resolve({ stopped: false, reason: 'could not look up the port' }))
+  })
+}
+
+/**
+ * Best effort, and deliberately never fatal.
+ *
+ * Whether the assistants can talk to each other has nothing to do with whether players can
+ * join, so a failure here must not turn into a failure to start the game server.
+ */
+async function startCoordApiQuietly () {
+  try {
+    if (!coordApiPath()) return
+
+    const status = await getCoordStatus()
+    if (status.running) return
+
+    startCoordApi()
+    console.log('[coord] started alongside the game server')
+  } catch (err) {
+    console.warn('[coord] could not start:', err.message)
+  }
+}
+
 async function restartServer () {
   await stopServer()
 
@@ -1728,7 +2013,35 @@ ipcMain.handle('server:status', async () => {
 ipcMain.handle('server:start', async () => {
   if (!isAdmin()) return { ok: false, error: 'Not permitted' }
   try {
-    return { ok: true, ...startServer() }
+    const result = startServer()
+
+    // Alongside, not before: the game server is what people are waiting on.
+    startCoordApiQuietly()
+
+    return { ok: true, ...result }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
+ipcMain.handle('coord:status', async () => {
+  if (!isAdmin()) return { ok: false, error: 'Not permitted' }
+  return { ok: true, ...(await getCoordStatus()) }
+})
+
+ipcMain.handle('coord:start', async () => {
+  if (!isAdmin()) return { ok: false, error: 'Not permitted' }
+  try {
+    return { ok: true, ...startCoordApi() }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
+ipcMain.handle('coord:stop', async () => {
+  if (!isAdmin()) return { ok: false, error: 'Not permitted' }
+  try {
+    return { ok: true, ...(await stopCoordApi()) }
   } catch (err) {
     return { ok: false, error: err.message }
   }
@@ -1746,7 +2059,14 @@ ipcMain.handle('server:stop', async () => {
 ipcMain.handle('server:restart', async () => {
   if (!isAdmin()) return { ok: false, error: 'Not permitted' }
   try {
-    return { ok: true, ...(await restartServer()) }
+    const result = await restartServer()
+
+    // Deliberately not stopped by server:stop. Rebuilding the game server should not
+    // silence the channel the assistants are talking on - but a restart is a good moment
+    // to bring it back if it had died.
+    startCoordApiQuietly()
+
+    return { ok: true, ...result }
   } catch (err) {
     return { ok: false, error: err.message }
   }
@@ -2644,6 +2964,38 @@ ipcMain.handle('tailscale:invite', async () => {
 // never leaves the main process except to Discord itself and to Cam's own coordination
 // service.
 // ---------------------------------------------------------------------------
+
+// The body type a new character starts from.
+//
+// In the launcher rather than in game because it is decided by which save the world is
+// built from, and that is chosen before the game starts. Ripperdocs change everything
+// about how you look EXCEPT this.
+ipcMain.handle('bodyType:get', async () => {
+  const chosen = chosenBodyType()
+
+  // Whether the other option can actually be honoured yet. Offering a choice that
+  // silently does nothing is worse than showing it as unavailable.
+  let maleAvailable = false
+  try {
+    const head = await axios.head(TEMPLATE_URLS.male, {
+      timeout: 8000,
+      validateStatus: () => true
+    })
+    maleAvailable = head.status === 200
+  } catch { /* offline - assume not, and say so rather than guessing */ }
+
+  return { ok: true, bodyType: chosen, maleAvailable }
+})
+
+ipcMain.handle('bodyType:set', async (_event, value) => {
+  const wanted = value === 'male' ? 'male' : 'female'
+  saveSettings({ bodyType: wanted })
+
+  // Not installed here. It happens on the next launch, through the same path as a first
+  // install, so there is one place where the template is put in place rather than two
+  // that can disagree.
+  return { ok: true, bodyType: wanted }
+})
 
 ipcMain.handle('devKey:fetch', async () => {
   if (!isAdmin()) return { ok: false, error: 'The dev key is for people with the dev role.' }

@@ -302,7 +302,20 @@ void Server::HandleHandshake(const uint8_t* apData, uint32_t aSize, ConnectionId
 
     if (aClientIdentifier != m_clientIdentifier)
     {
-        spdlog::warn("{} attempted to connect with wrong client protocol identifier {:x}, expected {:x}", aConnectionId, aClientIdentifier, m_clientIdentifier);
+        // Says what it MEANS, not just what it measured.
+        //
+        // The identifier is a hash of the protocol definition, so it changes whenever a
+        // message is added to the .proto - which means this fires for every player the
+        // moment the server is rebuilt and the client is not. That is not an attack or a
+        // corrupt packet, it is an out-of-date mod, and the raw hashes give no hint of it.
+        //
+        // It cost an evening once: the server had the character-system messages and no
+        // client had been deployed, so every connection was refused and the symptom read
+        // as "the mod loads but does not connect".
+        spdlog::warn("{} was refused: their mod is built against a different protocol "
+                     "(theirs {:x}, ours {:x}). They need to update - or the server was "
+                     "rebuilt without shipping a matching client.",
+                     aConnectionId, aClientIdentifier, m_clientIdentifier);
         Kick(aConnectionId);
         return;
     }

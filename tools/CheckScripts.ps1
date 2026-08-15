@@ -14,12 +14,19 @@
 #
 [CmdletBinding()]
 param(
-    [string]$GameDir = "C:\Program Files (x86)\Steam\steamapps\common\Cyberpunk 2077",
+    # Defaults to whatever tools\Environment.ps1 resolves. Pass it to override for one run.
+    [string]$GameDir,
     [switch]$Full   # print the whole scc output, not just the errors
 )
 
 $ErrorActionPreference = 'Stop'
-$Repo = Split-Path -Parent $PSScriptRoot
+
+. (Join-Path $PSScriptRoot "Environment.ps1")
+
+# A parameter beats the machine's own configuration; without one, Environment.ps1 decides.
+if ($GameDir) { $script:GameDir = $GameDir }
+Assert-GameDir
+$GameDir = $script:GameDir
 
 $scc = Join-Path $GameDir "engine\tools\scc.exe"
 if (-not (Test-Path $scc)) { Write-Host "no scc.exe at $scc" -ForegroundColor Red; exit 2 }

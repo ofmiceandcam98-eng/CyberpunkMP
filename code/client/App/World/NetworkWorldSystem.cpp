@@ -221,6 +221,14 @@ void NetworkWorldSystem::OnWorldAttached(RED4ext::world::RuntimeScene* aScene)
     spdlog::info("[NetworkWorldSystem] OnWorldAttached");
     IGameSystem::OnWorldAttached(aScene);
 
+    // Deliberately here rather than on connect.
+    //
+    // RTTI is loaded with the game and has nothing to do with the server, so requiring a
+    // successful connection to read it made the diagnostic depend on the very thing that
+    // might be failing. A launch that only reaches the main menu now still answers the
+    // question.
+    DumpCustomizationApi();
+
     m_chatSystem->OnWorldAttached(aScene);
     m_appearanceSystem->OnWorldAttached(aScene);
     m_interpolationSystem->OnWorldAttached(aScene);
@@ -271,6 +279,201 @@ void NetworkWorldSystem::RequestRespawn()
 
     client::RespawnRequest request;
     service->Send(request);
+}
+
+/**
+ * Asks the game what the character customization system can actually do.
+ *
+ * Every other way of finding this out has been exhausted. redscript sees two methods on
+ * the interface; the type dump has no open event, no mirror class and no creator
+ * controller; the SDK's generated class is an opaque blob. All of which establish only
+ * that the answer is not written down anywhere WE can read.
+ *
+ * The game itself knows. RTTI carries every native function on every class, including the
+ * ones never exposed to scripts - that is how the engine dispatches them. So rather than
+ * guessing at names, this walks the class and its parents and writes down what is really
+ * there.
+ *
+ * Once per session, on connect. It is a few dozen log lines and it is the difference
+ * between "the creator cannot be opened" and knowing the name of the function that opens
+ * it.
+ */
+void NetworkWorldSystem::DumpCustomizationApi() const
+{
+    static bool s_dumped = false;
+    if (s_dumped)
+        return;
+
+    s_dumped = true;
+
+    auto* pRtti = Red::CRTTISystem::Get();
+    if (!pRtti)
+        return;
+
+    // Both the concrete class and the interface it inherits - the interesting methods
+    // could be on either, and checking one and concluding "not there" is how this took
+    // three attempts already.
+    for (const char* name : {"gameuiCharacterCustomizationSystem", "gameuiICharacterCustomizationSystem"})
+    {
+        auto* pClass = pRtti->GetClass(name);
+
+        if (!pClass)
+        {
+            spdlog::warn("[CCApi] no RTTI class named {}", name);
+            continue;
+        }
+
+        spdlog::info("[CCApi] === {} : {} function(s) ===", name, pClass->funcs.size);
+
+        for (auto* pFunc : pClass->funcs)
+        {
+            if (!pFunc)
+                continue;
+
+            std::string params;
+
+            for (auto* pParam : pFunc->params)
+            {
+                if (!pParam || !pParam->type)
+                    continue;
+
+                Red::CName typeName;
+                pParam->type->GetName(typeName);
+
+                if (!params.empty())
+                    params += ", ";
+
+                params += typeName.ToString();
+            }
+
+            spdlog::info("[CCApi]   {}({})", pFunc->shortName.ToString(), params);
+        }
+    }
+}
+
+/**
+ * Notices when the player has finished changing how they look, and saves it.
+ *
+ * Nobody should have to type a command to keep their own face. An earlier version made
+ * saving explicit because the creator gives no callback when it closes and the
+ * customization system has no IsActive to poll - both true, and both the wrong thing to
+ * look at.
+ *
+ * The signal was already written down a few lines up in NetworkService: the customization
+ * STATE INSTANCE is null during normal gameplay and non-null only while somebody is
+ * editing. So the transition from non-null back to null is exactly "they closed the
+ * mirror", which is the event that seemed unavailable.
+ *
+ * Polled rather than hooked because there is nothing to hook - but it is a null check
+ * once a second, not a serialisation, so the cost is nothing until someone is actually
+ * standing at a mirror.
+ */
+void NetworkWorldSystem::PollAppearanceChanges()
+{
+    const auto& service = Core::Container::Get<NetworkService>();
+    if (!service || !service->IsConnected())
+        return;
+
+    auto ccSystem = Red::GetGameSystem<Red::game::ui::CharacterCustomizationSystem>();
+    auto stateHandle = GetCustomizationState(ccSystem);
+
+    const bool customising = stateHandle && stateHandle->instance;
+
+    if (customising)
+    {
+        // Kept up to date while they edit, so whatever they had at the moment it closed is
+        // what gets saved. Serialising here rather than on close matters: by the time the
+        // instance is null there is nothing left to read.
+        auto writer = CMPWriter();
+        CharacterCustomizationState_Serialize(stateHandle->instance, &writer);
+
+        // Implausibly small means half-built, not "a simple face".
+        //
+        // A real appearance is 7-9KB. A 23-byte one was captured and saved during testing,
+        // and then used to spawn that player - the customization state exists for a moment
+        // before it is populated, and polling caught it in that window. Rejecting only
+        // EMPTY blobs was not enough, because the degenerate case is not empty.
+        //
+        // Held rather than replaced: if this poll caught a bad moment, the good bytes from
+        // the previous one are still what gets saved.
+        constexpr size_t kMinPlausibleAppearance = 1024;
+
+        if (writer.bytes.size() >= kMinPlausibleAppearance)
+        {
+            m_pendingAppearance = writer.bytes;
+            m_pendingIsMale = stateHandle->instance->isBodyGenderMale;
+        }
+
+        m_wasCustomising = true;
+        return;
+    }
+
+    if (!m_wasCustomising)
+        return;
+
+    // Closed. Send what they finished with.
+    m_wasCustomising = false;
+
+    if (m_pendingAppearance.empty())
+        return;
+
+    client::SaveCharacterRequest request;
+    request.set_ccstate(m_pendingAppearance);
+    request.set_is_male(m_pendingIsMale);
+    request.set_name(Settings::Get().discordName.c_str());
+
+    service->Send(request);
+
+    spdlog::info("[Character] appearance changed - saved {} bytes to the server",
+                 m_pendingAppearance.size());
+
+    m_pendingAppearance.clear();
+}
+
+/**
+ * Sends the player's current appearance to the server as their character.
+ *
+ * Kept as a manual override - PollAppearanceChanges is what actually saves in normal use.
+ * Useful when something has gone wrong and somebody needs to force it.
+ */
+void NetworkWorldSystem::SaveCharacterAppearance()
+{
+    const auto& service = Core::Container::Get<NetworkService>();
+    if (!service || !service->IsConnected())
+    {
+        spdlog::warn("[Character] not connected - cannot save the character");
+        return;
+    }
+
+    auto ccSystem = Red::GetGameSystem<Red::game::ui::CharacterCustomizationSystem>();
+    auto stateHandle = GetCustomizationState(ccSystem);
+
+    // GetCustomizationState() returns a pointer that can never be null; the instance
+    // behind it can be, and is during ordinary gameplay. Serialising a null instance
+    // crashes the game, so the instance is what gets checked.
+    if (!stateHandle || !stateHandle->instance)
+    {
+        spdlog::error("[Character] no customization state to save");
+        return;
+    }
+
+    auto writer = CMPWriter();
+    CharacterCustomizationState_Serialize(stateHandle->instance, &writer);
+
+    if (writer.bytes.empty())
+    {
+        spdlog::error("[Character] the customization state serialised to nothing - not saving");
+        return;
+    }
+
+    client::SaveCharacterRequest request;
+    request.set_ccstate(writer.bytes);
+    request.set_is_male(stateHandle->instance->isBodyGenderMale);
+    request.set_name(Settings::Get().discordName.c_str());
+
+    service->Send(request);
+
+    spdlog::info("[Character] sent {} bytes of appearance to the server", writer.bytes.size());
 }
 
 bool NetworkWorldSystem::IsConnected() const
@@ -351,6 +554,40 @@ void NetworkWorldSystem::HandleCharacterLoad(const PacketEvent<server::NotifyCha
 void NetworkWorldSystem::HandleEntityUnload(const PacketEvent<server::NotifyEntityUnload>& aMessage)
 {
     DeSpawn(aMessage.get_id());
+}
+
+/**
+ * The server has asked this client to make a character.
+ *
+ * Handed straight to redscript - the creator is script-side machinery, and driving the
+ * game's own UI from native would mean reimplementing what redscript can already call.
+ */
+void NetworkWorldSystem::HandleOpenCharacterCreator(const PacketEvent<server::OpenCharacterCreator>& aMessage)
+{
+    if (aMessage.get_capture_only())
+    {
+        spdlog::info("[Character] the server asked for our current appearance");
+        SaveCharacterAppearance();
+        return;
+    }
+
+    spdlog::info("[Character] the server asked us to open the character creator");
+
+    Red::CallVirtual(this, "OpenCharacterCreator");
+}
+
+/**
+ * The server wants to know what this character is called.
+ *
+ * Handed to redscript for the same reason as the creator above: the prompt is a UI widget,
+ * and the answer travels back out as an ordinary chat command, both of which are script
+ * side already.
+ */
+void NetworkWorldSystem::HandleRequestCharacterName(const PacketEvent<server::RequestCharacterName>& aMessage)
+{
+    spdlog::info("[Character] the server asked what our character is called");
+
+    Red::CallVirtual(this, "RequestCharacterName", Red::CString(aMessage.get_current().c_str()));
 }
 
 void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::SpawnCharacterResponse>& aMessage)
@@ -560,6 +797,8 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleEntityUnload>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleTeleport>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleSpawnCharacterResponse>(this);
+    pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleOpenCharacterCreator>(this);
+    pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleRequestCharacterName>(this);
 
     m_remotePlayerId = std::nullopt;
 
@@ -611,6 +850,15 @@ void NetworkWorldSystem::OnConnected()
             UpdatePlayerLocation();
         });
 
+    // Once a second is plenty - somebody adjusting their face is not in a hurry, and this
+    // is a null check until they actually are at a mirror.
+    m_updateAppearance = system("Appearance watch")
+        .interval(1.f)
+        .run([this](flecs::iter& it)
+        {
+            PollAppearanceChanges();
+        });
+
     m_updateSpawningEntities = system<SpawningComponent>("Spawning entity process")
         .interval(0.2f)
         .write<EntityComponent>()
@@ -658,6 +906,9 @@ void NetworkWorldSystem::OnDisconnected(Client::EDisconnectReason aReason)
 
     if (m_updateSpawningEntities)
         m_updateSpawningEntities.destruct();
+
+    if (m_updateAppearance)
+        m_updateAppearance.destruct();
 
     m_interpolationSystem->OnDisconnected();
     m_vehicleSystem->OnDisconnected();

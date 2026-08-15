@@ -4,6 +4,7 @@
 #include "Components/PlayerComponent.h"
 #include "Components/MovementComponent.h"
 #include "Components/AppearanceComponent.h"
+#include "CharacterRecord.h"
 #include "Components/CharacterComponent.h"
 #include "Game/Level.h"
 
@@ -14,6 +15,138 @@ ChatSystem::ChatSystem(gsl::not_null<World*> apWorld)
 {
     GServer->RegisterHandler<&ChatSystem::HandleChatMessageRequest>(this);
     GServer->RegisterHandler<&ChatSystem::HandleRespawnRequest>(this);
+    GServer->RegisterHandler<&ChatSystem::HandleSaveCharacterRequest>(this);
+}
+
+void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharacterRequest>& aMessage)
+{
+    auto* pPlayerManager = m_pWorld->get<PlayerManager>();
+
+    const auto entity = pPlayerManager->GetByConnectionId(aMessage.ConnectionId);
+    if (!entity || !entity.has<PlayerComponent>())
+        return;
+
+    auto* pPlayer = entity.get_mut<PlayerComponent>();
+
+    // Identity comes from Discord, never from the client. Without a verified account there
+    // is nothing durable to key a character on, and storing one against a connection id
+    // would lose it the moment they reconnect.
+    if (pPlayer->DiscordId.empty())
+    {
+        Tell(*pPlayer, "Your Discord sign-in could not be verified, so a character cannot be saved.");
+        return;
+    }
+
+    const auto& blob = aMessage.get_ccstate();
+
+    // Same bound as the spawn path. This is stored and then relayed to every other client,
+    // so an unbounded blob is a way to make one save allocate arbitrary memory everywhere.
+    constexpr size_t kMaxCcstate = 256 * 1024;
+
+    // Too SMALL is the case that actually happened. A real appearance is 7-9KB; a 23-byte
+    // one was saved during testing and then used to spawn that player, because the
+    // customization state exists briefly before it is populated. Rejecting only empty
+    // blobs let the degenerate case straight through, and the server is the last place to
+    // catch it before it becomes somebody's stored character.
+    constexpr size_t kMinCcstate = 1024;
+
+    if (blob.size() < kMinCcstate || blob.size() > kMaxCcstate)
+    {
+        spdlog::warn("Refused a character save from {} - {} bytes of appearance is not plausible",
+                     pPlayer->Username, blob.size());
+        Tell(*pPlayer, "That character could not be saved - the appearance data was not usable.");
+        return;
+    }
+
+    auto& store = GServer->GetPlayerStore();
+
+    CharacterRecord character;
+    character.Slot = 0;
+    character.IsMale = aMessage.get_is_male();
+    character.Appearance = Base64::Encode(std::vector<uint8_t>(blob.begin(), blob.end()));
+
+    // What they typed with /character save wins over the name the client offered, which is
+    // only their launcher display name. Falls back through the client's name to their
+    // Discord name, so a character always has something to be called.
+    std::string name = pPlayer->PendingCharacterName;
+    if (name.empty())
+        name = aMessage.get_name().c_str();
+    if (name.size() > 32)
+        name.resize(32);
+
+    // Consumed, so a later save without a name does not silently re-apply an old one.
+    pPlayer->PendingCharacterName.clear();
+
+    // An existing character keeps its name when the player is only editing their face.
+    if (name.empty())
+    {
+        if (const auto* pExisting = store.FindCharacter(pPlayer->DiscordId))
+            name = pExisting->Name;
+    }
+
+    // Carried over, so editing your face at a ripperdoc does not make the server think
+    // you never picked a name and ask again every visit.
+    if (const auto* pExisting = store.FindCharacter(pPlayer->DiscordId))
+        character.NameChosen = pExisting->NameChosen;
+
+    // Typing a name into /character save IS choosing one.
+    if (!pPlayer->PendingCharacterName.empty() || !aMessage.get_name().empty())
+        character.NameChosen = character.NameChosen || !name.empty();
+
+    character.Name = name.empty() ? pPlayer->Username : name;
+
+    // Progression carried forward, so editing your face does not reset your character and
+    // re-grant the starting loadout.
+    if (const auto* pExisting = store.FindCharacter(pPlayer->DiscordId))
+    {
+        character.Level = pExisting->Level;
+        character.AttributePoints = pExisting->AttributePoints;
+        character.PerkPoints = pExisting->PerkPoints;
+        character.Initialised = pExisting->Initialised;
+    }
+
+    store.SaveCharacter(pPlayer->DiscordId, pPlayer->Username, character);
+
+    spdlog::info("{} saved character '{}' from the creator ({} bytes)", pPlayer->Username,
+                 character.Name, blob.size());
+
+    Tell(*pPlayer, fmt::format("Character saved as '{}'. You will look like this every time you join.",
+                               character.Name));
+
+    // Nobody should have to know a command exists to be called something.
+    //
+    // The creator has no name field, so a character arrives with the account name on it -
+    // which is the one thing roleplay cannot have, and it is now on the nameplate, in the
+    // scanner and in front of every line they type. Asking here means the box appears the
+    // moment they finish creating, which is exactly when they are thinking about who this
+    // person is.
+    //
+    // Only when they have not chosen one. Somebody editing their face at a ripperdoc has
+    // already answered this and being asked again every visit would be its own kind of
+    // broken.
+    if (!character.NameChosen)
+        AskForCharacterName(*pPlayer, character);
+}
+
+/**
+ * Opens the name box on a player's client.
+ *
+ * Split out because there are two moments worth asking: straight after the creator, and
+ * on spawn for anybody whose character predates the prompt existing. Both want identical
+ * behaviour, and the second one is the only route that ever reaches an existing player.
+ */
+void ChatSystem::AskForCharacterName(const PlayerComponent& acPlayer, const CharacterRecord& acCharacter)
+{
+    server::RequestCharacterName ask;
+
+    // Their account name is NOT offered as a starting value. It is what we are trying to
+    // get away from, and pre-filling it makes pressing Enter - the path of least
+    // resistance - reproduce exactly the problem the prompt exists to solve.
+    ask.set_current("");
+
+    GServer->Send(acPlayer.Connection, ask);
+
+    spdlog::info("Asked {} to name their character", acPlayer.Username);
 }
 
 void ChatSystem::HandleRespawnRequest(const PacketEvent<client::RespawnRequest>& aMessage)
@@ -615,6 +748,82 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         return true;
     }
 
+    // ------------------------------------------------------------- /name ----
+    //
+    // What your character is called, which is not your Discord name. Somebody being
+    // "noremacxxi" and their character being someone else is the point of roleplay.
+    //
+    // Separate from appearance because the two are chosen at different moments: a face is
+    // fiddled with at a mirror and saves itself, a name is a decision typed once.
+    if (command == "/name")
+    {
+        const auto nameStart = acLine.find(' ');
+        std::string wanted = (nameStart == std::string::npos) ? std::string{} : acLine.substr(nameStart + 1);
+
+        while (!wanted.empty() && wanted.front() == ' ')
+            wanted.erase(wanted.begin());
+
+        if (wanted.empty())
+        {
+            const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(acSender.DiscordId);
+            Tell(acSender, fmt::format("You are called '{}'. Change it with /name <name>.",
+                                       (pCharacter && !pCharacter->Name.empty()) ? pCharacter->Name
+                                                                                 : acSender.Username));
+            return true;
+        }
+
+        if (wanted.size() > 32)
+            wanted.resize(32);
+
+        auto& store = GServer->GetPlayerStore();
+        const auto* pCharacter = store.FindCharacter(acSender.DiscordId);
+
+        if (!pCharacter)
+        {
+            Tell(acSender, "You have no character yet - look in a mirror first, then set a name.");
+            return true;
+        }
+
+        auto updated = *pCharacter;
+        updated.Name = wanted;
+
+        // Typing /name is the definition of choosing one, so the prompt stops asking.
+        updated.NameChosen = true;
+
+        store.SaveCharacter(acSender.DiscordId, acSender.Username, updated);
+
+        spdlog::info("{} named their character '{}'", acSender.Username, wanted);
+
+        Tell(acSender, fmt::format("You are now known as '{}'.", wanted));
+        return true;
+    }
+
+    // ---------------------------------------------------------- /setstart ----
+    //
+    // Where a brand-new character arrives. Separate from /setspawn on purpose - see
+    // GameServer::SetStartPoint.
+    if (command == "/setstart")
+    {
+        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
+            return deny(EPermissionLevel::kAdmin);
+
+        const auto* pMovement = acSender.Puppet ? acSender.Puppet.get<MovementComponent>() : nullptr;
+        if (!pMovement)
+        {
+            Tell(acSender, "Spawn into the world first, then stand where new players should arrive.");
+            return true;
+        }
+
+        GServer->SetStartPoint(pMovement->Position, pMovement->Rotation.z);
+
+        spdlog::info("{} set the start point to ({:.1f}, {:.1f}, {:.1f})", acSender.Username,
+                     pMovement->Position.x, pMovement->Position.y, pMovement->Position.z);
+
+        Tell(acSender, fmt::format("Start point set here ({:.0f}, {:.0f}, {:.0f}). New characters will arrive here.",
+                                   pMovement->Position.x, pMovement->Position.y, pMovement->Position.z));
+        return true;
+    }
+
     // --------------------------------------------------------------- /jail ----
     //
     // The cell is wherever the staff member is standing. No configuration, no coordinates
@@ -842,6 +1051,92 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         return true;
     }
 
+    // ---------------------------------------------------------- /character ----
+    //
+    // The multiplayer character system, before it has a UI.
+    //
+    // Everything here is deliberately usable by one person with no second player and no
+    // launcher work: the point is to find out whether the storage half is right before
+    // building a creator on top of it. The creator replaces /character save, not the rest.
+    if (command == "/character" || command == "/char")
+    {
+        auto& store = GServer->GetPlayerStore();
+
+        if (target.empty() || target == "show")
+        {
+            const auto* pCharacter = store.FindCharacter(acSender.DiscordId);
+
+            if (!pCharacter)
+            {
+                Tell(acSender, "You have no multiplayer character yet.");
+                Tell(acSender, "  /character save <name>  - save how you look now as your character");
+                return true;
+            }
+
+            Tell(acSender, fmt::format("Character: {}", pCharacter->Name.empty() ? "unnamed" : pCharacter->Name));
+            Tell(acSender, fmt::format("  appearance {} bytes stored, {}",
+                                       Base64::Decode(pCharacter->Appearance).size(),
+                                       pCharacter->Initialised ? "initialised" : "not initialised yet"));
+            Tell(acSender, "  /character new <name>  - retire this one and start again");
+            return true;
+        }
+
+        // Asks the client for the appearance it has RIGHT NOW.
+        //
+        // Deliberately not read from the puppet's AppearanceComponent: that was captured
+        // at spawn, so it would save whatever they looked like when they joined and
+        // silently discard everything they just did in the creator. The client is the only
+        // side that knows the current state, so the client is asked.
+        //
+        // The name is remembered here and applied when the appearance comes back, because
+        // the reply carries no idea of what the player typed.
+        if (target == "save")
+        {
+            if (!rest.empty())
+            {
+                auto* pMutable = aSender.get_mut<PlayerComponent>();
+                pMutable->PendingCharacterName = rest.substr(0, 32);
+            }
+
+            server::OpenCharacterCreator capture;
+            capture.set_capture_only(true);
+            GServer->Send(acSender.Connection, capture);
+
+            return true;
+        }
+
+        // How to change your appearance.
+        //
+        // Driving the game's creator directly is not possible from scripts - its system is
+        // native-only, checked against the 2.31 type hierarchy rather than assumed. The
+        // mirror is the game's own answer to the same problem and already works in a live
+        // world, so it is what players are pointed at.
+        //
+        // Nothing to run afterwards: the client notices when the mirror closes and saves
+        // it. Making players type a command to keep their own face was an implementation
+        // limitation showing through the design.
+        if (target == "create" || target == "edit")
+        {
+            Tell(acSender, "Visit any ripperdoc and change how you look - they do appearance, not just cyberware.");
+            Tell(acSender, "It saves by itself when you close it. Use /name to choose what you are called.");
+            return true;
+        }
+
+        if (target == "new")
+        {
+            if (store.RetireCharacter(acSender.DiscordId))
+                Tell(acSender, "Your old character has been retired - it is kept, not deleted.");
+            else
+                Tell(acSender, "You had no character yet, so there was nothing to retire.");
+
+            Tell(acSender, "Change how you look at any ripperdoc - it saves by itself.");
+            return true;
+        }
+
+        Tell(acSender, "Usage: /character [show | create | new | save <name>]");
+        return true;
+    }
+
     // --------------------------------------------------------------- /help ----
     //
     // Nobody discovers a chat channel by accident, and an unlisted feature may as well
@@ -872,7 +1167,9 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             Tell(acSender, "Admin: /ban <player> [reason], /unban <discord id>");
             Tell(acSender, "       /tp <player>    - brings them to you");
             Tell(acSender, "       /tp to <player> - sends you to them");
-            Tell(acSender, "       /return <player>, /setspawn");
+            Tell(acSender, "       /return <player>");
+            Tell(acSender, "       /setspawn - where players wake up after being downed");
+            Tell(acSender, "       /setstart - where brand-new characters arrive");
         }
 
         return true;
@@ -906,11 +1203,40 @@ void ChatSystem::HandleChatMessageRequest(const PacketEvent<client::ChatMessageR
     }
     auto* pPlayer = entity.get<PlayerComponent>();
 
-    spdlog::info("[chat] [{}]: {}", pPlayer->Username, aMessage.get_message());
+    // Length is checked before the message is logged, let alone broadcast.
+    //
+    // Chat is relayed verbatim to everyone in range and written to the log. With no cap, a
+    // single client could send a megabyte and have the server copy it to every player and
+    // to disk - a denial of service that costs the sender one packet, and needs no exploit
+    // beyond a text field with no maximum.
+    //
+    // 512 is far more than anyone types. Truncating rather than dropping keeps an
+    // over-long message readable instead of making it vanish with no explanation.
+    constexpr size_t kMaxChatLength = 512;
+
+    std::string line = aMessage.get_message().c_str();
+
+    if (line.size() > kMaxChatLength)
+    {
+        spdlog::warn("Truncated a {}-byte chat message from {}", line.size(), pPlayer->Username);
+        line.resize(kMaxChatLength);
+    }
+
+    // Control characters are stripped. They do nothing useful in a chat box and newlines
+    // in particular let one message forge several lines in the log, which is how a chat
+    // message starts pretending to be a server notice.
+    line.erase(std::remove_if(line.begin(), line.end(),
+                              [](unsigned char c) { return c < 0x20 && c != '\t'; }),
+               line.end());
+
+    if (line.empty())
+        return;
+
+    spdlog::info("[chat] [{}]: {}", pPlayer->Username, line);
 
     // Moderation commands. Every one of these checks the permission level the SERVER
     // derived from Discord at connect time - never anything the client said about itself.
-    if (HandleModerationCommand(entity, *pPlayer, aMessage.get_message().c_str()))
+    if (HandleModerationCommand(entity, *pPlayer, line))
         return;
 
     // Debug command: spawn a fake remote player next to the sender.
@@ -920,7 +1246,7 @@ void ChatSystem::HandleChatMessageRequest(const PacketEvent<client::ChatMessageR
     // NotifyCharacterLoad for any entity with a MovementComponent, so a fabricated
     // one drives exactly the same client path - letting a single player reproduce
     // the crash on demand with a debugger attached.
-    if (aMessage.get_message() == "/dummy")
+    if (line == "/dummy")
     {
         auto* pOwnPuppet = pPlayer->Puppet ? pPlayer->Puppet.get<MovementComponent>() : nullptr;
         if (!pOwnPuppet)
@@ -979,12 +1305,28 @@ void ChatSystem::HandleChatMessageRequest(const PacketEvent<client::ChatMessageR
     bool everyone = false;
     uint32_t channel = ChatChannel::kLocal;
 
-    if (!ResolveChannel(*pPlayer, aMessage.get_message().c_str(), text, range, everyone, channel))
+    if (!ResolveChannel(*pPlayer, line, text, range, everyone, channel))
         return; // Refused or misused - ResolveChannel already said why.
+
+    // Chat shows the CHARACTER's name.
+    //
+    // The scanner already did - Level::Serialize sends it - so a player could be scanned
+    // as one person and then speak as another, which is worse than either alone. Somebody
+    // being "noremacxxi" while their character is somebody else is the point of roleplay,
+    // and the account name leaking into the one place people read constantly undoes it.
+    //
+    // Falls back to the account name only until a character exists.
+    std::string speaker = pPlayer->Username;
+
+    if (const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(pPlayer->DiscordId))
+    {
+        if (!pCharacter->Name.empty())
+            speaker = pCharacter->Name;
+    }
 
     if (everyone)
     {
-        Broadcast(pPlayer->Username.c_str(), text.c_str(), channel);
+        Broadcast(speaker.c_str(), text.c_str(), channel);
         return;
     }
 
@@ -997,5 +1339,5 @@ void ChatSystem::HandleChatMessageRequest(const PacketEvent<client::ChatMessageR
         return;
     }
 
-    BroadcastInRange(pPlayer->Username, text, pMovement->Position, range, entity, channel);
+    BroadcastInRange(speaker, text, pMovement->Position, range, entity, channel);
 }

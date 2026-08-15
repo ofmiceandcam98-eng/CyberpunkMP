@@ -26,17 +26,29 @@ import CyberpunkMP.World.*
 private func PopulateMenuItemList() -> Void {
     wrappedMethod();
 
-    // Two ways in, because they answer different questions.
+    // Two entries, and this time they genuinely differ.
     //
-    // CONTINUE is the one people want almost every time: the server already remembers
-    // where you were standing, so which save loads underneath barely matters - it gets
-    // overwritten by your real position on arrival. Making people pick a save first was
-    // an extra decision that changes nothing.
+    // An earlier version had CONTINUE and LOAD GAME, which both loaded a save and differed only in
+    // whether you picked it - a choice that changed nothing once the server started owning
+    // appearance and position. That pair was rightly collapsed into one.
     //
-    // LOAD GAME still exists for choosing WHICH character to bring, which is a real
-    // choice until proper character slots land.
-    this.AddMenuItem("MULTIPLAYER - CONTINUE", n"OnMultiplayerContinue");
-    this.AddMenuItem("MULTIPLAYER - LOAD GAME", n"OnMultiplayerJoin");
+    // These two are different actions. PLAY drops you into the world. NEW CHARACTER runs
+    // the game's own New Game flow, which is the ONLY place body gender can be chosen -
+    // ripperdocs change everything about how you look except that, and the customization
+    // system is native-only so it cannot be opened on demand. Going through New Game is
+    // therefore the only route to real character creation that exists.
+    this.AddMenuItem("MULTIPLAYER", n"OnMultiplayerContinue");
+
+    // The warning is IN THE LABEL.
+    //
+    // Making a character replaces the one the server holds, and that is hours of
+    // somebody's evening. "NEW CHARACTER" on its own reads as ADDING one, which is exactly
+    // the misreading that costs people their character - and by the time anything could
+    // warn them from in game, the replacement has already happened.
+    //
+    // A confirmation dialog would be better and needs an API this menu does not obviously
+    // have. A label that cannot be misread is available right now and cannot fail to show.
+    this.AddMenuItem("MULTIPLAYER - NEW CHARACTER (REPLACES YOURS)", n"OnMultiplayerNewCharacter");
 
     // PopulateMenuItemList refreshes at its end, before our item existed. Without
     // refreshing again the entry is in the data but never drawn, which looks exactly
@@ -57,7 +69,7 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
     // server replaces the position on arrival with wherever you actually were. That is
     // what makes this "continue from the server" rather than "continue singleplayer".
     if Equals(data.eventName, n"OnMultiplayerContinue") {
-        FTLog(s"[CyberpunkMP] Multiplayer CONTINUE selected from the main menu");
+        FTLog(s"[CyberpunkMP] MULTIPLAYER selected from the main menu");
 
         let network = GameInstance.GetNetworkWorldSystem();
         if IsDefined(network) {
@@ -70,34 +82,37 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
         return true;
     }
 
-    if Equals(data.eventName, n"OnMultiplayerJoin") {
-        FTLog(s"[CyberpunkMP] Multiplayer selected from the main menu");
+    // Real character creation, via the game's own New Game.
+    //
+    // This is the answer to something that looked unsolvable for most of a day: the
+    // character creator cannot be opened mid-session, because the customization system is
+    // native-only - verified against the 2.31 type hierarchy, which has no open event, no
+    // mirror class and no creator controller. So it cannot be brought to the player.
+    //
+    // The player can be brought to IT. New Game runs the creator as part of its normal
+    // flow, including body gender, which is the one thing no ripperdoc can change. Pick
+    // Phantom Liberty's start on the way through and it lands post-Act-1 at level 15 -
+    // the same state the shipped world templates were made from.
+    //
+    // The join is armed BEFORE the flow starts, on the game system that survives the load,
+    // so the connection happens once there is a real world to arrive in. Same mechanism as
+    // PLAY; only the route through the menus differs.
+    if Equals(data.eventName, n"OnMultiplayerNewCharacter") {
+        FTLog(s"[CyberpunkMP] MULTIPLAYER - NEW CHARACTER selected from the main menu");
 
-        // Record the decision BEFORE the load starts.
-        //
-        // Nothing can connect from here: a menu has no world and no player, so there is
-        // nowhere for anyone to be put. All this does is remember that the player asked
-        // to join, on the one object that survives the load that follows - see
-        // NetworkWorldSystem::RequestJoin. MultiplayerGameController picks it back up on
-        // the other side, once there is a real world to arrive in.
-        //
-        // An earlier version connected automatically on world attach instead. The main
-        // menu is itself a world, so it connected there, and the game died the moment the
-        // server tried to stream players into it.
+
         let network = GameInstance.GetNetworkWorldSystem();
         if IsDefined(network) {
             network.RequestJoin();
         } else {
-            // Not fatal on its own - the save still loads, the player simply arrives in
-            // singleplayer and can connect by hand. Worth saying out loud, because it
-            // would otherwise look like the menu entry did nothing at all.
             FTLogError(s"[CyberpunkMP] No NetworkWorldSystem in the menu - cannot arm the join");
         }
 
-        // Hand over to the game's own Load Game screen rather than picking a save for
-        // them. This is the same event the Load Game entry spawns, so it is the real
-        // save list, with the real character on each slot.
-        this.m_menuEventDispatcher.SpawnEvent(n"OnLoadGame");
+        // Handed to the game's own New Game entry rather than starting one ourselves.
+        // RequestNewGame does not exist on the requests handler - checked - and this is the
+        // event the menu's own New Game item spawns, so it is the real flow with the real
+        // lifepath and creator screens.
+        this.m_menuEventDispatcher.SpawnEvent(n"OnNewGame");
 
         return true;
     }

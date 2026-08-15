@@ -649,6 +649,28 @@
           </div>
         </section>
 
+        <!-- CHARACTER
+             Body type is decided by which world template loads, so it has to be chosen
+             here rather than in game. Ripperdocs change everything else about how you
+             look; they cannot change this. -->
+        <section class="panel">
+          <h3>Character</h3>
+
+          <div class="tool">
+            <div>
+              <div class="tool-name">Body type</div>
+              <div class="tool-desc" id="bodyTypeHint">
+                Chosen here because it is built into the world you load. Everything else
+                about how you look can be changed at any ripperdoc.
+              </div>
+            </div>
+            <div class="btn-row">
+              <button class="action ghost" id="bodyFemale">Female</button>
+              <button class="action ghost" id="bodyMale">Male</button>
+            </div>
+          </div>
+        </section>
+
         <!-- REMOVE -->
         <section class="panel danger">
           <h3>Remove data</h3>
@@ -813,6 +835,23 @@
       </div>
       <button class="linkbtn" id="pickServerDir">Server not found? Locate it</button>
       <div class="admin-note" id="serverPath"></div>
+
+      <!-- The assistants' coordination service. Starts with the game server; controllable
+           on its own because stopping the server should not silence the channel.
+           Hidden entirely unless the source is on this machine. -->
+      <div id="coordRow" style="display:none; margin-top:.6rem; border-top:1px solid var(--line); padding-top:.6rem">
+        <div class="admin-head">
+          <span class="admin-title">Coordination API</span>
+          <span class="serverstate">
+            <span class="dot" id="coordDot"></span>
+            <span id="coordText">checking...</span>
+          </span>
+        </div>
+        <div class="btn-row">
+          <button class="action start" id="startCoord">Start</button>
+          <button class="action stop" id="stopCoord">Stop</button>
+        </div>
+      </div>
     </div>
 
     </div><!-- /col-right -->
@@ -1148,7 +1187,45 @@
     $('serverPath').textContent = result.exists
       ? result.exePath
       : 'Not found: ' + result.exePath
+
+    refreshCoordStatus()
   }
+
+  // Rides on the same poll as the game server, so there is one heartbeat rather than two.
+  async function refreshCoordStatus () {
+    const result = await window.launcher.coordStatus()
+
+    // Not an admin, or the source is not on this machine. Either way there is nothing
+    // here to operate and a dead row would only raise questions.
+    if (!result.ok || !result.available) {
+      $('coordRow').style.display = 'none'
+      return
+    }
+
+    $('coordRow').style.display = 'block'
+    $('coordDot').className = 'dot' + (result.running ? ' on' : '')
+
+    // Says who is on it, not just that it is up. "Online" answers a question nobody was
+    // asking; "3 of 5 keys" tells you whether the people you handed keys to can talk.
+    $('coordText').textContent = result.running
+      ? (result.participants !== null ? `online - ${result.participants} of ${result.max} keys` : 'online')
+      : 'not running'
+
+    $('startCoord').disabled = result.running
+    $('stopCoord').disabled = !result.running
+  }
+
+  $('startCoord').addEventListener('click', async () => {
+    const result = await window.launcher.startCoord()
+    setStatus(result.ok ? 'Coordination API starting...' : result.error, result.ok ? 'ok' : 'bad')
+    setTimeout(refreshCoordStatus, 1500)
+  })
+
+  $('stopCoord').addEventListener('click', async () => {
+    const result = await window.launcher.stopCoord()
+    setStatus(result.ok ? 'Coordination API stopped.' : result.error, result.ok ? 'ok' : 'bad')
+    setTimeout(refreshCoordStatus, 800)
+  })
 
   function showAdminPanel (show) {
     $('adminPanel').style.display = show ? 'flex' : 'none'
@@ -1590,6 +1667,8 @@
     // rest. Showing both as equally available invites people to pick the wrong one.
     $('installAll').textContent = paths.modDir ? 'Reinstall all' : 'Install'
 
+    refreshBodyType()
+
     // The dev section rides on the same answer that decides the server controls, so a
     // dev sees the same launcher Cam does.
     const debug = await window.launcher.getDebugMode()
@@ -1601,6 +1680,35 @@
     $('devKeyValue').textContent = ''
     $('revealDevKey').textContent = 'Reveal'
     $('revealDevKey').disabled = false
+  }
+
+  // Body type. Reflects what is chosen AND whether the choice can be honoured yet - a
+  // button that silently does nothing is worse than one that says it is unavailable.
+  async function refreshBodyType () {
+    const result = await window.launcher.getBodyType()
+    if (!result.ok) return
+
+    const female = $('bodyFemale')
+    const male = $('bodyMale')
+
+    female.classList.toggle('play', result.bodyType === 'female')
+    male.classList.toggle('play', result.bodyType === 'male')
+
+    male.disabled = !result.maleAvailable
+
+    $('bodyTypeHint').textContent = result.maleAvailable
+      ? 'Chosen here because it is built into the world you load. Everything else about how you look can be changed at any ripperdoc. Takes effect next launch.'
+      : 'Only the female starting world has been published so far, so this cannot be changed yet. Everything else about how you look can be changed at any ripperdoc.'
+  }
+
+  for (const [id, value] of [['bodyFemale', 'female'], ['bodyMale', 'male']]) {
+    $(id).addEventListener('click', async () => {
+      const result = await window.launcher.setBodyType(value)
+      if (result.ok) {
+        setSettingsStatus(`Body type set to ${result.bodyType}. It applies the next time you launch.`, 'good')
+        refreshBodyType()
+      }
+    })
   }
 
   $('revealDevKey').addEventListener('click', async () => {
