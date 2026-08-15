@@ -84,10 +84,14 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
             name = pExisting->Name;
     }
 
-    // Whether they have actually CHOSEN a name, as opposed to falling back to their
-    // account name below. This is the question the prompt exists to answer, and it has to
-    // be asked before the fallback makes every character look named.
-    const bool unnamed = name.empty();
+    // Carried over, so editing your face at a ripperdoc does not make the server think
+    // you never picked a name and ask again every visit.
+    if (const auto* pExisting = store.FindCharacter(pPlayer->DiscordId))
+        character.NameChosen = pExisting->NameChosen;
+
+    // Typing a name into /character save IS choosing one.
+    if (!pPlayer->PendingCharacterName.empty() || !aMessage.get_name().empty())
+        character.NameChosen = character.NameChosen || !name.empty();
 
     character.Name = name.empty() ? pPlayer->Username : name;
 
@@ -117,16 +121,32 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
     // moment they finish creating, which is exactly when they are thinking about who this
     // person is.
     //
-    // Only when unnamed. Somebody editing their face at a ripperdoc has already answered
-    // this and being asked again every visit would be its own kind of broken.
-    if (unnamed)
-    {
-        server::RequestCharacterName ask;
-        ask.set_current("");
-        GServer->Send(pPlayer->Connection, ask);
+    // Only when they have not chosen one. Somebody editing their face at a ripperdoc has
+    // already answered this and being asked again every visit would be its own kind of
+    // broken.
+    if (!character.NameChosen)
+        AskForCharacterName(*pPlayer, character);
+}
 
-        spdlog::info("Asked {} to name their new character", pPlayer->Username);
-    }
+/**
+ * Opens the name box on a player's client.
+ *
+ * Split out because there are two moments worth asking: straight after the creator, and
+ * on spawn for anybody whose character predates the prompt existing. Both want identical
+ * behaviour, and the second one is the only route that ever reaches an existing player.
+ */
+void ChatSystem::AskForCharacterName(const PlayerComponent& acPlayer, const CharacterRecord& acCharacter)
+{
+    server::RequestCharacterName ask;
+
+    // Their account name is NOT offered as a starting value. It is what we are trying to
+    // get away from, and pre-filling it makes pressing Enter - the path of least
+    // resistance - reproduce exactly the problem the prompt exists to solve.
+    ask.set_current("");
+
+    GServer->Send(acPlayer.Connection, ask);
+
+    spdlog::info("Asked {} to name their character", acPlayer.Username);
 }
 
 void ChatSystem::HandleRespawnRequest(const PacketEvent<client::RespawnRequest>& aMessage)
@@ -766,6 +786,10 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
 
         auto updated = *pCharacter;
         updated.Name = wanted;
+
+        // Typing /name is the definition of choosing one, so the prompt stops asking.
+        updated.NameChosen = true;
+
         store.SaveCharacter(acSender.DiscordId, acSender.Username, updated);
 
         spdlog::info("{} named their character '{}'", acSender.Username, wanted);

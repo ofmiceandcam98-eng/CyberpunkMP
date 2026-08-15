@@ -342,6 +342,18 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
                              pComponent->Username);
             }
         }
+
+        // Ask on spawn if they still have not chosen a name.
+        //
+        // Asking only after the creator missed everybody who already had a character,
+        // which was every existing player - their character was made before the prompt
+        // existed, so the one moment that triggers it had already passed for them. This
+        // is the route that reaches them, and it stops as soon as they answer.
+        if (!pCharacter->NameChosen)
+        {
+            if (auto* pChat = GetWorld()->get_mut<ChatSystem>())
+                pChat->AskForCharacterName(*pComponent, *pCharacter);
+        }
     }
 
     pComponent->Puppet = GetWorld()->entity()

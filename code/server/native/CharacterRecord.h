@@ -63,12 +63,23 @@ struct CharacterRecord
     // be zero", and the loadout would be granted again on every single spawn.
     bool Initialised{false};
 
+    // Whether the PLAYER chose this name, as opposed to it defaulting to their account.
+    //
+    // Name is never empty - it falls back to the Discord username so a character always
+    // has something to be called - which means emptiness cannot be the test for "needs
+    // asking". That is exactly the bug this fixes: the prompt asked only when Name was
+    // empty, so it could never fire for anybody who already had a character, which was
+    // everybody who had ever played. Both existing players were silently skipped.
+    //
+    // Defaults false, so every character that predates this gets asked once.
+    bool NameChosen{false};
+
     int64_t CreatedAt{0};
     int64_t UpdatedAt{0};
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(CharacterRecord, Slot, Name, Appearance, IsMale,
                                                 Level, AttributePoints, PerkPoints, Initialised,
-                                                CreatedAt, UpdatedAt)
+                                                NameChosen, CreatedAt, UpdatedAt)
 };
 
 /**

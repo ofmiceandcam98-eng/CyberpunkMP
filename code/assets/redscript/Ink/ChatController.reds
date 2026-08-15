@@ -40,10 +40,57 @@ public class ChatController extends inkHUDGameController {
 
         this.UpdateInputHints();
 
+        // The chat widget is forced visible rather than trusted to be.
+        //
+        // Cam's session proved the logic works and the rendering does not: the controller
+        // initialised, messages arrived (OnChatMessageUIEvent fired repeatedly), typed text
+        // reached SendChat, and the server logged the commands he sent - all with no chat
+        // box on screen at any point. So every widget resolves and every handler runs; only
+        // the pixels are missing.
+        //
+        // Nothing in OnInitialize made the widget visible. Its on-screen state came purely
+        // from whatever the .inkwidget authored, plus the to_input/from_input animations -
+        // and neither animation has played when the HUD first appears. If the authored
+        // default is transparent, chat is invisible forever and every handler still works
+        // perfectly, which is exactly the shape of what happened.
+        //
+        // Setting it explicitly costs nothing if it was already visible.
+        this.ForceVisible();
+
         let messageData = new ChatMessageUIEvent();
         messageData.author = "SERVER";
         messageData.message = "Connected to...";
         this.QueueEvent(messageData);
+    }
+
+    // Makes the chat widget and its parts visible and opaque, and reports what they were.
+    //
+    // The log lines matter as much as the assignments. If chat is still invisible after
+    // this, the values say which widget is wrong and how - a null means the path is wrong,
+    // a zero size means layout, and correct-looking values everywhere mean the problem is
+    // a parent or the render order rather than anything in this file. Guessing again
+    // without them would cost another round trip.
+    private func ForceVisible() -> Void {
+        let root = this.GetRootWidget();
+        if IsDefined(root) {
+            FTLog(s"[ChatController] root visible=\(root.IsVisible()) opacity=\(root.GetOpacity())");
+            root.SetVisible(true);
+            root.SetOpacity(1.0);
+        } else {
+            FTLogError(s"[ChatController] no root widget");
+        }
+
+        let names = ["wrapper", "wrapper/chat", "wrapper/chat/bg", "wrapper/input_box"];
+        for name in names {
+            let widget = this.GetWidget(StringToName(name));
+            if IsDefined(widget) {
+                let size = widget.GetSize();
+                FTLog(s"[ChatController] '\(name)' visible=\(widget.IsVisible()) opacity=\(widget.GetOpacity()) size=\(size.X)x\(size.Y)");
+                widget.SetVisible(true);
+            } else {
+                FTLogWarning(s"[ChatController] '\(name)' does not resolve");
+            }
+        }
     }
 
     protected cb func OnUninitialize() -> Bool {
@@ -187,6 +234,19 @@ public class ChatController extends inkHUDGameController {
             targets.Select(this.GetWidget(n"wrapper/chat/mask"));
             targets.Select(this.GetWidget(n"wrapper/chat/bg"));
             this.PlayLibraryAnimationOnTargets(n"to_input", targets);
+
+            // Same reasoning as ForceVisible: the animation is what was RELIED on to
+            // reveal the input box, and the box demonstrably never appeared even though
+            // everything downstream of it worked. Setting the state directly means the
+            // box shows whether or not the animation plays, so this no longer depends on
+            // an asset that cannot be inspected without WolvenKit.
+            this.ForceVisible();
+
+            let inputBox = this.GetWidget(n"wrapper/input_box");
+            if IsDefined(inputBox) {
+                inputBox.SetVisible(true);
+                inputBox.SetOpacity(1.0);
+            }
 
             this.RequestSetFocus(inkTextInputRef.Get(this.m_inputRef));
             uiBlackboard.SetBool(GetAllBlackboardDefs().UIGameData.UIChatInputContextRequest, true, true);

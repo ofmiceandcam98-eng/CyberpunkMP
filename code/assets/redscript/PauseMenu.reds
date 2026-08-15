@@ -52,23 +52,6 @@ protected func AddMenuItem(label: script_ref<String>, spawnEvent: CName) -> Void
     // built before connecting and so was invisible to the connected-only logging below.
     FTLog(s"[Menu] item '\(NameToString(spawnEvent))'");
 
-    // No standard start when making a multiplayer character.
-    //
-    // A regular new game begins in the prologue, which is the whole of Act 1 - the thing
-    // the world templates exist to skip. Somebody who picks it spends hours getting to
-    // where everyone else already is, or more likely gives up.
-    //
-    // Phantom Liberty's start is the only one that lands post-Act-1 at level 15, and the
-    // expansion is already required to play at all, so nothing is lost by removing the
-    // other. Filtered by name, and the names are logged above - if these guesses miss, the
-    // log says what to use instead.
-    if Equals(spawnEvent, n"OnNewGameStandard")
-        || Equals(spawnEvent, n"OnNewGameBase")
-        || Equals(spawnEvent, n"OnNewGameVanilla") {
-        FTLog(s"[Menu] hiding the standard start - multiplayer uses the Phantom Liberty one");
-        return;
-    }
-
     if connected {
         // Every entry, once, so the exact names are on record rather than guessed at.
         // The save entry's event name is not in the type dump - it is an ink event - so if
@@ -93,4 +76,46 @@ protected func AddMenuItem(label: script_ref<String>, spawnEvent: CName) -> Void
     }
 
     wrappedMethod(label, spawnEvent);
+}
+
+// REGULAR START is removed from the new-game screen.
+//
+// The first attempt at this filtered menu-item names on gameuiMenuItemListGameController,
+// which was the wrong screen entirely. The choice in Cam's screenshot is not a menu list -
+// it is ExpansionNewGame, a BaseCharacterCreationController with two bound buttons, and it
+// never passes through AddMenuItem at all. The logging that replaced the guesses is what
+// showed this: the only names that ever appeared were OnNewGame, OnLoadGame,
+// OnSwitchToSettings, OnCreditsPicker and our own two. No standard-start event exists,
+// because the standard start is a button on a later screen.
+//
+// Written against the game's own source, which is authoritative for the installed patch:
+//   cyberpunk/UI/fullscreen/pregame/expansionNewGame.script
+//     m_baseGameButton   -> REGULAR START            -> OnPressBaseGame
+//     m_standaloneButton -> SKIP AHEAD TO PHANTOM LIBERTY -> OnPressExpansion
+//
+// A regular new game begins in the prologue - the whole of Act 1, which is exactly what
+// the multiplayer start exists to skip. Phantom Liberty's start lands post-Act-1 at level
+// 15, and the expansion is already required to play here at all, so nothing is lost.
+@wrapMethod(ExpansionNewGame)
+protected cb func OnInitialize() -> Bool {
+    let result = wrappedMethod();
+
+    FTLog(s"[Menu] new game screen - hiding REGULAR START");
+    inkWidgetRef.SetVisible(this.m_baseGameButton, false);
+
+    return result;
+}
+
+// Belt and braces: the button is hidden above, but a hidden widget can still be reachable
+// by controller focus in some menus. If the press ever lands anyway, it is answered with
+// the expansion start rather than being silently swallowed - a dead button is worse than
+// no button, and this way the outcome is the one we want either way.
+@replaceMethod(ExpansionNewGame)
+protected cb func OnPressBaseGame(evt: ref<inkPointerEvent>) -> Bool {
+    if evt.IsAction(n"click") && !this.m_isInputLocked {
+        FTLog(s"[Menu] REGULAR START pressed - starting the Phantom Liberty one instead");
+        this.m_characterCustomizationState.SetIsExpansionStandalone(true);
+        this.PlaySound(n"Button", n"OnPress");
+        this.NextMenu();
+    }
 }

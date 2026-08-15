@@ -4,6 +4,17 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.49
+
+Most of this was already written and simply never reached your game. The build was only deploying the mod's code, not its data files — so two fixes sat finished in the repo while everyone kept hitting the bugs they fixed.
+
+- **Players are no longer Panam.** Remote players are built on Panam's character record, and the fix that strips her identity off them was written days ago and never shipped. Nameplates and the scanner now show the player, not her name, her gang and her criminal record.
+- **The chat box shows up.** Chat was never broken — messages arrived, typing worked, commands were sent — the box just wasn't being drawn. It's now made visible directly instead of relying on an animation that wasn't running.
+- **Mouse wheel scrolls chat.** The bindings existed and had never been deployed either.
+- **REGULAR START is gone from character creation.** The previous attempt filtered the wrong screen. It now removes the button on the actual one, so you can't accidentally start in the prologue.
+- **The name box actually opens.** It could only ever trigger for a character with no name at all — which no character has, since names fall back to your Discord name. Everyone gets asked once now, on spawn if you already have a character.
+- Builds now verify that tweaks and inputs reached the game, the same way scripts already were. That check is what would have caught all of this.
+
 ## What changed — v0.3.48
 
 - **Your character gets a name, and the game asks for it.** Finish the creator and a box appears labelled **CHARACTER NAME**. Type one, press Enter, done — no command to know about. Escape skips it and `/name` still works whenever you change your mind.
