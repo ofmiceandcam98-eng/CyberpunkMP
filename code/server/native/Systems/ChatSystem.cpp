@@ -59,45 +59,61 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
     }
 
     auto& store = GServer->GetPlayerStore();
+    const auto* pExisting = store.FindCharacter(pPlayer->DiscordId);
 
     CharacterRecord character;
     character.Slot = 0;
     character.IsMale = aMessage.get_is_male();
     character.Appearance = Base64::Encode(std::vector<uint8_t>(blob.begin(), blob.end()));
 
-    // What they typed with /character save wins over the name the client offered, which is
-    // only their launcher display name. Falls back through the client's name to their
-    // Discord name, so a character always has something to be called.
-    std::string name = pPlayer->PendingCharacterName;
-    if (name.empty())
+    // Read BEFORE it is consumed. The old code cleared this field and then tested it, so
+    // "did they deliberately choose a name" could never come back true from here.
+    std::string chosenName = pPlayer->PendingCharacterName;
+    pPlayer->PendingCharacterName.clear();
+
+    // A name is chosen once per character, and only deliberately.
+    //
+    // Deliberately means /name or /character save <name> - never the message's own name
+    // field, which old clients filled with the Discord name on EVERY ripperdoc save. The
+    // server took any non-empty name as a rename, so editing your hair as 'Silverhand92'
+    // walked you out named after your account, with NameChosen set so the prompt never
+    // asked again. The guard meant to prevent that ("an existing character keeps its
+    // name") tested name.empty(), which the always-filled field made unreachable.
+    //
+    // Once means the FIRST deliberate choice sticks. The reset is a new character:
+    // /character new retires this one, and the fresh record starts with NameChosen false.
+    // Dying is not a reset - FLATLINED revives the same person, so their name survives;
+    // if permadeath ever retires the record instead, the unlock comes with it for free.
+    const bool alreadyNamed = pExisting && pExisting->NameChosen;
+
+    if (alreadyNamed && !chosenName.empty() && chosenName != pExisting->Name)
+    {
+        Tell(*pPlayer, fmt::format("This character is already named '{}' - a name is chosen once.",
+                                   pExisting->Name));
+        Tell(*pPlayer, "Start a new character with /character new to choose a new name.");
+        chosenName.clear();
+    }
+
+    // Precedence: a deliberate choice, else the name the character already has, else the
+    // client's label for a character that does not exist yet (first capture sends none,
+    // so this usually falls through to the account username below).
+    std::string name;
+    if (!chosenName.empty())
+        name = chosenName;
+    else if (pExisting)
+        name = pExisting->Name;
+    else
         name = aMessage.get_name().c_str();
+
     if (name.size() > 32)
         name.resize(32);
 
-    // Consumed, so a later save without a name does not silently re-apply an old one.
-    pPlayer->PendingCharacterName.clear();
-
-    // An existing character keeps its name when the player is only editing their face.
-    if (name.empty())
-    {
-        if (const auto* pExisting = store.FindCharacter(pPlayer->DiscordId))
-            name = pExisting->Name;
-    }
-
-    // Carried over, so editing your face at a ripperdoc does not make the server think
-    // you never picked a name and ask again every visit.
-    if (const auto* pExisting = store.FindCharacter(pPlayer->DiscordId))
-        character.NameChosen = pExisting->NameChosen;
-
-    // Typing a name into /character save IS choosing one.
-    if (!pPlayer->PendingCharacterName.empty() || !aMessage.get_name().empty())
-        character.NameChosen = character.NameChosen || !name.empty();
-
+    character.NameChosen = alreadyNamed || !chosenName.empty();
     character.Name = name.empty() ? pPlayer->Username : name;
 
     // Progression carried forward, so editing your face does not reset your character and
     // re-grant the starting loadout.
-    if (const auto* pExisting = store.FindCharacter(pPlayer->DiscordId))
+    if (pExisting)
     {
         character.Level = pExisting->Level;
         character.AttributePoints = pExisting->AttributePoints;
@@ -754,7 +770,11 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
     // "noremacxxi" and their character being someone else is the point of roleplay.
     //
     // Separate from appearance because the two are chosen at different moments: a face is
-    // fiddled with at a mirror and saves itself, a name is a decision typed once.
+    // fiddled with at a mirror and saves itself, a name is a decision typed ONCE. One
+    // name per character: it is part of who the character is, chosen when they are made
+    // and kept until they are retired. /character new starts a fresh character, and a
+    // fresh character chooses fresh. Dying is not the end of a character on this server -
+    // FLATLINED revives the same person - so a name survives death on purpose.
     if (command == "/name")
     {
         const auto nameStart = acLine.find(' ');
@@ -766,9 +786,14 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         if (wanted.empty())
         {
             const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(acSender.DiscordId);
-            Tell(acSender, fmt::format("You are called '{}'. Change it with /name <name>.",
+            const bool named = pCharacter && pCharacter->NameChosen;
+
+            Tell(acSender, fmt::format("You are called '{}'.",
                                        (pCharacter && !pCharacter->Name.empty()) ? pCharacter->Name
                                                                                  : acSender.Username));
+            // The hint matches what typing a name would actually do.
+            Tell(acSender, named ? "A name is chosen once per character - /character new starts one that can choose again."
+                                 : "Choose it with /name <name>.");
             return true;
         }
 
@@ -781,6 +806,16 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         if (!pCharacter)
         {
             Tell(acSender, "You have no character yet - look in a mirror first, then set a name.");
+            return true;
+        }
+
+        // Once per character. Refused rather than applied - if renaming were free, a name
+        // would be a chat status instead of an identity.
+        if (pCharacter->NameChosen)
+        {
+            Tell(acSender, fmt::format("This character is already named '{}' - a name is chosen once.",
+                                       pCharacter->Name));
+            Tell(acSender, "Start a new character with /character new to choose a new name.");
             return true;
         }
 
