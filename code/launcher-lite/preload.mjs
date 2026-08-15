@@ -34,6 +34,18 @@ contextBridge.exposeInMainWorld('launcher', {
     ipcRenderer.on('user-updated', (_e, user) => callback(user))
   },
 
+  // Whether a game is starting or already running, so the play button can lock itself.
+  // Pushed from the main process rather than polled here - it is the side that can see
+  // the process list, and the answer has to survive the launcher being reopened.
+  onGameState: (callback) => {
+    ipcRenderer.on('game-state', (_e, state) => callback(state))
+  },
+
+  // Sent when a duplicate copy of the mod was found and moved aside on the way to launch.
+  onModsCleaned: (callback) => {
+    ipcRenderer.on('mods-cleaned', (_e, info) => callback(info))
+  },
+
   // Update checks. Play is refused unless the check says up to date.
   checkUpdate: () => ipcRenderer.invoke('update:check'),
   applyUpdate: () => ipcRenderer.invoke('update:apply'),

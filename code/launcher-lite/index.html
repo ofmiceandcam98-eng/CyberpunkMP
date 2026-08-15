@@ -903,6 +903,9 @@
 
   const loginBtn = $('login')
   const playBtn = $('play')
+
+  // Mirrors the main process, which is the only side that can see the process list.
+  let gameState = { launching: false, running: false }
   const logoutBtn = $('logout')
   const statusEl = $('status')
 
@@ -1060,7 +1063,23 @@
     // what testing looks like, and they are the ones who can start it.
     const serverReady = Boolean(serverState?.online) || Boolean(user?.isAdmin)
 
-    playBtn.disabled = !verified || !filesReady || !serverReady
+    // A game already up, or on its way up, outranks every other reason.
+    //
+    // Two copies of Cyberpunk cannot share one install - they fight over the same saves
+    // and the same logs, and both sign in as the same account, which the server reads as
+    // one player teleporting between two places. So the button locks and SAYS what it is
+    // waiting for, because a dead button with no explanation reads as the launcher having
+    // broken during the least reassuring possible moment.
+    playBtn.disabled = !verified || !filesReady || !serverReady ||
+                       gameState.launching || gameState.running
+
+    if (gameState.launching) {
+      playBtn.textContent = 'Launching...'
+    } else if (gameState.running) {
+      playBtn.textContent = 'Game running'
+    } else {
+      playBtn.textContent = 'Launch Game'
+    }
 
     // Say WHY, in the order someone has to fix them. Signing in first, then files, then
     // the server - listing a server outage to someone who has not signed in yet sends
@@ -1274,9 +1293,29 @@
   })
 
   playBtn.addEventListener('click', async () => {
+    // Locked on the way out as well as by the state message that follows. The main process
+    // is the authority, but its reply takes a moment to arrive and a second click can land
+    // inside that gap - which is precisely the double launch this exists to prevent.
+    if (playBtn.disabled) return
+    playBtn.disabled = true
+    playBtn.textContent = 'Launching...'
+
     setStatus('Starting game...')
     const result = await window.launcher.launchGame()
     setStatus(result.ok ? 'Game started.' : result.error, result.ok ? 'ok' : 'error')
+  })
+
+  // Launching / running / closed, pushed from the main process.
+  window.launcher.onGameState((state) => {
+    gameState = state
+    // signedInUser is what the rest of this file re-renders from - see line ~918. There
+    // is no `currentUser` in the renderer; that name belongs to the main process.
+    render(signedInUser)
+  })
+
+  // A duplicate copy of the mod was found and moved aside on the way to launch.
+  window.launcher.onModsCleaned((info) => {
+    setStatus(info.message, 'ok')
   })
 
   // The role check finishes after sign-in returns, so a dev's admin controls arrive

@@ -4,6 +4,11 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.54
+
+- **A leftover copy of the mod is moved aside automatically.** The game loads every mod folder it finds, so an old copy kept overriding the current one. The launcher now handles it on the way to launch — nothing to find, nothing to delete. The old copy is *moved*, not deleted, into `red4ext\disabled-by-launcher\`, so it can be dragged back if you wanted it. If you have deliberately pointed the launcher at your own build in Settings, that is the one it keeps.
+- **You can't start the game twice.** Launch Game greys out and reads **Launching…**, then **Game running**, and only comes back once Cyberpunk has actually closed. It checks the real process list, so a game you started from Steam — or one still running from before you opened the launcher — counts too.
+
 ## What changed — v0.3.53
 
 - **Verify files now catches a stale second copy of the mod.** The game loads *every* mod folder it finds, but the launcher only ever looked at the first — so a leftover copy kept running, its scripts overrode the current ones, and the launcher truthfully reported the copy it knew about as up to date. That is how you get an old main menu under a launcher saying v0.3.51. Verify now names every copy, and which release each came from.

@@ -382,6 +382,71 @@ function findAllModDirs () {
 }
 
 /**
+ * Moves every copy of the mod except the one we mean to run out of the plugins folder.
+ *
+ * Reporting duplicates was not enough. Nobody should have to work out which of two folders
+ * is the stale one and delete it by hand to make a launcher's own update take effect - that
+ * is the launcher's job, and it has every fact needed to do it.
+ *
+ * MOVED, not renamed and not deleted:
+ *   - Renaming does not work. RED4ext scans every subdirectory of plugins for a DLL and
+ *     does not care what the folder is called, so a renamed copy is still loaded. Getting
+ *     this wrong looks like the fix silently failing.
+ *   - Deleting is not ours to do. A second copy is usually a developer's junction pointing
+ *     at their own build; removing it would throw away their working setup, and for a
+ *     junction the target might not even be theirs to lose. Moving is reversible by drag
+ *     and drop.
+ *
+ * Which copy survives, in order: the folder the player explicitly chose in Settings - a
+ * developer pointing the launcher at their own build has said which one they want, and
+ * that answer outranks ours - then the one carrying the current release's marker, then
+ * whatever came first.
+ */
+async function resolveDuplicateInstalls (currentVersion) {
+  const installs = findAllModDirs()
+  if (installs.length < 2) return { moved: [], kept: installs[0] || null }
+
+  const chosen = loadSettings().modDir
+
+  const keep =
+    installs.find((dir) => chosen && path.resolve(dir) === path.resolve(chosen)) ||
+    installs.find((dir) => currentVersion && installedVersionAt(dir) === currentVersion) ||
+    installs[0]
+
+  const gameDir = findGameDir()
+  if (!gameDir) return { moved: [], kept: keep }
+
+  const parked = path.join(gameDir, 'red4ext', 'disabled-by-launcher')
+  await fsp.mkdir(parked, { recursive: true })
+
+  const moved = []
+
+  for (const dir of installs) {
+    if (dir === keep) continue
+
+    // Only touch copies inside the plugins folder. One somewhere else is not being loaded
+    // by RED4ext and is therefore not the problem - moving it would be meddling.
+    const pluginRoot = path.join(gameDir, 'red4ext', 'plugins')
+    if (path.resolve(path.dirname(dir)) !== path.resolve(pluginRoot)) continue
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+    const destination = path.join(parked, `${path.basename(dir)}-${stamp}`)
+
+    try {
+      await fsp.rename(dir, destination)
+      moved.push({ from: dir, to: destination, version: installedVersionAt(destination) })
+      console.log(`[mods] moved a duplicate install out of plugins: ${dir} -> ${destination}`)
+    } catch (err) {
+      // Across volumes, or held open by a running game. Reported rather than thrown - a
+      // launch with a duplicate still present is worse informed, not impossible.
+      console.warn(`[mods] could not move ${dir}:`, err.message)
+    }
+  }
+
+  return { moved, kept: keep, parked }
+}
+
+/**
  * Which release a copy of the mod came from, read from the marker written at install.
  *
  * Returns null for a copy installed before markers existed, or built by hand - which is
@@ -1733,12 +1798,81 @@ async function stampTemplateNewest () {
   }
 }
 
+// Is a game running, or on its way up?
+//
+// Two copies of Cyberpunk cannot share one install: they fight over the same save folder
+// and the same mod logs, and both connect to the server as the same account, which the
+// server sees as one player teleporting between two positions. The launch button is
+// disabled in the UI while this is true, and refused here as well - the UI is not a
+// security boundary, and the check that matters is the one nothing can route around.
+let gameState = { launching: false, running: false }
+let gameWatcher = null
+
+function setGameState (next) {
+  gameState = { ...gameState, ...next }
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('game-state', gameState)
+  }
+}
+
+/**
+ * Watches for the game to close, then unlocks the button.
+ *
+ * Polls the process list rather than trusting the spawned child to represent the game.
+ * It often does not: Cyberpunk is started through REDprelauncher, which exits almost
+ * immediately after handing off, so the child exiting means nothing about whether anybody
+ * is playing. Asking the OS what is running is the only answer that stays true.
+ */
+function watchForGameExit () {
+  if (gameWatcher) clearInterval(gameWatcher)
+
+  let sawItStart = false
+
+  gameWatcher = setInterval(async () => {
+    const running = await isProcessRunning('Cyberpunk2077.exe')
+
+    if (running) {
+      sawItStart = true
+      if (!gameState.running || gameState.launching) {
+        setGameState({ launching: false, running: true })
+      }
+      return
+    }
+
+    // Not running. Before it has ever appeared this is just the loading screen taking its
+    // time, so the button stays locked - unlocking there would let someone start a second
+    // copy during the slowest, most tempting part of the wait.
+    if (!sawItStart) return
+
+    clearInterval(gameWatcher)
+    gameWatcher = null
+    setGameState({ launching: false, running: false })
+    console.log('[launch] the game has closed - unlocked')
+  }, 3000)
+}
+
 async function launchGame () {
   if (!currentUser) {
     // Belt and braces. The button is disabled in the UI, but the UI is not a
     // security boundary - a renderer could send this message anyway.
     throw new Error('Not signed in')
   }
+
+  if (gameState.launching) {
+    throw new Error('Already starting the game - give it a moment.')
+  }
+
+  // Asked of the OS, not just of our own flag. The flag only knows about launches this
+  // launcher made: a game started from Steam, or one still running after the launcher was
+  // restarted, is invisible to it and is exactly the case worth catching.
+  if (gameState.running || await isProcessRunning('Cyberpunk2077.exe')) {
+    setGameState({ launching: false, running: true })
+    watchForGameExit()
+    throw new Error('Cyberpunk 2077 is already running. Close it before launching again.')
+  }
+
+  setGameState({ launching: true })
 
   if (!currentUser.isMember) {
     throw new Error('You must join the Night City Online Discord to play.')
@@ -1853,6 +1987,32 @@ async function launchGame () {
     throw new Error('Could not find Cyberpunk 2077. Use "Locate game" to point at it.')
   }
 
+  // Last thing before starting: make sure only one copy of the mod will load.
+  //
+  // Here rather than at install time because a duplicate does not have to arrive through
+  // the launcher - a developer's junction, a manual unzip, a copy restored by a backup
+  // tool. The only moment it is certainly true is the moment before the game reads them.
+  //
+  // Non-fatal by design. A launch with a duplicate still present is a launch that might
+  // run old scripts; a launch refused over it is definitely no game at all.
+  let duplicates = { moved: [] }
+
+  try {
+    duplicates = await resolveDuplicateInstalls(loadSettings().installedVersion)
+
+    if (duplicates.moved.length && mainWindow && !mainWindow.isDestroyed()) {
+      const names = duplicates.moved.map((m) => path.basename(m.from)).join(', ')
+      mainWindow.webContents.send('mods-cleaned', {
+        moved: duplicates.moved,
+        parked: duplicates.parked,
+        message: `Found another copy of the mod (${names}) and moved it aside - the game ` +
+                 'loads every copy it finds, so the old one would have overridden this update.'
+      })
+    }
+  } catch (err) {
+    console.warn('[mods] duplicate check failed:', err.message)
+  }
+
   const child = spawn(exe, args, {
     detached: true,
     stdio: 'ignore'
@@ -1880,7 +2040,10 @@ async function launchGame () {
 
   child.unref()
 
-  return { launched: true, executable: exe }
+  // The button stays locked from here until the game is gone from the process list.
+  watchForGameExit()
+
+  return { launched: true, executable: exe, cleaned: duplicates.moved.length }
 }
 
 // ---------------------------------------------------------------------------
@@ -3304,6 +3467,18 @@ ipcMain.handle('game:launch', async () => {
   try {
     return { ok: true, ...(await launchGame()) }
   } catch (err) {
+    // Unlocked on every failure, without needing to know which check refused.
+    //
+    // launchGame sets `launching` early - the checks before the spawn include network
+    // calls and can take seconds, and the button has to be dead for all of it. Every one
+    // of those checks can throw, and any path that threw without clearing the flag would
+    // leave the button disabled until the launcher was restarted. One reset here covers
+    // all of them, including ones added later.
+    //
+    // `running` is deliberately not touched: "already running" is one of the errors, and
+    // that state is true and still needs to be.
+    if (!gameState.running) setGameState({ launching: false })
+
     return { ok: false, error: err.message }
   }
 })
