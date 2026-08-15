@@ -26,6 +26,14 @@ contextBridge.exposeInMainWorld('launcher', {
   // Forget the session in the main process.
   logout: () => ipcRenderer.invoke('discord:logout'),
 
+  // Fired when the signed-in user's profile changes after sign-in. The Discord role
+  // check runs asynchronously, so anyone whose access comes from a role (rather than
+  // the hardcoded list) only resolves to admin a moment after login/restore returned -
+  // this is how the page learns about it.
+  onUserUpdated: (callback) => {
+    ipcRenderer.on('user-updated', (_e, user) => callback(user))
+  },
+
   // Update checks. Play is refused unless the check says up to date.
   checkUpdate: () => ipcRenderer.invoke('update:check'),
   applyUpdate: () => ipcRenderer.invoke('update:apply'),

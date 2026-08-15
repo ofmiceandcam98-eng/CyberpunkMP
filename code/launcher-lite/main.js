@@ -1372,6 +1372,17 @@ async function hydrateUserFromToken () {
       if (currentUser && level && level !== 'player') {
         currentUser.isAdmin = isAdmin()
         console.log(`[roles] ${currentUser.handle} resolved to ${level}`)
+
+        // Tell the page, or the controls never actually appear. The profile the
+        // renderer got at sign-in was built before this answer arrived, with isAdmin
+        // still false for anyone whose access comes from a Discord role rather than
+        // the hardcoded list. The comment above promised the controls "a moment
+        // later" and nothing delivered them: the only admin so far was on the
+        // hardcoded list, resolved synchronously, so the gap was invisible until the
+        // first role-based dev signed in and stayed a player.
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('user-updated', publicProfile())
+        }
       }
     })
     .catch(() => {})

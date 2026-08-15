@@ -1279,6 +1279,13 @@
     setStatus(result.ok ? 'Game started.' : result.error, result.ok ? 'ok' : 'error')
   })
 
+  // The role check finishes after sign-in returns, so a dev's admin controls arrive
+  // as an update rather than in the login result. Re-rendering with the fresh profile
+  // is what actually makes the SERVER panel and dev tools appear for role-based devs.
+  window.launcher.onUserUpdated((user) => {
+    render(user)
+  })
+
   // The process can fail to start after we have already handed off, so this
   // arrives separately rather than as a return value.
   window.launcher.onLaunchError((message) => {
