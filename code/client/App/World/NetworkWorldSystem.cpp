@@ -576,6 +576,20 @@ void NetworkWorldSystem::HandleOpenCharacterCreator(const PacketEvent<server::Op
     Red::CallVirtual(this, "OpenCharacterCreator");
 }
 
+/**
+ * The server wants to know what this character is called.
+ *
+ * Handed to redscript for the same reason as the creator above: the prompt is a UI widget,
+ * and the answer travels back out as an ordinary chat command, both of which are script
+ * side already.
+ */
+void NetworkWorldSystem::HandleRequestCharacterName(const PacketEvent<server::RequestCharacterName>& aMessage)
+{
+    spdlog::info("[Character] the server asked what our character is called");
+
+    Red::CallVirtual(this, "RequestCharacterName", Red::CString(aMessage.get_current().c_str()));
+}
+
 void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::SpawnCharacterResponse>& aMessage)
 {
     if (!aMessage.has_id())
@@ -784,6 +798,7 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleTeleport>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleSpawnCharacterResponse>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleOpenCharacterCreator>(this);
+    pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleRequestCharacterName>(this);
 
     m_remotePlayerId = std::nullopt;
 

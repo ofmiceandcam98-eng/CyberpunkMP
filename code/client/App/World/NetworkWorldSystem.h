@@ -87,6 +87,7 @@ protected:
 
     // The server asking this client to make a character.
     void HandleOpenCharacterCreator(const PacketEvent<server::OpenCharacterCreator>& aMessage);
+    void HandleRequestCharacterName(const PacketEvent<server::RequestCharacterName>& aMessage);
     void HandleTeleport(const PacketEvent<server::NotifyTeleport>& aMessage);
 
     void UpdatePlayerLocation() const;

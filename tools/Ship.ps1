@@ -65,9 +65,18 @@ $ErrorActionPreference = 'Stop'
 Assert-XMake
 Assert-GameDir
 
-# Nothing selected means everything.
+# Nothing selected means everything - INCLUDING the server.
+#
+# It used to mean launcher and mod only, which is wrong in the one case that matters most.
+# The client and server share code\protocol, so a change there has to reach both or the
+# halves disagree about what the other is saying. Shipping v0.3.48 hit exactly that: the
+# client went out with a new message the server had never been rebuilt to send, and the
+# feature simply did nothing with no error anywhere to explain why.
+#
+# "Everything" now means everything. -Launcher, -Mod and -Server still narrow it when that
+# is what you actually want.
 $all = -not ($Launcher -or $Mod -or $Server)
-if ($all) { $Launcher = $true; $Mod = $true }
+if ($all) { $Launcher = $true; $Mod = $true; $Server = $true }
 
 function Step  { param($T) Write-Host "`n=== $T" -ForegroundColor Cyan }
 function Ok    { param($T) Write-Host "  OK  $T" -ForegroundColor Green }

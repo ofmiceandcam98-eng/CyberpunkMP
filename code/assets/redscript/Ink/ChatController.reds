@@ -17,6 +17,15 @@ public class ChatController extends inkHUDGameController {
     private let m_input: wref<inkTextInput>;
     private let m_lastMessageData: ref<ChatMessageData>;
 
+    // The input box is currently asking for a character name, not a chat message.
+    //
+    // A mode flag rather than a second widget. Everything a name prompt needs - a focused
+    // text field, a modal input context, Enter to commit, Escape to leave - is what the
+    // chat input already is, and all of it took real debugging to get working. A separate
+    // prompt would be a second copy of that, able to break on its own.
+    private let m_namePromptOpen: Bool;
+    private let m_nameLabel: wref<inkText>;
+
     protected cb func OnInitialize() -> Bool {
         FTLog(s"[ChatController] OnInitialize");
         this.m_player = this.GetPlayerControlledObject() as PlayerPuppet;
@@ -78,6 +87,96 @@ public class ChatController extends inkHUDGameController {
         inkScrollAreaRef.ScrollVertical(this.m_scrollRef, 1.0);
     }
 
+    // The server wants a name for this character.
+    protected cb func OnCharacterNameRequest(evt: ref<CharacterNameRequest>) -> Bool {
+        FTLog(s"[ChatController] character name requested (currently '\(evt.m_current)')");
+
+        this.m_namePromptOpen = true;
+
+        this.ShowNameLabel(true);
+        this.ShowChatInput(true);
+
+        // Pre-filled when they already have a name, so editing it does not mean retyping
+        // it. Empty for a brand new character, where there is nothing to preserve.
+        this.m_input.SetText(evt.m_current);
+
+        // Said in chat as well as shown on the label.
+        //
+        // The label is built at runtime and reparented into a widget from a compiled ink
+        // asset, which is the one part of this that cannot be checked without running the
+        // game. If it lands somewhere invisible, this line is still there and still says
+        // what the box wants. Cheap insurance against a silent failure that would look
+        // like the box appearing for no reason.
+        let notice = new ChatMessageUIEvent();
+        notice.author = "SERVER";
+        notice.message = "What is your character called? Type a name and press Enter.";
+        this.QueueEvent(notice);
+    }
+
+    // Creates the CHARACTER NAME label the first time it is needed, then shows or hides it.
+    //
+    // Built in script rather than added to multiplayer_ui.inkwidget because that file is a
+    // compiled binary - editing it needs WolvenKit and a rebuild of the archive, which is a
+    // much longer road for one line of text.
+    //
+    // Every step is guarded and failure is silent on purpose: a missing label leaves a
+    // working prompt with no caption, which is far better than a script error, and one bad
+    // script takes the whole mod's compilation down with it.
+    private func ShowNameLabel(show: Bool) -> Void {
+        if !IsDefined(this.m_nameLabel) {
+            if !show {
+                return;
+            }
+
+            let parent = this.GetWidget(n"wrapper/input_box") as inkCompoundWidget;
+            if !IsDefined(parent) {
+                FTLogWarning(s"[ChatController] no input_box to hang the name label on");
+                return;
+            }
+
+            let label = new inkText();
+            label.SetName(n"mp_character_name_label");
+            label.SetText("CHARACTER NAME");
+            label.SetFontFamily("base\\gameplay\\gui\\fonts\\raj\\raj.inkfontfamily");
+            label.SetFontStyle(n"Medium");
+            label.SetFontSize(28);
+            label.SetLetterCase(textLetterCase.UpperCase);
+            label.SetAnchor(inkEAnchor.TopLeft);
+
+            // Sits above the box rather than inside it - a negative top margin lifts it
+            // clear of the input, which already fills its own row.
+            label.SetMargin(new inkMargin(12.0, -34.0, 0.0, 0.0));
+
+            // The same yellow the game uses for prompts, so it reads as the game asking.
+            label.SetTintColor(new HDRColor(2.0, 1.75, 0.25, 1.0));
+
+            label.Reparent(parent);
+
+            this.m_nameLabel = label;
+        }
+
+        this.m_nameLabel.SetVisible(show);
+    }
+
+    // Commits whatever is in the box as the character's name.
+    private func SendName() -> Void {
+        let wanted = this.m_input.GetText();
+
+        if Equals(wanted, "") {
+            let notice = new ChatMessageUIEvent();
+            notice.author = "SERVER";
+            notice.message = "A character needs a name - use /name when you have picked one.";
+            this.QueueEvent(notice);
+            return;
+        }
+
+        // Sent as the ordinary /name command. The server already validates, truncates to 32
+        // and writes it through to the character record, so this reuses that rather than
+        // adding a second path to the same field.
+        FTLog(s"[ChatController] naming this character '\(wanted)'");
+        GameInstance.GetNetworkWorldSystem().GetChatSystem().Send("/name " + wanted);
+    }
+
     private func ShowChatInput(show: Bool) -> Void {
         let blackboardSystem: ref<BlackboardSystem> = GameInstance.GetBlackboardSystem(GetGameInstance());
         let uiBlackboard: ref<IBlackboard> = blackboardSystem.Get(GetAllBlackboardDefs().UIGameData);
@@ -130,6 +229,12 @@ public class ChatController extends inkHUDGameController {
             this.m_player.UnregisterInputListener(this, n"ChatScrollDown");
             this.m_input.SetText("");
             this.RequestSetFocus(null);
+
+            // Whatever the box was being used for, it is a chat box again now. Cleared
+            // here rather than at each call site so no route out can leave the mode set
+            // and turn somebody's next message into a rename.
+            this.m_namePromptOpen = false;
+            this.ShowNameLabel(false);
         }
         this.m_chatInputOpen = show;
         this.UpdateInputHints();
@@ -182,7 +287,12 @@ public class ChatController extends inkHUDGameController {
             };
             switch actionName {
             case n"EnterChat":
-                this.SendChat();
+                // The flag is read here, before ShowChatInput clears it below.
+                if this.m_namePromptOpen {
+                    this.SendName();
+                } else {
+                    this.SendChat();
+                }
                 this.ShowChatInput(false);
                 return true;
                 break;
@@ -215,6 +325,18 @@ public class ChatController extends inkHUDGameController {
                 return true;
                 break;
             case n"back":
+                // Escape leaves the name prompt too.
+                //
+                // Trapping somebody in a box until they type something is worse than
+                // letting them out with the wrong name, and they may well want to look at
+                // their character before deciding. Nothing is lost - they keep the
+                // fallback name and the line below says how to change it.
+                if this.m_namePromptOpen {
+                    let notice = new ChatMessageUIEvent();
+                    notice.author = "SERVER";
+                    notice.message = "No name set - you can pick one any time with /name <name>.";
+                    this.QueueEvent(notice);
+                }
                 this.ShowChatInput(false);
                 return true;
                 break;

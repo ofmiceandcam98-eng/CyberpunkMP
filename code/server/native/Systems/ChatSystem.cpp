@@ -84,6 +84,11 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
             name = pExisting->Name;
     }
 
+    // Whether they have actually CHOSEN a name, as opposed to falling back to their
+    // account name below. This is the question the prompt exists to answer, and it has to
+    // be asked before the fallback makes every character look named.
+    const bool unnamed = name.empty();
+
     character.Name = name.empty() ? pPlayer->Username : name;
 
     // Progression carried forward, so editing your face does not reset your character and
@@ -103,6 +108,25 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
 
     Tell(*pPlayer, fmt::format("Character saved as '{}'. You will look like this every time you join.",
                                character.Name));
+
+    // Nobody should have to know a command exists to be called something.
+    //
+    // The creator has no name field, so a character arrives with the account name on it -
+    // which is the one thing roleplay cannot have, and it is now on the nameplate, in the
+    // scanner and in front of every line they type. Asking here means the box appears the
+    // moment they finish creating, which is exactly when they are thinking about who this
+    // person is.
+    //
+    // Only when unnamed. Somebody editing their face at a ripperdoc has already answered
+    // this and being asked again every visit would be its own kind of broken.
+    if (unnamed)
+    {
+        server::RequestCharacterName ask;
+        ask.set_current("");
+        GServer->Send(pPlayer->Connection, ask);
+
+        spdlog::info("Asked {} to name their new character", pPlayer->Username);
+    }
 }
 
 void ChatSystem::HandleRespawnRequest(const PacketEvent<client::RespawnRequest>& aMessage)
@@ -1260,9 +1284,25 @@ void ChatSystem::HandleChatMessageRequest(const PacketEvent<client::ChatMessageR
     if (!ResolveChannel(*pPlayer, line, text, range, everyone, channel))
         return; // Refused or misused - ResolveChannel already said why.
 
+    // Chat shows the CHARACTER's name.
+    //
+    // The scanner already did - Level::Serialize sends it - so a player could be scanned
+    // as one person and then speak as another, which is worse than either alone. Somebody
+    // being "noremacxxi" while their character is somebody else is the point of roleplay,
+    // and the account name leaking into the one place people read constantly undoes it.
+    //
+    // Falls back to the account name only until a character exists.
+    std::string speaker = pPlayer->Username;
+
+    if (const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(pPlayer->DiscordId))
+    {
+        if (!pCharacter->Name.empty())
+            speaker = pCharacter->Name;
+    }
+
     if (everyone)
     {
-        Broadcast(pPlayer->Username.c_str(), text.c_str(), channel);
+        Broadcast(speaker.c_str(), text.c_str(), channel);
         return;
     }
 
@@ -1275,5 +1315,5 @@ void ChatSystem::HandleChatMessageRequest(const PacketEvent<client::ChatMessageR
         return;
     }
 
-    BroadcastInRange(pPlayer->Username, text, pMovement->Position, range, entity, channel);
+    BroadcastInRange(speaker, text, pMovement->Position, range, entity, channel);
 }

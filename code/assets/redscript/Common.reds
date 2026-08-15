@@ -14,6 +14,16 @@ public class ConnectedToServer extends Event {
     public let m_connected: Bool;
 }
 
+// The server asking what this character is called.
+//
+// Plain redscript, not native like ChatMessageUIEvent above - the C++ side only calls a
+// method on NetworkWorldSystem and that method raises this, so nothing about the event
+// itself has to exist in both languages. One less thing that can be declared on one side
+// and not the other.
+public class CharacterNameRequest extends Event {
+    public let m_current: String;
+}
+
 public class ChatMessageData extends IScriptable {
     public let m_author: String;
     public let m_message: String;

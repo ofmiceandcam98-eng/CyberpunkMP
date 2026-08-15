@@ -253,6 +253,22 @@ public native class NetworkWorldSystem extends IGameSystem {
         }
     }
 
+    // Called from C++ when the server wants a name for this character.
+    //
+    // Raised as a UI event rather than handled here, because the thing that has to happen
+    // is a text box appearing and this system owns no widgets. ChatController does, and it
+    // already owns a text input that works - so the prompt reuses it instead of building a
+    // second one that would need its own focus handling, its own input context and its own
+    // way of being wrong.
+    public func RequestCharacterName(current: String) -> Void {
+        FTLog(s"[Character] the server asked for a character name (currently '\(current)')");
+
+        let evt = new CharacterNameRequest();
+        evt.m_current = current;
+
+        GameInstance.GetUISystem(GetGameInstance()).QueueEvent(evt);
+    }
+
     public func DeletePuppet(entityId: EntityID) {
         GameInstance.GetDynamicEntitySystem().DeleteEntity(entityId);
     }

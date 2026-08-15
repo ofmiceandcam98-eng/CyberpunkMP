@@ -109,6 +109,22 @@ message OpenCharacterCreator {
     bool capture_only = 1;
 }
 
+// Asks a client what their character is called.
+//
+// Sent right after a character is saved without a name, which is what happens when
+// somebody comes out of the creator - the creator has no name field of its own. Asking is
+// the server's job for the same reason as above: it is the only side that knows whether a
+// name already exists.
+//
+// The answer comes back as the ordinary /name command over chat rather than a message of
+// its own. That path already validates, truncates and persists, so a second one would only
+// be a second place for the two to disagree.
+message RequestCharacterName {
+    // What they are called now, so the box opens with something in it rather than empty.
+    // Empty when they have never had a name.
+    string current = 1;
+}
+
 message RpcCall {
     uint32 id = 1;
 	bytes arguments = 2;
@@ -141,5 +157,6 @@ message Protocol {
         NotifyVehicleControlAssigned notify_vehicle_control_assigned = 12;
         NotifyTeleport notify_teleport = 13;
         OpenCharacterCreator open_character_creator = 14;
+        RequestCharacterName request_character_name = 15;
     }
 }

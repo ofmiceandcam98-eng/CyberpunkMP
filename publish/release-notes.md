@@ -4,6 +4,14 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.48
+
+- **Your character gets a name, and the game asks for it.** Finish the creator and a box appears labelled **CHARACTER NAME**. Type one, press Enter, done — no command to know about. Escape skips it and `/name` still works whenever you change your mind.
+- **That name is who you are to everyone else.** It shows over your head when someone scans you, and it is now what appears in chat instead of your Discord name. Your account name no longer leaks into the one place people read constantly.
+- Everybody's name is their own — it lives on the character, not the account, so making a new character means picking a new name.
+
+**This update changes how the client and server talk, so everyone needs it.** The launcher updates itself; if you were already in game, restart it.
+
 ## What changed — v0.3.47
 
 - **No standard start when making a character.** A regular new game begins in the prologue — the whole of Act 1, which is exactly what the multiplayer start exists to skip. Only the Phantom Liberty start is offered, which lands you past Act 1 at level 15.
