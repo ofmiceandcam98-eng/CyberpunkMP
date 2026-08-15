@@ -349,6 +349,24 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
         .set<MovementComponent>({pos, rot, {}})
         .set<AppearanceComponent>({equipment, appearance});
 
+    // Somebody with no character is told, once, on arrival.
+    //
+    // The server is the only side that knows whether they have one, and a player who is
+    // silently playing as whoever the world template contains has no way to find out that
+    // is not who they are meant to be. Being asked is the difference between a system that
+    // exists and a system anybody uses.
+    if (!GServer->GetPlayerStore().HasCharacter(pComponent->DiscordId))
+    {
+        if (auto* pChat = GetWorld()->get_mut<ChatSystem>())
+        {
+            pChat->Tell(*pComponent, "You have no character yet.");
+            pChat->Tell(*pComponent, "Find a mirror and change how you look - it saves by itself when you close it.");
+            pChat->Tell(*pComponent, "Then choose what you are called with /name <name>.");
+        }
+
+        spdlog::info("{} has no character yet - prompted them to make one", pComponent->Username);
+    }
+
     response.set_id(pComponent->Puppet);
     GServer->Send(aMessage.ConnectionId, response);
 
@@ -651,7 +669,19 @@ server::NotifyCharacterLoad Level::Serialize(flecs::entity aEntity) noexcept
     {
         if (const auto* pPlayerComponent = owner.get<PlayerComponent>())
         {
-            message.set_username(pPlayerComponent->Username.c_str());
+            // The CHARACTER's name, when they have one - this is what other players read
+            // off the nameplate when they scan someone.
+            //
+            // Falling back to the Discord name only until a character exists. Somebody
+            // being "noremacxxi" and their character being someone else is the whole
+            // point of roleplay; showing the account name over a character's head breaks
+            // it every time anybody looks at anybody.
+            const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(pPlayerComponent->DiscordId);
+
+            if (pCharacter && !pCharacter->Name.empty())
+                message.set_username(pCharacter->Name.c_str());
+            else
+                message.set_username(pPlayerComponent->Username.c_str());
         }
     }
 
