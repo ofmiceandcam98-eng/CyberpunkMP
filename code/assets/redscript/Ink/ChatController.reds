@@ -113,6 +113,18 @@ public class ChatController extends inkHUDGameController {
 
     protected cb func OnChatMessageUIEvent(evt: ref<ChatMessageUIEvent>) -> Bool {
         FTLog(s"[ChatController] OnChatMessageUIEvent");
+
+        // Re-asserted on every message, not just at init.
+        //
+        // Cam's report after the first fix was that chat now appears but LATE - typically
+        // once he got into a vehicle. That fits: OnInitialize runs while the HUD is still
+        // being assembled, and something later in that assembly puts the widget back the
+        // way the asset authored it. Anything that rebuilds the HUD would do the same.
+        //
+        // Setting it again here means the first message to arrive brings chat back, so a
+        // late reset costs one message rather than the rest of the session. It is cheap
+        // and it does not depend on knowing which part of the HUD is responsible.
+        this.ForceVisible();
         let messageData = new ChatMessageData();
         messageData.m_author = evt.author;
         messageData.m_message = evt.message;

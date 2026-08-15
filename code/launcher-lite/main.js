@@ -1493,7 +1493,103 @@ async function ensureTemplateSave () {
   // Records WHICH body is installed, so a later change of mind is noticed.
   await fsp.writeFile(stampPath, wanted)
 
+  // And WHEN, which is what tells us later whether the player has built a world of their
+  // own since. The folder's own timestamp cannot answer that - stampTemplateNewest
+  // rewrites it to the future on every launch - so the real install time is recorded
+  // separately and never touched again.
+  await fsp.writeFile(path.join(target, '.installed-at'), String(Date.now()))
+
   return { installed: existsSync(path.join(target, 'sav.dat')), fresh: true, bodyType: wanted }
+}
+
+/**
+ * When the template was installed, or null if that is not recorded.
+ */
+function templateInstalledAt () {
+  const target = templateDir()
+  const marker = path.join(target, '.installed-at')
+
+  if (existsSync(marker)) {
+    const value = Number(readFileSync(marker, 'utf8').trim())
+    if (Number.isFinite(value)) return value
+  }
+
+  if (!existsSync(path.join(target, 'sav.dat'))) return null
+
+  // A template installed before this marker existed, which is everyone playing today.
+  //
+  // Its real install time is unrecoverable: stampTemplateNewest rewrites every timestamp
+  // in the folder to the future on every launch, including the .bodytype file, so nothing
+  // in there remembers when it arrived.
+  //
+  // Backdated a week, which resolves the case that actually matters. Anyone affected by
+  // the identity bug has played recently - that is how they noticed - so their own saves
+  // land inside the window and they stop being handed the template. Someone genuinely new
+  // is not in this branch at all, because their template installs fresh and passes its
+  // real timestamp.
+  const assumed = Date.now() - 7 * 24 * 60 * 60 * 1000
+
+  try {
+    writeFileSync(marker, String(assumed))
+  } catch (err) {
+    console.warn('[template] could not record an install time:', err.message)
+  }
+
+  return assumed
+}
+
+/**
+ * Has this player made a world of their own since the template was installed?
+ *
+ * This is the question behind the worst bug the project has had. The template is ONE save,
+ * built from one person's character, and it was being forced to the front on every single
+ * launch - so MULTIPLAYER loaded it every time and everybody arrived wearing the character
+ * it was made from. Two players reported it as "I spawned in as your old character", and
+ * hyliangenesis found the workaround that proves the diagnosis exactly: loading their own
+ * save from the singleplayer menu and then connecting with '/' produced the right
+ * character every time.
+ *
+ * The template's job is to give somebody with NO character a world past Act 1 to arrive
+ * in. Once they have been through NEW CHARACTER, the game has written saves of their own
+ * and those are the ones that hold who they are. Continuing to override them is what
+ * turned a bootstrap into an identity swap.
+ *
+ * Saves older than the install are ignored on purpose. Everyone has singleplayer saves
+ * from before any of this, and loading a random one of those is the behaviour the template
+ * was introduced to stop.
+ */
+async function hasOwnWorldSince (installedAt) {
+  if (!installedAt) return false
+
+  const saves = savesDir()
+  if (!existsSync(saves)) return false
+
+  const template = templateDir()
+
+  let entries
+  try {
+    entries = await fsp.readdir(saves, { withFileTypes: true })
+  } catch (err) {
+    console.warn('[template] could not read the saves folder:', err.message)
+    return false
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+
+    const full = path.join(saves, entry.name)
+    if (full === template) continue
+
+    // A folder is only a save if the game wrote one there.
+    if (!existsSync(path.join(full, 'sav.dat'))) continue
+
+    try {
+      const stat = await fsp.stat(path.join(full, 'sav.dat'))
+      if (stat.mtimeMs > installedAt) return true
+    } catch { /* unreadable save - treat as not theirs */ }
+  }
+
+  return false
 }
 
 /**
@@ -1570,8 +1666,17 @@ async function launchGame () {
     const template = await ensureTemplateSave()
 
     if (template.installed) {
-      await stampTemplateNewest()
-      console.log('[template] ready - multiplayer will load it rather than a personal save')
+      // Only until they have a world of their own. See hasOwnWorldSince - forcing this
+      // every launch is what made everybody spawn as the character the template was built
+      // from, and it overrode the character they had just created through NEW CHARACTER.
+      const own = await hasOwnWorldSince(template.fresh ? Date.now() : templateInstalledAt())
+
+      if (own) {
+        console.log('[template] player has their own world - leaving their saves alone')
+      } else {
+        await stampTemplateNewest()
+        console.log('[template] no character yet - multiplayer will start from the template')
+      }
     } else {
       console.warn('[template] not available:', template.reason || 'unknown')
     }

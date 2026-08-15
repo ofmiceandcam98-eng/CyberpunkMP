@@ -4,6 +4,13 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.50
+
+- **You are your own character again.** This was the big one. The launcher installs a starter save so new players skip Act 1 — and it was forcing that save to load on **every** launch, for everyone. Since it is one save built from one person's character, pressing MULTIPLAYER handed you *their* character, and it overwrote whatever you made through NEW CHARACTER. It is now only used until you have a character of your own, then your saves are left alone.
+- **Chat appears straight away.** It was showing up late — usually once you got in a car — because the HUD finishes assembling after chat sets itself up and puts it back. Visibility is now re-asserted on every message, so the first line that arrives brings it back.
+
+**Known and not fixed yet:** a crash when opening the weapon wheel as a passenger in a moving vehicle, and clothing that only partly applies to other players.
+
 ## What changed — v0.3.49
 
 Most of this was already written and simply never reached your game. The build was only deploying the mod's code, not its data files — so two fixes sat finished in the repo while everyone kept hitting the bugs they fixed.
