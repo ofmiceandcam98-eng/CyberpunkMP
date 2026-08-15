@@ -65,6 +65,10 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // Watches for the player finishing a mirror or creator session, and saves it for them.
     void PollAppearanceChanges();
 
+    // Writes every native function on the customization system to the log, once, so the
+    // way to open the creator can be found rather than guessed at.
+    void DumpCustomizationApi() const;
+
     // What they had while the customization state was still readable. Captured during the
     // session because once it closes the instance is null and there is nothing to read.
     Vector<uint8_t> m_pendingAppearance;

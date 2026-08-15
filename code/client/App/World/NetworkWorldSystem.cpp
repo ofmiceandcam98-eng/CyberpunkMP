@@ -274,6 +274,76 @@ void NetworkWorldSystem::RequestRespawn()
 }
 
 /**
+ * Asks the game what the character customization system can actually do.
+ *
+ * Every other way of finding this out has been exhausted. redscript sees two methods on
+ * the interface; the type dump has no open event, no mirror class and no creator
+ * controller; the SDK's generated class is an opaque blob. All of which establish only
+ * that the answer is not written down anywhere WE can read.
+ *
+ * The game itself knows. RTTI carries every native function on every class, including the
+ * ones never exposed to scripts - that is how the engine dispatches them. So rather than
+ * guessing at names, this walks the class and its parents and writes down what is really
+ * there.
+ *
+ * Once per session, on connect. It is a few dozen log lines and it is the difference
+ * between "the creator cannot be opened" and knowing the name of the function that opens
+ * it.
+ */
+void NetworkWorldSystem::DumpCustomizationApi() const
+{
+    static bool s_dumped = false;
+    if (s_dumped)
+        return;
+
+    s_dumped = true;
+
+    auto* pRtti = Red::CRTTISystem::Get();
+    if (!pRtti)
+        return;
+
+    // Both the concrete class and the interface it inherits - the interesting methods
+    // could be on either, and checking one and concluding "not there" is how this took
+    // three attempts already.
+    for (const char* name : {"gameuiCharacterCustomizationSystem", "gameuiICharacterCustomizationSystem"})
+    {
+        auto* pClass = pRtti->GetClass(name);
+
+        if (!pClass)
+        {
+            spdlog::warn("[CCApi] no RTTI class named {}", name);
+            continue;
+        }
+
+        spdlog::info("[CCApi] === {} : {} function(s) ===", name, pClass->funcs.size);
+
+        for (auto* pFunc : pClass->funcs)
+        {
+            if (!pFunc)
+                continue;
+
+            std::string params;
+
+            for (auto* pParam : pFunc->params)
+            {
+                if (!pParam || !pParam->type)
+                    continue;
+
+                Red::CName typeName;
+                pParam->type->GetName(typeName);
+
+                if (!params.empty())
+                    params += ", ";
+
+                params += typeName.ToString();
+            }
+
+            spdlog::info("[CCApi]   {}({})", pFunc->shortName.ToString(), params);
+        }
+    }
+}
+
+/**
  * Notices when the player has finished changing how they look, and saves it.
  *
  * Nobody should have to type a command to keep their own face. An earlier version made
@@ -745,6 +815,10 @@ void NetworkWorldSystem::OnConnected()
         {
             UpdatePlayerLocation();
         });
+
+    // What the customization system really offers, written down once per session. See
+    // DumpCustomizationApi - this is how the creator stops being a guess.
+    DumpCustomizationApi();
 
     // Once a second is plenty - somebody adjusting their face is not in a hurry, and this
     // is a null check until they actually are at a mirror.
