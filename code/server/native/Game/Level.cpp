@@ -357,14 +357,28 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
     // exists and a system anybody uses.
     if (!GServer->GetPlayerStore().HasCharacter(pComponent->DiscordId))
     {
+        // Ask for whatever they are wearing right now, and keep it as their character.
+        //
+        // This is what makes MULTIPLAYER - NEW CHARACTER work. That flow runs the game's
+        // creator BEFORE the world exists and before anyone connects, so the client's
+        // appearance watcher - which only runs while connected - never sees the session at
+        // all. Somebody could spend ten minutes building a face and have none of it kept.
+        //
+        // Asking on first spawn catches it: by now they are standing in the world as
+        // whoever they just made. The reply carries the body gender too, which the server
+        // cannot read out of the appearance blob itself.
+        server::OpenCharacterCreator capture;
+        capture.set_capture_only(true);
+        GServer->Send(aMessage.ConnectionId, capture);
+
         if (auto* pChat = GetWorld()->get_mut<ChatSystem>())
         {
-            pChat->Tell(*pComponent, "You have no character yet.");
-            pChat->Tell(*pComponent, "Visit any ripperdoc and change how you look - it saves by itself.");
-            pChat->Tell(*pComponent, "Then choose what you are called with /name <name>.");
+            pChat->Tell(*pComponent, "Welcome. This is now your character - the server will remember you.");
+            pChat->Tell(*pComponent, "Choose what you are called with /name <name>.");
+            pChat->Tell(*pComponent, "Any ripperdoc can change how you look later, and it saves by itself.");
         }
 
-        spdlog::info("{} has no character yet - prompted them to make one", pComponent->Username);
+        spdlog::info("{} has no character yet - capturing the one they arrived as", pComponent->Username);
     }
 
     response.set_id(pComponent->Puppet);

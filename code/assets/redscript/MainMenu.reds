@@ -38,7 +38,17 @@ private func PopulateMenuItemList() -> Void {
     // system is native-only so it cannot be opened on demand. Going through New Game is
     // therefore the only route to real character creation that exists.
     this.AddMenuItem("MULTIPLAYER", n"OnMultiplayerContinue");
-    this.AddMenuItem("MULTIPLAYER - NEW CHARACTER", n"OnMultiplayerNewCharacter");
+
+    // The warning is IN THE LABEL.
+    //
+    // Making a character replaces the one the server holds, and that is hours of
+    // somebody's evening. "NEW CHARACTER" on its own reads as ADDING one, which is exactly
+    // the misreading that costs people their character - and by the time anything could
+    // warn them from in game, the replacement has already happened.
+    //
+    // A confirmation dialog would be better and needs an API this menu does not obviously
+    // have. A label that cannot be misread is available right now and cannot fail to show.
+    this.AddMenuItem("MULTIPLAYER - NEW CHARACTER (REPLACES YOURS)", n"OnMultiplayerNewCharacter");
 
     // PopulateMenuItemList refreshes at its end, before our item existed. Without
     // refreshing again the entry is in the data but never drawn, which looks exactly
@@ -89,6 +99,7 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
     // PLAY; only the route through the menus differs.
     if Equals(data.eventName, n"OnMultiplayerNewCharacter") {
         FTLog(s"[CyberpunkMP] MULTIPLAYER - NEW CHARACTER selected from the main menu");
+
 
         let network = GameInstance.GetNetworkWorldSystem();
         if IsDefined(network) {

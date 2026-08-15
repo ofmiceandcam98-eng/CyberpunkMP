@@ -4,6 +4,12 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.46
+
+- **The character you make is kept.** The creator runs before you connect, so nothing was watching while you built a face — the server now asks for your appearance the moment you arrive and keeps that as your character. Previously it was only saved if you happened to visit a ripperdoc afterwards.
+- **The menu says what it does.** Making a new character replaces the one the server holds, so the entry now reads **NEW CHARACTER (REPLACES YOURS)**.
+- Half-built appearances are rejected. A 23-byte appearance was captured and used during testing — the customization state exists briefly before it is filled in, and the watcher caught it in that window. Both ends now require a plausible one.
+
 ## What changed — v0.3.45
 
 - **MULTIPLAYER — NEW CHARACTER.** Runs the game's own New Game flow, so you get the real character creator — **including male or female**, which is the one thing no ripperdoc can change. Pick Phantom Liberty's start on the way through and you land past Act 1 at level 15, then connect straight to the server. **MULTIPLAYER** still drops you back in as you were.
