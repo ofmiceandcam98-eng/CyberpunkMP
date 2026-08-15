@@ -1407,7 +1407,26 @@ async function hydrateUserFromToken () {
 // ---------------------------------------------------------------------------
 
 const TEMPLATE_SAVE_NAME = 'MultiplayerStart'
-const TEMPLATE_URL = `https://github.com/${GITHUB_REPO}/releases/latest/download/character-template.zip`
+
+// Two templates, because body type cannot be changed in game.
+//
+// Ripperdocs change appearance - everything except body gender - and the mirror cannot
+// either. So the body a player has is decided entirely by which save the world was built
+// from, which means it has to be chosen BEFORE the game starts. There is nowhere else to
+// put this: by the time anybody is in the world it is already too late.
+//
+// Named separately rather than one file with a flag inside, so adding a template is
+// dropping a save into publish/ rather than a code change.
+const TEMPLATE_URLS = {
+  female: `https://github.com/${GITHUB_REPO}/releases/latest/download/character-template.zip`,
+  male: `https://github.com/${GITHUB_REPO}/releases/latest/download/character-template-male.zip`
+}
+
+// Which body the player asked for. Female is the default only because it is the template
+// that exists today, not as a statement about anything.
+function chosenBodyType () {
+  return loadSettings().bodyType === 'male' ? 'male' : 'female'
+}
 
 function savesDir () {
   // Not Documents. Cyberpunk uses the Saved Games known folder, under a CD Projekt Red
@@ -1422,8 +1441,18 @@ function templateDir () {
 
 async function ensureTemplateSave () {
   const target = templateDir()
+  const wanted = chosenBodyType()
 
-  if (existsSync(path.join(target, 'sav.dat'))) return { installed: true, fresh: false }
+  // Re-installed when the player changes body type, because the installed save IS the
+  // body. Checking only for existence would silently leave somebody who picked male
+  // playing the female template forever, with no way to tell why.
+  const stampPath = path.join(target, '.bodytype')
+  const installed = existsSync(path.join(target, 'sav.dat'))
+  const current = installed && existsSync(stampPath)
+    ? readFileSync(stampPath, 'utf8').trim()
+    : null
+
+  if (installed && current === wanted) return { installed: true, fresh: false, bodyType: wanted }
 
   const saves = savesDir()
   if (!existsSync(saves)) {
@@ -1432,22 +1461,39 @@ async function ensureTemplateSave () {
     await fsp.mkdir(saves, { recursive: true })
   }
 
-  const response = await axios.get(TEMPLATE_URL, {
+  const response = await axios.get(TEMPLATE_URLS[wanted], {
     responseType: 'arraybuffer',
     timeout: 60000,
     validateStatus: (status) => status === 200 || status === 404
   })
 
-  if (response.status === 404) return { installed: false, reason: 'no template published yet' }
+  // A body type with no template published yet. Falling back to the one that does exist
+  // beats refusing to launch - they play as the wrong body rather than not at all - but it
+  // is said out loud, because silently ignoring somebody's choice is worse than the wait.
+  if (response.status === 404) {
+    if (installed) {
+      return { installed: true, fresh: false, bodyType: current, requested: wanted, missing: true }
+    }
+    return { installed: false, reason: `no ${wanted} template published yet` }
+  }
 
-  const zipPath = path.join(app.getPath('temp'), 'character-template.zip')
+  const zipPath = path.join(app.getPath('temp'), `character-template-${wanted}.zip`)
   await fsp.writeFile(zipPath, Buffer.from(response.data))
+
+  // Cleared first. Extracting over an existing template would leave the previous body's
+  // files behind when the two archives ever differ in contents.
+  if (installed) {
+    await fsp.rm(target, { recursive: true, force: true })
+  }
 
   const zip = new AdmZip(zipPath)
   await fsp.mkdir(target, { recursive: true })
   zip.extractAllTo(target, true)
 
-  return { installed: existsSync(path.join(target, 'sav.dat')), fresh: true }
+  // Records WHICH body is installed, so a later change of mind is noticed.
+  await fsp.writeFile(stampPath, wanted)
+
+  return { installed: existsSync(path.join(target, 'sav.dat')), fresh: true, bodyType: wanted }
 }
 
 /**
@@ -2918,6 +2964,38 @@ ipcMain.handle('tailscale:invite', async () => {
 // never leaves the main process except to Discord itself and to Cam's own coordination
 // service.
 // ---------------------------------------------------------------------------
+
+// The body type a new character starts from.
+//
+// In the launcher rather than in game because it is decided by which save the world is
+// built from, and that is chosen before the game starts. Ripperdocs change everything
+// about how you look EXCEPT this.
+ipcMain.handle('bodyType:get', async () => {
+  const chosen = chosenBodyType()
+
+  // Whether the other option can actually be honoured yet. Offering a choice that
+  // silently does nothing is worse than showing it as unavailable.
+  let maleAvailable = false
+  try {
+    const head = await axios.head(TEMPLATE_URLS.male, {
+      timeout: 8000,
+      validateStatus: () => true
+    })
+    maleAvailable = head.status === 200
+  } catch { /* offline - assume not, and say so rather than guessing */ }
+
+  return { ok: true, bodyType: chosen, maleAvailable }
+})
+
+ipcMain.handle('bodyType:set', async (_event, value) => {
+  const wanted = value === 'male' ? 'male' : 'female'
+  saveSettings({ bodyType: wanted })
+
+  // Not installed here. It happens on the next launch, through the same path as a first
+  // install, so there is one place where the template is put in place rather than two
+  // that can disagree.
+  return { ok: true, bodyType: wanted }
+})
 
 ipcMain.handle('devKey:fetch', async () => {
   if (!isAdmin()) return { ok: false, error: 'The dev key is for people with the dev role.' }

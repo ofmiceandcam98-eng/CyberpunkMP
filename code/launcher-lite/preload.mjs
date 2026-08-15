@@ -42,6 +42,11 @@ contextBridge.exposeInMainWorld('launcher', {
   // rather than pushed, so it is never sitting in the page for someone screen-sharing.
   devKey: () => ipcRenderer.invoke('devKey:fetch'),
 
+  // Which body a new character starts from. Chosen here because it is baked into the
+  // world template and cannot be changed once the game is running.
+  getBodyType: () => ipcRenderer.invoke('bodyType:get'),
+  setBodyType: (value) => ipcRenderer.invoke('bodyType:set', value),
+
   // The coordination service itself - started alongside the game server, controllable
   // on its own. Host machine only.
   coordStatus: () => ipcRenderer.invoke('coord:status'),

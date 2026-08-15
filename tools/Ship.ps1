@@ -521,17 +521,38 @@ foreach ($side in $sideFiles) {
 # Zipped here rather than stored zipped, so the save stays inspectable in the repo - being
 # able to read its metadata is how we know what state it is in. The launcher extracts it
 # into the player's saves folder and stamps it newest; see ensureTemplateSave.
-$templateDir = Join-Path $Repo "publish\character-template"
-if (Test-Path (Join-Path $templateDir "sav.dat")) {
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
+# One per body type. Body gender cannot be changed in game - not at a ripperdoc, not at a
+# mirror - so the only way to offer both is to ship both worlds and let the launcher
+# install whichever was chosen.
+#
+# The male one is optional: while it does not exist the launcher shows that choice as
+# unavailable rather than pretending to honour it.
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 
-    $templateZip = Join-Path $env:TEMP "character-template.zip"
+$templates = @(
+    @{ Dir = "publish\character-template";      Zip = "character-template.zip";      Label = "female" },
+    @{ Dir = "publish\character-template-male"; Zip = "character-template-male.zip"; Label = "male"   }
+)
+
+foreach ($template in $templates) {
+    $templateDir = Join-Path $Repo $template.Dir
+
+    if (-not (Test-Path (Join-Path $templateDir "sav.dat"))) {
+        if ($template.Label -eq "female") {
+            Warn "no $($template.Dir)\sav.dat - players will load their own saves instead"
+        } else {
+            Warn "no $($template.Label) template yet - that body type stays unavailable in the launcher"
+        }
+        continue
+    }
+
+    $templateZip = Join-Path $env:TEMP $template.Zip
     if (Test-Path $templateZip) { Remove-Item -LiteralPath $templateZip -Force }
 
     # Staged WITHOUT the README. That folder becomes a save directory on the player's
     # machine and Cyberpunk reads it looking for saves - a stray markdown file there is at
     # best noise and at worst something the game tries to parse.
-    $templateStage = Join-Path $env:TEMP ("template_" + (Get-Date -Format 'HHmmss'))
+    $templateStage = Join-Path $env:TEMP ("template_" + $template.Label + "_" + (Get-Date -Format 'HHmmss'))
     if (Test-Path $templateStage) { Remove-Item -LiteralPath $templateStage -Recurse -Force }
     New-Item -ItemType Directory -Path $templateStage -Force | Out-Null
 
@@ -544,9 +565,7 @@ if (Test-Path (Join-Path $templateDir "sav.dat")) {
         [System.IO.Compression.CompressionLevel]::Optimal, $false)
 
     $uploads += $templateZip
-    Ok "world template staged ($([math]::Round((Get-Item $templateZip).Length/1MB,1)) MB)"
-} else {
-    Warn "no publish\character-template\sav.dat - players will load their own saves instead"
+    Ok "$($template.Label) world template staged ($([math]::Round((Get-Item $templateZip).Length/1MB,1)) MB)"
 }
 
 # The mod artifacts. Rebuilt above when -Mod, carried forward from the previous release
