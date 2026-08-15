@@ -74,12 +74,26 @@ struct CharacterRecord
     // Defaults false, so every character that predates this gets asked once.
     bool NameChosen{false};
 
+    // Has this CHARACTER been into the world yet?
+    //
+    // The arrivals point set by /setstart is for brand-new characters, and "brand-new" was
+    // being decided by whether the ACCOUNT had a record - which is wrong twice over. A
+    // record is created the first time anything about a player is stored, so by the time
+    // anybody spawned they already had one and the start point was skipped; and somebody
+    // replacing their character with a new one kept the old character's position, which is
+    // precisely the case the arrivals point exists for.
+    //
+    // Kept on the character rather than the account so a replacement starts fresh: a new
+    // CharacterRecord defaults this to false and is therefore sent to the start point,
+    // without anything having to remember to reset it.
+    bool SpawnedBefore{false};
+
     int64_t CreatedAt{0};
     int64_t UpdatedAt{0};
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(CharacterRecord, Slot, Name, Appearance, IsMale,
                                                 Level, AttributePoints, PerkPoints, Initialised,
-                                                NameChosen, CreatedAt, UpdatedAt)
+                                                NameChosen, SpawnedBefore, CreatedAt, UpdatedAt)
 };
 
 /**
