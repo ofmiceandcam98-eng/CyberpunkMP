@@ -274,11 +274,78 @@ void NetworkWorldSystem::RequestRespawn()
 }
 
 /**
+ * Notices when the player has finished changing how they look, and saves it.
+ *
+ * Nobody should have to type a command to keep their own face. An earlier version made
+ * saving explicit because the creator gives no callback when it closes and the
+ * customization system has no IsActive to poll - both true, and both the wrong thing to
+ * look at.
+ *
+ * The signal was already written down a few lines up in NetworkService: the customization
+ * STATE INSTANCE is null during normal gameplay and non-null only while somebody is
+ * editing. So the transition from non-null back to null is exactly "they closed the
+ * mirror", which is the event that seemed unavailable.
+ *
+ * Polled rather than hooked because there is nothing to hook - but it is a null check
+ * once a second, not a serialisation, so the cost is nothing until someone is actually
+ * standing at a mirror.
+ */
+void NetworkWorldSystem::PollAppearanceChanges()
+{
+    const auto& service = Core::Container::Get<NetworkService>();
+    if (!service || !service->IsConnected())
+        return;
+
+    auto ccSystem = Red::GetGameSystem<Red::game::ui::CharacterCustomizationSystem>();
+    auto stateHandle = GetCustomizationState(ccSystem);
+
+    const bool customising = stateHandle && stateHandle->instance;
+
+    if (customising)
+    {
+        // Kept up to date while they edit, so whatever they had at the moment it closed is
+        // what gets saved. Serialising here rather than on close matters: by the time the
+        // instance is null there is nothing left to read.
+        auto writer = CMPWriter();
+        CharacterCustomizationState_Serialize(stateHandle->instance, &writer);
+
+        if (!writer.bytes.empty())
+        {
+            m_pendingAppearance = writer.bytes;
+            m_pendingIsMale = stateHandle->instance->isBodyGenderMale;
+        }
+
+        m_wasCustomising = true;
+        return;
+    }
+
+    if (!m_wasCustomising)
+        return;
+
+    // Closed. Send what they finished with.
+    m_wasCustomising = false;
+
+    if (m_pendingAppearance.empty())
+        return;
+
+    client::SaveCharacterRequest request;
+    request.set_ccstate(m_pendingAppearance);
+    request.set_is_male(m_pendingIsMale);
+    request.set_name(Settings::Get().discordName.c_str());
+
+    service->Send(request);
+
+    spdlog::info("[Character] appearance changed - saved {} bytes to the server",
+                 m_pendingAppearance.size());
+
+    m_pendingAppearance.clear();
+}
+
+/**
  * Sends the player's current appearance to the server as their character.
  *
- * Called by the creator when it closes - see CharacterCreator.reds. The spawn path already
- * serialises this exact blob, but that one describes whoever the loaded save contained;
- * this is the deliberate "this is me", and the only one the server keeps.
+ * Kept as a manual override - PollAppearanceChanges is what actually saves in normal use.
+ * Useful when something has gone wrong and somebody needs to force it.
  */
 void NetworkWorldSystem::SaveCharacterAppearance()
 {
@@ -679,6 +746,15 @@ void NetworkWorldSystem::OnConnected()
             UpdatePlayerLocation();
         });
 
+    // Once a second is plenty - somebody adjusting their face is not in a hurry, and this
+    // is a null check until they actually are at a mirror.
+    m_updateAppearance = system("Appearance watch")
+        .interval(1.f)
+        .run([this](flecs::iter& it)
+        {
+            PollAppearanceChanges();
+        });
+
     m_updateSpawningEntities = system<SpawningComponent>("Spawning entity process")
         .interval(0.2f)
         .write<EntityComponent>()
@@ -726,6 +802,9 @@ void NetworkWorldSystem::OnDisconnected(Client::EDisconnectReason aReason)
 
     if (m_updateSpawningEntities)
         m_updateSpawningEntities.destruct();
+
+    if (m_updateAppearance)
+        m_updateAppearance.destruct();
 
     m_interpolationSystem->OnDisconnected();
     m_vehicleSystem->OnDisconnected();

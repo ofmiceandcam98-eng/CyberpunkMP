@@ -697,6 +697,52 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         return true;
     }
 
+    // ------------------------------------------------------------- /name ----
+    //
+    // What your character is called, which is not your Discord name. Somebody being
+    // "noremacxxi" and their character being someone else is the point of roleplay.
+    //
+    // Separate from appearance because the two are chosen at different moments: a face is
+    // fiddled with at a mirror and saves itself, a name is a decision typed once.
+    if (command == "/name")
+    {
+        const auto nameStart = acLine.find(' ');
+        std::string wanted = (nameStart == std::string::npos) ? std::string{} : acLine.substr(nameStart + 1);
+
+        while (!wanted.empty() && wanted.front() == ' ')
+            wanted.erase(wanted.begin());
+
+        if (wanted.empty())
+        {
+            const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(acSender.DiscordId);
+            Tell(acSender, fmt::format("You are called '{}'. Change it with /name <name>.",
+                                       (pCharacter && !pCharacter->Name.empty()) ? pCharacter->Name
+                                                                                 : acSender.Username));
+            return true;
+        }
+
+        if (wanted.size() > 32)
+            wanted.resize(32);
+
+        auto& store = GServer->GetPlayerStore();
+        const auto* pCharacter = store.FindCharacter(acSender.DiscordId);
+
+        if (!pCharacter)
+        {
+            Tell(acSender, "You have no character yet - look in a mirror first, then set a name.");
+            return true;
+        }
+
+        auto updated = *pCharacter;
+        updated.Name = wanted;
+        store.SaveCharacter(acSender.DiscordId, acSender.Username, updated);
+
+        spdlog::info("{} named their character '{}'", acSender.Username, wanted);
+
+        Tell(acSender, fmt::format("You are now known as '{}'.", wanted));
+        return true;
+    }
+
     // ---------------------------------------------------------- /setstart ----
     //
     // Where a brand-new character arrives. Separate from /setspawn on purpose - see
@@ -1004,16 +1050,20 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             return true;
         }
 
-        // How to change your appearance, until the creator can be opened on demand.
+        // How to change your appearance.
         //
         // Driving the game's creator directly is not possible from scripts - its system is
-        // native-only, which was checked against the 2.31 type hierarchy rather than
-        // assumed. The mirror is the game's own answer to the same problem and it already
-        // works in a live world, so it is what players are pointed at.
+        // native-only, checked against the 2.31 type hierarchy rather than assumed. The
+        // mirror is the game's own answer to the same problem and already works in a live
+        // world, so it is what players are pointed at.
+        //
+        // Nothing to run afterwards: the client notices when the mirror closes and saves
+        // it. Making players type a command to keep their own face was an implementation
+        // limitation showing through the design.
         if (target == "create" || target == "edit")
         {
             Tell(acSender, "Use a mirror to change how you look - the one in V's apartment works.");
-            Tell(acSender, "When you are happy with it, run /character save <name>.");
+            Tell(acSender, "It saves by itself when you close it. Use /name to choose what you are called.");
             return true;
         }
 
@@ -1024,7 +1074,7 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             else
                 Tell(acSender, "You had no character yet, so there was nothing to retire.");
 
-            Tell(acSender, "Change how you look at a mirror, then run /character save <name>.");
+            Tell(acSender, "Change how you look at a mirror - it saves by itself when you close it.");
             return true;
         }
 

@@ -58,8 +58,18 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // Called from redscript when the local player is downed - see Death.reds.
     void RequestRespawn();
 
-    // Stores the player's current appearance as their multiplayer character.
+    // Stores the player's current appearance as their multiplayer character. A manual
+    // override; PollAppearanceChanges is what saves in normal use.
     void SaveCharacterAppearance();
+
+    // Watches for the player finishing a mirror or creator session, and saves it for them.
+    void PollAppearanceChanges();
+
+    // What they had while the customization state was still readable. Captured during the
+    // session because once it closes the instance is null and there is nothing to read.
+    Vector<uint8_t> m_pendingAppearance;
+    bool m_pendingIsMale{true};
+    bool m_wasCustomising{false};
     bool IsConnected() const;
 
 protected:
@@ -92,6 +102,7 @@ private:
     uint64_t m_lastTick;
     flecs::system m_updatePlayerLocation;
     flecs::system m_updateSpawningEntities;
+    flecs::system m_updateAppearance;
     Red::Handle<InterpolationSystem> m_interpolationSystem;
     Red::Handle<AppearanceSystem> m_appearanceSystem;
     Red::Handle<ChatSystem> m_chatSystem;
