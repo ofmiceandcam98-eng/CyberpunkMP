@@ -4,6 +4,17 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.41
+
+**Everyone must update.** The protocol changed, so older clients are refused at the handshake with "wrong client protocol identifier". The launcher will offer the update.
+
+- **Your character now lives on the server, not in a save file.** Look in a mirror, change your face, close it — that's it. No command, no save picking. Rejoin from any save and you come back as yourself. Set what you're called with `/name`.
+- **One MULTIPLAYER entry** on the main menu instead of two. Picking a save used to decide which character you played; it doesn't any more, so offering the choice implied a decision that no longer matters.
+- **`/setstart`** — stand where new players should arrive and run it. Separate from `/setspawn`, which is where people wake up after being downed.
+- **The pause menu no longer offers Save while connected.** A Cyberpunk save records a singleplayer game and knows nothing about the server, so offering it was telling you something untrue about what preserves your session. The server writes your position continuously.
+- **Far-away players cost far less bandwidth.** Movement updates now degrade with distance instead of every player being sent every update, and nobody in a vehicle has their character position relayed at all — the client was already throwing those away on arrival.
+- **Malformed packets are rejected.** A non-finite position used to silently switch off every system that measures distance: local chat stopped working for that player, jail stopped enforcing them, and the bad value was written to the persistent store where it survived a restart.
+
 ## What changed — v0.3.4
 
 - **The coordination API starts with the game server.** It was started by hand, so it died on every reboot — and when it is down the far end gets a bare connection-refused with no way to tell whether the service is off, the machine is off, or their key is wrong. It had already died once unnoticed. It now has its own row in the admin panel showing how many keys are in use, and its own Start/Stop, because rebuilding the game server should not silence the channel.

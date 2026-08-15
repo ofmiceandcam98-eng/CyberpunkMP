@@ -26,17 +26,16 @@ import CyberpunkMP.World.*
 private func PopulateMenuItemList() -> Void {
     wrappedMethod();
 
-    // Two ways in, because they answer different questions.
+    // One entry, because there is only one question now.
     //
-    // CONTINUE is the one people want almost every time: the server already remembers
-    // where you were standing, so which save loads underneath barely matters - it gets
-    // overwritten by your real position on arrival. Making people pick a save first was
-    // an extra decision that changes nothing.
+    // There used to be two - CONTINUE and LOAD GAME - because picking which save to bring
+    // decided which character you played. It does not any more: the server owns your
+    // appearance, your name and your position, and applies all three on arrival. Whichever
+    // save loads underneath is scenery.
     //
-    // LOAD GAME still exists for choosing WHICH character to bring, which is a real
-    // choice until proper character slots land.
-    this.AddMenuItem("MULTIPLAYER - CONTINUE", n"OnMultiplayerContinue");
-    this.AddMenuItem("MULTIPLAYER - LOAD GAME", n"OnMultiplayerJoin");
+    // So offering a save picker was offering a choice that no longer changes anything,
+    // which is worse than offering nothing - it implies the decision matters.
+    this.AddMenuItem("MULTIPLAYER", n"OnMultiplayerContinue");
 
     // PopulateMenuItemList refreshes at its end, before our item existed. Without
     // refreshing again the entry is in the data but never drawn, which looks exactly
@@ -57,7 +56,7 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
     // server replaces the position on arrival with wherever you actually were. That is
     // what makes this "continue from the server" rather than "continue singleplayer".
     if Equals(data.eventName, n"OnMultiplayerContinue") {
-        FTLog(s"[CyberpunkMP] Multiplayer CONTINUE selected from the main menu");
+        FTLog(s"[CyberpunkMP] MULTIPLAYER selected from the main menu");
 
         let network = GameInstance.GetNetworkWorldSystem();
         if IsDefined(network) {
@@ -67,38 +66,6 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
         }
 
         this.GetSystemRequestsHandler().LoadLastCheckpoint(false);
-        return true;
-    }
-
-    if Equals(data.eventName, n"OnMultiplayerJoin") {
-        FTLog(s"[CyberpunkMP] Multiplayer selected from the main menu");
-
-        // Record the decision BEFORE the load starts.
-        //
-        // Nothing can connect from here: a menu has no world and no player, so there is
-        // nowhere for anyone to be put. All this does is remember that the player asked
-        // to join, on the one object that survives the load that follows - see
-        // NetworkWorldSystem::RequestJoin. MultiplayerGameController picks it back up on
-        // the other side, once there is a real world to arrive in.
-        //
-        // An earlier version connected automatically on world attach instead. The main
-        // menu is itself a world, so it connected there, and the game died the moment the
-        // server tried to stream players into it.
-        let network = GameInstance.GetNetworkWorldSystem();
-        if IsDefined(network) {
-            network.RequestJoin();
-        } else {
-            // Not fatal on its own - the save still loads, the player simply arrives in
-            // singleplayer and can connect by hand. Worth saying out loud, because it
-            // would otherwise look like the menu entry did nothing at all.
-            FTLogError(s"[CyberpunkMP] No NetworkWorldSystem in the menu - cannot arm the join");
-        }
-
-        // Hand over to the game's own Load Game screen rather than picking a save for
-        // them. This is the same event the Load Game entry spawns, so it is the real
-        // save list, with the real character on each slot.
-        this.m_menuEventDispatcher.SpawnEvent(n"OnLoadGame");
-
         return true;
     }
 
