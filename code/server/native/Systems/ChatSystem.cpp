@@ -43,9 +43,16 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
     // so an unbounded blob is a way to make one save allocate arbitrary memory everywhere.
     constexpr size_t kMaxCcstate = 256 * 1024;
 
-    if (blob.empty() || blob.size() > kMaxCcstate)
+    // Too SMALL is the case that actually happened. A real appearance is 7-9KB; a 23-byte
+    // one was saved during testing and then used to spawn that player, because the
+    // customization state exists briefly before it is populated. Rejecting only empty
+    // blobs let the degenerate case straight through, and the server is the last place to
+    // catch it before it becomes somebody's stored character.
+    constexpr size_t kMinCcstate = 1024;
+
+    if (blob.size() < kMinCcstate || blob.size() > kMaxCcstate)
     {
-        spdlog::warn("Refused a character save from {} - {} bytes of appearance",
+        spdlog::warn("Refused a character save from {} - {} bytes of appearance is not plausible",
                      pPlayer->Username, blob.size());
         Tell(*pPlayer, "That character could not be saved - the appearance data was not usable.");
         return;

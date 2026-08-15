@@ -387,7 +387,18 @@ void NetworkWorldSystem::PollAppearanceChanges()
         auto writer = CMPWriter();
         CharacterCustomizationState_Serialize(stateHandle->instance, &writer);
 
-        if (!writer.bytes.empty())
+        // Implausibly small means half-built, not "a simple face".
+        //
+        // A real appearance is 7-9KB. A 23-byte one was captured and saved during testing,
+        // and then used to spawn that player - the customization state exists for a moment
+        // before it is populated, and polling caught it in that window. Rejecting only
+        // EMPTY blobs was not enough, because the degenerate case is not empty.
+        //
+        // Held rather than replaced: if this poll caught a bad moment, the good bytes from
+        // the previous one are still what gets saved.
+        constexpr size_t kMinPlausibleAppearance = 1024;
+
+        if (writer.bytes.size() >= kMinPlausibleAppearance)
         {
             m_pendingAppearance = writer.bytes;
             m_pendingIsMale = stateHandle->instance->isBodyGenderMale;
