@@ -4,6 +4,10 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.55
+
+- Diagnostic build for the "everyone looks like me" bug. Your clothes, name and position all sync correctly — only the face and body don't, and each player sees the other wearing a whole copy of their own character. This build records the one measurement that separates the two possible causes. Play for a minute with someone else and send the client log.
+
 ## What changed — v0.3.54
 
 - **A leftover copy of the mod is moved aside automatically.** The game loads every mod folder it finds, so an old copy kept overriding the current one. The launcher now handles it on the way to launch — nothing to find, nothing to delete. The old copy is *moved*, not deleted, into `red4ext\disabled-by-launcher\`, so it can be dragged back if you wanted it. If you have deliberately pointed the launcher at your own build in Settings, that is the one it keeps.
