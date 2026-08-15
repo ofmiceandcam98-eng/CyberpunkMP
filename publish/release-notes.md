@@ -4,6 +4,11 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.53
+
+- **Verify files now catches a stale second copy of the mod.** The game loads *every* mod folder it finds, but the launcher only ever looked at the first — so a leftover copy kept running, its scripts overrode the current ones, and the launcher truthfully reported the copy it knew about as up to date. That is how you get an old main menu under a launcher saying v0.3.51. Verify now names every copy, and which release each came from.
+- Each install stamps its version into its own folder, so the copies can be told apart.
+
 ## What changed — v0.3.52
 
 - **The dev launcher appears for devs.** Access granted by a Discord role resolved *after* sign-in had already drawn the page, so the admin controls never showed up for anyone who was not on the hardcoded list. The page is now told when the role check finishes. Thanks to zeldfep for finding and fixing it.

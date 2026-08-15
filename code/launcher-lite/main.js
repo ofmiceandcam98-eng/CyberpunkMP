@@ -340,6 +340,64 @@ function findModDir () {
   return null
 }
 
+/**
+ * EVERY copy of the mod installed under the game, not just the first one found.
+ *
+ * findModDir stops at the first match, which is fine for updating but hides the failure
+ * that actually happens to developers: RED4ext loads every plugin subdirectory it finds,
+ * so a second copy is not ignored - it is loaded alongside, and one of the two sets of
+ * scripts wins. The launcher updates the copy it found and reports "up to date" while the
+ * game runs the other one.
+ *
+ * That is exactly what zeldfep hit - a launcher saying v0.3.51 next to a main menu from
+ * before v0.3.45 - and nothing in the launcher could see it, because everything it checked
+ * was about the copy it already knew.
+ *
+ * The usual cause is a dev junction at red4ext\plugins\zzzCyberpunkMP pointing at a build
+ * output, sitting beside an install the launcher made itself.
+ */
+function findAllModDirs () {
+  const found = []
+
+  const chosen = loadSettings().modDir
+  if (chosen && existsSync(path.join(chosen, 'CyberpunkMP.dll'))) found.push(chosen)
+
+  const gameDir = findGameDir()
+  if (gameDir) {
+    const pluginRoot = path.join(gameDir, 'red4ext', 'plugins')
+
+    if (existsSync(pluginRoot)) {
+      for (const entry of readdirSync(pluginRoot)) {
+        const dir = path.join(pluginRoot, entry)
+        try {
+          if (existsSync(path.join(dir, 'CyberpunkMP.dll')) && !found.includes(dir)) {
+            found.push(dir)
+          }
+        } catch { /* unreadable entry - keep looking */ }
+      }
+    }
+  }
+
+  return found
+}
+
+/**
+ * Which release a copy of the mod came from, read from the marker written at install.
+ *
+ * Returns null for a copy installed before markers existed, or built by hand - which is
+ * itself informative, since the launcher's own installs always have one.
+ */
+function installedVersionAt (modDir) {
+  const marker = path.join(modDir, '.nco-version')
+  if (!existsSync(marker)) return null
+
+  try {
+    return readFileSync(marker, 'utf8').trim() || null
+  } catch {
+    return null
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Tailscale
 //
@@ -557,6 +615,28 @@ async function verifyInstall () {
     problems.push('No script files found - the install looks incomplete')
   }
 
+  // More than one copy of the mod is the failure that looks like nothing at all.
+  //
+  // RED4ext loads every plugin subdirectory, so a second copy is not dormant - it is
+  // running, and its scripts can be the ones the game actually compiles. The launcher
+  // updates the copy it finds first and truthfully reports that one as current, which is
+  // how somebody ends up staring at an old main menu under a launcher saying it is up to
+  // date. Reported with paths and versions, because the answer is always "delete the one
+  // you did not mean to keep" and that requires knowing which is which.
+  const allInstalls = findAllModDirs()
+
+  if (allInstalls.length > 1) {
+    const described = allInstalls
+      .map((dir) => `${dir} (${installedVersionAt(dir) || 'version not recorded - built by hand?'})`)
+      .join('  |  ')
+
+    problems.push(
+      `The mod is installed ${allInstalls.length} times and the game loads all of them: ${described}. ` +
+      'Remove the ones you are not using - a copy the launcher does not update will still run, ' +
+      'and its scripts can override the current ones.'
+    )
+  }
+
   // The mods this one is built on top of.
   //
   // Checked here because their absence does not look like their absence. Without
@@ -727,6 +807,18 @@ async function installEverything (onProgress = () => {}) {
   const info = await checkForUpdates()
   if (info.remoteStamp) {
     saveSettings({ installedStamp: info.remoteStamp, installedVersion: info.version })
+
+  // Stamped into the folder itself, not just into settings.
+  //
+  // Settings describe "the install the launcher knows about"; this describes THIS copy on
+  // disk. When two copies exist that difference is the whole diagnosis - it is what lets
+  // verify say which folder is current and which is the stale one still being loaded.
+  try {
+    writeFileSync(path.join(modDir, '.nco-version'), String(info.version || 'unknown'))
+  } catch (err) {
+    console.warn('[install] could not record the version marker:', err.message)
+  }
+
   }
 
   onProgress('Done')
@@ -848,6 +940,18 @@ async function applyUpdate () {
   zip.extractAllTo(modDir, true)
 
   saveSettings({ installedStamp: info.remoteStamp, installedVersion: info.version })
+
+  // Stamped into the folder itself, not just into settings.
+  //
+  // Settings describe "the install the launcher knows about"; this describes THIS copy on
+  // disk. When two copies exist that difference is the whole diagnosis - it is what lets
+  // verify say which folder is current and which is the stale one still being loaded.
+  try {
+    writeFileSync(path.join(modDir, '.nco-version'), String(info.version || 'unknown'))
+  } catch (err) {
+    console.warn('[install] could not record the version marker:', err.message)
+  }
+
 
   return { version: info.version }
 }
