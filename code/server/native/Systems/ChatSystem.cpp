@@ -697,6 +697,32 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         return true;
     }
 
+    // ---------------------------------------------------------- /setstart ----
+    //
+    // Where a brand-new character arrives. Separate from /setspawn on purpose - see
+    // GameServer::SetStartPoint.
+    if (command == "/setstart")
+    {
+        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
+            return deny(EPermissionLevel::kAdmin);
+
+        const auto* pMovement = acSender.Puppet ? acSender.Puppet.get<MovementComponent>() : nullptr;
+        if (!pMovement)
+        {
+            Tell(acSender, "Spawn into the world first, then stand where new players should arrive.");
+            return true;
+        }
+
+        GServer->SetStartPoint(pMovement->Position, pMovement->Rotation.z);
+
+        spdlog::info("{} set the start point to ({:.1f}, {:.1f}, {:.1f})", acSender.Username,
+                     pMovement->Position.x, pMovement->Position.y, pMovement->Position.z);
+
+        Tell(acSender, fmt::format("Start point set here ({:.0f}, {:.0f}, {:.0f}). New characters will arrive here.",
+                                   pMovement->Position.x, pMovement->Position.y, pMovement->Position.z));
+        return true;
+    }
+
     // --------------------------------------------------------------- /jail ----
     //
     // The cell is wherever the staff member is standing. No configuration, no coordinates
@@ -1036,7 +1062,9 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             Tell(acSender, "Admin: /ban <player> [reason], /unban <discord id>");
             Tell(acSender, "       /tp <player>    - brings them to you");
             Tell(acSender, "       /tp to <player> - sends you to them");
-            Tell(acSender, "       /return <player>, /setspawn");
+            Tell(acSender, "       /return <player>");
+            Tell(acSender, "       /setspawn - where players wake up after being downed");
+            Tell(acSender, "       /setstart - where brand-new characters arrive");
         }
 
         return true;

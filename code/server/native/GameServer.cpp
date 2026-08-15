@@ -69,6 +69,27 @@ GameServer::GameServer()
                 spdlog::error("Could not read {}: {}", m_respawnPath.string(), e.what());
             }
         }
+
+        m_startPath = serverPath / "config" / "startpoint.json";
+        if (std::ifstream file(m_startPath); file.is_open())
+        {
+            try
+            {
+                const auto data = nlohmann::json::parse(file);
+                m_startPosition = {data.value("x", 0.f), data.value("y", 0.f), data.value("z", 0.f)};
+                m_startYaw = data.value("yaw", 0.f);
+                m_hasStartPoint = true;
+
+                spdlog::info("Start point loaded: ({:.1f}, {:.1f}, {:.1f})", m_startPosition.x,
+                             m_startPosition.y, m_startPosition.z);
+            }
+            catch (const std::exception& e)
+            {
+                // Not fatal. Without one, new characters simply begin wherever the world
+                // template put them, which is where they began before this existed.
+                spdlog::error("Could not read {}: {}", m_startPath.string(), e.what());
+            }
+        }
     }
     catch (std::exception& e)
     {
@@ -201,6 +222,35 @@ bool GameServer::GetRespawnPoint(glm::vec3& aPosition, float& aYaw) const
 
     aPosition = m_respawnPosition;
     aYaw = m_respawnYaw;
+    return true;
+}
+
+void GameServer::SetStartPoint(const glm::vec3& acPosition, float aYaw)
+{
+    m_startPosition = acPosition;
+    m_startYaw = aYaw;
+    m_hasStartPoint = true;
+
+    try
+    {
+        std::filesystem::create_directories(m_startPath.parent_path());
+
+        std::ofstream file(m_startPath);
+        file << nlohmann::json{{"x", acPosition.x}, {"y", acPosition.y}, {"z", acPosition.z}, {"yaw", aYaw}}.dump(2);
+    }
+    catch (const std::exception& e)
+    {
+        spdlog::error("Could not write {}: {}", m_startPath.string(), e.what());
+    }
+}
+
+bool GameServer::GetStartPoint(glm::vec3& aPosition, float& aYaw) const
+{
+    if (!m_hasStartPoint)
+        return false;
+
+    aPosition = m_startPosition;
+    aYaw = m_startYaw;
     return true;
 }
 

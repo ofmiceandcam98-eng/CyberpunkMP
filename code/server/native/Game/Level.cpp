@@ -254,6 +254,38 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
     //
     // The server's record wins, and the client is asked to move itself - it owns its own
     // position, so editing our copy alone would be undone by its next update.
+    // A player the server has never seen starts where the server says, not where the world
+    // template happens to leave V standing.
+    //
+    // Checked BEFORE the saved-position branch below, and only when there is no record at
+    // all - a returning player is put back where they were, which is the whole point of
+    // the position store. Getting this order wrong would teleport everybody to the
+    // arrivals point on every single join.
+    glm::vec3 startPosition;
+    float startYaw = 0.f;
+
+    const bool isNewHere = GServer->GetPlayerStore().Find(pComponent->DiscordId) == nullptr;
+
+    if (isNewHere && GServer->GetStartPoint(startPosition, startYaw))
+    {
+        pos = startPosition;
+        rot = glm::vec3(0.f, 0.f, startYaw);
+
+        server::NotifyTeleport teleport;
+
+        common::Vector3 destination;
+        destination.set_x(startPosition.x);
+        destination.set_y(startPosition.y);
+        destination.set_z(startPosition.z);
+        teleport.set_position(destination);
+        teleport.set_rotation(startYaw);
+
+        GServer->Send(aMessage.ConnectionId, teleport);
+
+        spdlog::info("New arrival {} placed at the start point ({:.1f}, {:.1f}, {:.1f})",
+                     pComponent->Username, startPosition.x, startPosition.y, startPosition.z);
+    }
+
     const auto* pSaved = GServer->GetPlayerStore().Find(pComponent->DiscordId);
     if (pSaved)
     {
