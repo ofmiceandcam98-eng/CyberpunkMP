@@ -45,6 +45,30 @@ protected func AddMenuItem(label: script_ref<String>, spawnEvent: CName) -> Void
     let system = GameInstance.GetNetworkWorldSystem();
     let connected = IsDefined(system) && system.IsConnected();
 
+    // Every menu item, everywhere, once per menu build.
+    //
+    // Menu event names are ink events and do not appear in the type dump, so the only way
+    // to learn them is to watch them go past. This covers the NEW GAME menu too, which is
+    // built before connecting and so was invisible to the connected-only logging below.
+    FTLog(s"[Menu] item '\(NameToString(spawnEvent))'");
+
+    // No standard start when making a multiplayer character.
+    //
+    // A regular new game begins in the prologue, which is the whole of Act 1 - the thing
+    // the world templates exist to skip. Somebody who picks it spends hours getting to
+    // where everyone else already is, or more likely gives up.
+    //
+    // Phantom Liberty's start is the only one that lands post-Act-1 at level 15, and the
+    // expansion is already required to play at all, so nothing is lost by removing the
+    // other. Filtered by name, and the names are logged above - if these guesses miss, the
+    // log says what to use instead.
+    if Equals(spawnEvent, n"OnNewGameStandard")
+        || Equals(spawnEvent, n"OnNewGameBase")
+        || Equals(spawnEvent, n"OnNewGameVanilla") {
+        FTLog(s"[Menu] hiding the standard start - multiplayer uses the Phantom Liberty one");
+        return;
+    }
+
     if connected {
         // Every entry, once, so the exact names are on record rather than guessed at.
         // The save entry's event name is not in the type dump - it is an ink event - so if

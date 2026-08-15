@@ -4,6 +4,11 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.47
+
+- **No standard start when making a character.** A regular new game begins in the prologue — the whole of Act 1, which is exactly what the multiplayer start exists to skip. Only the Phantom Liberty start is offered, which lands you past Act 1 at level 15.
+- Menu items are logged, so the remaining ones we want to hide can be named exactly rather than guessed at.
+
 ## What changed — v0.3.46
 
 - **The character you make is kept.** The creator runs before you connect, so nothing was watching while you built a face — the server now asks for your appearance the moment you arrive and keeps that as your character. Previously it was only saved if you happened to visit a ripperdoc afterwards.
