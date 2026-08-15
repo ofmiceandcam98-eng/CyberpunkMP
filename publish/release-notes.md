@@ -4,6 +4,13 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.44
+
+- **Male or female.** Pick your body type in the launcher, under Settings → Character. It has to be chosen there rather than in game: ripperdocs change everything about how you look *except* body gender, and it is built into the world you load.
+- Everything else about your appearance is still changed at any ripperdoc, and still saves itself.
+
+**Phantom Liberty is required.** Both starting worlds are Phantom Liberty saves, so the expansion is needed to play on the server — not just to visit Dogtown.
+
 ## What changed — v0.3.43
 
 - **Ripperdocs, not the apartment mirror.** They change appearance too — everything except body gender — and they are everywhere, so "go to a ripperdoc" is a far easier instruction than "go home". The prompts say so now.
