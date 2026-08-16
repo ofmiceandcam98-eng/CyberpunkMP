@@ -61,7 +61,15 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
     auto& store = GServer->GetPlayerStore();
     const auto* pExisting = store.FindCharacter(pPlayer->DiscordId);
 
-    CharacterRecord character;
+    // Start from the record as stored, and overwrite only what an appearance save is
+    // allowed to change. SaveCharacter replaces the stored record wholesale with what it
+    // is given (CreatedAt and CharacterId excepted), so every field NOT copied here
+    // silently resets on every ripperdoc visit. Not hypothetical: building the record
+    // from scratch and hand-carrying fields is how SpawnedBefore got wiped by face edits
+    // - sending people back to the arrivals point on their next spawn - and it is how
+    // the next field added to CharacterRecord would break too. Copying first inverts the
+    // default: a new field survives unless a save deliberately changes it.
+    CharacterRecord character = pExisting ? *pExisting : CharacterRecord{};
     character.Slot = 0;
     character.IsMale = aMessage.get_is_male();
     character.Appearance = Base64::Encode(std::vector<uint8_t>(blob.begin(), blob.end()));
@@ -94,32 +102,27 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
         chosenName.clear();
     }
 
-    // Precedence: a deliberate choice, else the name the character already has, else the
-    // client's label for a character that does not exist yet (first capture sends none,
-    // so this usually falls through to the account username below).
-    std::string name;
     if (!chosenName.empty())
-        name = chosenName;
-    else if (pExisting)
-        name = pExisting->Name;
-    else
-        name = aMessage.get_name().c_str();
-
-    if (name.size() > 32)
-        name.resize(32);
-
-    character.NameChosen = alreadyNamed || !chosenName.empty();
-    character.Name = name.empty() ? pPlayer->Username : name;
-
-    // Progression carried forward, so editing your face does not reset your character and
-    // re-grant the starting loadout.
-    if (pExisting)
     {
-        character.Level = pExisting->Level;
-        character.AttributePoints = pExisting->AttributePoints;
-        character.PerkPoints = pExisting->PerkPoints;
-        character.Initialised = pExisting->Initialised;
+        if (chosenName.size() > 32)
+            chosenName.resize(32);
+
+        character.Name = chosenName;
+        character.NameChosen = true;
     }
+    else if (!pExisting)
+    {
+        // First capture. The client's label if it sent one (first-capture clients send
+        // none), else the account username - so a character always has something to be
+        // called, and NameChosen stays false so the prompt asks properly.
+        std::string label = aMessage.get_name().c_str();
+        if (label.size() > 32)
+            label.resize(32);
+
+        character.Name = label.empty() ? pPlayer->Username : label;
+    }
+    // else: an existing character's Name and NameChosen came over with the copy,
+    // untouched - editing your face is not an identity change.
 
     store.SaveCharacter(pPlayer->DiscordId, pPlayer->Username, character);
 
