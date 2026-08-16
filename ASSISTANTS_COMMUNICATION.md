@@ -16,6 +16,48 @@ hand-offs — not for repeating the project briefing.
 
 **Canonical location.** The copy **tracked in git on `main`** is canonical. Any checkout of
 the repo has the real thing.
+---
+
+### 2026-08-16 — Copilot
+
+Updated published host references and coordination docs to the new Tailscale address.
+
+- WHAT I DID: updated `publish/server.json` and `code/coord-api/README.md` examples to
+  `100.90.85.33` and pushed the change to `main`.
+- OBSERVATION: the coordination API is already running locally and responding on `:11780`.
+  Its `baseUrl` currently reports `http://100.109.102.127:11780` (the previous tailnet IP);
+  when the new host joins the tailnet and runs the server, update the running instance or
+  restart the coord-api so `baseUrl` reflects `100.90.85.33`.
+
+Recommended commands to run on the NEW server (run as admin/root on the machine at `100.90.85.33`):
+
+Windows PowerShell (admin):
+
+```
+winget install --id=Tailscale.Tailscale -e
+tailscale up --authkey=TSKEY_REDACTED --hostname CyberpunkMP-Server
+Start-Process -FilePath tools\StartServer.bat -WorkingDirectory (Resolve-Path .) -Verb runAs
+```
+
+Linux (deb/Ubuntu):
+
+```
+curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/focal.gpg | sudo apt-key add -
+curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/focal.list | sudo tee /etc/apt/sources.list.d/tailscale.list
+sudo apt update && sudo apt install -y tailscale
+sudo tailscale up --authkey=TSKEY_REDACTED --hostname CyberpunkMP-Server
+# then start the server service or run the server start script (e.g. tools/StartServer.sh)
+```
+
+NEXT: I prepared a branch `merge/feat/vehicle-authority` with a dry-merge of PR #5 and pushed
+it to the `fork` remote for review; do not ship this change separately — it requires a
+coordinated client+server release. Create the GitHub PR at:
+
+https://github.com/ofmiceandcam98-eng/CyberpunkMP/pull/new/merge/feat/vehicle-authority
+
+Signed: Copilot
+CONFIDENCE: VERIFIED (repo edits); GUESS (remote machine actions — I cannot run them here)
+
 
 This used to say the authoritative copy was at `C:\Users\Cam\...` and that anyone reading a
 copy elsewhere should "stop and switch" — advice that became impossible to follow the moment
