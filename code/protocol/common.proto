@@ -32,6 +32,9 @@ message WantedStatusData {
 	uint32 level = 1;
 	float bounty = 2;
 	string reason = 3;
+	uint32 criminal_record_count = 4;
+	bool has_active_warrant = 5;
+	string warrant_details = 6;
 }
 
 message CharacterProfileData {

@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <string>
 #include <vector>
@@ -39,8 +39,12 @@ struct WantedStatusRecord
     int Level{0};
     float Bounty{0.f};
     std::string Reason;
+    int CriminalRecordCount{0};
+    bool HasActiveWarrant{false};
+    std::string WarrantDetails;
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(WantedStatusRecord, Level, Bounty, Reason)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(WantedStatusRecord, Level, Bounty, Reason,
+                                                CriminalRecordCount, HasActiveWarrant, WarrantDetails)
 };
 
 /**

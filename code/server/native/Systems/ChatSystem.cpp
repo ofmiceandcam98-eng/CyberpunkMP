@@ -1098,6 +1098,259 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         return true;
     }
 
+    // ----------------------------------------------------------- /scan ----
+    //
+    // Kiroshi Optical Scanner RP System
+    // Dual permission views: Civilian View vs Tactical & Bounty View
+    // Tactical Roles: Mercenary, Solo, Netrunner, Tech/Techie, Lawman/NCPD, Fixer, Exec, Staff
+    if (command == "/scan" || command == "/kiroshi")
+    {
+        const auto nameStart = acLine.find(' ');
+        std::string query = (nameStart == std::string::npos) ? std::string{} : acLine.substr(nameStart + 1);
+
+        while (!query.empty() && query.front() == ' ')
+            query.erase(query.begin());
+
+        if (query.empty())
+        {
+            Tell(acSender, "Usage: /scan <player name or ID>");
+            return true;
+        }
+
+        const auto who = findPlayer(query);
+        if (!who)
+        {
+            Tell(acSender, fmt::format("Nobody matching '{}' is online to scan.", query));
+            return true;
+        }
+
+        const auto* pWho = who.get<PlayerComponent>();
+        const std::string targetDiscordId = pWho->DiscordId;
+        const std::string targetAccountName = pWho->Username;
+        const auto* pTargetChar = GServer->GetPlayerStore().FindCharacter(targetDiscordId);
+
+        if (!pTargetChar)
+        {
+            Tell(acSender, "Scan failed: Target has no active character record.");
+            return true;
+        }
+
+        const auto* pScannerChar = GServer->GetPlayerStore().FindCharacter(acSender.DiscordId);
+
+        // Permission check: Tactical/Bounty Roles vs Civilian
+        auto isTacticalRole = [](const PlayerComponent& sender, const CharacterRecord* pChar) -> bool {
+            if (sender.HasAtLeast(EPermissionLevel::kOfficer))
+                return true;
+            if (!pChar)
+                return false;
+            std::string occ = pChar->Occupation;
+            std::string aff = pChar->Affiliation;
+            std::transform(occ.begin(), occ.end(), occ.begin(), ::tolower);
+            std::transform(aff.begin(), aff.end(), aff.begin(), ::tolower);
+            auto check = [](const std::string& s) {
+                return (s.find("merc") != std::string::npos ||
+                        s.find("solo") != std::string::npos ||
+                        s.find("netrunner") != std::string::npos ||
+                        s.find("tech") != std::string::npos ||
+                        s.find("lawman") != std::string::npos ||
+                        s.find("police") != std::string::npos ||
+                        s.find("ncpd") != std::string::npos ||
+                        s.find("fixer") != std::string::npos ||
+                        s.find("exec") != std::string::npos);
+            };
+            return check(occ) || check(aff);
+        };
+
+        const bool hasTacticalAccess = isTacticalRole(acSender, pScannerChar);
+        const std::string displayName = pTargetChar->Name.empty() ? targetAccountName : pTargetChar->Name;
+
+        if (hasTacticalAccess)
+        {
+            // Tactical & Bounty Kiroshi Feed (Mercenary, Solo, Netrunner, Techie, Lawman, Fixer, Exec)
+            Tell(acSender, "--- TACTICAL & BOUNTY KIROSHI FEED ---");
+            Tell(acSender, fmt::format("TARGET          : {}", displayName));
+            Tell(acSender, fmt::format("LIFEPATH/ROLE   : {} | {}", pTargetChar->Lifepath, pTargetChar->Occupation));
+            Tell(acSender, fmt::format("AFFILIATION     : {}", pTargetChar->Affiliation));
+            
+            if (pTargetChar->WantedStatus.HasActiveWarrant)
+            {
+                Tell(acSender, fmt::format("WARRANT STATUS  : ACTIVE WARRANT ({})",
+                                           pTargetChar->WantedStatus.WarrantDetails.empty() ? "Wanted by NCPD" : pTargetChar->WantedStatus.WarrantDetails));
+            }
+            else
+            {
+                Tell(acSender, "WARRANT STATUS  : NONE");
+            }
+
+            Tell(acSender, fmt::format("CRIMINAL RECORD : {} PRIOR CONVICTIONS", pTargetChar->WantedStatus.CriminalRecordCount));
+            Tell(acSender, fmt::format("BOUNTY AMOUNT   : €${:.0f}", pTargetChar->WantedStatus.Bounty));
+            Tell(acSender, "---------------------------------------");
+        }
+        else
+        {
+            // Civilian Kiroshi Scanner View
+            Tell(acSender, "--- KIROSHI OPTICAL SCANNER v3.2 ---");
+            Tell(acSender, fmt::format("NAME        : {}", displayName));
+            Tell(acSender, fmt::format("LIFEPATH    : {}", pTargetChar->Lifepath));
+            Tell(acSender, fmt::format("OCCUPATION  : {}", pTargetChar->Occupation));
+            Tell(acSender, fmt::format("AFFILIATION : {}", pTargetChar->Affiliation));
+            Tell(acSender, fmt::format("BIO         : {}", pTargetChar->Bio.empty() ? "(No public bio recorded)" : pTargetChar->Bio));
+            Tell(acSender, "------------------------------------");
+        }
+
+        return true;
+    }
+
+    // ----------------------------------------------------- /setwarrant ----
+    //
+    // Issue active warrant & bounty on a suspect.
+    // Usage: /setwarrant <player> <crime reason> [bounty]
+    if (command == "/setwarrant")
+    {
+        const auto* pScannerChar = GServer->GetPlayerStore().FindCharacter(acSender.DiscordId);
+        std::string aff = pScannerChar ? pScannerChar->Affiliation : "";
+        std::transform(aff.begin(), aff.end(), aff.begin(), ::tolower);
+        const bool isLawman = (aff.find("lawman") != std::string::npos || aff.find("ncpd") != std::string::npos || aff.find("police") != std::string::npos);
+
+        if (!acSender.HasAtLeast(EPermissionLevel::kOfficer) && !isLawman)
+            return deny(EPermissionLevel::kOfficer);
+
+        if (target.empty() || rest.empty())
+        {
+            Tell(acSender, "Usage: /setwarrant <player> <crime reason> [bounty amount]");
+            return true;
+        }
+
+        const auto who = findPlayer(target);
+        if (!who)
+        {
+            Tell(acSender, fmt::format("Nobody matching '{}' is online.", target));
+            return true;
+        }
+
+        const auto* pWho = who.get<PlayerComponent>();
+        auto& store = GServer->GetPlayerStore();
+        const auto* pCharacter = store.FindCharacter(pWho->DiscordId);
+
+        if (!pCharacter)
+        {
+            Tell(acSender, "Target has no character record.");
+            return true;
+        }
+
+        float bounty = 2500.f;
+        std::string reason = rest;
+
+        const auto lastSpace = rest.rfind(' ');
+        if (lastSpace != std::string::npos)
+        {
+            try {
+                bounty = std::stof(rest.substr(lastSpace + 1));
+                reason = rest.substr(0, lastSpace);
+            } catch (...) {}
+        }
+
+        auto updated = *pCharacter;
+        updated.WantedStatus.HasActiveWarrant = true;
+        updated.WantedStatus.WarrantDetails = reason;
+        updated.WantedStatus.Bounty = bounty;
+        updated.WantedStatus.Level = std::max(1, updated.WantedStatus.Level);
+
+        store.SaveCharacter(pWho->DiscordId, pWho->Username, updated);
+
+        Tell(acSender, fmt::format("Warrant issued for '{}': {} (Bounty: €${:.0f}).", updated.Name, reason, bounty));
+        spdlog::info("{} issued warrant for '{}': {}", acSender.Username, updated.Name, reason);
+        return true;
+    }
+
+    // --------------------------------------------------- /clearwarrant ----
+    if (command == "/clearwarrant")
+    {
+        const auto* pScannerChar = GServer->GetPlayerStore().FindCharacter(acSender.DiscordId);
+        std::string aff = pScannerChar ? pScannerChar->Affiliation : "";
+        std::transform(aff.begin(), aff.end(), aff.begin(), ::tolower);
+        const bool isLawman = (aff.find("lawman") != std::string::npos || aff.find("ncpd") != std::string::npos || aff.find("police") != std::string::npos);
+
+        if (!acSender.HasAtLeast(EPermissionLevel::kOfficer) && !isLawman)
+            return deny(EPermissionLevel::kOfficer);
+
+        if (target.empty())
+        {
+            Tell(acSender, "Usage: /clearwarrant <player>");
+            return true;
+        }
+
+        const auto who = findPlayer(target);
+        if (!who)
+        {
+            Tell(acSender, fmt::format("Nobody matching '{}' is online.", target));
+            return true;
+        }
+
+        const auto* pWho = who.get<PlayerComponent>();
+        auto& store = GServer->GetPlayerStore();
+        const auto* pCharacter = store.FindCharacter(pWho->DiscordId);
+
+        if (!pCharacter)
+        {
+            Tell(acSender, "Target has no character record.");
+            return true;
+        }
+
+        auto updated = *pCharacter;
+        updated.WantedStatus.HasActiveWarrant = false;
+        updated.WantedStatus.WarrantDetails.clear();
+        updated.WantedStatus.Bounty = 0.f;
+
+        store.SaveCharacter(pWho->DiscordId, pWho->Username, updated);
+
+        Tell(acSender, fmt::format("Active warrant cleared for '{}'.", updated.Name));
+        return true;
+    }
+
+    // ------------------------------------------------------ /addrecord ----
+    if (command == "/addrecord")
+    {
+        const auto* pScannerChar = GServer->GetPlayerStore().FindCharacter(acSender.DiscordId);
+        std::string aff = pScannerChar ? pScannerChar->Affiliation : "";
+        std::transform(aff.begin(), aff.end(), aff.begin(), ::tolower);
+        const bool isLawman = (aff.find("lawman") != std::string::npos || aff.find("ncpd") != std::string::npos || aff.find("police") != std::string::npos);
+
+        if (!acSender.HasAtLeast(EPermissionLevel::kOfficer) && !isLawman)
+            return deny(EPermissionLevel::kOfficer);
+
+        if (target.empty())
+        {
+            Tell(acSender, "Usage: /addrecord <player>");
+            return true;
+        }
+
+        const auto who = findPlayer(target);
+        if (!who)
+        {
+            Tell(acSender, fmt::format("Nobody matching '{}' is online.", target));
+            return true;
+        }
+
+        const auto* pWho = who.get<PlayerComponent>();
+        auto& store = GServer->GetPlayerStore();
+        const auto* pCharacter = store.FindCharacter(pWho->DiscordId);
+
+        if (!pCharacter)
+        {
+            Tell(acSender, "Target has no character record.");
+            return true;
+        }
+
+        auto updated = *pCharacter;
+        updated.WantedStatus.CriminalRecordCount += 1;
+
+        store.SaveCharacter(pWho->DiscordId, pWho->Username, updated);
+
+        Tell(acSender, fmt::format("Criminal record updated for '{}'. Total convictions: {}.", updated.Name, updated.WantedStatus.CriminalRecordCount));
+        return true;
+    }
+
     // ---------------------------------------------------------- /setstart ----
     //
     // Where a brand-new character arrives. Separate from /setspawn on purpose - see

@@ -660,3 +660,47 @@ Character Entity (Runtime Puppet / CharacterComponent)
 - `xmake build Server.Native`: C++ Protobuf codegen and `Server.Native.dll` built & linked 100% clean.
 
 Signed: Gemini (Antigravity)
+
+### 2026-08-15 - Kiroshi Optical Scanner RP System - Gemini (Antigravity)
+
+Implemented the **Kiroshi Optical Scanner RP System** with role-based scanner access levels:
+
+1. **Civilian Scanner View**:
+   - Shows: Name, Lifepath, Occupation, Affiliation, and Bio backstory.
+   - Example:
+     ```
+     --- KIROSHI OPTICAL SCANNER v3.2 ---
+     NAME        : JACK THOMPSON
+     LIFEPATH    : Nomad
+     OCCUPATION  : Mercenary
+     AFFILIATION : Unaffiliated
+     BIO         : Recently arrived in Night City.
+     ```
+
+2. **Tactical & Bounty Scanner View**:
+   - Authorized Roles: `Mercenary`, `Solo`, `Netrunner`, `Tech` / `Techie`, `Lawman` / `NCPD`, `Fixer`, `Exec`, and Staff.
+   - Shows: Warrant Status (Active/None), Criminal Record Count (prior convictions), Bounty Amount (€$), Warrant Details/Reason.
+   - Example:
+     ```
+     --- TACTICAL & BOUNTY KIROSHI FEED ---
+     TARGET          : JACK THOMPSON
+     LIFEPATH/ROLE   : Nomad | Mercenary
+     AFFILIATION     : Unaffiliated
+     WARRANT STATUS  : ACTIVE WARRANT (Wanted by NCPD for Armory Robbery)
+     CRIMINAL RECORD : 2 PRIOR CONVICTIONS
+     BOUNTY AMOUNT   : €$2,500
+     ```
+
+3. **Police & Warrant Management Commands**:
+   - `/scan [player]` / `/kiroshi [player]`: Triggers the role-aware scanner query on target.
+   - `/setwarrant <player> <reason> [bounty]`: (Lawmen/NCPD/Staff) Issues active warrant & bounty.
+   - `/clearwarrant <player>`: Clears active warrant.
+   - `/addrecord <player>`: Increments criminal record count by 1.
+
+4. **Code & Protocol Additions**:
+   - Extended `WantedStatusRecord` in `CharacterRecord.h` (`CriminalRecordCount`, `HasActiveWarrant`, `WarrantDetails`).
+   - Updated `common.proto` (`WantedStatusData`).
+   - Added Redscript helper `code/assets/redscript/World/KiroshiScanner.reds`.
+   - `tools/CheckScripts.ps1` & `xmake build Server.Native` compiled 100% clean.
+
+Signed: Gemini (Antigravity)
