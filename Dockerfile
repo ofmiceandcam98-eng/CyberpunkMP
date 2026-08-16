@@ -15,7 +15,14 @@ RUN apt update \
 
 COPY . .
 
-RUN --mount=type=cache,target=/root/.xmake xmake -y
+# Capped parallelism, for the same reason CONTRIBUTING caps it on Windows: this build
+# has exhausted memory before, and here the deaths were silent - dependency compiles
+# (cryptopp, abseil, protobuf) just stopped mid-file with no compiler error, killed
+# under memory pressure on a 4-core/ZFS host. Two jobs builds everywhere we have
+# tried; raise it per-host with --build-arg BUILD_JOBS=N if the hardware has headroom.
+ARG BUILD_JOBS=2
+
+RUN --mount=type=cache,target=/root/.xmake xmake -y -j${BUILD_JOBS}
 
 # xmake writes to build/linux/<arch>/release, where <arch> is x86_64 on Intel and
 # arm64 on ARM. Collect it into a fixed path so the release stage does not have to
