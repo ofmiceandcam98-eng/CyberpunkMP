@@ -1,6 +1,11 @@
 services:
   server:
-    build: .
+    build:
+      context: .
+      args:
+        # Build parallelism - see the ARG in the Dockerfile. Override per host in .env
+        # (BUILD_JOBS=1 for constrained machines) without touching tracked files.
+        BUILD_JOBS: ${BUILD_JOBS:-2}
     image: cyberpunkmp-server
     container_name: cyberpunkmp-server
     restart: unless-stopped
