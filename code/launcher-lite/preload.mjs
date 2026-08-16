@@ -62,6 +62,17 @@ contextBridge.exposeInMainWorld('launcher', {
   // rather than pushed, so it is never sitting in the page for someone screen-sharing.
   devKey: () => ipcRenderer.invoke('devKey:fetch'),
 
+  // Dev server selection. Which server Launch connects to - the live published one, or
+  // a test server. The main process re-checks the dev role on set.
+  devServerGet: () => ipcRenderer.invoke('devServer:get'),
+  devServerSet: (host, port) => ipcRenderer.invoke('devServer:set', host, port),
+
+  // Test builds: pre-releases from GitHub, invisible to player launchers. Install swaps
+  // the mod DLL (keeping the shipped one); restore puts it back. Dev role required.
+  prereleaseList: () => ipcRenderer.invoke('prerelease:list'),
+  prereleaseInstall: (tag) => ipcRenderer.invoke('prerelease:install', tag),
+  prereleaseRestore: () => ipcRenderer.invoke('prerelease:restore'),
+
   // Which body a new character starts from. Chosen here because it is baked into the
   // world template and cannot be changed once the game is running.
   getBodyType: () => ipcRenderer.invoke('bodyType:get'),
