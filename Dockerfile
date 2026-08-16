@@ -9,8 +9,13 @@ WORKDIR /app
 ENV XMAKE_ROOT y
 
 RUN echo 'deb http://deb.debian.org/debian bookworm-backports main' >> /etc/apt/sources.list
+# xmake-data Recommends cmake, and apt installs recommends by default - which plants
+# Debian's cmake 3.25 in the image. With a system cmake present, xmake uses it instead
+# of fetching its own, and entt v4.0.0 demands cmake >= 3.28. Removing it (a Recommends,
+# so xmake itself survives) puts xmake back on its fetch-a-modern-one path.
 RUN apt update \
   && apt install -y xmake g++ unzip wget ca-certificates git \
+  && apt remove -y cmake cmake-data \
   && apt clean
 
 COPY . .
