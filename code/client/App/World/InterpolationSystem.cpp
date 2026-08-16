@@ -1,7 +1,11 @@
 #include "InterpolationSystem.h"
 
+#include <algorithm>
+#include <cmath>
+
 #include <App/Components/AttachedComponent.h>
 #include <App/Threading/ThreadService.h>
+#include <App/World/PuppetRegistry.h>
 
 #include "App/Network/NetworkService.h"
 #include "RED4ext/Scripting/Natives/Generated/game/EntityStubComponentPS.hpp"
@@ -39,28 +43,24 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
 {
     const float tick = NetworkWorldSystem::GetTick() - aSimulationDelay;
 
-    while (!aInterpolation.TimePoints.empty())
+    // Advance the segment. Everything that is now behind render time becomes the anchor
+    // we interpolate FROM; the first sample still ahead of it is what we interpolate TO.
+    //
+    // The old loop threw the past samples away entirely and then lerped from the last
+    // drawn pose towards the target, which is a chase rather than an interpolation - the
+    // fraction covered per frame grew as the target got closer, so every 100ms segment
+    // was a small acceleration followed by a jump to the next one.
+    while (!aInterpolation.TimePoints.empty() &&
+           static_cast<float>(aInterpolation.TimePoints.front().Tick) <= tick)
     {
-        auto future = *aInterpolation.TimePoints.begin();
-        if (tick > future.Tick)
-            aInterpolation.TimePoints.pop_front();
-        else
-            break;
+        aInterpolation.PreviousFrame = aInterpolation.TimePoints.front();
+        aInterpolation.HasPrevious = true;
+        aInterpolation.TimePoints.pop_front();
     }
 
-    if (aInterpolation.TimePoints.empty())
+    // Nothing to work from yet - the puppet has spawned but no movement has arrived.
+    if (!aInterpolation.HasPrevious)
         return;
-
-    const auto& first = aInterpolation.PreviousFrame;
-    const auto& second = aInterpolation.TimePoints.front();
-
-    // Calculate delta movement since last update
-    auto ratio = 0.0001f;
-    const auto tickDelta = static_cast<float>(second.Tick - first.Tick);
-    if (tickDelta > 0.0)
-    {
-        ratio = 1.0f / tickDelta * (tick - first.Tick);
-    }
 
     const auto pEntityStubSystem = Red::GetGameSystem<Red::game::IEntityStubSystem>();
     const auto* pStub = pEntityStubSystem->FindStub(aEntityComponent.Id);
@@ -69,6 +69,43 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
 
     if (aEntity.has<AttachedComponent>())
         return;
+
+    const auto& first = aInterpolation.PreviousFrame;
+
+    // Buffer starvation. A dropped or late packet leaves nothing ahead of render time,
+    // and simply stopping there reads as a stutter every time the network hiccups.
+    // Carrying on along the last known heading for a short while covers the gap; past
+    // that the guess is worse than standing still, so it stops.
+    if (aInterpolation.TimePoints.empty())
+    {
+        constexpr float kMaxExtrapolationMs = 250.f;
+
+        const float ahead = tick - static_cast<float>(first.Tick);
+        if (ahead <= 0.f || ahead > kMaxExtrapolationMs)
+            return;
+
+        if (aEntityComponent.IsVehicle || !aEntityComponent.Controller)
+            return;
+
+        // Velocity is metres per second and the tick is milliseconds.
+        const glm::vec3 heading{-std::sin(first.Rotation.z), std::cos(first.Rotation.z), 0.f};
+        const glm::vec3 guessed = first.Position + heading * (first.Velocity * ahead * 0.001f);
+
+        const auto pos = Red::Vector4{guessed.x, guessed.y, guessed.z, 0.f};
+        aEntityComponent.Controller->SetTransform(pos, first.Rotation.z, first.Velocity);
+        return;
+    }
+
+    const auto& second = aInterpolation.TimePoints.front();
+
+    // Where render time sits between the two samples, 0..1.
+    auto ratio = 0.f;
+    const auto tickDelta = static_cast<float>(second.Tick) - static_cast<float>(first.Tick);
+    if (tickDelta > 0.f)
+    {
+        ratio = (tick - static_cast<float>(first.Tick)) / tickDelta;
+        ratio = std::clamp(ratio, 0.f, 1.f);
+    }
 
     const glm::vec3 position{Lerp(first.Position, second.Position, ratio)};
 
@@ -105,10 +142,16 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
                 EnablePhysics(vehicle, 0x100, false);
             }
 
-            ForceMoveTo(vehicle, transform, tick - aInterpolation.PreviousFrame.Tick);
-            //ForceTransform(vehicle, transform, true);
+            // How long this move should take: the time since we last drew, not the time
+            // since the last network sample. PreviousFrame used to be rewritten every
+            // frame so the two were the same number; now that it holds a real sample,
+            // the frame delta has to be tracked on its own.
+            const float frameDelta = (aInterpolation.LastRenderTick > 0.f)
+                                         ? std::max(tick - aInterpolation.LastRenderTick, 0.f)
+                                         : 16.f;
 
-            aInterpolation.PreviousFrame = InterpolationComponent::Timepoint{position, rot, 0.f, static_cast<uint64_t>(tick)};
+            ForceMoveTo(vehicle, transform, frameDelta);
+            //ForceTransform(vehicle, transform, true);
         }
     }
     else
@@ -121,10 +164,10 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
 
             const auto pos = Red::Vector4{position.x, position.y, position.z, 0.f};
             aEntityComponent.Controller->SetTransform(pos, direction, speed);
-
-            aInterpolation.PreviousFrame = InterpolationComponent::Timepoint{position, glm::vec3{0.f, 0.f, direction}, speed, static_cast<uint64_t>(tick)};
         }
     }
+
+    aInterpolation.LastRenderTick = tick;
 }
 
 void InterpolationSystem::OnWorldAttached(RED4ext::world::RuntimeScene* aScene)
@@ -195,8 +238,32 @@ void InterpolationSystem::HandleNotifyEntityMove(const PacketEvent<server::Notif
 
     auto* pInterpolation = entity.get_mut<InterpolationComponent>();
 
-    if (!pInterpolation->TimePoints.empty() && pInterpolation->TimePoints.back().Tick > aMessage.get_tick())
+    // get_mut returns NULL when the entity does not have the component yet, and this was
+    // dereferenced unconditionally.
+    //
+    // InterpolationComponent is added by an observer on EntityComponent, which is only
+    // attached once the promotion poll runs - up to 200ms after the puppet spawns. A real
+    // player is sending movement the entire time, so their first update reliably lands
+    // inside that window and dereferenced a null pointer: an access violation with no
+    // crash report, a few milliseconds after the spawn completed.
+    //
+    // It never reproduced with a fabricated test player because those never move.
+    if (!pInterpolation)
         return;
+
+    // Drop anything that arrives out of order. The buffer is usually non-empty so its
+    // last sample is the newest thing we hold, but once it drains the newest thing we
+    // hold is the anchor - and without that second check a late packet could reopen a
+    // segment we have already walked past and drag the puppet backwards.
+    if (!pInterpolation->TimePoints.empty())
+    {
+        if (pInterpolation->TimePoints.back().Tick > aMessage.get_tick())
+            return;
+    }
+    else if (pInterpolation->HasPrevious && pInterpolation->PreviousFrame.Tick > aMessage.get_tick())
+    {
+        return;
+    }
 
     pInterpolation->TimePoints.push_back(InterpolationComponent::Timepoint{position, rotation, aMessage.get_speed(), aMessage.get_tick()});
 }
@@ -210,11 +277,20 @@ void HookIdleController_SetAnimation(Game::Controller* apController, AnimationDa
     Game::EntityPtr entity(pMoveComponent);
     if (const auto pOwner = Red::Cast<Red::GameObject>(entity.GetValuePtr()))
     {
-        if (pOwner->tags.Contains("CyberpunkMP.Puppet"))
+        // This hook runs on the game's ANIMATION thread. Reading pOwner->tags here
+        // walks a heap DynArray on an entity the main thread may still be building,
+        // which raced and crashed the game shortly after a remote player spawned.
+        // PuppetRegistry only touches the entity's 64-bit id.
+        if (App::PuppetRegistry::Contains(pOwner->id.hash))
         {
             if (apController->m_type == MultiMovementController::kMulti)
                 return;
 
+            // The kMulti guard above is evaluated on the ANIMATION thread while the attach
+            // below happens later on the MAIN thread, so every animation frame in that gap
+            // queues another attach for the same move component. Harmless - the second one
+            // finds the controller already multi - but it is why the same entity shows up
+            // several times in a row in the logs.
             ThreadService::RunInMainThread([id = pOwner->id, pMoveComponent, apController]
             {
                 const auto pSystem = Red::GetGameSystem<NetworkWorldSystem>();
@@ -222,6 +298,7 @@ void HookIdleController_SetAnimation(Game::Controller* apController, AnimationDa
                 auto flecsEntity = entityQuery.find([id](const EntityComponent& component) { return component.Id == id; });
 
                 auto* pController = Red::Memory::New<MultiMovementController>();
+
                 AttachController(pMoveComponent, pController);
 
                 if (flecsEntity)

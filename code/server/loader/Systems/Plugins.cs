@@ -62,6 +62,22 @@ namespace Server.Loader.Systems
         private List<PluginInfo> plugins = [];
         private Logger logger = new("SDK");
 
+        // Kept so a plugin can be unloaded and loaded again without restarting.
+        private readonly Dictionary<string, PluginLoadContext> contexts = new();
+        private RpcManager rpcManager = null!;
+        private string pluginsDirectory = "";
+
+        // Hot reload. The watcher fires on a background thread, so it only records
+        // what changed; the reload itself runs from the server update loop, where it
+        // cannot race with an RPC dispatch.
+        private FileSystemWatcher? watcher;
+        private readonly Dictionary<string, DateTime> pendingReloads = new();
+        private readonly object pendingLock = new();
+
+        // A build writes the dll several times in quick succession. Wait for it to go
+        // quiet before reloading, otherwise we load a half-written file.
+        private static readonly TimeSpan ReloadQuietPeriod = TimeSpan.FromMilliseconds(750);
+
         public IList<ModDef> ClientMods => clientMods;
         
         public IList<PluginInfo> GetPlugins(Func<PluginInfo, bool> predicate) => plugins.Where(predicate).ToList();
@@ -315,13 +331,163 @@ namespace Server.Loader.Systems
             string baseDirectory = Path.GetDirectoryName(currentAssemblyLocation)!;
             string exeRoot = baseDirectory;
 
+            this.rpcManager = rpcManager;
+            this.pluginsDirectory = Path.Combine(baseDirectory, "plugins");
+
             LoadConfiguration(exeRoot);
             DownloadMods(exeRoot);
 
             // Get all subdirectories in the base directory
-            string[] subDirectories = Directory.GetDirectories(Path.Combine(baseDirectory, "plugins"));
+            string[] subDirectories = Directory.GetDirectories(pluginsDirectory);
 
             foreach (string directory in subDirectories)
+            {
+                LoadPlugin(directory);
+            }
+
+            StartWatching();
+        }
+
+        /// <summary>
+        /// Watch the plugins directory and reload a plugin when its dll is rebuilt.
+        /// </summary>
+        private void StartWatching()
+        {
+            try
+            {
+                watcher = new FileSystemWatcher(pluginsDirectory)
+                {
+                    Filter = "*.dll",
+                    IncludeSubdirectories = true,
+                    NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size
+                };
+
+                void OnChanged(object _, FileSystemEventArgs e) => QueueReload(e.FullPath);
+
+                watcher.Changed += OnChanged;
+                watcher.Created += OnChanged;
+                watcher.Renamed += (_, e) => QueueReload(e.FullPath);
+
+                watcher.EnableRaisingEvents = true;
+
+                logger.Info($"Watching {pluginsDirectory} - rebuild a plugin and it reloads automatically");
+            }
+            catch (Exception ex)
+            {
+                logger.Warn($"Could not watch the plugins directory, hot reload disabled: {ex.Message}");
+            }
+        }
+
+        private void QueueReload(string changedPath)
+        {
+            // Only care about a plugin's own assembly: plugins/EmoteSystem/EmoteSystem.dll
+            var directory = Path.GetDirectoryName(changedPath);
+            if (directory == null)
+                return;
+
+            var pluginName = new DirectoryInfo(directory).Name;
+
+            if (!string.Equals(Path.GetFileNameWithoutExtension(changedPath), pluginName,
+                               StringComparison.OrdinalIgnoreCase))
+                return;
+
+            lock (pendingLock)
+            {
+                pendingReloads[pluginName] = DateTime.UtcNow;
+            }
+        }
+
+        /// <summary>
+        /// Called from the server update loop. Reloads plugins whose files have
+        /// stopped changing.
+        /// </summary>
+        public void ProcessPendingReloads()
+        {
+            if (watcher == null)
+                return;
+
+            List<string>? ready = null;
+
+            lock (pendingLock)
+            {
+                if (pendingReloads.Count == 0)
+                    return;
+
+                var now = DateTime.UtcNow;
+                foreach (var (name, changedAt) in pendingReloads)
+                {
+                    if (now - changedAt < ReloadQuietPeriod)
+                        continue;
+
+                    (ready ??= new List<string>()).Add(name);
+                }
+
+                if (ready != null)
+                {
+                    foreach (var name in ready)
+                        pendingReloads.Remove(name);
+                }
+            }
+
+            if (ready == null)
+                return;
+
+            foreach (var name in ready)
+            {
+                try
+                {
+                    Reload(name);
+                }
+                catch (Exception ex)
+                {
+                    logger.Error($"Reload of '{name}' failed: {ex.Message}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Reload a single plugin by name (the directory name, e.g. "EmoteSystem").
+        /// Returns true if it was loaded again successfully.
+        ///
+        /// RPC registration is idempotent on the native side, so a reloaded plugin
+        /// re-registers the same (Klass, Function) pairs and gets the same ids back.
+        /// That means already-connected clients keep working - they were sent those
+        /// ids at authentication and never learn anything changed.
+        ///
+        /// Known limitation: WebApi routes are registered when the web server is
+        /// built, so a plugin's WebApi hook is NOT re-registered by a reload. Restart
+        /// the server if you changed one.
+        /// </summary>
+        public bool Reload(string pluginName)
+        {
+            var directory = Path.Combine(pluginsDirectory, pluginName);
+
+            if (!Directory.Exists(directory))
+            {
+                logger.Warn($"Cannot reload '{pluginName}': no such plugin directory");
+                return false;
+            }
+
+            // Drop the old plugin's entry and release its load context. The unload is
+            // cooperative: the assembly goes away once the GC sees no live references,
+            // which is why nothing may hold on to plugin types across a reload.
+            plugins.RemoveAll(p => p.FullName == pluginName);
+
+            if (contexts.TryGetValue(pluginName, out var oldContext))
+            {
+                contexts.Remove(pluginName);
+                oldContext.Unload();
+
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+            }
+
+            logger.Info($"Reloading plugin: {pluginName}");
+            return LoadPlugin(directory);
+        }
+
+        private bool LoadPlugin(string directory)
+        {
             {
                 string directoryName = new DirectoryInfo(directory).Name;
                 string assemblyPath = Path.Combine(directory, directoryName + ".dll");
@@ -331,8 +497,11 @@ namespace Server.Loader.Systems
                 {
                     try
                     {
-                        // Load the assembly from the file path
-                        var assembly = Assembly.LoadFrom(assemblyPath);
+                        // Load into a collectible context, from a copy in memory, so the
+                        // file on disk is never locked and can be rebuilt in place.
+                        var context = new PluginLoadContext(assemblyPath);
+                        var assembly = context.LoadFromFileCopy(assemblyPath);
+                        contexts[directoryName] = context;
                         var typeName = directoryName + ".Plugin";
 
                         var plugin = assembly.GetType(typeName);
@@ -355,6 +524,8 @@ namespace Server.Loader.Systems
                             logger.Info($"Loaded Plugin" +
                                         $"{(hasHook ? " + WebApi" : "")}" +
                                         $"{(hasAssets ? " + Assets" : "")}: {directoryName}");
+
+                            return true;
                         }
                         else
                         {
@@ -372,6 +543,8 @@ namespace Server.Loader.Systems
                     logger.Warn($"Expected assembly not found: {assemblyPath}");
                 }
             }
+
+            return false;
         }
     }
 }

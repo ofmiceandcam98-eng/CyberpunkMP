@@ -16,8 +16,34 @@ message SpawnCharacterRequest {
     float rotation = 2;
     bool is_player = 3;
     uint64 cookie = 4;
-    repeated string equipment = 5;
+    // TweakDBIDs as raw numbers, NOT their names.
+    //
+    // These used to be strings produced by TDBID.ToStringDEBUG, which needs TweakDB's
+    // debug name table. That table is stripped from release builds of the game, so on
+    // 2.31 every name came back empty, every item serialised blank, and remote players
+    // appeared with no clothes or weapons. The number is the identity; the name was only
+    // ever for humans reading logs.
+    repeated uint64 equipment = 5;
     bytes ccstate = 6;
+}
+
+// Saves the player's appearance as their multiplayer character.
+//
+// Sent when the character creator closes, NOT on every spawn - the spawn message carries
+// an appearance too, but that one describes whoever the loaded save happens to contain.
+// This one is a deliberate "this is me", and it is the only one the server stores.
+message SaveCharacterRequest {
+    // The game's own CharacterCustomizationState, serialised. The server stores it
+    // opaquely and hands the same bytes back, so a game patch changing the format needs
+    // no server change.
+    bytes ccstate = 1;
+
+    // The character's name in the world, which is not the player's Discord name.
+    string name = 2;
+
+    // Kept out of the blob because the server needs it without parsing: it decides which
+    // puppet record other clients spawn for this player.
+    bool is_male = 3;
 }
 
 message MoveEntityRequest {
@@ -47,6 +73,14 @@ message ChatMessageRequest {
     string message = 1;
 }
 
+// "I was downed - where do I get up?"
+//
+// Carries nothing on purpose. The client is not telling the server where to put it, only
+// that it needs putting somewhere; the server owns the respawn point. A client that could
+// name its own destination could teleport anywhere by claiming to have died.
+message RespawnRequest {
+}
+
 message RpcCall {
     uint32 id = 1;
 	bytes arguments = 2;
@@ -61,5 +95,7 @@ message Protocol {
         RpcCall rpc_call = 5;
         EnterVehicleRequest enter_vehicle_request = 6;
         ExitVehicleRequest exit_vehicle_request = 7;
+        RespawnRequest respawn_request = 8;
+        SaveCharacterRequest save_character_request = 9;
     }
 }

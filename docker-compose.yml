@@ -1,0 +1,31 @@
+services:
+  server:
+    build: .
+    image: cyberpunkmp-server
+    container_name: cyberpunkmp-server
+    restart: unless-stopped
+
+    # Release builds refuse to start without these - see WebApi.cs.
+    environment:
+      CYBERPUNKMP_ADMIN_USERNAME: ${CYBERPUNKMP_ADMIN_USERNAME:?set this in .env}
+      CYBERPUNKMP_ADMIN_PASSWORD: ${CYBERPUNKMP_ADMIN_PASSWORD:?set this in .env}
+
+    ports:
+      # Game traffic. GameNetworkingSockets is UDP; the same port also serves the
+      # web/admin API over TCP.
+      - "${CYBERPUNKMP_PORT:-11778}:11778/udp"
+      - "${CYBERPUNKMP_PORT:-11778}:11778/tcp"
+
+    volumes:
+      # Config is created on first run - keep it so settings survive a rebuild.
+      - ./config:/app/config
+      # Server-side plugins.
+      - ./plugins:/app/plugins
+      # Logs, so you can read them without entering the container.
+      - ./logs:/app/logs
+
+    # The server needs a console attached: without one, Swan does not register its
+    # ConsoleLogger and WebApi's Logger.UnregisterLogger<ConsoleLogger>() throws
+    # "The logger is not registered" on startup.
+    tty: true
+    stdin_open: true

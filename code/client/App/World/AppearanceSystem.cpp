@@ -37,29 +37,100 @@ void AppearanceSystem::OnBeforeWorldDetach(RED4ext::world::RuntimeScene* aScene)
     Red::CallVirtual(this, "OnBeforeWorldDetach");
 }
 
-Red::DynArray<Red::TweakDBID> AppearanceSystem::GetEntityItems(Red::EntityID & entityID)
+// FNV-1a. Used only for the [Identity] log lines below: a cheap fingerprint of the
+// appearance data, so a session log can show whether the bytes ADDED for an entity are
+// the same bytes APPLIED to it. When two players render as each other, these hashes say
+// on which side of the map the swap happened - distinct at add + swapped at apply means
+// our maps; identical at both means the engine's appearance changer.
+static uint64_t HashBytes(const void* apData, size_t aSize)
 {
-    return m_playerEquipment[entityID];
+    const auto* p = static_cast<const uint8_t*>(apData);
+    uint64_t hash = 0xcbf29ce484222325ULL;
+    for (size_t i = 0; i < aSize; ++i)
+    {
+        hash ^= p[i];
+        hash *= 0x100000001b3ULL;
+    }
+    return hash;
 }
 
-Vector<String> AppearanceSystem::GetPlayerItems(Red::Handle<Red::GameObject> player)
+static uint64_t HashEquipment(const Red::DynArray<Red::TweakDBID>& aItems)
 {
-    auto equipment = Vector<String>();
-    Red::DynArray<Red::CString> items;
+    uint64_t hash = 0xcbf29ce484222325ULL;
+    for (const auto& item : aItems)
+    {
+        hash ^= item.value;
+        hash *= 0x100000001b3ULL;
+    }
+    return hash;
+}
+
+Red::DynArray<Red::TweakDBID> AppearanceSystem::GetEntityItems(Red::EntityID & entityID)
+{
+    std::lock_guard lock(m_mapLock);
+
+    // find, not operator[] - a read must not insert an empty entry for an unknown entity.
+    const auto it = m_playerEquipment.find(entityID);
+    return it == m_playerEquipment.end() ? Red::DynArray<Red::TweakDBID>() : it->second;
+}
+
+Vector<uint64_t> AppearanceSystem::GetPlayerItems(Red::Handle<Red::GameObject> player)
+{
+    // Numbers, not names.
+    //
+    // This used to collect TDBID.ToStringDEBUG output. That helper reads TweakDB's debug
+    // name table, which release builds of the game do not ship, so on 2.31 every entry
+    // was an empty string. The empty strings serialised fine, crossed the wire fine, and
+    // then failed on the far side as eight "ItemID creation failed" warnings per spawn -
+    // which is why remote players had no clothes or weapons.
+    auto equipment = Vector<uint64_t>();
+
+    Red::DynArray<uint64_t> items;
     Red::CallVirtual(this, "GetPlayerItems", items);
+
     for (auto item : items)
     {
-        spdlog::info("Getting: {}", item.c_str());
-        equipment.push_back(item.c_str());
+        spdlog::info("Getting: {:#x}", item);
+        equipment.push_back(item);
     }
+
     return equipment;
 }
 
 void AppearanceSystem::AddEntity(const Red::EntityID entityID, const Red::DynArray<Red::TweakDBID>& items, const Vector<uint8_t> ccstate)
 {
     spdlog::info("Logging Entity Appearance: {}", entityID.hash);
-    m_playerEquipment[entityID] = items;
-    m_playerCcstate[entityID] = ccstate;
+
+    // TEMPORARY [PROBE] lines - see the matching block in NetworkWorldSystem::Spawn.
+    spdlog::info("[PROBE 2] AddEntity: writing equipment map ({} items)", items.size);
+    spdlog::info("[PROBE 3] AddEntity: writing ccstate map ({} bytes)", ccstate.size());
+
+    {
+        std::lock_guard lock(m_mapLock);
+        m_playerEquipment[entityID] = items;
+        m_playerCcstate[entityID] = ccstate;
+    }
+
+    // The identity fingerprint for this entity, at the moment its data arrives. Compare
+    // against the matching 'apply' line - see HashBytes above.
+    spdlog::info("[Identity] add   entity {:x}: ccstate {} bytes hash={:016x}, equipment {} items hash={:016x}",
+                 entityID.hash, ccstate.size(), HashBytes(ccstate.data(), ccstate.size()),
+                 items.size, HashEquipment(items));
+
+    spdlog::info("[PROBE 4] AddEntity: both map writes done");
+}
+
+void AppearanceSystem::SetEntityName(Red::EntityID entityID, const std::string& acName)
+{
+    std::lock_guard lock(m_mapLock);
+    m_playerNames[entityID] = acName;
+}
+
+std::string AppearanceSystem::GetEntityName(Red::EntityID entityID) const
+{
+    std::lock_guard lock(m_mapLock);
+    const auto it = m_playerNames.find(entityID);
+    return it == m_playerNames.end() ? std::string() : it->second;
 }
 
 void AddItems(Red::Handle<Red::game::Object> & object, Red::DynArray<Red::TweakDBID> const & items, game::ui::CharacterCustomizationState const * state)
@@ -93,11 +164,6 @@ void AddItems(Red::Handle<Red::game::Object> & object, Red::DynArray<Red::TweakD
 
         auto placementSlot = placementSlotHandle.instance->recordID;
 
-        Red::CString str;
-        Red::CallStatic("gamedataTDBIDHelper", "ToStringDEBUG", str, item);
-        Red::CString placementStr;
-        Red::CallStatic("gamedataTDBIDHelper", "ToStringDEBUG", placementStr, placementSlot);
-
         auto appearanceName = EvalCName(&item_record.instance->appearanceName);
         std::string appearance = appearanceName.ToString();
         // auto suffixes = EvalArrayTweakDBID(&item_record.instance->appearanceSuffixes);
@@ -126,10 +192,13 @@ void AddItems(Red::Handle<Red::game::Object> & object, Red::DynArray<Red::TweakD
         //         }
         //     }
         // }
-        spdlog::info("Adding {} to {} with \"{}\"", str.c_str(), placementStr.c_str(), appearance);
+        // The two ToStringDEBUG calls that used to log the item and slot names here are
+        // gone. TweakDB's debug name table is stripped from release builds, so both
+        // returned an empty string on 2.31 - two TweakDB lookups per item per spawn to
+        // print nothing.
         Red::CString redAppStr;
         GetItemAppearanceName(&redAppStr, object, object, item_record, itemID);
-        spdlog::info("* computed suffix: {}", redAppStr.c_str());
+        spdlog::info("[Appearance] {}{}", appearance, redAppStr.c_str());
         appearance.append(redAppStr.c_str());
 
         appearanceName = appearance.c_str();
@@ -165,41 +234,105 @@ void AddItems(Red::Handle<Red::game::Object> & object, Red::DynArray<Red::TweakD
 
 bool AppearanceSystem::ApplyAppearance(Red::Handle<Red::game::Object> object)
 {
-    if (m_playerCcstate.find(object.instance->id) == m_playerCcstate.end()) 
+    // TEMPORARY [PROBE 21]. Tells us whether the Entity/Attached script callback fired at
+    // all for a puppet that crashed - the surviving spawn reaches this ~40ms after Spawn()
+    // returns, the crashing one never logs anything after [PROBE 10].
+    spdlog::info("[PROBE 21] ApplyAppearance entered");
+
+    if (!object.instance)
     {
-        // not our entity
+        spdlog::error("[Appearance] ApplyAppearance called with a null object - aborting");
         return false;
     }
 
-    auto bytes = m_playerCcstate[object.instance->id];
-    if (bytes.size() == 0) 
+    // One locked copy-out for everything this function needs from the maps. The rest of
+    // the function works on the copies, so nothing engine-facing runs under the lock -
+    // and GetEntityName is NOT called here because it takes the same (non-recursive)
+    // lock.
+    Vector<uint8_t> bytes;
+    Red::DynArray<Red::TweakDBID> items;
+    std::string name;
+    {
+        std::lock_guard lock(m_mapLock);
+
+        const auto ccIt = m_playerCcstate.find(object.instance->id);
+        if (ccIt == m_playerCcstate.end())
+        {
+            // not our entity
+            return false;
+        }
+        bytes = ccIt->second;
+
+        const auto eqIt = m_playerEquipment.find(object.instance->id);
+        if (eqIt != m_playerEquipment.end())
+            items = eqIt->second;
+
+        const auto nameIt = m_playerNames.find(object.instance->id);
+        if (nameIt != m_playerNames.end())
+            name = nameIt->second;
+    }
+
+    if (bytes.size() == 0)
     {
         spdlog::info("no bytes for {}", object->id.hash);
         return false;
     }
 
-    object.instance->displayName.unk08 = Red::CString("Test");
+    // The identity fingerprint at the moment of application. If two players render as
+    // each other and this line's hashes MATCH their 'add' lines, the swap happened
+    // downstream of us - in the engine's appearance changer. If they differ, it is ours.
+    spdlog::info("[Identity] apply entity {:x}: ccstate {} bytes hash={:016x}, equipment {} items hash={:016x}, name '{}'",
+                 object.instance->id.hash, bytes.size(), HashBytes(bytes.data(), bytes.size()),
+                 items.size, HashEquipment(items), name);
+
+    // The name on the puppet.
+    //
+    // This was hardcoded to "Test" upstream. Left alone, the nameplate falls back to the
+    // TweakDB record the puppet was built from - Character.MaMuppet - which is why every
+    // remote player appeared as "Panam" regardless of who they were.
+    //
+    // The name comes from the server, which got it from Discord. A client never says who
+    // it is; it is told.
+    if (!name.empty())
+        object.instance->displayName.unk08 = Red::CString(name.c_str());
 
     spdlog::info("Loaded bytes: {}", bytes.size());
 
     Red::Handle<game::ui::CharacterCustomizationState> stateHandle;
     CreateHandle_CharacterCustomizationState(&stateHandle);
 
-    auto reader = CMPReader(bytes);
-    CharacterCustomizationState_Serialize(stateHandle.instance, &reader);
+    if (!stateHandle.instance)
+    {
+        spdlog::error("[Appearance] CreateHandle_CharacterCustomizationState returned null - aborting");
+        return false;
+    }
+
+    if (bytes.empty())
+    {
+        spdlog::warn("[Appearance] no ccstate bytes for this entity - appearance will be default");
+    }
+    else
+    {
+        auto reader = CMPReader(bytes);
+        CharacterCustomizationState_Serialize(stateHandle.instance, &reader);
+    }
 
     // shouldn't be needed
     // Red::CallVirtual(this, "AddBodyParts", object, stateHandle.instance->isBodyGenderMale);
 
     auto ps = reinterpret_cast<Red::game::PuppetPS*>(object.instance->persistentState.instance);
+    if (!ps)
+    {
+        spdlog::error("[Appearance] puppet persistentState is null - aborting before writing unk72");
+        return false;
+    }
     // checked during item adding process for &TPP
     ps->unk72[0] = 1;
 
     // old method
     // Red::CallVirtual(this, "AddItems", object);
 
-    // c++ method
-    auto items = m_playerEquipment[object.instance->id];
+    // c++ method - items were copied out under the lock at the top of this function
     // if (stateHandle.instance->isBodyGenderMale) {
     //     // items.PushBack("Items.PlayerMaTppHead");
     //     items.PushBack("Items.MuppetMaHead");

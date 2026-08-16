@@ -4,6 +4,7 @@
 #include "win32.h"
 #include "App/Application.h"
 #include "App/Debugging/DebugService.h"
+#include "App/Settings.h"
 
 namespace App
 {
@@ -18,6 +19,27 @@ ImGuiService::~ImGuiService()
 
 void ImGuiService::OnRenderInit()
 {
+    // With the overlay off, take no part in rendering whatsoever.
+    //
+    // Returning here means no descriptor heap, no command allocators, no command list,
+    // no ImGui context - the mod creates nothing on the game's D3D12 device and never
+    // touches a frame. PrepareUpdate and OnPresent already skipped their work; this
+    // removes the objects as well.
+    //
+    // The reason to go this far is Cyber Engine Tweaks. CET draws its own ImGui overlay
+    // through the same present path, and two overlays sharing one swapchain is a known
+    // way to hard-lock a GPU - which is exactly what was seen when both were installed.
+    // Most Cyberpunk mods want CET, so "you must uninstall CET" is a real cost to anyone
+    // playing here. A mod that renders nothing cannot fight another renderer.
+    //
+    // Safe to decide once: the overlay is set from the command line at launch and cannot
+    // change mid-session, so there is no case where this is skipped and later needed.
+    if (!Settings::Get().debug)
+    {
+        spdlog::info("[ImGuiService] developer overlay off - not initialising any rendering");
+        return;
+    }
+
     Microsoft::WRL::ComPtr<ID3D12Device> pDevice;
     if (FAILED(GetSwapChain()->GetDevice(IID_PPV_ARGS(&pDevice))))
     {
@@ -118,6 +140,19 @@ void ImGuiService::OnRenderInit()
             IMGUI_CHECKVERSION();
             ImGui::CreateContext();
 
+            // Keep our hands off the OS cursor.
+            //
+            // The Win32 backend re-applies a cursor shape every single NewFrame. Left
+            // alone it calls SetCursor(IDC_ARROW) forever, which paints a plain white
+            // Windows arrow in the middle of the screen - sitting on top of the crosshair
+            // during play, and on top of the game's own cursor in menus. The game already
+            // decides when a cursor should exist and what it should look like; this
+            // overlay has no business overriding that.
+            //
+            // Our own windows stay usable because MouseDrawCursor below makes ImGui draw
+            // its cursor INTO the overlay, so it exists only while ImGui wants the mouse.
+            ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+
             // TODO - make this configurable eventually and overridable by mods for themselves easily
             // setup CET default style
             ImGui::StyleColorsDark(&m_styleReference);
@@ -166,6 +201,12 @@ void ImGuiService::OnRenderInit()
 void ImGuiService::OnPresent()
 {
     if (!m_initialized)
+        return;
+
+    // Nothing to present when the overlay is off - see PrepareUpdate. Checked here too
+    // rather than relying on the draw buffers being empty, because "no GPU work" should
+    // not depend on a buffer happening to be in the right state.
+    if (!Settings::Get().debug)
         return;
 
     // swap staging ImGui buffer with render ImGui buffer
@@ -267,10 +308,32 @@ void ImGuiService::PrepareUpdate()
     if (!m_pCommandList || !m_initialized)
         return;
 
+    // With the overlay off, build no frame at all.
+    //
+    // Gating only DebugService::Draw() still ran the whole ImGui frame and still handed
+    // OnPresent a valid (empty) draw list, so the mod kept resetting a command allocator,
+    // raising a resource barrier and executing a command list inside the game's frame -
+    // every frame, to draw nothing.
+    //
+    // That is worth removing on its own, and it matters more after a GPU crash was
+    // reported with no other explanation: gpuApiDX12Error, "Gpu Crash for unknown
+    // reasons". This mod injecting DX12 work into a frame is one of the few things about
+    // the renderer we control, so for anyone not running the overlay it now injects none.
+    // That is not a claim this caused it - it removes us from the list of suspects.
+    if (!Settings::Get().debug)
+        return;
+
     std::lock_guard _(m_imguiLock);
 
     DXGI_SWAP_CHAIN_DESC sdesc;
     GetSwapChain()->GetDesc(&sdesc);
+
+    // Draw a cursor only while our own UI actually wants the mouse. WantCaptureMouse is
+    // last frame's answer, which is exactly right here: it is set while the pointer is
+    // over an ImGui window, and a single frame of lag entering or leaving one is
+    // invisible. During normal play nothing is hovered, so nothing is drawn and the
+    // crosshair is left alone.
+    ImGui::GetIO().MouseDrawCursor = ImGui::GetIO().WantCaptureMouse;
 
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();

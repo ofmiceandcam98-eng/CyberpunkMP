@@ -59,6 +59,12 @@ protected:
     void HandleMoveEntityRequest(PacketEvent<client::MoveEntityRequest>& aMessage) noexcept;
     void HandleEnterVehicleRequest(PacketEvent<client::EnterVehicleRequest>& aMessage) noexcept;
     void HandleExitVehicleRequest(PacketEvent<client::ExitVehicleRequest>& aMessage) noexcept;
+    void ReleaseVehicleIfEmpty(flecs::entity aVehicle) noexcept;
+
+public:
+    void RemoveOwnedVehicles(flecs::entity aPlayer) noexcept;
+
+protected:
 
     static server::NotifyCharacterLoad Serialize(flecs::entity aEntity) noexcept;
 

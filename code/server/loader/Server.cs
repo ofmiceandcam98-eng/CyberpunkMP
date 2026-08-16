@@ -33,6 +33,11 @@ namespace Server.Loader
             // As late as possible
             plugins = new Plugins(rpcManager);
 
+            // Run plugin hot reloads from the update loop rather than the file
+            // watcher's thread, so a reload can't land in the middle of an RPC
+            // dispatch.
+            world.UpdateEvent += _ => plugins.ProcessPendingReloads();
+
             webApi = new WebApi(plugins, statistics);
         }
 

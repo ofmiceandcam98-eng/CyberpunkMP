@@ -13,5 +13,13 @@ struct DebugService : Core::Feature, Core::LoggingAgent
     void OnBootstrap() override;
 
     void Draw();
+
+private:
+    // Sends a chat command without going through the in-game chat UI, whose "/" hotkey
+    // does not work on 2.31.
+    static void SendChatCommand(const char* apCommand);
+
+    // Ping and packet loss, right-aligned in the menu bar, coloured by severity.
+    static void DrawConnectionStatus();
 };
 } // namespace App

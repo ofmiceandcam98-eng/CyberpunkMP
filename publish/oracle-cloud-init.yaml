@@ -1,0 +1,80 @@
+#cloud-config
+# ---------------------------------------------------------------------------
+# Night City Online - Oracle Cloud instance bootstrap
+#
+# Paste this into "Advanced options -> Management -> Cloud-init script" when
+# creating the instance. It runs once, on first boot, as root.
+#
+# What it does:
+#   - installs Docker
+#   - opens UDP/TCP 11778 in the instance firewall (the step everyone misses)
+#   - clones the repo and builds the server
+#   - starts it, and makes it come back after a reboot
+#
+# BEFORE PASTING: change the password on the line marked CHANGE THIS.
+# The admin panel binds to 0.0.0.0, so on a public cloud instance it is reachable
+# from the internet. A weak password here is a real problem, not a theoretical one.
+# ---------------------------------------------------------------------------
+
+package_update: true
+package_upgrade: false
+
+packages:
+  - docker.io
+  - docker-compose-v2
+  - git
+  - iptables-persistent
+
+write_files:
+  # Compose reads this. Kept out of the repo and off the command line so the
+  # password never lands in shell history.
+  - path: /opt/nightcity/.env
+    permissions: '0600'
+    content: |
+      CYBERPUNKMP_ADMIN_USERNAME=admin
+      CYBERPUNKMP_ADMIN_PASSWORD=CHANGE_THIS_BEFORE_PASTING
+
+  # Oracle's Ubuntu images ship a restrictive INPUT chain. Opening the port in the
+  # cloud Security List alone is NOT enough - traffic still gets dropped here, with
+  # no error anywhere, which looks exactly like a dead server.
+  - path: /opt/nightcity/open-ports.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -e
+      # -I inserts at the top, ahead of the default REJECT rule. Appending with -A
+      # would put these after it, where they never match.
+      iptables -I INPUT 1 -p udp --dport 11778 -j ACCEPT
+      iptables -I INPUT 1 -p tcp --dport 11778 -j ACCEPT
+      netfilter-persistent save
+      echo "opened 11778 (udp+tcp)"
+
+runcmd:
+  - systemctl enable --now docker
+
+  # Let the default user run docker without sudo. Takes effect on next login.
+  - usermod -aG docker ubuntu
+
+  - /opt/nightcity/open-ports.sh
+
+  - git clone --depth 1 https://github.com/ofmiceandcam98-eng/CyberpunkMP.git /opt/nightcity/CyberpunkMP
+  - cp /opt/nightcity/.env /opt/nightcity/CyberpunkMP/.env
+  - chown -R ubuntu:ubuntu /opt/nightcity
+
+  # Build and start. This compiles the whole project from source and takes a while
+  # on first boot - twenty minutes or more is normal. The instance is usable over
+  # SSH throughout; watch progress with:
+  #   docker compose -f /opt/nightcity/CyberpunkMP/docker-compose.yml logs -f
+  - cd /opt/nightcity/CyberpunkMP && docker compose up -d --build
+
+final_message: |
+  Night City Online bootstrap finished after $UPTIME seconds.
+
+  Check it:      cd /opt/nightcity/CyberpunkMP && docker compose logs -f
+  Restart it:    docker compose restart
+  Update it:     git pull && docker compose up -d --build
+
+  The server restarts by itself after a reboot (restart: unless-stopped).
+
+  If the build failed, it is most likely the first aarch64 build of this project -
+  send the output from `docker compose logs` rather than guessing.

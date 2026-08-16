@@ -33,6 +33,19 @@
 		<button id="IK_Semicolon" />
     </mapping>
 
+	<!-- Mouse wheel, for scrolling the chat log.
+	     There is no "mouse_wheel" action in the game - it exposes IK_MouseWheelUp and
+	     IK_MouseWheelDown as separate buttons, and binds them to weapon switching and
+	     zoom. Ours are declared under our own names and live only in the chat context,
+	     so they cannot interfere with either during normal play. -->
+	<mapping name="ChatScrollUp_Button" type="Button" >
+		<button id="IK_MouseWheelUp" />
+    </mapping>
+
+	<mapping name="ChatScrollDown_Button" type="Button" >
+		<button id="IK_MouseWheelDown" />
+    </mapping>
+
 	<mapping name="ChatTop_Button" type="Button" >
 		<button id="IK_PageUp" />
     </mapping>
@@ -53,6 +66,8 @@
         <action name="navigate_down" map="down_button" />
         <action name="ChatTop" map="ChatTop_Button" />
         <action name="ChatBottom" map="ChatBottom_Button" />
+        <action name="ChatScrollUp" map="ChatScrollUp_Button" />
+        <action name="ChatScrollDown" map="ChatScrollDown_Button" />
     </context>
 
     <context name="UI_EmoteSelection" >

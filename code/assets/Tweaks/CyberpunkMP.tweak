@@ -7,6 +7,15 @@ Character.Muppet : Character.TPP_Player {
 	reactionPreset = "ReactionPresets.NoReaction";
 	uiNameplate = "UINameplate.MpPlayerSettings";
 	abilities += [ "Ability.CanCrouch", "Ability.CanSprint" ];
+
+	// Cleared because this record INHERITS FROM Character.Panam, and with it her name.
+	// That is why every remote player was labelled Panam regardless of who they were -
+	// the nameplate reads the character record first and only falls back to the entity's
+	// own display name when the record has none. Blanking these is what lets the name the
+	// server sends actually reach the screen.
+	displayName = "";
+	fullDisplayName = "";
+	alternativeDisplayName = "";
 	// tags = [];
 	// genders = [
 	// 	{
@@ -71,6 +80,15 @@ Character.MaMuppet : Character.Panam {
 	reactionPreset = "ReactionPresets.NoReaction";
 	uiNameplate = "UINameplate.MpPlayerSettings";
 	abilities += [ "Ability.CanCrouch", "Ability.CanSprint" ];
+
+	// Cleared because this record INHERITS FROM Character.Panam, and with it her name.
+	// That is why every remote player was labelled Panam regardless of who they were -
+	// the nameplate reads the character record first and only falls back to the entity's
+	// own display name when the record has none. Blanking these is what lets the name the
+	// server sends actually reach the screen.
+	displayName = "";
+	fullDisplayName = "";
+	alternativeDisplayName = "";
 	// entityTemplatePath = "mods\cyberpunkmp\player_ma_fpp.ent";
 	// entityTemplatePath = "base\characters\entities\player\player_ma_tpp_cutscene.ent";
 	entityTemplatePath = "mods\cyberpunkmp\player_ma_tpp_cutscene.ent";
@@ -93,6 +111,15 @@ Character.WaMuppet : Character.Panam {
 	reactionPreset = "ReactionPresets.NoReaction";
 	uiNameplate = "UINameplate.MpPlayerSettings";
 	abilities += [ "Ability.CanCrouch", "Ability.CanSprint" ];
+
+	// Cleared because this record INHERITS FROM Character.Panam, and with it her name.
+	// That is why every remote player was labelled Panam regardless of who they were -
+	// the nameplate reads the character record first and only falls back to the entity's
+	// own display name when the record has none. Blanking these is what lets the name the
+	// server sends actually reach the screen.
+	displayName = "";
+	fullDisplayName = "";
+	alternativeDisplayName = "";
 	// entityTemplatePath = "mods\cyberpunkmp\player_wa_fpp.ent";
 	// entityTemplatePath = "base\characters\entities\player\player_wa_tpp_cutscene.ent";
 	entityTemplatePath = "mods\cyberpunkmp\player_wa_tpp_cutscene.ent";

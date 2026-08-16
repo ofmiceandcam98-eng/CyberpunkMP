@@ -24,8 +24,17 @@ message NotifyCharacterLoad {
     common.Vector3 position = 2;
     float rotation = 3;
     bool is_player = 4;
-    repeated string equipment = 5;
+    // Raw TweakDBIDs - see the matching field in client.proto for why these are not names.
+    repeated uint64 equipment = 5;
     bytes ccstate = 6;
+
+    // Who this is.
+    //
+    // Without it the client has no idea, and the nameplate falls back to whatever the
+    // TweakDB record it was built from is called - which is why every remote player
+    // showed up as "Panam". The server is the only thing that knows the real name, since
+    // it is the half that talked to Discord.
+    string username = 7;
 }
 
 message NotifyVehicleLoad {
@@ -66,6 +75,54 @@ message NotifyEntityMove {
 message ChatMessage {
     string username = 1;
     string message = 2;
+
+    // Which channel this was said on, so the client can colour it. Sent as a number the
+    // SERVER decides rather than letting the client infer one from the text - otherwise
+    // anyone could type "[yells]" and have their local chatter render as a shout.
+    // 0 local, 1 yell, 2 whisper, 3 advert, 4 server notice.
+    uint32 channel = 3;
+}
+
+// Move a player somewhere. Sent only to the player being moved.
+//
+// The client owns its own position, so the server cannot simply relocate someone by
+// editing its own copy - the next position update would put them straight back. This
+// asks the client to move itself, which is the only thing that actually works.
+message NotifyTeleport {
+    common.Vector3 position = 1;
+    float rotation = 2;
+}
+
+// Tells a client to open the game's character creator.
+//
+// Server-driven on purpose: whether somebody needs a character is the server's business,
+// since it is the only side that knows what they already have. A client that opened this
+// for itself would be guessing.
+message OpenCharacterCreator {
+    // When true, do not open anything - just serialise the appearance the player has
+    // right now and send it back.
+    //
+    // Two jobs in one message because they are two halves of the same exchange. The
+    // creator gives no callback when it closes and there is no way to poll for it - there
+    // is no IsActive on the customization system - so the player says when they are done
+    // and this is what asks their client for the result.
+    bool capture_only = 1;
+}
+
+// Asks a client what their character is called.
+//
+// Sent right after a character is saved without a name, which is what happens when
+// somebody comes out of the creator - the creator has no name field of its own. Asking is
+// the server's job for the same reason as above: it is the only side that knows whether a
+// name already exists.
+//
+// The answer comes back as the ordinary /name command over chat rather than a message of
+// its own. That path already validates, truncates and persists, so a second one would only
+// be a second place for the two to disagree.
+message RequestCharacterName {
+    // What they are called now, so the box opens with something in it rather than empty.
+    // Empty when they have never had a name.
+    string current = 1;
 }
 
 message RpcCall {
@@ -98,5 +155,8 @@ message Protocol {
         NotifyVehicleEnter notify_vehicle_enter = 10;
         NotifyVehicleExit notify_vehicle_exit = 11;
         NotifyVehicleControlAssigned notify_vehicle_control_assigned = 12;
+        NotifyTeleport notify_teleport = 13;
+        OpenCharacterCreator open_character_creator = 14;
+        RequestCharacterName request_character_name = 15;
     }
 }

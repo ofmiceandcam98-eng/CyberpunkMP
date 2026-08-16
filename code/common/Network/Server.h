@@ -46,6 +46,7 @@ struct Server
     [[nodiscard]] uint32_t GetTickRate() const noexcept;
     [[nodiscard]] uint64_t GetTick() const noexcept;
     [[nodiscard]] SteamNetConnectionInfo_t GetConnectionInfo(ConnectionId aConnectionId) const noexcept;
+    [[nodiscard]] SteamNetConnectionRealTimeStatus_t GetConnectionRealTimeStatus(ConnectionId aConnectionId) const noexcept;
     [[nodiscard]] bool IsAlive(ConnectionId aConnectionId) const noexcept;
 
 private:

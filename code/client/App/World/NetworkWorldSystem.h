@@ -19,7 +19,7 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
 
     NetworkWorldSystem();
 
-    bool Spawn(uint64_t aServerId, const Red::Vector4& aPosition, const Red::Quaternion& aRotation, const Red::DynArray<Red::TweakDBID>& aEquipment, const Vector<uint8_t> aCcstate);
+    bool Spawn(uint64_t aServerId, const Red::Vector4& aPosition, const Red::Quaternion& aRotation, const Red::DynArray<Red::TweakDBID>& aEquipment, const Vector<uint8_t> aCcstate, const std::string& acUsername = {});
     void DeSpawn(uint64_t aServerId) const;
 
     Red::Handle<Red::Entity> GetEntity(Red::EntityID aId) const;
@@ -44,6 +44,38 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     void OnConnected();
     void OnDisconnected(Client::EDisconnectReason);
 
+    // Joining is a decision someone makes in the main menu, but it cannot be acted on
+    // there: the menu has no world and no player to put anywhere. The decision has to
+    // outlive the save load that follows it.
+    //
+    // This system is where it lives because it is the one thing in the chain that
+    // survives. Game systems are created once per session and stay put while worlds
+    // attach and detach around them - which is exactly why OnInitialize runs once and
+    // OnWorldAttached runs for every world. Script state does not survive; this does.
+    void RequestJoin();
+    bool ConsumeJoinRequest();
+
+    // Called from redscript when the local player is downed - see Death.reds.
+    void RequestRespawn();
+
+    // Stores the player's current appearance as their multiplayer character. A manual
+    // override; PollAppearanceChanges is what saves in normal use.
+    void SaveCharacterAppearance();
+
+    // Watches for the player finishing a mirror or creator session, and saves it for them.
+    void PollAppearanceChanges();
+
+    // Writes every native function on the customization system to the log, once, so the
+    // way to open the creator can be found rather than guessed at.
+    void DumpCustomizationApi() const;
+
+    // What they had while the customization state was still readable. Captured during the
+    // session because once it closes the instance is null and there is nothing to read.
+    Vector<uint8_t> m_pendingAppearance;
+    bool m_pendingIsMale{true};
+    bool m_wasCustomising{false};
+    bool IsConnected() const;
+
 protected:
     void OnWorldAttached(RED4ext::world::RuntimeScene* aScene) override;
     void OnAfterWorldDetach() override;
@@ -53,16 +85,29 @@ protected:
     void HandleEntityUnload(const PacketEvent<server::NotifyEntityUnload>& aMessage);
     void HandleSpawnCharacterResponse(const PacketEvent<server::SpawnCharacterResponse>& aMessage);
 
+    // The server asking this client to make a character.
+    void HandleOpenCharacterCreator(const PacketEvent<server::OpenCharacterCreator>& aMessage);
+    void HandleRequestCharacterName(const PacketEvent<server::RequestCharacterName>& aMessage);
+    void HandleTeleport(const PacketEvent<server::NotifyTeleport>& aMessage);
+
     void UpdatePlayerLocation() const;
 
 private:
     bool m_ready{false};
+    bool m_joinRequested{false};
+
+    // For measuring our own speed from how far we actually moved - see
+    // UpdatePlayerLocation. Mutable because that function is const and only reports.
+    mutable glm::vec3 m_lastPosition{};
+    mutable std::chrono::steady_clock::time_point m_lastPositionAt{};
+    mutable bool m_hasLastPosition{false};
     Red::CBaseFunction* m_pCreatePuppet;
     Red::CBaseFunction* m_pDeletePuppet;
     std::optional<uint64_t> m_remotePlayerId;
     uint64_t m_lastTick;
     flecs::system m_updatePlayerLocation;
     flecs::system m_updateSpawningEntities;
+    flecs::system m_updateAppearance;
     Red::Handle<InterpolationSystem> m_interpolationSystem;
     Red::Handle<AppearanceSystem> m_appearanceSystem;
     Red::Handle<ChatSystem> m_chatSystem;
@@ -73,6 +118,11 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_ALIAS("CyberpunkMP.World.NetworkWorldSystem");
     RTTI_METHOD(Connect);
     RTTI_METHOD(Disconnect);
+    RTTI_METHOD(RequestJoin);
+    RTTI_METHOD(ConsumeJoinRequest);
+    RTTI_METHOD(RequestRespawn);
+    RTTI_METHOD(SaveCharacterAppearance);
+    RTTI_METHOD(IsConnected);
     RTTI_METHOD(GetEntityIdByServerId);
     RTTI_METHOD(GetAppearanceSystem);
     RTTI_METHOD(GetInterpolationSystem);

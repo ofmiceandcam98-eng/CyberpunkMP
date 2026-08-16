@@ -1,5 +1,6 @@
 #include "NetworkService.h"
 
+#include "App/Settings.h"
 #include "App/World/NetworkWorldSystem.h"
 #include "Game/Utils.h"
 #include "RED4ext/Scripting/Natives/Generated/Vector4.hpp"
@@ -39,8 +40,15 @@ void NetworkService::OnConnected()
     spdlog::info("Connected to server.");
 
     client::AuthenticationRequest request;
-    request.set_token("test");
-    request.set_username("testuser");
+
+    // The token decides who the server thinks we are. Username is only a hint for servers
+    // with Discord verification switched off - where it IS on, the server overwrites this
+    // with whatever Discord says, because a client naming itself proves nothing.
+    const auto& token = Settings::Get().discordToken;
+    request.set_token(token.empty() ? "test" : token.c_str());
+
+    const auto& name = Settings::Get().discordName;
+    request.set_username(name.empty() ? "Player" : name.c_str());
     request.set_client_protocol(client::kIdentifier);
     request.set_server_protocol(server::kIdentifier);
 
@@ -59,7 +67,80 @@ void NetworkService::OnUpdate()
 {
     m_dispatcher.update();
 
+    ReportConnectionHealth();
+
     Red::GetGameSystem<NetworkWorldSystem>()->Update(GetClock().GetCurrentTick());
+}
+
+void NetworkService::ReportConnectionHealth()
+{
+    if (!IsConnected())
+        return;
+
+    const auto now = std::chrono::steady_clock::now();
+
+    const auto status = GetConnectionStatus();
+
+    // GameNetworkingSockets already measures all of this - it is what the clock uses to
+    // stay in sync. None of it was ever surfaced, so a laggy or degrading link looked
+    // identical to a healthy one right up until it dropped.
+    //
+    // Quality is 0..1 as seen from each end; a value below 1 means packets are being lost.
+    // A negative quality means "not measured yet", not "100% loss". Comparing it
+    // against a threshold made a fresh, healthy connection report DEGRADED every
+    // two seconds for the first few seconds of every session.
+    const bool localKnown = status.m_flConnectionQualityLocal >= 0.f;
+    const bool remoteKnown = status.m_flConnectionQualityRemote >= 0.f;
+
+    const bool degraded = status.m_nPing > 200 ||
+                          (localKnown && status.m_flConnectionQualityLocal < 0.95f) ||
+                          (remoteKnown && status.m_flConnectionQualityRemote < 0.95f);
+
+    // Report on a slow heartbeat normally, but immediately when something looks wrong and
+    // it has not already been reported recently.
+    const auto sinceLast = std::chrono::duration_cast<std::chrono::seconds>(now - m_lastHealthReport).count();
+
+    if (sinceLast < (degraded ? 2 : 15))
+        return;
+
+    m_lastHealthReport = now;
+
+    // The "not measured yet" sentinel has to be kept out of the TEXT as well, not just out
+    // of the degraded test above. Multiplying -1 by 100 printed "quality -100%/-100%" on
+    // every healthy fresh connection, which reads like total packet loss and sent me
+    // hunting a network fault that did not exist. An unknown value is reported as unknown.
+    const auto describe = [](bool aKnown, float aQuality)
+    {
+        if (!aKnown)
+            return std::string("n/a");
+
+        char buffer[16];
+        std::snprintf(buffer, sizeof(buffer), "%.0f%%", aQuality * 100.f);
+        return std::string(buffer);
+    };
+
+    const auto local = describe(localKnown, status.m_flConnectionQualityLocal);
+    const auto remote = describe(remoteKnown, status.m_flConnectionQualityRemote);
+
+    if (degraded)
+    {
+        spdlog::warn("[Link] DEGRADED - ping {}ms, quality {}/{} (local/remote), "
+                     "{} unacked reliable bytes, {}ms queued",
+                     status.m_nPing,
+                     local,
+                     remote,
+                     status.m_cbSentUnackedReliable,
+                     status.m_usecQueueTime / 1000);
+    }
+    else
+    {
+        spdlog::info("[Link] ok - ping {}ms, quality {}/{}, in {:.0f}/s out {:.0f}/s",
+                     status.m_nPing,
+                     local,
+                     remote,
+                     status.m_flInPacketsPerSec,
+                     status.m_flOutPacketsPerSec);
+    }
 }
 
 void NetworkService::OnGameUpdate(RED4ext::CGameApplication* apApp)
@@ -71,8 +152,7 @@ void NetworkService::HandleAuthentication(const PacketEvent<server::Authenticati
 {
     if (!aResponse.get_success())
     {
-        // Handle the error message here
-        // aResponse.get_error();
+        spdlog::error("Authentication failed: {}", aResponse.get_error());
         Close();
         return;
     }
@@ -88,8 +168,10 @@ void NetworkService::HandleAuthentication(const PacketEvent<server::Authenticati
     Red::Handle<Red::GameObject> player;
     system->GetLocalPlayerControlledGameObject(player);
 
-    const auto& cEntityPosition = player->placedComponent->localTransform.Position;
-    const auto cEntityRotation = Game::ToGlm(player->placedComponent->localTransform.Orientation);
+    // Use worldTransform: localTransform is relative and stays near-origin, which made
+    // the server spawn our puppet at ~(0, 3.6, 0) instead of our actual world position.
+    const auto& cEntityPosition = player->placedComponent->worldTransform.Position;
+    const auto cEntityRotation = Game::ToGlm(player->placedComponent->worldTransform.Orientation);
 
     common::Vector3 pos;
     pos.set_x(cEntityPosition.x);
@@ -105,14 +187,19 @@ void NetworkService::HandleAuthentication(const PacketEvent<server::Authenticati
 
 
     auto ccSystem = Red::GetGameSystem<Red::game::ui::CharacterCustomizationSystem>();
+
+    // GetCustomizationState() returns (ccSystem + 0x78), which can never be null - the
+    // instance behind it can be, and is during normal gameplay. Serializing a null
+    // instance crashes the game, so check the instance itself.
     auto stateHandle = GetCustomizationState(ccSystem);
-    if (stateHandle) 
+
+    if (stateHandle && stateHandle->instance)
     {
         auto writer = CMPWriter();
         CharacterCustomizationState_Serialize(stateHandle->instance, &writer);
         spdlog::info("Got bytes: {}", writer.bytes.size());
         request.set_ccstate(writer.bytes);
-    } 
+    }
     else
     {
         spdlog::info("CustomizationState was null");

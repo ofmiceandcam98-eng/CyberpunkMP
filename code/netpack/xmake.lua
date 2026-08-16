@@ -21,4 +21,5 @@ target("NetPack")
         "spdlog",
         "hopscotch-map",
         "cxxopts",
-        "protobuf-cpp")
+        "protobuf-cpp",
+        "abseil")

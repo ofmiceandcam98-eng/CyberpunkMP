@@ -70,4 +70,9 @@ private:
     Vector<RpcDefinition> m_clientRpcs;
     Vector<RpcDefinition> m_serverRpcs;
     Map<RpcId, uint32_t> m_clientIds;
+    // Same lookup for server RPCs, so re-registering an already-known
+    // (Klass, Function) returns its existing id instead of appending a duplicate.
+    // This is what makes reloading a plugin safe: ids stay stable, so clients that
+    // already received the RpcDefinitions keep working.
+    Map<RpcId, uint32_t> m_serverIds;
 };

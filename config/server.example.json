@@ -1,0 +1,91 @@
+{
+  "_comment": [
+    "Template for the game server's config. Copy to server.json next to Server.Loader.exe",
+    "- normally build/windows/x64/release/config/server.json - and fill in.",
+    "",
+    "That directory is gitignored, so the real config never reaches the repo. Nothing in",
+    "here is secret by itself: the bot token lives in a separate file this only points at,",
+    "and the admin password comes from the environment (see StartServer.bat).",
+    "",
+    "Every field has a default in code/server/native/Config.h, so an older config keeps",
+    "working when new fields are added - you only need the ones you want to change."
+  ],
+
+  "Name": "Your server name",
+  "Description": "",
+  "IconUrl": "",
+  "Tags": "",
+
+  "_comment_players": "Raise this before inviting people. It was 4 for a while, which was exactly the size of the group.",
+  "MaxPlayer": 16,
+
+  "_comment_public": "Public servers announce themselves to the master list. A private one is reachable only by address - over Tailscale, in our case.",
+  "Public": false,
+  "Password": "",
+
+  "Port": 11778,
+  "WebPort": 11779,
+
+  "_comment_rates": [
+    "TickRate is the server's simulation loop. UpdateRate is position updates per second,",
+    "per player, and is the ceiling on how smooth anyone else can possibly look - the",
+    "client's interpolation delay is derived from it too (50ms + 1500/rate), so a low rate",
+    "costs both smoothness AND responsiveness. It was 10 and looked like teleporting."
+  ],
+  "TickRate": 60,
+  "UpdateRate": 30,
+
+  "Discord": {
+    "_comment": [
+      "Identity and permissions come from Discord, not from anything the client claims.",
+      "With Enabled false, anyone who can reach the port can join as a plain player."
+    ],
+    "Enabled": true,
+
+    "_comment_guild": "Developer Mode on, right-click your server, Copy Server ID.",
+    "GuildId": "PUT_YOUR_GUILD_ID_HERE",
+
+    "_comment_membership": "Reject anyone not in the guild. Off means a valid Discord account is enough.",
+    "RequireMembership": true,
+
+    "_comment_owner": [
+      "The one account that always has full access regardless of roles. Set it to your own",
+      "Discord user id: it is the way back in if the role setup is ever broken, and it",
+      "cannot be removed by someone editing roles in Discord."
+    ],
+    "OwnerId": "PUT_YOUR_DISCORD_USER_ID_HERE",
+
+    "_comment_roles": [
+      "Role -> permission level. Keys may be a role NAME or a role id; names are resolved",
+      "against the guild's real role list using the bot token.",
+      "",
+      "Leave this empty and sensible defaults still apply: roles named dev, admin,",
+      "moderator, mod, staff and so on map to the obvious levels. Anything here overrides",
+      "those. Levels are owner, admin, moderator.",
+      "",
+      "  \"Roles\": { \"dev\": \"admin\", \"1234567890\": \"moderator\" }"
+    ],
+    "Roles": {},
+
+    "_comment_bottoken": [
+      "Path to the file holding the bot token - see tools/.discord-bot.example. Needed only",
+      "to resolve role NAMES; role ids work without it. The token is never stored in this",
+      "file. NCO_DISCORD_BOT_TOKEN in the environment wins if set."
+    ],
+    "BotTokenFile": "",
+
+    "_comment_rolesfile": [
+      "Where to write the resolved role -> level map, so the launcher can grant the same",
+      "people the same controls the game does. Point it at your checkout's publish/roles.json",
+      "and Ship publishes it with the release. Contains ids, names and levels - no secrets."
+    ],
+    "RolesFile": ""
+  },
+
+  "Flecs": {
+    "_comment": "The ECS REST API, for inspecting the live world. Keep it on localhost.",
+    "Enabled": true,
+    "IpAddress": "127.0.0.1",
+    "Port": 27750
+  }
+}

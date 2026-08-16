@@ -63,19 +63,34 @@ void RpcScriptInstance::Clear()
 
 uint32_t RpcScriptInstance::RegisterClient(uint64_t Klass, uint64_t Function)
 {
+    // Registration is idempotent: registering the same (Klass, Function) twice
+    // returns the original id rather than appending a duplicate. Without this,
+    // reloading a plugin would grow the definition list without bound and hand out
+    // new ids, invalidating the mapping every connected client already received.
+    const RpcId key{Klass, Function};
+
+    if (const auto it = m_clientIds.find(key); it != m_clientIds.end())
+        return it->second;
+
     uint32_t id = m_clientRpcs.size() & 0xFFFFFFFF;
 
     m_clientRpcs.emplace_back(id, Klass, Function);
-    m_clientIds[RpcId{Klass, Function}] = id;
+    m_clientIds[key] = id;
 
     return id;
 }
 
 uint32_t RpcScriptInstance::RegisterServer(uint64_t Klass, uint64_t Function)
 {
+    const RpcId key{Klass, Function};
+
+    if (const auto it = m_serverIds.find(key); it != m_serverIds.end())
+        return it->second;
+
     uint32_t id = m_serverRpcs.size() & 0xFFFFFFFF;
 
     m_serverRpcs.emplace_back(id, Klass, Function);
+    m_serverIds[key] = id;
 
     return id;
 }

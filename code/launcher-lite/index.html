@@ -1,0 +1,2167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src 'self' https://cdn.discordapp.com; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+<title>Night City Online</title>
+<style>
+  /* A slightly green-biased near-black rather than pure grey - it sits with the
+     yellow accent instead of fighting it. */
+  :root {
+    --ground:  #0f1115;
+    --surface: #171a20;
+    --line:    #262a33;
+    --ink:     #e7e6df;
+    --ink-dim: #8b8f9a;
+    --accent:  #fcee0a;
+    --ok:      #5bc07e;
+    --bad:     #f0705a;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    user-select: none;
+    /* The window is a fixed frame, not a document. Nothing here should ever
+       scroll the page - only the patch notes panel scrolls. */
+    overflow: hidden;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .brand {
+    font-family: var(--mono);
+    font-weight: 700;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    font-size: .8rem;
+  }
+  .brand span { color: var(--accent); }
+
+  /* --- account chip in the header, shown once signed in --- */
+  .account { display: none; align-items: center; gap: .75rem; }
+  .account.visible { display: flex; }
+  .account img { width: 34px; height: 34px; border-radius: 50%; background: var(--surface); }
+  .account .who { line-height: 1.25; }
+  .account .name { font-size: .85rem; font-weight: 600; }
+  .account .id {
+    font-family: var(--mono);
+    font-size: .68rem;
+    color: var(--ink-dim);
+    font-variant-numeric: tabular-nums;
+  }
+  .linkbtn {
+    background: none; border: none; color: var(--ink-dim);
+    font-family: var(--sans); font-size: .72rem; cursor: pointer;
+    text-decoration: underline; text-underline-offset: 2px; padding: 0;
+  }
+  .linkbtn:hover { color: var(--ink); }
+
+  /* Two columns: patch notes pinned left, everything actionable on the right.
+     The page itself never scrolls - `overflow: hidden` here and on body. Only the
+     notes body scrolls, and only when the pointer is over it. */
+  main {
+    flex: 1;
+    min-height: 0;              /* lets a flex child actually shrink and scroll */
+    display: grid;
+    /* Three columns: patch notes, the play controls, the mod list.
+       Fixed outer columns and a flexible middle, so the play controls - the thing
+       everyone is actually here for - keep the centre and never get squeezed to a
+       sliver by a long mod name. Sized to fit 1180px without stretching the window. */
+    grid-template-columns: minmax(17rem, 22rem) 1fr minmax(17rem, 22rem);
+    gap: 1.25rem;
+    padding: 1.5rem;
+    overflow: hidden;
+  }
+
+  .col-mods {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* The list scrolls, the panel does not grow. A hundred mods must not push the
+     window taller than the screen. */
+  .modlist {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: .4rem;
+    padding-right: .25rem;
+  }
+
+  .mod {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    padding: .45rem .55rem;
+    background: rgba(255,255,255,.02);
+    border: 1px solid rgba(255,255,255,.06);
+    border-radius: 6px;
+  }
+
+  .mod-name {
+    flex: 1;
+    min-width: 0;
+    font-size: .76rem;
+    /* Long names truncate rather than wrapping the row to two lines and making the
+       list jump about as it loads. */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .mod-badge {
+    font-size: .6rem;
+    letter-spacing: .04em;
+    padding: .12rem .4rem;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+  .mod-badge.ok      { background: rgba(70,200,120,.15); color: #6fdca0; }
+  .mod-badge.missing { background: rgba(255,255,255,.06); color: var(--ink-dim); }
+  .mod-badge.bad     { background: rgba(255,90,90,.15);  color: #ff8f8f; }
+
+  .mod-btn {
+    font-size: .62rem;
+    letter-spacing: .04em;
+    padding: .22rem .45rem;
+    border-radius: 4px;
+    border: 1px solid rgba(255,255,255,.14);
+    background: transparent;
+    color: var(--ink);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .mod-btn:hover { background: rgba(255,255,255,.08); }
+  .mod-btn.danger:hover { background: rgba(255,90,90,.15); color: #ff8f8f; }
+
+  .col-left {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .col-right {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    /* Top-aligned, not centred. Centring worked with three elements and pushed the
+       admin panel off the bottom once there were six - the content grew, the window
+       did not. Starting at the top means new rows extend downward into space that
+       exists rather than overflowing both edges. */
+    justify-content: flex-start;
+    gap: .85rem;
+    text-align: center;
+    overflow: hidden;
+  }
+
+  h1 { font-size: 1.15rem; margin: 0; font-weight: 600; }
+  p.lede { color: var(--ink-dim); margin: 0; max-width: 30rem; line-height: 1.45; font-size: .82rem; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 1.1rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: .75rem;
+    /* Sized to the column rather than a fixed width, so nothing overflows when the
+       window is at its minimum. */
+    width: 100%;
+    max-width: 26rem;
+  }
+
+  button.action {
+    font-family: var(--sans);
+    font-size: .92rem;
+    font-weight: 600;
+    padding: .7rem 1.6rem;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: filter 120ms ease, transform 120ms ease;
+  }
+  button.action:hover:not(:disabled) { filter: brightness(1.1); }
+  button.action:active:not(:disabled) { transform: translateY(1px); }
+  button.action:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .discord { background: #5865f2; color: #fff; }
+  .join { background: #5865f2; color: #fff; }
+  .update { background: #c2621b; color: #fff; }
+  .verify { background: #2b303a; color: var(--ink); }
+
+  /* Destructive and secondary actions, kept small and away from the main flow. */
+  .footlinks {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .play {
+    background: var(--accent);
+    color: #14150c;
+    min-width: 12rem;
+    font-size: 1rem;
+  }
+
+  /* Disabled has to LOOK disabled, not just be disabled - otherwise people
+     click it repeatedly and assume the app is broken. */
+  button.action:disabled {
+    background: #22262e;
+    color: #5c616c;
+    cursor: not-allowed;
+    border-color: var(--line);
+  }
+
+  /* --- admin server panel --- */
+  .admin { width: 100%; max-width: 26rem; gap: .7rem; }
+  .admin-head {
+    display: flex; align-items: center; justify-content: space-between;
+    width: 100%; gap: 1rem;
+  }
+  .admin-title {
+    font-family: var(--mono); font-size: .7rem; font-weight: 700;
+    letter-spacing: .14em; text-transform: uppercase; color: var(--ink-dim);
+  }
+  .serverstate {
+    display: flex; align-items: center; gap: .45rem;
+    font-family: var(--mono); font-size: .72rem; color: var(--ink-dim);
+  }
+  .btn-row { display: flex; gap: .6rem; }
+  .start   { background: #2f7a4c; color: #eafff2; }
+  .restart { background: #4a4f59; color: #e7e6df; }
+  .stop    { background: #7a2f2f; color: #ffeaea; }
+  .admin-note {
+    font-family: var(--mono); font-size: .64rem; color: #5c616c;
+    word-break: break-all; text-align: center; line-height: 1.4;
+  }
+
+  .status {
+    font-family: var(--mono);
+    font-size: .74rem;
+    color: var(--ink-dim);
+    min-height: 1.2em;
+  }
+  .status.error { color: var(--bad); }
+  .status.ok { color: var(--ok); }
+
+  .gate {
+    font-size: .78rem;
+    color: var(--ink-dim);
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #4a4f59; }
+  .dot.on { background: var(--ok); }
+
+  /* --- settings modal --- */
+  .gear {
+    background: none; border: none; color: var(--ink-dim);
+    font-size: 1.1rem; cursor: pointer; padding: .2rem .4rem; line-height: 1;
+    margin-left: .75rem;
+  }
+  .gear:hover { color: var(--ink); }
+  .gear:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+  .modal-backdrop {
+    position: fixed; inset: 0; z-index: 50;
+    background: rgba(0,0,0,.6);
+    display: flex; align-items: center; justify-content: center;
+    padding: 2rem;
+  }
+  .modal {
+    background: var(--ground);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    width: min(38rem, 100%);
+    max-height: 100%;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .modal-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 1rem 1.25rem; border-bottom: 1px solid var(--line);
+  }
+  .modal-head h2 { margin: 0; font-size: 1.05rem; font-weight: 600; }
+  .modal-close {
+    background: none; border: none; color: var(--ink-dim);
+    font-size: 1.3rem; cursor: pointer; line-height: 1; padding: 0 .2rem;
+  }
+  .modal-close:hover { color: var(--ink); }
+
+  /* The modal body is the only thing that scrolls, and only when it needs to. */
+  .modal-body {
+    padding: 1.25rem;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    display: flex; flex-direction: column; gap: 1rem;
+  }
+  .modal-foot {
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+    padding: .9rem 1.25rem; border-top: 1px solid var(--line);
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 1rem 1.1rem;
+    display: flex; flex-direction: column; gap: .9rem;
+  }
+  .panel h3 {
+    margin: 0; font-family: var(--mono); font-size: .72rem; font-weight: 700;
+    letter-spacing: .14em; text-transform: uppercase; color: var(--ink-dim);
+  }
+  .panel.danger { border-color: #4a2b2b; }
+  .panel.danger h3 { color: var(--bad); }
+  .panel-warn { margin: -.4rem 0 0; font-size: .74rem; color: var(--ink-dim); }
+
+  .field { display: flex; flex-direction: column; gap: .4rem; }
+  .field-label { font-size: .84rem; font-weight: 600; }
+  .field-hint { font-size: .72rem; color: var(--ink-dim); }
+  .pathbox {
+    font-family: var(--mono); font-size: .72rem;
+    background: #0c0e12; border: 1px solid var(--line); border-radius: 5px;
+    padding: .5rem .6rem; word-break: break-all; color: var(--ink);
+  }
+  .field-actions { display: flex; gap: .5rem; }
+
+  /* Green ticks and red crosses, so state is readable without parsing sentences. */
+  .checks { display: flex; flex-direction: column; gap: .15rem; }
+  .check { font-size: .72rem; display: flex; align-items: center; gap: .4rem; }
+  .check.yes { color: var(--ok); }
+  .check.no  { color: var(--bad); }
+
+  .tool { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+  .tool-name { font-size: .84rem; font-weight: 600; }
+  .tool-desc { font-size: .72rem; color: var(--ink-dim); line-height: 1.45; margin-top: .15rem; }
+  .ghost { background: #22262e; color: var(--ink); white-space: nowrap; }
+
+  /* Shown in full and selectable on purpose: the whole point is to copy it out into
+     another tool. Wraps rather than scrolls, so nothing is silently cut off. */
+  .devkey {
+    margin-top: .5rem;
+    padding: .45rem .6rem;
+    background: #0c0e13;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: .72rem;
+    color: var(--accent, #fcee0a);
+    user-select: all;
+    word-break: break-all;
+    white-space: pre-wrap;
+    line-height: 1.5;
+  }
+
+  footer {
+    padding: .75rem 1.5rem;
+    border-top: 1px solid var(--line);
+    font-size: .7rem;
+    color: var(--ink-dim);
+    text-align: center;
+  }
+  .links { display: flex; justify-content: center; align-items: center; gap: .6rem; flex-wrap: wrap; }
+  .sep { color: #3a3f48; }
+
+  /* --- patch notes --- */
+  .changelog {
+    min-width: 0;
+    align-items: stretch;
+    gap: .8rem;
+    /* Fills the left column and stops there. The card never grows the page. */
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .notes {
+    font-size: .78rem;
+    line-height: 1.55;
+    color: var(--ink-dim);
+    text-align: left;
+    /* The ONLY scrollable region in the app. flex+min-height:0 lets it take the
+       leftover column height instead of a guessed max-height, so it fits whatever
+       the window is. */
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: .5rem;
+    /* Keeps a wheel gesture inside the panel from scrolling anything behind it. */
+    overscroll-behavior: contain;
+  }
+
+  /* A scrollbar that is only obvious while you are actually in the panel. */
+  .notes::-webkit-scrollbar { width: 8px; }
+  .notes::-webkit-scrollbar-track { background: transparent; }
+  .notes::-webkit-scrollbar-thumb {
+    background: #2b303a;
+    border-radius: 4px;
+  }
+  .notes:hover::-webkit-scrollbar-thumb { background: #3d434f; }
+  .notes h4 {
+    margin: .9rem 0 .3rem;
+    font-family: var(--mono);
+    font-size: .7rem;
+    font-weight: 700;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink);
+  }
+  .notes h4:first-child { margin-top: 0; }
+  .notes ul { margin: .2rem 0; padding-left: 1.1rem; }
+  .notes li { margin: .2rem 0; }
+  .notes p { margin: .4rem 0; }
+  .notes code {
+    font-family: var(--mono);
+    font-size: .92em;
+    background: #22262e;
+    padding: .05em .3em;
+    border-radius: 3px;
+  }
+</style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">Night City <span>Online</span></div>
+
+    <div class="account" id="account">
+      <img id="avatar" alt="">
+      <div class="who">
+        <div class="name" id="username"></div>
+        <div class="id" id="discordId"></div>
+      </div>
+      <button class="linkbtn" id="logout">Log out</button>
+    </div>
+
+    <button class="gear" id="openSettings" title="Settings" aria-label="Settings">&#9881;</button>
+  </header>
+
+  <!-- Settings. Everything that is occasional, diagnostic or destructive lives in
+       here rather than cluttering the main screen. -->
+  <div class="modal-backdrop" id="settingsModal" style="display:none">
+    <div class="modal">
+      <div class="modal-head">
+        <h2>Settings</h2>
+        <button class="modal-close" id="closeSettings" aria-label="Close">&times;</button>
+      </div>
+
+      <div class="modal-body">
+
+        <!-- FOLDERS -->
+        <section class="panel">
+          <h3>Folders</h3>
+
+          <div class="field">
+            <div class="field-label">Cyberpunk 2077</div>
+            <div class="field-hint">Folder containing bin\x64\Cyberpunk2077.exe</div>
+            <div class="pathbox" id="gamePathBox">not detected</div>
+            <div class="checks" id="gameChecks"></div>
+            <div class="field-actions">
+              <button class="action ghost" id="viewGameDir">View</button>
+              <button class="action ghost" id="browseGameDir">Browse</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">Mod folder</div>
+            <div class="field-hint">Where the multiplayer mod is installed.</div>
+            <div class="pathbox" id="modPathBox">not installed</div>
+            <div class="checks" id="modChecks"></div>
+            <div class="field-actions">
+              <button class="action ghost" id="viewModDir">View</button>
+              <button class="action ghost" id="browseModDir">Browse</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- TOOLS -->
+        <section class="panel">
+          <h3>Tools</h3>
+
+          <div class="tool">
+            <div>
+              <div class="tool-name">Install everything</div>
+              <div class="tool-desc">
+                Downloads and installs the mod and all six required mods. Use this on a
+                fresh setup.
+              </div>
+            </div>
+            <button class="action ghost" id="installAll">Install</button>
+          </div>
+
+          <div class="tool">
+            <div>
+              <div class="tool-name">Nexus Mods account</div>
+              <div class="tool-desc">
+                Needed to download the server's mod list.
+                <div style="margin-top:.35rem">
+                  <b>1.</b> Press <b>Get my key</b> — it opens your Nexus API page.<br>
+                  <b>2.</b> Scroll to <b>Personal API Key</b> and copy it.<br>
+                  <b>3.</b> Paste it below and press Save.
+                </div>
+                <div style="margin-top:.4rem"><span id="nexusState">Not signed in</span></div>
+
+                <input id="nexusKey" type="password" placeholder="Paste your Nexus API key here"
+                       style="margin-top:.4rem;width:100%;padding:.35rem .5rem;border-radius:4px;border:1px solid rgba(255,255,255,.14);background:rgba(0,0,0,.25);color:inherit;font-size:.75rem">
+                <button class="mod-btn" id="nexusSave" style="margin-top:.35rem">Save key</button>
+
+                <!-- Nexus SSO - the one-click browser approval - only works for
+                     applications Nexus has approved, and rejects everything else with an
+                     unhelpful "problem authenticating your request". Kept because it
+                     starts working the moment they whitelist us, but not offered as the
+                     way in, because today it fails. -->
+                <details style="margin-top:.5rem">
+                  <summary style="cursor:pointer;font-size:.7rem">One-click sign-in (needs Nexus approval)</summary>
+                  <div style="margin-top:.3rem;font-size:.68rem">
+                    Nexus only allows this for approved mod managers. It will fail until
+                    they whitelist Night City Online.
+                  </div>
+                  <button class="mod-btn" id="nexusLogin" style="margin-top:.35rem">Try it anyway</button>
+                </details>
+              </div>
+            </div>
+            <button class="action ghost" id="nexusGetKey">Get my key</button>
+          </div>
+
+          <div class="tool">
+            <div>
+              <div class="tool-name">Desktop shortcut</div>
+              <div class="tool-desc">
+                Puts Night City Online Launcher on your Desktop and in the Start Menu.
+                Windows will not let a program pin itself to the taskbar - right-click the
+                shortcut and choose "Pin to taskbar" for that.
+              </div>
+            </div>
+            <button class="action ghost" id="makeShortcut">Create</button>
+          </div>
+
+          <!-- Hidden entirely unless the signed-in account is a dev/admin. Shown as a
+               row like the others rather than tucked away, because a toggle you cannot
+               find is a toggle you leave in the wrong state. -->
+          <div class="tool" id="debugTool" style="display:none">
+            <div>
+              <div class="tool-name">Developer overlay</div>
+              <div class="tool-desc" id="debugDesc">
+                Shows the in-game debug menu bar. Devs and admins only.
+              </div>
+            </div>
+            <button class="action ghost" id="toggleDebug">Off</button>
+          </div>
+
+          <div class="tool">
+            <div>
+              <div class="tool-name">Launcher folder</div>
+              <div class="tool-desc">
+                Opens where the launcher is installed. The uninstaller lives here too.
+              </div>
+            </div>
+            <button class="action ghost" id="openInstallDir">Open</button>
+          </div>
+
+          <div class="tool">
+            <div>
+              <div class="tool-name">Uninstall launcher</div>
+              <div class="tool-desc">
+                Removes the launcher from this PC. Your game and the mod are left alone -
+                use "Remove mod" above if you want that gone as well.
+              </div>
+            </div>
+            <button class="action ghost" id="uninstallLauncher">Uninstall</button>
+          </div>
+
+          <div class="tool">
+            <div>
+              <div class="tool-name">Verify game files</div>
+              <div class="tool-desc">
+                Checks the mod files are present and current. Reports everything wrong at
+                once rather than one problem at a time.
+              </div>
+            </div>
+            <button class="action ghost" id="verifyFiles">Verify</button>
+          </div>
+
+          <div class="tool">
+            <div>
+              <div class="tool-name">Reinstall mod files</div>
+              <div class="tool-desc">
+                Re-downloads the current build over the top. Fixes a corrupted or partial
+                install. Your other mods are not touched.
+              </div>
+            </div>
+            <button class="action ghost" id="reinstallMod">Reinstall</button>
+          </div>
+        </section>
+
+        <!-- DEV TOOLS
+             Hidden unless the published role map says this account is a dev. The key it
+             reveals is for the coordination API the assistants use to tell each other what
+             changed - see code/coord-api. -->
+        <section class="panel" id="devPanel" style="display:none">
+          <h3>Dev</h3>
+
+          <div class="tool">
+            <div style="min-width:0">
+              <div class="tool-name">Dev key</div>
+              <div class="tool-desc">
+                Paste this into your Claude so it can read and post updates alongside the
+                others. Base URL and usage are shown once you reveal it.
+              </div>
+              <div class="devkey" id="devKeyValue" style="display:none"></div>
+            </div>
+            <button class="action ghost" id="revealDevKey">Reveal</button>
+          </div>
+
+          <div class="tool">
+            <div>
+              <div class="tool-name">Join the Tailscale network</div>
+              <div class="tool-desc">
+                Opens Cam's invite. You need this before the server or the dev key will
+                reach you.
+              </div>
+            </div>
+            <button class="action ghost" id="openTailscaleInvite">Open invite</button>
+          </div>
+        </section>
+
+        <!-- CHARACTER
+             Body type is decided by which world template loads, so it has to be chosen
+             here rather than in game. Ripperdocs change everything else about how you
+             look; they cannot change this. -->
+        <section class="panel">
+          <h3>Character</h3>
+
+          <div class="tool">
+            <div>
+              <div class="tool-name">Body type</div>
+              <div class="tool-desc" id="bodyTypeHint">
+                Chosen here because it is built into the world you load. Everything else
+                about how you look can be changed at any ripperdoc.
+              </div>
+            </div>
+            <div class="btn-row">
+              <button class="action ghost" id="bodyFemale">Female</button>
+              <button class="action ghost" id="bodyMale">Male</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- REMOVE -->
+        <section class="panel danger">
+          <h3>Remove data</h3>
+          <p class="panel-warn">Permanent. Cannot be undone.</p>
+
+          <div class="tool">
+            <div>
+              <div class="tool-name">Remove the mod</div>
+              <div class="tool-desc" id="removeModPath">
+                Deletes the multiplayer mod folder. Your game, saves and other mods are
+                left alone.
+              </div>
+            </div>
+            <button class="action stop" id="removeMod">Remove</button>
+          </div>
+
+          <div class="tool">
+            <div>
+              <div class="tool-name">Remove launcher files</div>
+              <div class="tool-desc" id="removeDataPath">
+                Deletes your saved sign-in and settings. You will sign in again next time.
+              </div>
+            </div>
+            <button class="action stop" id="removeData">Remove</button>
+          </div>
+        </section>
+
+        <!-- ABOUT -->
+        <section class="panel">
+          <div class="tool">
+            <div>
+              <div class="tool-name" id="launcherVersion">Launcher</div>
+              <div class="tool-desc">Mod updates are checked every time the launcher opens.</div>
+            </div>
+            <button class="action ghost" id="checkFromSettings">Check</button>
+          </div>
+        </section>
+
+      </div>
+
+      <div class="modal-foot">
+        <div class="status" id="settingsStatus"></div>
+        <button class="action play" id="closeSettingsDone">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <main>
+
+    <!-- LEFT: what changed in the current build. Read straight from the GitHub
+         release, the same source the Discord bot announces from - so the launcher
+         and #server-update can never disagree about what shipped. -->
+    <div class="col-left">
+      <div class="card changelog" id="changelog" style="display:none">
+        <div class="admin-head">
+          <span class="admin-title">Patch notes</span>
+          <span class="serverstate" id="changelogVersion"></span>
+        </div>
+        <div class="notes" id="changelogBody"></div>
+      </div>
+
+      <!-- What is being worked on RIGHT NOW, as opposed to what shipped.
+           Posted through the coordination API and published with the release, so
+           anyone running the launcher can see progress between builds instead of
+           only when a version goes out. Hidden entirely when there is nothing. -->
+      <div class="card changelog" id="devUpdates" style="display:none">
+        <div class="admin-head">
+          <span class="admin-title">In development</span>
+          <span class="serverstate" id="devUpdatesCount"></span>
+        </div>
+        <div class="notes" id="devUpdatesBody"></div>
+      </div>
+    </div>
+
+    <!-- RIGHT: everything you actually act on. -->
+    <div class="col-right">
+    <h1 id="heading">Sign in to play</h1>
+    <p class="lede" id="blurb">
+      Verify your Discord account to continue. We only read your username and avatar.
+    </p>
+
+    <div class="card">
+      <button class="action discord" id="login">Log in with Discord</button>
+
+      <div class="gate">
+        <span class="dot" id="dot"></span>
+        <span id="gateText">Not verified</span>
+      </div>
+
+      <div class="gate">
+        <span class="dot" id="srvDot"></span>
+        <span id="srvText">Checking server...</span>
+      </div>
+
+      <button class="action join" id="join" style="display:none">Join the Discord</button>
+
+      <div class="gate">
+        <span class="dot" id="updateDot"></span>
+        <span id="updateText">Checking for updates...</span>
+      </div>
+
+      <!-- A stale LAUNCHER is a different problem from a stale mod, and needs saying
+           separately. The mod can update itself; a running launcher cannot replace its
+           own executable, so all this can do is be loud about it and hand over the
+           download. Hidden entirely when there is nothing to report. -->
+      <div class="gate" id="launcherGate" style="display:none">
+        <span class="dot" id="launcherDot"></span>
+        <span id="launcherText"></span>
+      </div>
+
+      <button class="action join" id="getLauncher" style="display:none">Download the new launcher</button>
+
+      <div class="gate">
+        <span class="dot" id="tsDot"></span>
+        <span id="tsText">Checking Tailscale...</span>
+      </div>
+
+      <button class="action join" id="getTailscale" style="display:none">Get Tailscale</button>
+
+      <!-- Joining Cam's network. Shown once we know they are in the Discord, and only
+           while they are not already on the tailnet - once connected it is noise.
+           Installing Tailscale and being invited to the network are two separate steps
+           and people were only ever told about the first. -->
+      <button class="action join" id="joinTailnet" style="display:none">Join the server's network</button>
+
+      <div class="btn-row">
+        <button class="action verify" id="verify">Verify files</button>
+        <button class="action update" id="update" style="display:none">Update</button>
+      </div>
+
+      <button class="action play" id="play" disabled>Launch Game</button>
+
+      <!-- Why the button is dead. A greyed-out Launch with no explanation is the most
+           frustrating thing a launcher can do - people conclude it is broken and leave,
+           when the answer is usually one sentence. -->
+      <div class="field-hint" id="playReason" style="text-align:center;margin-top:.35rem"></div>
+
+      <div class="footlinks">
+        <button class="linkbtn" id="pickGameDir">Game not found? Locate it</button>
+        <span class="sep">Â·</span>
+        <button class="linkbtn" id="uninstallMod">Remove mod</button>
+        <span class="sep">Â·</span>
+        <button class="linkbtn" id="resetLauncher">Sign out &amp; reset</button>
+      </div>
+    </div>
+
+    <div class="status" id="status"></div>
+
+    <!-- Server controls. Hidden unless the signed-in Discord id is an admin. -->
+    <div class="card admin" id="adminPanel" style="display:none">
+      <div class="admin-head">
+        <span class="admin-title">Server</span>
+        <span class="serverstate" id="serverState">
+          <span class="dot" id="serverDot"></span>
+          <span id="serverText">checking...</span>
+        </span>
+      </div>
+      <div class="btn-row">
+        <button class="action start" id="startServer">Start</button>
+        <button class="action restart" id="restartServer">Restart</button>
+        <button class="action stop" id="stopServer">Stop</button>
+      </div>
+      <button class="linkbtn" id="pickServerDir">Server not found? Locate it</button>
+      <div class="admin-note" id="serverPath"></div>
+
+      <!-- The assistants' coordination service. Starts with the game server; controllable
+           on its own because stopping the server should not silence the channel.
+           Hidden entirely unless the source is on this machine. -->
+      <div id="coordRow" style="display:none; margin-top:.6rem; border-top:1px solid var(--line); padding-top:.6rem">
+        <div class="admin-head">
+          <span class="admin-title">Coordination API</span>
+          <span class="serverstate">
+            <span class="dot" id="coordDot"></span>
+            <span id="coordText">checking...</span>
+          </span>
+        </div>
+        <div class="btn-row">
+          <button class="action start" id="startCoord">Start</button>
+          <button class="action stop" id="stopCoord">Stop</button>
+        </div>
+      </div>
+    </div>
+
+    </div><!-- /col-right -->
+
+    <!-- MOD LIST: what the server expects everyone to be running.
+         Nexus mods are not ours to redistribute, so this points at Nexus rather than
+         hosting anything. Install opens the mod page; the download comes back through
+         the nxm:// handler when you press "Mod Manager Download" there. -->
+    <div class="col-mods">
+      <div class="card changelog" style="flex:1; min-height:0">
+        <div class="admin-head">
+          <span class="admin-title">Mods</span>
+          <span class="serverstate" id="modCount"></span>
+        </div>
+
+        <div class="btn-row" style="margin:.5rem 0">
+          <button class="action verify" id="verifyAllMods">Verify all</button>
+        </div>
+
+        <div class="modlist" id="modList"></div>
+
+        <div class="field-hint" id="modHint" style="margin-top:.5rem"></div>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <div class="links">
+      <button class="linkbtn" data-link="release">Download the mod</button>
+      <span class="sep">Â·</span>
+      <button class="linkbtn" data-link="diagnostic">Diagnostic build</button>
+      <span class="sep">Â·</span>
+      <button class="linkbtn" data-link="tailscale">Tailscale</button>
+      <span class="sep">Â·</span>
+      <button class="linkbtn" data-link="discord">Discord</button>
+    </div>
+    <!-- The LAUNCHER's own version, which is not the same number as the mod's.
+         It was only ever shown inside Settings, so the gate above reading
+         "Up to date - v0.1.6" was the only version on screen - and that one is the
+         mod's. Two different things called v0.1.6 is a coincidence that will not
+         survive the next mod-only ship. -->
+    <div style="margin-top:.4rem">
+      Your Discord ID is used to identify you in game. <span class="sep">Â·</span> <span id="footerVersion"></span>
+    </div>
+  </footer>
+
+<script>
+  const $ = (id) => document.getElementById(id)
+
+  const loginBtn = $('login')
+  const playBtn = $('play')
+  const logoutBtn = $('logout')
+  const statusEl = $('status')
+
+  function setStatus (message, kind) {
+    statusEl.textContent = message || ''
+    statusEl.className = 'status' + (kind ? ' ' + kind : '')
+  }
+
+  // Whoever is signed in, so update checks can re-render without re-fetching.
+  let signedInUser = null
+
+  // Declared here, above render(), on purpose. `let` is not hoisted the way `var`
+  // is - referencing these before their declaration throws, so putting them further
+  // down would break the very first render.
+  let updateState = null
+  let serverState = null
+
+  // Set from the main process as the launcher updates itself, not from any check we
+  // run here - the updater owns that state and reports on it.
+  let launcherUpdate = null
+
+  function renderServerState () {
+    const online = Boolean(serverState?.online)
+    $('srvDot').className = 'dot' + (online ? ' on' : '')
+
+    if (!serverState) {
+      $('srvText').textContent = 'Checking server...'
+      return
+    }
+
+    $('srvText').textContent = online
+      ? `Server online - ${serverState.players} ${serverState.players === 1 ? 'player' : 'players'}`
+      : (serverState.canBypass ? 'Server offline (admin - you can launch anyway)' : 'Server offline')
+  }
+
+  async function checkServer () {
+    const result = await window.launcher.gameServerStatus()
+    serverState = result.ok ? result : null
+    renderServerState()
+    render(signedInUser)
+  }
+
+  let tailscaleState = null
+
+  async function checkTailscale () {
+    const result = await window.launcher.tailscaleStatus()
+    tailscaleState = result.ok ? result : null
+
+    const dot = $('tsDot')
+    const text = $('tsText')
+    const btn = $('getTailscale')
+
+    if (!tailscaleState) {
+      dot.className = 'dot'
+      text.textContent = 'Tailscale state unknown'
+      btn.style.display = 'none'
+      return
+    }
+
+    if (!tailscaleState.installed) {
+      dot.className = 'dot'
+      text.textContent = 'Tailscale not installed'
+      btn.style.display = 'inline-block'
+      return
+    }
+
+    btn.style.display = 'none'
+
+    if (!tailscaleState.connected) {
+      // The distinction that matters. Without it, someone whose tunnel is down sees
+      // "Server offline" and reports a server problem that does not exist.
+      dot.className = 'dot'
+      text.textContent = 'Tailscale installed but not connected - open it and sign in'
+      return
+    }
+
+    dot.className = 'dot on'
+    text.textContent = 'Tailscale connected - ' + tailscaleState.ip
+  }
+
+  // Being on Tailscale and being on THIS tailnet are different things, and the launcher
+  // only ever told people about the first. Someone can have it installed, signed in and
+  // connected to their own network, see a green light here, and still not reach the
+  // server - which reads as the server being broken.
+  //
+  // Offered to anyone verified in the Discord, and hidden once they are already on the
+  // right network, where it would only be one more button to wonder about.
+  function renderTailnetInvite () {
+    const btn = $('joinTailnet')
+    const verified = Boolean(signedInUser && signedInUser.isMember)
+
+    // Reaching the server is the proof they are on the right tailnet - nothing else
+    // distinguishes "connected to Tailscale" from "connected to CAM's Tailscale".
+    const alreadyOnIt = Boolean(serverState && serverState.online)
+
+    btn.style.display = verified && !alreadyOnIt ? 'inline-block' : 'none'
+  }
+
+  $('joinTailnet').addEventListener('click', async () => {
+    const result = await window.launcher.openTailscaleInvite()
+    setStatus(result.ok
+      ? 'Accept the invite in your browser, then reopen this launcher.'
+      : result.error, result.ok ? 'ok' : 'bad')
+  })
+
+  // Footer download links. The handler sends a NAME, never a URL, so nothing here
+  // can be turned into "open whatever page I like".
+  document.querySelectorAll('[data-link]').forEach((el) => {
+    el.addEventListener('click', () => window.launcher.openLink(el.dataset.link))
+  })
+
+  $('getTailscale').addEventListener('click', async () => {
+    await window.launcher.openTailscaleDownload()
+    setStatus('Install Tailscale, sign in, then reopen this launcher.')
+  })
+
+  $('pickGameDir').addEventListener('click', async () => {
+    const result = await window.launcher.pickGameDir()
+    if (result.ok) {
+      setStatus('Game folder set to ' + result.gameDir, 'ok')
+      await checkUpdates()
+    } else if (result.error) {
+      setStatus(result.error, 'error')
+    }
+  })
+
+  $('pickServerDir').addEventListener('click', async () => {
+    const result = await window.launcher.pickServerDir()
+    if (result.ok) {
+      setStatus('Server folder set to ' + result.serverDir, 'ok')
+      await refreshServerStatus()
+    } else if (result.error) {
+      setStatus(result.error, 'error')
+    }
+  })
+
+  // Three states, not two: signed out, signed in but not a member, and verified.
+  // Keeping them in one function means the button's enabled-ness and the text
+  // explaining it can never disagree with each other.
+  function render (user) {
+    signedInUser = user
+
+    const signedIn = Boolean(user)
+    const verified = signedIn && user.isMember
+
+    // Playing requires a verified account, current game files, AND a server to
+    // join. An out-of-date client against a newer server produces bug reports
+    // nobody can reproduce; a player sent at a dead server sits on a black screen
+    // and reports the mod as broken. Both are refused rather than warned about.
+    const filesReady = Boolean(updateState) &&
+                       updateState.installed &&
+                       (updateState.upToDate || updateState.offline)
+
+    // Admins bypass the server check - launching against a dead server is exactly
+    // what testing looks like, and they are the ones who can start it.
+    const serverReady = Boolean(serverState?.online) || Boolean(user?.isAdmin)
+
+    playBtn.disabled = !verified || !filesReady || !serverReady
+
+    // Say WHY, in the order someone has to fix them. Signing in first, then files, then
+    // the server - listing a server outage to someone who has not signed in yet sends
+    // them chasing the wrong thing.
+    const blockers = []
+
+    if (!signedIn) {
+      blockers.push('Sign in with Discord')
+    } else if (!user.isMember) {
+      blockers.push('Join the Night City Online Discord — press the button above')
+    }
+
+    if (!updateState) {
+      blockers.push('Still checking your files')
+    } else if (!updateState.installed) {
+      blockers.push('The mod is not installed — open Settings and press Install')
+    } else if (!(updateState.upToDate || updateState.offline)) {
+      blockers.push('Your mod is out of date — press Update')
+    }
+
+    if (!serverState) {
+      blockers.push('Still checking the server')
+    } else if (!serverState.online) {
+      blockers.push(user?.isAdmin
+        ? 'The server is offline — you can launch anyway, but nobody else can'
+        : 'The server is offline — ask in the Discord when it will be back')
+    }
+
+    $('playReason').textContent = blockers.length > 0 ? blockers.join('  ·  ') : ''
+    $('join').style.display = signedIn && !user.isMember ? 'inline-block' : 'none'
+    $('dot').className = 'dot' + (verified ? ' on' : '')
+    $('account').className = 'account' + (signedIn ? ' visible' : '')
+    loginBtn.style.display = signedIn ? 'none' : 'inline-block'
+
+    showAdminPanel(signedIn && user.isAdmin)
+
+    if (!signedIn) {
+      $('gateText').textContent = 'Not verified'
+      $('heading').textContent = 'Sign in to play'
+      $('blurb').textContent =
+        'Verify your Discord account to continue. We only read your username and avatar.'
+      return
+    }
+
+    $('username').textContent = user.username
+    // Their player number, not their Discord snowflake. This is what lands in
+    // screenshots and stream overlays, and a snowflake there is a permanent,
+    // unchangeable handle on someone's real Discord account.
+    $('discordId').textContent = 'ID ' + user.playerId
+    $('avatar').src = user.avatarUrl
+    $('avatar').alt = user.username
+
+    if (verified) {
+      $('gateText').textContent = 'Verified member'
+      $('heading').textContent = 'Ready to play'
+      $('blurb').textContent = 'You are verified. Launch when you are ready.'
+    } else {
+      // Signed in, but not in the server. Say exactly what is wrong and give
+      // them the one button that fixes it - do not just grey things out.
+      $('gateText').textContent = 'Not a member'
+      $('heading').textContent = 'Join the Discord to play'
+      $('blurb').textContent =
+        'Your Discord account is verified, but you are not in Night City Online. ' +
+        'Join, then sign in again.'
+    }
+
+    renderTailnetInvite()
+  }
+
+  // If the preload failed to load, window.launcher does not exist and every button
+  // would throw into nothing - a dead UI with no explanation. Say so loudly instead.
+  if (!window.launcher) {
+    setStatus('Launcher bridge failed to load - see the console. (preload error)', 'error')
+    loginBtn.disabled = true
+  }
+
+  // Anything unhandled ends up visible rather than swallowed.
+  window.addEventListener('error', (e) => setStatus('Error: ' + e.message, 'error'))
+  window.addEventListener('unhandledrejection', (e) => setStatus('Error: ' + e.reason, 'error'))
+
+  loginBtn.addEventListener('click', async () => {
+    loginBtn.disabled = true
+    setStatus('Opening Discord...')
+
+    const result = await window.launcher.login()
+
+    loginBtn.disabled = false
+
+    if (!result.ok) {
+      setStatus(result.error, 'error')
+      render(null)
+      return
+    }
+
+    setStatus(
+      result.user.isMember
+        ? 'Signed in as ' + result.user.handle
+        : 'Signed in, but not a member of Night City Online',
+      result.user.isMember ? 'ok' : 'error')
+
+    render(result.user)
+  })
+
+  $('join').addEventListener('click', async () => {
+    await window.launcher.openInvite()
+    setStatus('Join the server, then sign in again to refresh your membership.')
+  })
+
+  // --- server controls ------------------------------------------------------
+
+  let statusTimer = null
+
+  async function refreshServerStatus () {
+    const result = await window.launcher.serverStatus()
+    if (!result.ok) return
+
+    const running = result.running
+    $('serverDot').className = 'dot' + (running ? ' on' : '')
+    $('serverText').textContent = running ? 'online' : 'offline'
+    $('startServer').disabled = running || !result.exists
+    $('stopServer').disabled = !running
+    $('restartServer').disabled = !running || !result.exists
+
+    $('serverPath').textContent = result.exists
+      ? result.exePath
+      : 'Not found: ' + result.exePath
+
+    refreshCoordStatus()
+  }
+
+  // Rides on the same poll as the game server, so there is one heartbeat rather than two.
+  async function refreshCoordStatus () {
+    const result = await window.launcher.coordStatus()
+
+    // Not an admin, or the source is not on this machine. Either way there is nothing
+    // here to operate and a dead row would only raise questions.
+    if (!result.ok || !result.available) {
+      $('coordRow').style.display = 'none'
+      return
+    }
+
+    $('coordRow').style.display = 'block'
+    $('coordDot').className = 'dot' + (result.running ? ' on' : '')
+
+    // Says who is on it, not just that it is up. "Online" answers a question nobody was
+    // asking; "3 of 5 keys" tells you whether the people you handed keys to can talk.
+    $('coordText').textContent = result.running
+      ? (result.participants !== null ? `online - ${result.participants} of ${result.max} keys` : 'online')
+      : 'not running'
+
+    $('startCoord').disabled = result.running
+    $('stopCoord').disabled = !result.running
+  }
+
+  $('startCoord').addEventListener('click', async () => {
+    const result = await window.launcher.startCoord()
+    setStatus(result.ok ? 'Coordination API starting...' : result.error, result.ok ? 'ok' : 'bad')
+    setTimeout(refreshCoordStatus, 1500)
+  })
+
+  $('stopCoord').addEventListener('click', async () => {
+    const result = await window.launcher.stopCoord()
+    setStatus(result.ok ? 'Coordination API stopped.' : result.error, result.ok ? 'ok' : 'bad')
+    setTimeout(refreshCoordStatus, 800)
+  })
+
+  function showAdminPanel (show) {
+    $('adminPanel').style.display = show ? 'flex' : 'none'
+
+    // Only poll while the panel is actually visible - no point waking up every
+    // few seconds for someone who cannot see the result.
+    clearInterval(statusTimer)
+    if (show) {
+      refreshServerStatus()
+      statusTimer = setInterval(refreshServerStatus, 4000)
+    }
+  }
+
+  $('startServer').addEventListener('click', async () => {
+    setStatus('Starting server...')
+    const result = await window.launcher.startServer()
+    setStatus(result.ok ? 'Server starting in its own window.' : result.error,
+              result.ok ? 'ok' : 'error')
+    setTimeout(refreshServerStatus, 1500)
+  })
+
+  $('stopServer').addEventListener('click', async () => {
+    setStatus('Stopping server...')
+    const result = await window.launcher.stopServer()
+    setStatus(result.ok ? 'Server stopped.' : result.error, result.ok ? 'ok' : 'error')
+    setTimeout(refreshServerStatus, 1000)
+  })
+
+  $('restartServer').addEventListener('click', async () => {
+    // Disable all three while this runs - a restart takes several seconds, and a
+    // second click landing mid-sequence would start a server while one is still dying.
+    const buttons = ['startServer', 'restartServer', 'stopServer']
+    buttons.forEach((id) => { $(id).disabled = true })
+
+    setStatus('Restarting server...')
+    const result = await window.launcher.restartServer()
+    setStatus(result.ok ? 'Server restarted.' : result.error, result.ok ? 'ok' : 'error')
+
+    setTimeout(refreshServerStatus, 1500)
+  })
+
+  logoutBtn.addEventListener('click', async () => {
+    await window.launcher.logout()
+    render(null)
+    setStatus('Signed out')
+  })
+
+  playBtn.addEventListener('click', async () => {
+    setStatus('Starting game...')
+    const result = await window.launcher.launchGame()
+    setStatus(result.ok ? 'Game started.' : result.error, result.ok ? 'ok' : 'error')
+  })
+
+  // The process can fail to start after we have already handed off, so this
+  // arrives separately rather than as a return value.
+  window.launcher.onLaunchError((message) => {
+    setStatus('Could not start the game: ' + message, 'error')
+  })
+
+  // The main process already saved the log and showed a dialog; this keeps it on
+  // screen afterwards, so the instruction is still there once the dialog is dismissed.
+  window.launcher.onGameCrashed((info) => {
+    setStatus(info.savedTo
+      ? 'Game crashed. Log saved to your Desktop - send that file in the Discord.'
+      : 'Game crashed - ' + info.kind, 'error')
+  })
+
+  // --- updates ---------------------------------------------------------------
+
+  function renderUpdateState () {
+    const dot = $('updateDot')
+    const text = $('updateText')
+    const updateBtn = $('update')
+
+    if (!updateState) {
+      dot.className = 'dot'
+      text.textContent = 'Checking for updates...'
+      updateBtn.style.display = 'none'
+      return
+    }
+
+    if (!updateState.installed) {
+      dot.className = 'dot'
+      text.textContent = 'Mod not installed'
+      updateBtn.style.display = 'none'
+      return
+    }
+
+    if (updateState.offline) {
+      // Cannot reach GitHub. Allow play rather than stranding someone who already
+      // has the files - an outage should not stop a game that would work fine.
+      dot.className = 'dot on'
+      text.textContent = 'Update check unavailable - playing offline'
+      updateBtn.style.display = 'none'
+      return
+    }
+
+    if (updateState.upToDate) {
+      dot.className = 'dot on'
+      // Says MOD explicitly. This line reports the mod's version, and sat directly above
+      // a launcher that showed no version of its own - so it read as the launcher's.
+      text.textContent = 'Mod up to date' + (updateState.version ? ' - ' + updateState.version : '')
+      // Nothing to do, so the button is not shown at all. A permanently disabled
+      // "Update" button invites people to keep pressing it wondering what is broken.
+      updateBtn.style.display = 'none'
+    } else {
+      dot.className = 'dot'
+      text.textContent = 'Mod update required' + (updateState.version ? ' - ' + updateState.version : '')
+      updateBtn.style.display = 'inline-block'
+      updateBtn.disabled = false
+    }
+  }
+
+  // The launcher's own version, which is not the same question as the mod's.
+  //
+  // Deliberately silent when there is nothing wrong. A row that permanently says
+  // "launcher up to date" is one more thing to read past every launch; a row that only
+  // ever appears when something needs doing gets noticed the one time it matters.
+  function renderLauncherState () {
+    const gate = $('launcherGate')
+    const dot = $('launcherDot')
+    const text = $('launcherText')
+    const btn = $('getLauncher')
+
+    const hide = () => {
+      gate.style.display = 'none'
+      btn.style.display = 'none'
+    }
+
+    // The live updater wins over the version marker whenever it has said anything.
+    // The marker check is kept underneath purely so a launcher too old to contain the
+    // updater can still be told it is behind - after that it is dead weight.
+    if (launcherUpdate) {
+      if (launcherUpdate.state === 'current') return hide()
+
+      gate.style.display = 'flex'
+      dot.className = 'dot'
+
+      if (launcherUpdate.state === 'downloading') {
+        // No button while downloading. Nothing to press, and offering one invites
+        // someone to press it and wonder why nothing happened.
+        text.textContent = launcherUpdate.percent
+          ? 'Downloading launcher update... ' + launcherUpdate.percent + '%'
+          : 'Downloading launcher update...'
+        btn.style.display = 'none'
+        return
+      }
+
+      if (launcherUpdate.state === 'ready') {
+        dot.className = 'dot on'
+        text.textContent = 'Launcher update ready' +
+          (launcherUpdate.version ? ' - ' + launcherUpdate.version : '')
+        btn.textContent = 'Restart to update'
+        btn.style.display = 'inline-block'
+        return
+      }
+    }
+
+    const info = updateState && updateState.launcher
+    if (!info || info.upToDate) return hide()
+
+    gate.style.display = 'flex'
+    dot.className = 'dot'
+    text.textContent = 'New launcher available - ' + info.available + ' (you have ' + info.current + ')'
+    btn.textContent = 'Download the new launcher'
+    btn.style.display = 'inline-block'
+  }
+
+  // Renders the release body.
+  //
+  // Deliberately hand-built from a small subset of markdown rather than using a
+  // library or innerHTML on raw text: release notes are arbitrary content, and
+  // dropping them straight into the DOM would be an injection route. Everything
+  // here goes through textContent, so nothing in the notes can execute.
+  function renderNotes (markdown) {
+    const body = $('changelogBody')
+    body.textContent = ''
+
+    if (!markdown || !markdown.trim()) {
+      const p = document.createElement('p')
+      p.textContent = 'No notes for this build.'
+      body.appendChild(p)
+      return
+    }
+
+    let list = null
+
+    for (const rawLine of markdown.split(/\r?\n/)) {
+      const line = rawLine.trim()
+
+      // Skip the markdown table rows and images the release body uses for layout.
+      if (!line || line.startsWith('|') || line.startsWith('<')) continue
+
+      if (line.startsWith('#')) {
+        list = null
+        const h = document.createElement('h4')
+        h.textContent = line.replace(/^#+\s*/, '')
+        body.appendChild(h)
+        continue
+      }
+
+      if (line.startsWith('- ') || line.startsWith('* ')) {
+        if (!list) {
+          list = document.createElement('ul')
+          body.appendChild(list)
+        }
+        const li = document.createElement('li')
+        li.textContent = stripMarkdown(line.slice(2))
+        list.appendChild(li)
+        continue
+      }
+
+      list = null
+      const p = document.createElement('p')
+      p.textContent = stripMarkdown(line)
+      body.appendChild(p)
+    }
+  }
+
+  // Strips the emphasis markers so notes read as prose rather than raw markdown.
+  function stripMarkdown (text) {
+    return text
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')   // links -> their text
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/^\s*\*\s*/, '')
+  }
+
+  // What the people working on the mod have posted since the last build.
+  //
+  // Same discipline as renderNotes: every value here comes from a JSON file on the
+  // internet, so all of it goes through textContent and none of it is ever handed to
+  // innerHTML.
+  async function renderDevUpdates () {
+    const card = $('devUpdates')
+    const body = $('devUpdatesBody')
+
+    let result
+    try {
+      result = await window.launcher.devUpdates()
+    } catch {
+      card.style.display = 'none'
+      return
+    }
+
+    const updates = (result && result.updates) || []
+
+    // Nothing posted yet, or an older release without the asset. Not worth an empty
+    // panel or an error - the feature simply is not there.
+    if (!updates.length) {
+      card.style.display = 'none'
+      return
+    }
+
+    card.style.display = 'flex'
+    $('devUpdatesCount').textContent = updates.length === 1 ? '1 update' : `${updates.length} updates`
+
+    body.textContent = ''
+
+    for (const update of updates) {
+      const heading = document.createElement('h4')
+      heading.textContent = String(update.title || 'Untitled')
+      body.appendChild(heading)
+
+      const meta = document.createElement('p')
+      meta.className = 'field-hint'
+      meta.style.margin = '0 0 .25rem'
+
+      const when = update.at ? new Date(update.at) : null
+      const stamp = when && !isNaN(when) ? when.toLocaleDateString() : ''
+      meta.textContent = [update.fromLabel || update.from, update.kind, stamp]
+        .filter(Boolean).join(' · ')
+      body.appendChild(meta)
+
+      // The body is prose, possibly several paragraphs. Split rather than dumping it
+      // into one block so it reads the same way the patch notes do.
+      for (const line of String(update.body || '').split(/\r?\n/)) {
+        if (!line.trim()) continue
+        const p = document.createElement('p')
+        p.textContent = stripMarkdown(line.trim())
+        body.appendChild(p)
+      }
+    }
+  }
+
+  function renderChangelog () {
+    const card = $('changelog')
+
+    if (!updateState || !updateState.version) {
+      card.style.display = 'none'
+      return
+    }
+
+    card.style.display = 'flex'
+    $('changelogVersion').textContent = updateState.version
+    renderNotes(updateState.notes)
+  }
+
+  async function checkUpdates () {
+    updateState = null
+    renderUpdateState()
+    renderLauncherState()
+
+    const result = await window.launcher.checkUpdate()
+    updateState = result.ok ? result : null
+    renderUpdateState()
+    renderLauncherState()
+    renderChangelog()
+    render(signedInUser)
+
+    // Deliberately not awaited. This is the one panel nothing else depends on, and the
+    // launcher should not sit on a network call for it before the play button works.
+    renderDevUpdates()
+  }
+
+  $('getLauncher').addEventListener('click', async () => {
+    // Once an update has downloaded, this restarts into it. The fallback only runs on a
+    // launcher old enough to have no updater in it, where a manual download is all there
+    // is - see renderLauncherState.
+    if (launcherUpdate && launcherUpdate.state === 'ready') {
+      const result = await window.launcher.restartToUpdate()
+      if (result.ok) {
+        setStatus('Restarting to install the update...', 'ok')
+      } else {
+        setStatus(result.error, 'error')
+      }
+      return
+    }
+
+    await window.launcher.openLink('release')
+    setStatus('Download the installer, run it, then reopen the launcher.', 'ok')
+  })
+
+  window.launcher.onLauncherUpdate((info) => {
+    launcherUpdate = info
+    renderLauncherState()
+  })
+
+  $('verify').addEventListener('click', async () => {
+    const btn = $('verify')
+    btn.disabled = true
+    btn.textContent = 'Checking...'
+    setStatus('Checking your files...')
+
+    const result = await window.launcher.verifyInstall()
+
+    btn.disabled = false
+    btn.textContent = 'Verify files'
+
+    if (!result.ok && result.error) {
+      setStatus(result.error, 'error')
+      return
+    }
+
+    // verifyInstall re-checks the version too, so reflect that in the update row.
+    if (result.installed) {
+      updateState = {
+        installed: true,
+        upToDate: !result.outOfDate,
+        version: result.version,
+        notes: updateState?.notes,
+        downloadUrl: updateState?.downloadUrl
+      }
+      renderUpdateState()
+      render(signedInUser)
+    }
+
+    if (result.ok) {
+      setStatus(`Everything checks out - ${result.redscriptCount} script files, ${result.version || 'current'}`, 'ok')
+      return
+    }
+
+    // Report every problem at once. Fixing one at a time, re-running, and finding
+    // another is a miserable way to learn what is wrong.
+    setStatus(result.problems.join('  |  '), 'error')
+  })
+
+  $('uninstallMod').addEventListener('click', async () => {
+    const result = await window.launcher.uninstallMod()
+
+    if (!result.ok) {
+      setStatus(result.error, 'error')
+      return
+    }
+
+    if (result.removed) {
+      setStatus('Mod removed from ' + result.modDir, 'ok')
+      await checkUpdates()
+    }
+  })
+
+  $('resetLauncher').addEventListener('click', async () => {
+    const result = await window.launcher.resetLauncher()
+
+    if (!result.ok) {
+      setStatus(result.error, 'error')
+      return
+    }
+
+    if (result.reset) {
+      signedInUser = null
+      render(null)
+      setStatus('Signed out. Your game and mod are untouched.', 'ok')
+    }
+  })
+
+  // --- settings modal --------------------------------------------------------
+
+  function setSettingsStatus (msg, kind) {
+    const el = $('settingsStatus')
+    el.textContent = msg || ''
+    el.className = 'status' + (kind ? ' ' + kind : '')
+  }
+
+  function check (ok, text) {
+    return `<div class="check ${ok ? 'yes' : 'no'}">${ok ? 'âœ“' : 'âœ—'} ${text}</div>`
+  }
+
+  async function refreshSettings () {
+    await refreshDebugToggle()
+
+    const paths = await window.launcher.getPaths()
+
+    $('gamePathBox').textContent = paths.gameDir || 'not detected'
+    $('gameChecks').innerHTML =
+      check(Boolean(paths.gameDir), paths.gameDir ? 'Cyberpunk2077.exe found' : 'Cyberpunk2077.exe not found')
+
+    $('modPathBox').textContent = paths.modDir || 'not installed'
+    $('modChecks').innerHTML = paths.modDir
+      ? check(true, 'Mod folder OK') + check(paths.hasDll, paths.hasDll ? 'CyberpunkMP.dll found' : 'CyberpunkMP.dll missing')
+      : check(false, 'Mod not installed - use Install below')
+
+    $('removeDataPath').textContent =
+      'Deletes your saved sign-in and settings under ' + paths.userData + '. You will sign in again next time.'
+
+    $('launcherVersion').textContent = 'Launcher v' + paths.appVersion
+
+    // Install is only meaningful when it is not already there; Reinstall covers the
+    // rest. Showing both as equally available invites people to pick the wrong one.
+    $('installAll').textContent = paths.modDir ? 'Reinstall all' : 'Install'
+
+    refreshBodyType()
+
+    // The dev section rides on the same answer that decides the server controls, so a
+    // dev sees the same launcher Cam does.
+    const debug = await window.launcher.getDebugMode()
+    $('devPanel').style.display = debug && debug.admin ? 'block' : 'none'
+
+    // Re-hidden every time settings opens. A key left on screen from ten minutes ago is
+    // a key in the next screenshot.
+    $('devKeyValue').style.display = 'none'
+    $('devKeyValue').textContent = ''
+    $('revealDevKey').textContent = 'Reveal'
+    $('revealDevKey').disabled = false
+  }
+
+  // Body type. Reflects what is chosen AND whether the choice can be honoured yet - a
+  // button that silently does nothing is worse than one that says it is unavailable.
+  async function refreshBodyType () {
+    const result = await window.launcher.getBodyType()
+    if (!result.ok) return
+
+    const female = $('bodyFemale')
+    const male = $('bodyMale')
+
+    female.classList.toggle('play', result.bodyType === 'female')
+    male.classList.toggle('play', result.bodyType === 'male')
+
+    male.disabled = !result.maleAvailable
+
+    $('bodyTypeHint').textContent = result.maleAvailable
+      ? 'Chosen here because it is built into the world you load. Everything else about how you look can be changed at any ripperdoc. Takes effect next launch.'
+      : 'Only the female starting world has been published so far, so this cannot be changed yet. Everything else about how you look can be changed at any ripperdoc.'
+  }
+
+  for (const [id, value] of [['bodyFemale', 'female'], ['bodyMale', 'male']]) {
+    $(id).addEventListener('click', async () => {
+      const result = await window.launcher.setBodyType(value)
+      if (result.ok) {
+        setSettingsStatus(`Body type set to ${result.bodyType}. It applies the next time you launch.`, 'good')
+        refreshBodyType()
+      }
+    })
+  }
+
+  $('revealDevKey').addEventListener('click', async () => {
+    const box = $('devKeyValue')
+    const button = $('revealDevKey')
+
+    button.disabled = true
+    button.textContent = 'Fetching...'
+
+    const result = await window.launcher.devKey()
+
+    if (!result.ok) {
+      button.disabled = false
+      button.textContent = 'Reveal'
+      setSettingsStatus(result.error, 'bad')
+      return
+    }
+
+    // Everything the other end needs, in one block to copy: the key, where to send it,
+    // and the two calls that matter. Handing over a bare key means a second round of
+    // questions about what to do with it.
+    box.textContent =
+      `Key       ${result.key}\n` +
+      `Base URL  ${result.baseUrl}\n\n` +
+      `Read:  GET  ${result.baseUrl}/v1/updates?limit=10\n` +
+      `Post:  POST ${result.baseUrl}/v1/updates  {"title","body","kind"}\n` +
+      `Auth:  Authorization: Bearer <key>`
+
+    box.style.display = 'block'
+    button.textContent = 'Copy'
+    button.disabled = false
+
+    button.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(box.textContent)
+        setSettingsStatus('Dev key copied.', 'good')
+      } catch {
+        setSettingsStatus('Select the text above and copy it.', '')
+      }
+    }
+  })
+
+  $('openTailscaleInvite').addEventListener('click', async () => {
+    const result = await window.launcher.openTailscaleInvite()
+    if (!result.ok) setSettingsStatus(result.error, 'bad')
+    else setSettingsStatus('Invite opened in your browser.', 'good')
+  })
+
+  function openSettings () {
+    $('settingsModal').style.display = 'flex'
+    setSettingsStatus('')
+    refreshSettings()
+  }
+
+  function closeSettings () {
+    $('settingsModal').style.display = 'none'
+  }
+
+  $('openSettings').addEventListener('click', openSettings)
+  $('closeSettings').addEventListener('click', closeSettings)
+  $('closeSettingsDone').addEventListener('click', closeSettings)
+
+  // Escape closes it, and clicking the backdrop does too - both are what people expect.
+  $('settingsModal').addEventListener('click', (e) => {
+    if (e.target === $('settingsModal')) closeSettings()
+  })
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && $('settingsModal').style.display !== 'none') closeSettings()
+  })
+
+  async function refreshNexus () {
+    const status = await window.launcher.nexusStatus()
+    $('nexusState').textContent = status.signedIn
+      ? '✓ Signed in as ' + (status.name || 'Nexus user')
+      : 'Not signed in'
+  }
+
+  $('nexusGetKey').addEventListener('click', async () => {
+    await window.launcher.openLink('nexusApi')
+    setSettingsStatus('Scroll to "Personal API Key", copy it, and paste it below.')
+  })
+
+  $('nexusLogin').addEventListener('click', async () => {
+    const btn = $('nexusLogin')
+    btn.disabled = true
+    btn.textContent = 'Waiting for Nexus...'
+    setSettingsStatus('Nexus opened in your browser - press Authorise there.')
+
+    const result = await window.launcher.nexusSsoLogin()
+
+    btn.disabled = false
+
+    if (result.ok) {
+      setSettingsStatus(
+        'Signed in as ' + result.name + (result.premium ? ' (Premium)' : ' (free account - installs open Nexus)'),
+        'ok')
+    } else {
+      setSettingsStatus(result.error, 'error')
+    }
+
+    await refreshNexus()
+  })
+
+  $('nexusSave').addEventListener('click', async () => {
+    const key = $('nexusKey').value
+    const result = await window.launcher.nexusSignIn(key)
+
+    if (result.ok) {
+      // Cleared immediately. There is no reason for a live credential to sit in a
+      // text box for the rest of the session.
+      $('nexusKey').value = ''
+      setSettingsStatus(
+        'Signed in as ' + result.name + (result.premium ? ' (Premium)' : ' (free account - installs open Nexus)'),
+        'ok')
+      await refreshNexus()
+    } else {
+      setSettingsStatus(result.error, 'error')
+    }
+  })
+
+  $('makeShortcut').addEventListener('click', async () => {
+    const result = await window.launcher.createShortcuts()
+    if (result.ok) {
+      setSettingsStatus('Shortcut added to your Desktop and Start Menu.', 'ok')
+    } else {
+      setSettingsStatus(result.error, 'error')
+    }
+  })
+
+  async function refreshDebugToggle () {
+    const state = await window.launcher.getDebugMode()
+
+    // Not an admin: the row does not exist as far as this launcher is concerned.
+    if (!state.ok || !state.admin) {
+      $('debugTool').style.display = 'none'
+      return
+    }
+
+    $('debugTool').style.display = 'flex'
+    $('toggleDebug').textContent = state.enabled ? 'On' : 'Off'
+    $('debugDesc').textContent = state.enabled
+      ? 'The in-game debug menu bar will be shown next time you launch.'
+      : 'Shows the in-game debug menu bar. Devs and admins only.'
+  }
+
+  $('toggleDebug').addEventListener('click', async () => {
+    const current = await window.launcher.getDebugMode()
+    const result = await window.launcher.setDebugMode(!current.enabled)
+
+    if (!result.ok) {
+      setSettingsStatus(result.error, 'error')
+      return
+    }
+
+    await refreshDebugToggle()
+    setSettingsStatus(result.enabled
+      ? 'Developer overlay on - restart the game to see it.'
+      : 'Developer overlay off.', 'ok')
+  })
+
+  // --- mod list ---------------------------------------------------------------
+
+  let modState = []
+  let modsSignedIn = null
+
+  function renderMods () {
+    const list = $('modList')
+    const count = $('modCount')
+    const hint = $('modHint')
+
+    list.innerHTML = ''
+
+    if (modState.length === 0) {
+      count.textContent = ''
+      hint.textContent = modsSignedIn === false
+        ? 'Sign in to Nexus in Settings to see the mod list.'
+        : 'No mods are required yet. When the server adds some, they appear here.'
+      return
+    }
+
+    const installed = modState.filter((m) => m.state === 'installed').length
+    count.textContent = modState.length + ' mods · ' + installed + ' installed'
+
+    const missingRequired = modState.filter((m) => m.state !== 'installed' && m.required).length
+    hint.textContent = missingRequired > 0
+      ? missingRequired + ' required mod(s) missing. Install opens Nexus - press "Mod Manager Download" there.'
+      : 'Everything the server expects is installed.'
+
+    for (const mod of modState) {
+      const row = document.createElement('div')
+      row.className = 'mod'
+
+      const name = document.createElement('span')
+      name.className = 'mod-name'
+      name.textContent = mod.name
+      name.title = mod.summary || mod.name
+      row.appendChild(name)
+
+      const badge = document.createElement('span')
+      if (mod.state === 'installed') {
+        badge.className = 'mod-badge ok'
+        badge.textContent = '✓ INSTALLED'
+      } else if (mod.state === 'downloading') {
+        badge.className = 'mod-badge'
+        badge.textContent = 'DOWNLOADING'
+      } else if (mod.state === 'failed') {
+        badge.className = 'mod-badge bad'
+        badge.textContent = 'FAILED'
+      } else {
+        badge.className = 'mod-badge missing'
+        badge.textContent = mod.required ? 'REQUIRED' : 'OPTIONAL'
+      }
+      row.appendChild(badge)
+
+      // Blocked by a missing requirement: say which one, and offer no button. An
+      // Install button that refuses when pressed is worse than no button.
+      const blocked = mod.state !== 'installed' && (mod.blockedBy || []).length > 0
+
+      if (blocked) {
+        badge.className = 'mod-badge missing'
+        badge.textContent = 'NEEDS ' + mod.blockedBy[0].toUpperCase()
+        badge.title = 'Install ' + mod.blockedBy.join(' and ') + ' first'
+      }
+
+      // The install button is REMOVED once installed rather than disabled. A greyed
+      // button still reads as something you are supposed to press.
+      if (!blocked && mod.state !== 'installed' && mod.state !== 'downloading') {
+        const install = document.createElement('button')
+        install.className = 'mod-btn'
+        install.textContent = 'Install'
+        install.addEventListener('click', async () => {
+          const result = await window.launcher.openMod(mod.id)
+          if (!result.ok) setStatus(result.error, 'error')
+          else setStatus('Opened Nexus - press "Mod Manager Download" on that page.', 'ok')
+        })
+        row.appendChild(install)
+      }
+
+      if (mod.state === 'installed') {
+        const remove = document.createElement('button')
+        remove.className = 'mod-btn danger'
+        remove.textContent = '🗑'
+        remove.title = 'Remove this mod'
+        remove.addEventListener('click', async () => {
+          const result = await window.launcher.deleteMod(mod.id)
+          if (result.ok) {
+            setStatus('Removed ' + mod.name + '.', 'ok')
+            await refreshMods()
+          } else if (result.error) {
+            setStatus(result.error, 'error')
+          }
+        })
+        row.appendChild(remove)
+      }
+
+      list.appendChild(row)
+    }
+  }
+
+  async function refreshMods () {
+    const result = await window.launcher.listMods()
+    if (result.ok) {
+      modState = result.mods
+      modsSignedIn = result.signedIn
+    } else {
+      modState = []
+      $('modHint').textContent = result.error
+    }
+    renderMods()
+  }
+
+  $('verifyAllMods').addEventListener('click', async () => {
+    const btn = $('verifyAllMods')
+    btn.disabled = true
+    $('modHint').textContent = 'Checking every file...'
+
+    const result = await window.launcher.verifyMods()
+    btn.disabled = false
+
+    if (!result.ok) {
+      $('modHint').textContent = result.error
+      return
+    }
+
+    await refreshMods()
+
+    if (result.checked === 0) {
+      $('modHint').textContent = 'Nothing installed through the launcher yet.'
+    } else if (result.problems.length === 0) {
+      $('modHint').textContent = '✓ All ' + result.intact + ' installed mod(s) verified.'
+    } else {
+      // Names the broken ones. "3 problems found" leaves someone to work out which.
+      $('modHint').textContent = result.problems.length + ' problem(s): ' +
+        result.problems.map((p) => p.name + ' (' + p.detail + ')').join(', ')
+    }
+  })
+
+  window.launcher.onModProgress((info) => {
+    const mod = modState.find((m) => m.id === String(info.modId))
+    if (!mod) return
+
+    if (info.state === 'installed') {
+      setStatus('Installed ' + (info.name || mod.name) + '.', 'ok')
+      refreshMods()
+      return
+    }
+
+    mod.state = info.state
+    if (info.state === 'failed') setStatus(info.error, 'error')
+    renderMods()
+  })
+
+  $('openInstallDir').addEventListener('click', () => window.launcher.openInstallDir())
+
+  $('uninstallLauncher').addEventListener('click', async () => {
+    const result = await window.launcher.uninstallLauncher()
+    // On success the launcher is already quitting, so there is nothing to report.
+    if (!result.ok && result.error) setSettingsStatus(result.error, 'error')
+  })
+
+  $('browseModDir').addEventListener('click', async () => {
+    const result = await window.launcher.pickModDir()
+
+    if (result.ok) {
+      setSettingsStatus('Mod folder set to ' + result.modDir, 'ok')
+      await refreshSettings()
+      await checkUpdates()
+    } else if (result.error) {
+      setSettingsStatus(result.error, 'error')
+    }
+  })
+
+  $('viewGameDir').addEventListener('click', () => window.launcher.openFolder('game'))
+  $('viewModDir').addEventListener('click', () => window.launcher.openFolder('mod'))
+
+  $('browseGameDir').addEventListener('click', async () => {
+    const result = await window.launcher.pickGameDir()
+    if (result.ok) {
+      setSettingsStatus('Game folder set.', 'ok')
+      await refreshSettings()
+      await checkUpdates()
+    } else if (result.error) {
+      setSettingsStatus(result.error, 'error')
+    }
+  })
+
+  $('installAll').addEventListener('click', async () => {
+    const btn = $('installAll')
+    btn.disabled = true
+    setSettingsStatus('Starting...')
+
+    const result = await window.launcher.installEverything()
+
+    btn.disabled = false
+
+    if (!result.ok) {
+      setSettingsStatus(result.error, 'error')
+      return
+    }
+
+    // Says what actually landed. "Done" was indistinguishable from "did nothing and
+    // said done", which is exactly what this used to do.
+    setSettingsStatus(
+      'Installed ' + result.modFiles + ' mod file(s) and ' + result.prerequisites +
+      ' prerequisite(s): ' + (result.components || []).join(', '), 'ok')
+
+    setSettingsStatus(`Installed ${result.prerequisites} required mods and the multiplayer mod.`, 'ok')
+    await refreshSettings()
+    await checkUpdates()
+  })
+
+  window.launcher.onInstallProgress((step) => setSettingsStatus(step))
+
+  $('verifyFiles').addEventListener('click', () => $('verify').click())
+  $('reinstallMod').addEventListener('click', () => $('installAll').click())
+
+  $('removeMod').addEventListener('click', async () => {
+    const result = await window.launcher.uninstallMod()
+    if (!result.ok) { setSettingsStatus(result.error, 'error'); return }
+    if (result.removed) {
+      setSettingsStatus('Mod removed.', 'ok')
+      await refreshSettings()
+      await checkUpdates()
+    }
+  })
+
+  $('removeData').addEventListener('click', async () => {
+    const result = await window.launcher.resetLauncher()
+    if (!result.ok) { setSettingsStatus(result.error, 'error'); return }
+    if (result.reset) {
+      signedInUser = null
+      render(null)
+      closeSettings()
+      setStatus('Signed out. Your game and mod are untouched.', 'ok')
+    }
+  })
+
+  $('checkFromSettings').addEventListener('click', async () => {
+    setSettingsStatus('Checking...')
+    await checkUpdates()
+    setSettingsStatus(updateState?.upToDate ? 'Up to date.' : 'An update is available.', 'ok')
+  })
+
+  $('update').addEventListener('click', async () => {
+    $('update').disabled = true
+    setStatus('Downloading update...')
+
+    const result = await window.launcher.applyUpdate()
+
+    if (result.ok) {
+      setStatus('Updated to ' + result.version, 'ok')
+      await checkUpdates()
+    } else {
+      setStatus(result.error, 'error')
+      $('update').disabled = false
+    }
+  })
+
+  // --- startup ---------------------------------------------------------------
+
+  ;(async () => {
+    render(null)
+
+    // Own version first, before anything that can fail. If the update check or the
+    // server ping throws, the one number that identifies this build is still on screen -
+    // which is exactly when someone is about to ask what version they are running.
+    try {
+      const paths = await window.launcher.getPaths()
+      $('footerVersion').textContent = 'Launcher v' + paths.appVersion
+    } catch {
+      $('footerVersion').textContent = ''
+    }
+
+    // Restore a previous sign-in first, so a returning player lands on "Ready to
+    // play" instead of signing in again every single launch.
+    const restored = await window.launcher.restore()
+    if (restored.ok) {
+      signedInUser = restored.user
+      render(signedInUser)
+      setStatus('Signed in as ' + restored.user.handle, 'ok')
+    }
+
+    await checkUpdates()
+    await checkTailscale()
+    await checkServer()
+    await refreshMods()
+    await refreshNexus()
+
+    // Keep the online badge and player count honest while the launcher sits open -
+    // people leave it running, and a stale "offline" would be worse than no badge.
+    setInterval(checkServer, 10000)
+    setInterval(checkTailscale, 15000)
+  })()
+</script>
+</body>
+</html>

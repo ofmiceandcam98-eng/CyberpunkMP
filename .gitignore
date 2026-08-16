@@ -24,6 +24,52 @@ dist
 distrib/*
 
 # Miscellaneous
+# Local coordination scratchpads shared between Cam's assistants - never upstream.
+# (ASSISTANTS_COMMUNICATION.md is deliberately TRACKED - committed in 7800c75 - so it is
+# not listed here; .gitignore has no effect on already-tracked files anyway.)
+ANTIGRAVITY_NOTES.md
+CYBERPUNKMP_BRIEFING.md
+# publish/ is TRACKED. It holds the status page, install instructions, release notes,
+# the to-do list, and the licence texts for the six bundled mods - which are the
+# condition that makes redistributing them legitimate. All of that existed only on one
+# machine, with no copy anywhere, after a day's work had already been lost once to a
+# stray git reset.
+#
+# Only the build OUTPUT is ignored: FullInstall.zip is reassembled from
+# publish/fullinstall-base + the current build on every ship.
+publish/FullInstall.zip
 code/client/Archives/CyberpunkMP.zip
 Cyberpunk2077.exe*
 imgui.ini
+
+# Local secrets / runtime state (docker compose)
+.env
+
+# config/* rather than config/ so the negation below can reach inside it. git cannot
+# re-include a file whose PARENT DIRECTORY is excluded - the directory is never descended
+# into, so the exception is never considered.
+config/*
+!config/server.example.json
+
+logs/
+plugins/
+
+# Each machine's own paths - game install, xmake, publish target. Not a secret, but
+# specific to one PC, which is exactly why it must not be committed: hardcoding these was
+# what made the tools refuse to run anywhere but the machine they were written on.
+# tools/ship.local.example.ps1 documents every value.
+tools/ship.local.ps1
+
+# Discord credentials. The bot token is a password - never commit either of these.
+tools/.discord-webhook
+tools/.discord-bot
+
+# Which channel the to-do list lives in and which message to edit. Not a credential,
+# but it belongs with them rather than in the repo - it is specific to one Discord.
+tools/.discord-todo
+
+# Coordination API state. participants.json holds the API keys and updates.jsonl the full
+# message history; both are specific to this machine. The PUBLISHED slice of the history
+# lives in publish/ and is tracked deliberately - that is the copy the launcher and the
+# GitHub page read.
+code/coord-api/data/

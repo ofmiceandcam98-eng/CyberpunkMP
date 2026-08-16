@@ -3,6 +3,8 @@
 #include "System/Path.h"
 #include "System/Log.h"
 #include "Config.h"
+#include "BanList.h"
+#include "PlayerStore.h"
 #include "Game/World.h"
 
 template <typename T>
@@ -60,12 +62,136 @@ private:
 
     void FetchServerEntitlements();
 
+    // Result of asking Discord to vouch for a connecting player.
+    enum class EDiscordAuthResult
+    {
+        kOk,
+        kInvalidToken,  // Discord does not recognise it, or it expired
+        kNotAMember,    // real account, but not in the configured guild
+        kUnreachable    // we could not ask - treated as a refusal, never as a pass
+    };
+
+    struct DiscordIdentity
+    {
+        std::string Id;
+        std::string Username;
+        std::vector<std::string> RoleIds;
+        EPermissionLevel Level{EPermissionLevel::kPlayer};
+    };
+
+    // Asks Discord who a token belongs to and whether they are in the guild. The client's
+    // own claims about its identity are ignored entirely.
+    EDiscordAuthResult VerifyDiscordToken(const std::string& acToken, DiscordIdentity& aOutIdentity) const;
+
+    // A short-lived record of a successful verification.
+    //
+    // Discord rate-limits unauthenticated requests, and every connect costs two calls.
+    // A group joining together - which is exactly when a server is busiest - can trip
+    // that limit, and because verification fails closed, the result would be nobody
+    // getting in. Caching turns a burst of joins into one pair of calls per player
+    // instead of one per attempt.
+    struct CachedIdentity
+    {
+        DiscordIdentity Identity;
+        std::chrono::steady_clock::time_point Expires;
+    };
+
+    // Keyed on the token. Guarded because the re-verification loop runs off the game
+    // thread and reads this concurrently with connecting players.
+    mutable std::mutex m_discordCacheMutex;
+    mutable Map<std::string, CachedIdentity> m_discordCache;
+
+    // Deliberately short. A cached entry means a Discord ban takes up to this long to
+    // block a RECONNECT - the in-session re-verification loop still removes them within
+    // two minutes either way, and local bans are checked separately and never cached.
+    static constexpr auto kDiscordCacheTtl = std::chrono::minutes(3);
+
+    // The guild's roles, as id -> lowercased name.
+    //
+    // Lets the config name a role instead of quoting its snowflake, which is the
+    // difference between the role mapping being used and it sitting empty. Needs the bot
+    // token; without one this stays empty and only explicit ids resolve.
+    std::map<std::string, std::string> GetGuildRoleNames() const;
+
+    // Read from NCO_DISCORD_BOT_TOKEN or the file named by Discord.BotTokenFile. Never
+    // held in the config itself, never logged.
+    std::string GetBotToken() const;
+
+    // Writes the resolved role -> level map to Discord.RolesFile, so the launcher grants
+    // the same people the same controls the game does.
+    void WriteRolesFile(const std::map<std::string, std::string>& acRoleNames) const;
+
+    mutable std::mutex m_roleNameMutex;
+    mutable std::map<std::string, std::string> m_roleNames;
+    mutable std::chrono::steady_clock::time_point m_roleNamesExpire{};
+
+    // Roles are renamed and created rarely, and a stale name for a few minutes only
+    // delays a permission change that Discord itself takes a moment to propagate.
+    static constexpr auto kRoleNameTtl = std::chrono::minutes(10);
+
+    // Logs per-player ping / packet loss on a slow heartbeat, so a laggy player can be
+    // told apart from a struggling server.
+    void ReportPlayerConnections(std::chrono::steady_clock::time_point aNow);
+
+    // Re-checks connected players against Discord, so a ban or role change there takes
+    // effect here without waiting for them to reconnect.
+    void ReverifyPlayers(std::chrono::steady_clock::time_point aNow);
+
+    // Writes everyone's position to disk on a timer, so a server crash costs seconds
+    // rather than a session. Disconnects save immediately and do not wait for this.
+    void SavePlayerPositions(std::chrono::steady_clock::time_point aNow);
+
+    // Keeps jailed players in their cell, and lets them out when the time is up.
+    //
+    // The cell is a rule, not a room. Cyberpunk's doors are not synchronised - every
+    // client has its own - so a real cell door would hold nobody. What the server DOES
+    // know, every tick, is where everyone is, so the sentence is enforced by putting
+    // anyone who wanders too far straight back.
+    void EnforceJail(std::chrono::steady_clock::time_point aNow);
+
+public:
+    // Where players reappear after dying, set with /setspawn. Persisted alongside the
+    // player records so it survives a restart.
+    void SetRespawnPoint(const glm::vec3& acPosition, float aYaw);
+    bool GetRespawnPoint(glm::vec3& aPosition, float& aYaw) const;
+
+    // Where a brand-new character appears the first time.
+    //
+    // Deliberately separate from the respawn point. They answer different questions -
+    // "where does a new life begin" and "where do you wake up after being downed" - and a
+    // server will often want the first somewhere with a bit of ceremony and the second
+    // beside a ripperdoc. Making one serve both means changing where people respawn every
+    // time you move the arrivals point.
+    void SetStartPoint(const glm::vec3& acPosition, float aYaw);
+    bool GetStartPoint(glm::vec3& aPosition, float& aYaw) const;
+
+    BanList& GetBanList() noexcept { return m_bans; }
+    PlayerStore& GetPlayerStore() noexcept { return m_players; }
+
+private:
+
     Path m_path;
     Log m_log;
     UniquePtr<World> m_pWorld;
     TaskQueue m_tasks;
     bool m_run = true;
     std::chrono::steady_clock::time_point m_lastUpdate;
+    std::chrono::steady_clock::time_point m_lastConnectionReport;
+    std::chrono::steady_clock::time_point m_lastReverify;
+    BanList m_bans;
+    PlayerStore m_players;
+    std::chrono::steady_clock::time_point m_lastPlayerSave;
+    std::chrono::steady_clock::time_point m_lastJailCheck;
+
+    glm::vec3 m_respawnPosition{};
+    float m_respawnYaw{0.f};
+    bool m_hasRespawnPoint{false};
+
+    std::filesystem::path m_startPath;
+    glm::vec3 m_startPosition{};
+    float m_startYaw{0.f};
+    bool m_hasStartPoint{false};
+    std::filesystem::path m_respawnPath;
     entt::dispatcher m_dispatcher;
 
     Config m_config;

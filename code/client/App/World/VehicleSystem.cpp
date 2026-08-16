@@ -15,6 +15,34 @@
 #include "App/Components/InterpolationComponent.h"
 
 
+// Puts a network vehicle fully under remote control: no local player input, no local
+// physics. Interpolation drives these with ForceMoveTo, so a live rigid body here is not
+// just wasted work - a network copy spawns at the same transform as the local world's own
+// parked instance of that car, and two interpenetrating physics bodies resolve as a
+// depenetration impulse. That impulse is the "cars explode when another player gets in"
+// report. Called from OnVehicleReady so the copy never simulates a single frame; DoMount
+// repeats it, which is harmless, for vehicles that were already spawned when we mounted
+// someone into them.
+static void MakeRemoteDriven(const Red::Handle<Red::vehicle::WheeledBaseObject>& aVehicle)
+{
+    if (!aVehicle)
+        return;
+
+    // called from vehicle::actions::DriveAction::OnStart
+    static Core::RawFunc<4039776020UL, void (*)(Red::vehicle::BaseObject*, bool)> SetIsPlayerControlled;
+    static Core::RawFunc<1620777158UL, void (*)(Red::vehicle::BaseObject*, uint32_t)> SetFlags;
+    static Core::RawFunc<1585713002UL, void (*)(Red::vehicle::BaseObject*, bool)> SetKinematic;
+
+    SetIsPlayerControlled(aVehicle, false);
+    // turn on engine
+    reinterpret_cast<void (*)(Red::vehicle::WheeledBaseObject*, bool)>(*(uintptr_t*)(*(uintptr_t*)aVehicle.instance + 0x328))(aVehicle, true);
+    if (aVehicle->engineData)
+        aVehicle->engineData->unk61 = 0;
+    SetFlags(aVehicle, 0x10);
+    SetFlags(aVehicle, 0x80);
+    SetKinematic(aVehicle, true);
+}
+
 void VehicleSystem::OnWorldAttached(RED4ext::world::RuntimeScene* aScene)
 {
     m_ready = true;
@@ -149,7 +177,12 @@ bool VehicleSystem::HandleVehicleEnterMessage(const PacketEvent<server::NotifyVe
     const auto sit = Red::CName(aMessage.get_sit_id());
     const auto character = worldSystem->GetEntityByServerId(aMessage.get_character_id());
 
-    if (m_vehicleRemoteId && aMessage.get_vehicle_id() == *m_vehicleRemoteId)
+    // m_vehicleGameId must be checked too: when we were assigned control of a vehicle we
+    // did NOT locally own (we sat in the driver seat of a network-spawned car),
+    // m_vehicleRemoteId is set but m_vehicleGameId is nullopt - and *m_vehicleGameId is
+    // undefined behaviour. Fall through to the server-id lookup instead, which resolves
+    // the same vehicle through its EntityComponent.
+    if (m_vehicleRemoteId && aMessage.get_vehicle_id() == *m_vehicleRemoteId && m_vehicleGameId)
     {
         DoMount(character, *m_vehicleGameId, sit);
     }
@@ -182,10 +215,16 @@ void VehicleSystem::OnVehicleReady(const Red::EntityID& aVehicleEntityId)
 {
     spdlog::info("[VehicleSystem] OnVehicleReady");
 
+    const auto worldSystem = Red::GetGameSystem<NetworkWorldSystem>();
+
+    // Physics off FIRST, mounts second. Everything reaching this callback is a network
+    // copy this client spawned (only SpawnVehicle tags CyberpunkMP.Vehicle), and it may be
+    // standing inside the local world's own copy of the same parked car. It must never
+    // simulate, whether or not anyone has been mounted into it yet.
+    MakeRemoteDriven(Red::Cast<Red::vehicle::WheeledBaseObject>(worldSystem->GetEntity(aVehicleEntityId)));
+
     if (m_pendingMounts.find(aVehicleEntityId) != m_pendingMounts.end())
     {
-        const auto worldSystem = Red::GetGameSystem<NetworkWorldSystem>();
-
         for (auto& message : m_pendingMounts[aVehicleEntityId])
         {
             const auto sit = Red::CName(message.get_sit_id());
@@ -239,26 +278,20 @@ void VehicleSystem::DoMount(flecs::entity aCharacter, Red::EntityID aVehicle, Re
     const auto handle = Red::Handle(this);
     bool res;
 
+    if (!vehicle)
+    {
+        spdlog::warn("[VehicleSystem] DoMount: vehicle entity {:x} not resolvable yet - mount dropped", aVehicle.hash);
+        return;
+    }
+
     Red::Detail::CallFunctionWithArgs(m_pEnterVehicle, handle, res, character, vehicle->id, aSit);
 
     aCharacter.add<AttachedComponent>();
 
+    // Never our own car - the local player's vehicle keeps local physics and input.
     if (!m_vehicleGameId || *m_vehicleGameId != aVehicle)
     {
-        // called from vehicle::actions::DriveAction::OnStart
-        // static Core::RawFunc<4018412273UL, void (*)(Red::move::Component *, IMoveController &)> AttachLocomotionController
-        static Core::RawFunc<4039776020UL, void (*)(Red::vehicle::BaseObject*, bool)> SetIsPlayerControlled;
-        static Core::RawFunc<1620777158UL, void (*)(Red::vehicle::BaseObject*, uint32_t)> SetFlags;
-        static Core::RawFunc<1585713002UL, void (*)(Red::vehicle::BaseObject*, bool)> SetKinematic;
-
-        // AttachLocomotionController(component, controller);
-        SetIsPlayerControlled(vehicle, false);
-        // turn on engine
-        reinterpret_cast<void (*)(Red::vehicle::WheeledBaseObject*, bool)>(*(uintptr_t*)(*(uintptr_t*)vehicle.instance + 0x328))(vehicle, true);
-        vehicle->engineData->unk61 = 0;
-        SetFlags(vehicle, 0x10);
-        SetFlags(vehicle, 0x80);
-        SetKinematic(vehicle, true);
+        MakeRemoteDriven(vehicle);
     }
 }
 

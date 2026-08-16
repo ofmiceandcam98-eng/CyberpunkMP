@@ -5,6 +5,17 @@
         "type": "xmake",
         "request": "launch",
         "target": "Client"
+    },
+    {
+        // Attach to the already-running game to catch the remote-puppet spawn crash.
+        // Start the game normally first, then run this and pick Cyberpunk2077.exe.
+        // CyberpunkMP.pdb sits next to the built DLL and the DLL records that path,
+        // so our own frames should resolve with real function names.
+        "name": "Attach to Cyberpunk 2077",
+        "type": "cppvsdbg",
+        "request": "attach",
+        "processId": "${command:pickProcess}",
+        "symbolSearchPath": "${workspaceFolder}/build/windows/x64/release"
     }
   ]
 }

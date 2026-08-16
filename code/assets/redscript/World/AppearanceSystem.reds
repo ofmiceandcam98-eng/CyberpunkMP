@@ -74,25 +74,56 @@ public native class AppearanceSystem extends IScriptable {
         }
     }
 
-    private func GetPlayerItems() -> array<String> {
+    // Returns the raw TweakDBID of everything worn, as numbers.
+    //
+    // This used to return TDBID.ToStringDEBUG(...) names. That helper reads TweakDB's
+    // debug name table, which is stripped from release builds of the game - so on 2.31 it
+    // returned an empty string for every single item. The empty names travelled all the
+    // way to other players' clients before failing there, which is why remote players
+    // showed up with no clothes and no weapons.
+    //
+    // The number is the item's actual identity. The name was only ever for reading logs.
+    private func GetPlayerItems() -> array<Uint64> {
         let player = GetPlayer(GetGameInstance());
-        let items: array<String>;
+        let items: array<Uint64>;
         let equipData: ref<EquipmentSystemPlayerData> = EquipmentSystem.GetData(player);
-        let equipAreas: array<SEquipArea>;
-        if IsDefined(equipData) {
-            equipAreas = equipData.GetPaperDollEquipAreas();
+
+        if !IsDefined(equipData) {
+            return items;
         }
+
+        // The Outfit slot, explicitly, and first.
+        //
+        // Since 2.0 a player wearing a wardrobe outfit has their individual clothing slots
+        // overridden by it, and the paperdoll list does not report the outfit itself - so
+        // everything we sent was whatever happened to be underneath, which on most saves
+        // is the q001 starting clothes. That is exactly the "outfit isn't synced at all,
+        // it only shows base clothes" report: the code was working, it was just reading
+        // the wrong wardrobe.
+        let areas: array<gamedataEquipmentArea> = [gamedataEquipmentArea.Outfit];
+
+        // Everything the inventory paperdoll shows - clothing, plus arm cyberware, which
+        // is where mantis blades and the like come from.
+        let equipAreas: array<SEquipArea> = equipData.GetPaperDollEquipAreas();
         let i: Int32 = 0;
         while i < ArraySize(equipAreas) {
-            let item = equipData.GetVisualItemInSlot(equipAreas[i].areaType);
+            ArrayPush(areas, equipAreas[i].areaType);
+            i += 1;
+        }
+
+        i = 0;
+        while i < ArraySize(areas) {
+            let item = equipData.GetVisualItemInSlot(areas[i]);
             let tdbid = ItemID.GetTDBID(item);
-            if TDBID.IsValid(tdbid) {
-                let str = TDBID.ToStringDEBUG(ItemID.GetTDBID(item));
-                LogChannel(n"DEBUG", "Getting: " + str);
-                ArrayPush(items, str);
+
+            // Deduplicated: Outfit is listed by hand above and may also come back from
+            // the paperdoll, and sending an item twice makes the far side equip it twice.
+            if TDBID.IsValid(tdbid) && !ArrayContains(items, TDBID.ToNumber(tdbid)) {
+                ArrayPush(items, TDBID.ToNumber(tdbid));
             }
             i += 1;
         }
+
         return items;
     }
 

@@ -1,0 +1,44 @@
+#!/bin/sh
+#
+# post-commit - announce every commit in #server-update
+#
+# Install:
+#   cp tools/hooks/post-commit .git/hooks/post-commit
+#
+# Uninstall:
+#   rm .git/hooks/post-commit
+#
+# Silently does nothing when no webhook is configured, so it never blocks a commit
+# and never breaks a clone that has not set this up.
+
+# Don't announce commits made on a rebase/merge/amend replay - only real new work.
+if [ -d "$(git rev-parse --git-path rebase-merge 2>/dev/null)" ] ||
+   [ -d "$(git rev-parse --git-path rebase-apply 2>/dev/null)" ]; then
+    exit 0
+fi
+
+repo_root=$(git rev-parse --show-toplevel)
+script="$repo_root/tools/DiscordNotify.ps1"
+
+[ -f "$script" ] || exit 0
+
+# No webhook configured? Stay quiet.
+if [ -z "$NIGHT_CITY_WEBHOOK" ] && [ ! -f "$repo_root/tools/.discord-webhook" ]; then
+    exit 0
+fi
+
+branch=$(git rev-parse --abbrev-ref HEAD)
+short=$(git rev-parse --short HEAD)
+subject=$(git log -1 --pretty=%s)
+author=$(git log -1 --pretty=%an)
+files=$(git diff-tree --no-commit-id --name-only -r HEAD | wc -l | tr -d ' ')
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$script" \
+    -Title "$subject" \
+    -Message "New commit on \`$branch\`" \
+    -Level info \
+    -Fields "Commit=$short;Author=$author;Files changed=$files" \
+    -Footer "CyberpunkMP" \
+    >/dev/null 2>&1
+
+exit 0
