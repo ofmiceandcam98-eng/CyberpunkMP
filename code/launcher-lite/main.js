@@ -340,6 +340,129 @@ function findModDir () {
   return null
 }
 
+/**
+ * EVERY copy of the mod installed under the game, not just the first one found.
+ *
+ * findModDir stops at the first match, which is fine for updating but hides the failure
+ * that actually happens to developers: RED4ext loads every plugin subdirectory it finds,
+ * so a second copy is not ignored - it is loaded alongside, and one of the two sets of
+ * scripts wins. The launcher updates the copy it found and reports "up to date" while the
+ * game runs the other one.
+ *
+ * That is exactly what zeldfep hit - a launcher saying v0.3.51 next to a main menu from
+ * before v0.3.45 - and nothing in the launcher could see it, because everything it checked
+ * was about the copy it already knew.
+ *
+ * The usual cause is a dev junction at red4ext\plugins\zzzCyberpunkMP pointing at a build
+ * output, sitting beside an install the launcher made itself.
+ */
+function findAllModDirs () {
+  const found = []
+
+  const chosen = loadSettings().modDir
+  if (chosen && existsSync(path.join(chosen, 'CyberpunkMP.dll'))) found.push(chosen)
+
+  const gameDir = findGameDir()
+  if (gameDir) {
+    const pluginRoot = path.join(gameDir, 'red4ext', 'plugins')
+
+    if (existsSync(pluginRoot)) {
+      for (const entry of readdirSync(pluginRoot)) {
+        const dir = path.join(pluginRoot, entry)
+        try {
+          if (existsSync(path.join(dir, 'CyberpunkMP.dll')) && !found.includes(dir)) {
+            found.push(dir)
+          }
+        } catch { /* unreadable entry - keep looking */ }
+      }
+    }
+  }
+
+  return found
+}
+
+/**
+ * Moves every copy of the mod except the one we mean to run out of the plugins folder.
+ *
+ * Reporting duplicates was not enough. Nobody should have to work out which of two folders
+ * is the stale one and delete it by hand to make a launcher's own update take effect - that
+ * is the launcher's job, and it has every fact needed to do it.
+ *
+ * MOVED, not renamed and not deleted:
+ *   - Renaming does not work. RED4ext scans every subdirectory of plugins for a DLL and
+ *     does not care what the folder is called, so a renamed copy is still loaded. Getting
+ *     this wrong looks like the fix silently failing.
+ *   - Deleting is not ours to do. A second copy is usually a developer's junction pointing
+ *     at their own build; removing it would throw away their working setup, and for a
+ *     junction the target might not even be theirs to lose. Moving is reversible by drag
+ *     and drop.
+ *
+ * Which copy survives, in order: the folder the player explicitly chose in Settings - a
+ * developer pointing the launcher at their own build has said which one they want, and
+ * that answer outranks ours - then the one carrying the current release's marker, then
+ * whatever came first.
+ */
+async function resolveDuplicateInstalls (currentVersion) {
+  const installs = findAllModDirs()
+  if (installs.length < 2) return { moved: [], kept: installs[0] || null }
+
+  const chosen = loadSettings().modDir
+
+  const keep =
+    installs.find((dir) => chosen && path.resolve(dir) === path.resolve(chosen)) ||
+    installs.find((dir) => currentVersion && installedVersionAt(dir) === currentVersion) ||
+    installs[0]
+
+  const gameDir = findGameDir()
+  if (!gameDir) return { moved: [], kept: keep }
+
+  const parked = path.join(gameDir, 'red4ext', 'disabled-by-launcher')
+  await fsp.mkdir(parked, { recursive: true })
+
+  const moved = []
+
+  for (const dir of installs) {
+    if (dir === keep) continue
+
+    // Only touch copies inside the plugins folder. One somewhere else is not being loaded
+    // by RED4ext and is therefore not the problem - moving it would be meddling.
+    const pluginRoot = path.join(gameDir, 'red4ext', 'plugins')
+    if (path.resolve(path.dirname(dir)) !== path.resolve(pluginRoot)) continue
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+    const destination = path.join(parked, `${path.basename(dir)}-${stamp}`)
+
+    try {
+      await fsp.rename(dir, destination)
+      moved.push({ from: dir, to: destination, version: installedVersionAt(destination) })
+      console.log(`[mods] moved a duplicate install out of plugins: ${dir} -> ${destination}`)
+    } catch (err) {
+      // Across volumes, or held open by a running game. Reported rather than thrown - a
+      // launch with a duplicate still present is worse informed, not impossible.
+      console.warn(`[mods] could not move ${dir}:`, err.message)
+    }
+  }
+
+  return { moved, kept: keep, parked }
+}
+
+/**
+ * Which release a copy of the mod came from, read from the marker written at install.
+ *
+ * Returns null for a copy installed before markers existed, or built by hand - which is
+ * itself informative, since the launcher's own installs always have one.
+ */
+function installedVersionAt (modDir) {
+  const marker = path.join(modDir, '.nco-version')
+  if (!existsSync(marker)) return null
+
+  try {
+    return readFileSync(marker, 'utf8').trim() || null
+  } catch {
+    return null
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Tailscale
 //
@@ -557,6 +680,28 @@ async function verifyInstall () {
     problems.push('No script files found - the install looks incomplete')
   }
 
+  // More than one copy of the mod is the failure that looks like nothing at all.
+  //
+  // RED4ext loads every plugin subdirectory, so a second copy is not dormant - it is
+  // running, and its scripts can be the ones the game actually compiles. The launcher
+  // updates the copy it finds first and truthfully reports that one as current, which is
+  // how somebody ends up staring at an old main menu under a launcher saying it is up to
+  // date. Reported with paths and versions, because the answer is always "delete the one
+  // you did not mean to keep" and that requires knowing which is which.
+  const allInstalls = findAllModDirs()
+
+  if (allInstalls.length > 1) {
+    const described = allInstalls
+      .map((dir) => `${dir} (${installedVersionAt(dir) || 'version not recorded - built by hand?'})`)
+      .join('  |  ')
+
+    problems.push(
+      `The mod is installed ${allInstalls.length} times and the game loads all of them: ${described}. ` +
+      'Remove the ones you are not using - a copy the launcher does not update will still run, ' +
+      'and its scripts can override the current ones.'
+    )
+  }
+
   // The mods this one is built on top of.
   //
   // Checked here because their absence does not look like their absence. Without
@@ -727,6 +872,18 @@ async function installEverything (onProgress = () => {}) {
   const info = await checkForUpdates()
   if (info.remoteStamp) {
     saveSettings({ installedStamp: info.remoteStamp, installedVersion: info.version })
+
+  // Stamped into the folder itself, not just into settings.
+  //
+  // Settings describe "the install the launcher knows about"; this describes THIS copy on
+  // disk. When two copies exist that difference is the whole diagnosis - it is what lets
+  // verify say which folder is current and which is the stale one still being loaded.
+  try {
+    writeFileSync(path.join(modDir, '.nco-version'), String(info.version || 'unknown'))
+  } catch (err) {
+    console.warn('[install] could not record the version marker:', err.message)
+  }
+
   }
 
   onProgress('Done')
@@ -848,6 +1005,18 @@ async function applyUpdate () {
   zip.extractAllTo(modDir, true)
 
   saveSettings({ installedStamp: info.remoteStamp, installedVersion: info.version })
+
+  // Stamped into the folder itself, not just into settings.
+  //
+  // Settings describe "the install the launcher knows about"; this describes THIS copy on
+  // disk. When two copies exist that difference is the whole diagnosis - it is what lets
+  // verify say which folder is current and which is the stale one still being loaded.
+  try {
+    writeFileSync(path.join(modDir, '.nco-version'), String(info.version || 'unknown'))
+  } catch (err) {
+    console.warn('[install] could not record the version marker:', err.message)
+  }
+
 
   return { version: info.version }
 }
@@ -1372,6 +1541,17 @@ async function hydrateUserFromToken () {
       if (currentUser && level && level !== 'player') {
         currentUser.isAdmin = isAdmin()
         console.log(`[roles] ${currentUser.handle} resolved to ${level}`)
+
+        // Tell the page, or the controls never actually appear. The profile the
+        // renderer got at sign-in was built before this answer arrived, with isAdmin
+        // still false for anyone whose access comes from a Discord role rather than
+        // the hardcoded list. The comment above promised the controls "a moment
+        // later" and nothing delivered them: the only admin so far was on the
+        // hardcoded list, resolved synchronously, so the gap was invisible until the
+        // first role-based dev signed in and stayed a player.
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('user-updated', publicProfile())
+        }
       }
     })
     .catch(() => {})
@@ -1618,12 +1798,81 @@ async function stampTemplateNewest () {
   }
 }
 
+// Is a game running, or on its way up?
+//
+// Two copies of Cyberpunk cannot share one install: they fight over the same save folder
+// and the same mod logs, and both connect to the server as the same account, which the
+// server sees as one player teleporting between two positions. The launch button is
+// disabled in the UI while this is true, and refused here as well - the UI is not a
+// security boundary, and the check that matters is the one nothing can route around.
+let gameState = { launching: false, running: false }
+let gameWatcher = null
+
+function setGameState (next) {
+  gameState = { ...gameState, ...next }
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('game-state', gameState)
+  }
+}
+
+/**
+ * Watches for the game to close, then unlocks the button.
+ *
+ * Polls the process list rather than trusting the spawned child to represent the game.
+ * It often does not: Cyberpunk is started through REDprelauncher, which exits almost
+ * immediately after handing off, so the child exiting means nothing about whether anybody
+ * is playing. Asking the OS what is running is the only answer that stays true.
+ */
+function watchForGameExit () {
+  if (gameWatcher) clearInterval(gameWatcher)
+
+  let sawItStart = false
+
+  gameWatcher = setInterval(async () => {
+    const running = await isProcessRunning('Cyberpunk2077.exe')
+
+    if (running) {
+      sawItStart = true
+      if (!gameState.running || gameState.launching) {
+        setGameState({ launching: false, running: true })
+      }
+      return
+    }
+
+    // Not running. Before it has ever appeared this is just the loading screen taking its
+    // time, so the button stays locked - unlocking there would let someone start a second
+    // copy during the slowest, most tempting part of the wait.
+    if (!sawItStart) return
+
+    clearInterval(gameWatcher)
+    gameWatcher = null
+    setGameState({ launching: false, running: false })
+    console.log('[launch] the game has closed - unlocked')
+  }, 3000)
+}
+
 async function launchGame () {
   if (!currentUser) {
     // Belt and braces. The button is disabled in the UI, but the UI is not a
     // security boundary - a renderer could send this message anyway.
     throw new Error('Not signed in')
   }
+
+  if (gameState.launching) {
+    throw new Error('Already starting the game - give it a moment.')
+  }
+
+  // Asked of the OS, not just of our own flag. The flag only knows about launches this
+  // launcher made: a game started from Steam, or one still running after the launcher was
+  // restarted, is invisible to it and is exactly the case worth catching.
+  if (gameState.running || await isProcessRunning('Cyberpunk2077.exe')) {
+    setGameState({ launching: false, running: true })
+    watchForGameExit()
+    throw new Error('Cyberpunk 2077 is already running. Close it before launching again.')
+  }
+
+  setGameState({ launching: true })
 
   if (!currentUser.isMember) {
     throw new Error('You must join the Night City Online Discord to play.')
@@ -1738,6 +1987,32 @@ async function launchGame () {
     throw new Error('Could not find Cyberpunk 2077. Use "Locate game" to point at it.')
   }
 
+  // Last thing before starting: make sure only one copy of the mod will load.
+  //
+  // Here rather than at install time because a duplicate does not have to arrive through
+  // the launcher - a developer's junction, a manual unzip, a copy restored by a backup
+  // tool. The only moment it is certainly true is the moment before the game reads them.
+  //
+  // Non-fatal by design. A launch with a duplicate still present is a launch that might
+  // run old scripts; a launch refused over it is definitely no game at all.
+  let duplicates = { moved: [] }
+
+  try {
+    duplicates = await resolveDuplicateInstalls(loadSettings().installedVersion)
+
+    if (duplicates.moved.length && mainWindow && !mainWindow.isDestroyed()) {
+      const names = duplicates.moved.map((m) => path.basename(m.from)).join(', ')
+      mainWindow.webContents.send('mods-cleaned', {
+        moved: duplicates.moved,
+        parked: duplicates.parked,
+        message: `Found another copy of the mod (${names}) and moved it aside - the game ` +
+                 'loads every copy it finds, so the old one would have overridden this update.'
+      })
+    }
+  } catch (err) {
+    console.warn('[mods] duplicate check failed:', err.message)
+  }
+
   const child = spawn(exe, args, {
     detached: true,
     stdio: 'ignore'
@@ -1765,7 +2040,10 @@ async function launchGame () {
 
   child.unref()
 
-  return { launched: true, executable: exe }
+  // The button stays locked from here until the game is gone from the process list.
+  watchForGameExit()
+
+  return { launched: true, executable: exe, cleaned: duplicates.moved.length }
 }
 
 // ---------------------------------------------------------------------------
@@ -3189,6 +3467,18 @@ ipcMain.handle('game:launch', async () => {
   try {
     return { ok: true, ...(await launchGame()) }
   } catch (err) {
+    // Unlocked on every failure, without needing to know which check refused.
+    //
+    // launchGame sets `launching` early - the checks before the spawn include network
+    // calls and can take seconds, and the button has to be dead for all of it. Every one
+    // of those checks can throw, and any path that threw without clearing the flag would
+    // leave the button disabled until the launcher was restarted. One reset here covers
+    // all of them, including ones added later.
+    //
+    // `running` is deliberately not touched: "already running" is one of the errors, and
+    // that state is true and still needs to be.
+    if (!gameState.running) setGameState({ launching: false })
+
     return { ok: false, error: err.message }
   }
 })

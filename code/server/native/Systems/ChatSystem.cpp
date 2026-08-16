@@ -369,27 +369,66 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
 
     // Find a connected player by name. Case-insensitive, because nobody types display
     // names exactly, and a moderator fumbling capitalisation during an incident is bad.
-    const auto findPlayer = [&](const std::string& acName) -> flecs::entity
+    // Four ways to name the same person, because staff know them by different things.
+    //
+    // Matching only the Discord username meant an admin watching somebody roleplay as
+    // "Silas Voss" had to go and look up that this was noremacxxi before they could do
+    // anything about them - and a character id, the one identifier that is stable and
+    // safe to paste anywhere, could not be used at all.
+    //
+    // Order matters. Character id first because it is exact and unambiguous by
+    // construction; then Discord id, equally exact; then the two human names. A character
+    // name is checked before an account name so that in-world identity wins - if somebody
+    // names their character after another player's account, the character they are
+    // standing in front of is the one an admin means.
+    const auto equalsInsensitive = [](const std::string& acLeft, const std::string& acRight)
     {
-        flecs::entity found{};
+        return acLeft.size() == acRight.size() &&
+               std::equal(acLeft.begin(), acLeft.end(), acRight.begin(),
+                          [](char a, char b) { return std::tolower(a) == std::tolower(b); });
+    };
+
+    const auto findPlayer = [&](const std::string& acQuery) -> flecs::entity
+    {
+        flecs::entity byCharacterId{};
+        flecs::entity byDiscordId{};
+        flecs::entity byCharacterName{};
+        flecs::entity byUsername{};
 
         m_pWorld->each(
             [&](flecs::entity aEntity, const PlayerComponent& aOther)
             {
-                if (found)
-                    return;
-
-                if (aOther.Username.size() != acName.size())
-                    return;
-
-                if (std::equal(aOther.Username.begin(), aOther.Username.end(), acName.begin(),
-                               [](char a, char b) { return std::tolower(a) == std::tolower(b); }))
+                if (equalsInsensitive(aOther.Username, acQuery))
                 {
-                    found = aEntity;
+                    if (!byUsername) byUsername = aEntity;
+                }
+
+                if (aOther.DiscordId == acQuery)
+                {
+                    if (!byDiscordId) byDiscordId = aEntity;
+                }
+
+                const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(aOther.DiscordId);
+                if (!pCharacter)
+                    return;
+
+                if (!pCharacter->CharacterId.empty() &&
+                    equalsInsensitive(pCharacter->CharacterId, acQuery))
+                {
+                    if (!byCharacterId) byCharacterId = aEntity;
+                }
+
+                if (!pCharacter->Name.empty() && equalsInsensitive(pCharacter->Name, acQuery))
+                {
+                    if (!byCharacterName) byCharacterName = aEntity;
                 }
             });
 
-        return found;
+        if (byCharacterId)   return byCharacterId;
+        if (byDiscordId)     return byDiscordId;
+        if (byCharacterName) return byCharacterName;
+
+        return byUsername;
     };
 
     // ---------------------------------------------------------------- /kick ---
@@ -550,6 +589,8 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         {
             Tell(acSender, "Usage: /tp <player>   (brings them to you)");
             Tell(acSender, "       /tp to <player>   (sends you to them)");
+            Tell(acSender, "  <player> can be a character name, a Discord name, a Discord id,");
+            Tell(acSender, "  or a character id from /whois.");
             return true;
         }
 
@@ -830,6 +871,58 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         spdlog::info("{} named their character '{}'", acSender.Username, wanted);
 
         Tell(acSender, fmt::format("You are now known as '{}'.", wanted));
+        return true;
+    }
+
+    // ------------------------------------------------------------- /whois ----
+    //
+    // Who is this, by every name they have?
+    //
+    // Staff see three different identities for one person - the character in front of them,
+    // the Discord account that owns it, and the id that outlives both - and until now there
+    // was no way to get from any one to the others. That made the character id useless in
+    // practice: nothing could tell you what it was.
+    if (command == "/whois")
+    {
+        if (!acSender.HasAtLeast(EPermissionLevel::kModerator))
+            return deny(EPermissionLevel::kModerator);
+
+        const auto nameStart = acLine.find(' ');
+        std::string query = (nameStart == std::string::npos) ? std::string{} : acLine.substr(nameStart + 1);
+
+        while (!query.empty() && query.front() == ' ')
+            query.erase(query.begin());
+
+        if (query.empty())
+        {
+            Tell(acSender, "Usage: /whois <player>   (character name, Discord name, or id)");
+            return true;
+        }
+
+        const auto who = findPlayer(query);
+        if (!who)
+        {
+            Tell(acSender, fmt::format("Nobody matching '{}' is online.", query));
+            return true;
+        }
+
+        const auto* pWho = who.get<PlayerComponent>();
+        const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(pWho->DiscordId);
+
+        Tell(acSender, fmt::format("Character : {}",
+                                   (pCharacter && !pCharacter->Name.empty()) ? pCharacter->Name
+                                                                             : "not named yet"));
+        Tell(acSender, fmt::format("Account   : {}", pWho->Username));
+
+        if (pCharacter && !pCharacter->CharacterId.empty())
+            Tell(acSender, fmt::format("Character id : {}", pCharacter->CharacterId));
+        else
+            Tell(acSender, "Character id : none yet - it is assigned when a character is saved.");
+
+        // The Discord id is deliberately NOT shown. It identifies the human being rather
+        // than the character, it is the key everything on the server is filed under, and
+        // nothing an admin does in chat needs it - /tp and the rest already accept the
+        // character id, which is safe to paste anywhere.
         return true;
     }
 

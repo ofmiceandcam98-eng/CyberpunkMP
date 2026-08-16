@@ -248,18 +248,32 @@ public native class AppearanceSystem extends IScriptable {
         let equipment = this.GetEntityItems(entity.GetEntityID());
         i = 0;
         while i < ArraySize(equipment) {
-            LogChannel(n"DEBUG", "Setting: " + TDBID.ToStringDEBUG(equipment[i]));
             let item = ItemID.FromTDBID(equipment[i]);
             let placementSlot = EquipmentSystem.GetPlacementSlot(item);
 
-            // if EquipmentSystem.IsClothing(item) {
-                if !transactionSystem.HasItem(entity, item) {
-                    transactionSystem.GiveItem(entity, item, 1);
-                    if !transactionSystem.HasItemInSlot(entity, placementSlot, item) {
-                        transactionSystem.AddItemToSlot(entity, placementSlot, item);
-                    }
-                }
-            // }
+            // HAVING an item and WEARING it are different questions, and they were being
+            // asked as one.
+            //
+            // AddItemToSlot used to sit inside the `!HasItem` branch, so an item the
+            // puppet already carried was never equipped - the code concluded "already got
+            // it" and moved on, leaving the item in the inventory and the body bare. The
+            // muppet records inherit from Character.Panam and arrive with her loadout
+            // already in place, so overlaps are not an edge case here, they are the normal
+            // situation. That is why 7 items would arrive with correct names, apply
+            // without error, and produce a half-dressed player.
+            //
+            // Giving and equipping are now independent: give it if it is missing, and slot
+            // it if it is not already slotted, whichever of those turns out to be true.
+            if !transactionSystem.HasItem(entity, item) {
+                transactionSystem.GiveItem(entity, item, 1);
+            }
+
+            if !transactionSystem.HasItemInSlot(entity, placementSlot, item) {
+                transactionSystem.AddItemToSlot(entity, placementSlot, item);
+                LogChannel(n"DEBUG", s"[AppearanceSystem] equipped item \(i + 1)/\(ArraySize(equipment))");
+            } else {
+                LogChannel(n"DEBUG", s"[AppearanceSystem] item \(i + 1) already in its slot");
+            }
 
             // if EquipmentSystem.IsClothing(item) {
             //     transactionSystem.GivePreviewItemByItemID(entity, item);
