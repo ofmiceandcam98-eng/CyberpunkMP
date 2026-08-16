@@ -1,4 +1,4 @@
-﻿#include "ChatSystem.h"
+#include "ChatSystem.h"
 
 #include "GameServer.h"
 #include "Components/PlayerComponent.h"
@@ -1139,7 +1139,7 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
 
         // Permission check: Tactical/Bounty Roles vs Civilian
         auto isTacticalRole = [](const PlayerComponent& sender, const CharacterRecord* pChar) -> bool {
-            if (sender.HasAtLeast(EPermissionLevel::kOfficer))
+            if (sender.HasAtLeast(EPermissionLevel::kModerator))
                 return true;
             if (!pChar)
                 return false;
@@ -1212,8 +1212,8 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         std::transform(aff.begin(), aff.end(), aff.begin(), ::tolower);
         const bool isLawman = (aff.find("lawman") != std::string::npos || aff.find("ncpd") != std::string::npos || aff.find("police") != std::string::npos);
 
-        if (!acSender.HasAtLeast(EPermissionLevel::kOfficer) && !isLawman)
-            return deny(EPermissionLevel::kOfficer);
+        if (!acSender.HasAtLeast(EPermissionLevel::kModerator) && !isLawman)
+            return deny(EPermissionLevel::kModerator);
 
         if (target.empty() || rest.empty())
         {
@@ -1271,8 +1271,8 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         std::transform(aff.begin(), aff.end(), aff.begin(), ::tolower);
         const bool isLawman = (aff.find("lawman") != std::string::npos || aff.find("ncpd") != std::string::npos || aff.find("police") != std::string::npos);
 
-        if (!acSender.HasAtLeast(EPermissionLevel::kOfficer) && !isLawman)
-            return deny(EPermissionLevel::kOfficer);
+        if (!acSender.HasAtLeast(EPermissionLevel::kModerator) && !isLawman)
+            return deny(EPermissionLevel::kModerator);
 
         if (target.empty())
         {
@@ -1316,8 +1316,8 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         std::transform(aff.begin(), aff.end(), aff.begin(), ::tolower);
         const bool isLawman = (aff.find("lawman") != std::string::npos || aff.find("ncpd") != std::string::npos || aff.find("police") != std::string::npos);
 
-        if (!acSender.HasAtLeast(EPermissionLevel::kOfficer) && !isLawman)
-            return deny(EPermissionLevel::kOfficer);
+        if (!acSender.HasAtLeast(EPermissionLevel::kModerator) && !isLawman)
+            return deny(EPermissionLevel::kModerator);
 
         if (target.empty())
         {
