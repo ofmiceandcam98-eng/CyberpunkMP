@@ -4,6 +4,20 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed - v0.3.58
+
+- **Character Identity System**: Establishes the 5-tier identity hierarchy (Discord Account -> Player ID -> Character ID -> Character Profile -> Character Entity) with a 15-attribute profile schema (Name, Appearance, Level, Attributes, Perks, Vitals, Eddies, Inventory, Cyberware, Occupation, Lifepath, Affiliation, Bio, Wanted Status, Position).
+- **Roleplay Commands**:
+  - /profile (/charprofile) - Displays formatted 15-attribute character profile card.
+  - /setbio - One-time backstory bio lock for regular players. Admins can update/reset.
+  - /setoccupation (/setocc) - Sets character job/occupation.
+  - /setaffiliation (/setaffil) - Enforces a 1-week cooldown between affiliation changes.
+- **Kiroshi Optical Scanner RP System**: Native in-game scanner HUD card integration + /scan (/kiroshi) fallback command.
+- **Role-Aware Scanner Views**:
+  - *Civilian View*: Name, Lifepath, Occupation, Affiliation, Bio.
+  - *Tactical & Bounty Feed* (Mercenary, Solo, Netrunner, Tech, Lawman/NCPD, Fixer, Exec, Staff): Active Warrant Status, Warrant Details, Criminal Convictions Count, Bounty (€$).
+- **Warrant & Conviction Management**: /setwarrant, /clearwarrant, and /addrecord commands for Lawmen/NCPD/Staff.
+
 ## What changed — v0.3.57
 
 - **Every character now has a permanent ID of its own.** It's generated once, never reused, and stays the same through renames, ripperdoc visits and reconnects — while still filed under the Discord account that owns it. It's the identifier that will carry inventory, cyberware and RP profiles later.
