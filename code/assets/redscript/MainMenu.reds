@@ -104,6 +104,17 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
         let network = GameInstance.GetNetworkWorldSystem();
         if IsDefined(network) {
             network.RequestJoin();
+
+            // Says out loud that what arrives next REPLACES the stored character.
+            //
+            // Without this the server has no way to tell the difference. It captures an
+            // appearance only for a player who has none, so anybody with an existing
+            // character went through the whole creator and was then spawned as the
+            // character they had just replaced - the creation was silently discarded.
+            //
+            // The client is the only side that knows which menu entry was pressed, so the
+            // client is what says so.
+            network.MarkNewCharacter();
         } else {
             FTLogError(s"[CyberpunkMP] No NetworkWorldSystem in the menu - cannot arm the join");
         }

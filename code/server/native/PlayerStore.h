@@ -82,6 +82,45 @@ struct PlayerStore
             const auto data = nlohmann::json::parse(file);
             m_records = data.get<std::vector<PlayerRecord>>();
             spdlog::info("Loaded {} saved player position(s)", m_records.size());
+
+            // Every character that predates ids gets one now, on load.
+            //
+            // The alternative was assigning them on the next save, which sounds equivalent
+            // and is not: a character is only saved when its appearance changes, so
+            // somebody who is happy with how they look would have had no id for weeks.
+            // /whois would have answered "none yet" and /tp by id would have failed, for
+            // exactly the established players an admin is most likely to be looking up.
+            //
+            // Retired characters are included. They are the ones most in need of a stable
+            // handle, since their owner is no longer playing them and their name may since
+            // have been taken by the replacement.
+            int assigned = 0;
+
+            for (auto& record : m_records)
+            {
+                for (auto* list : {&record.Characters, &record.RetiredCharacters})
+                {
+                    for (auto& character : *list)
+                    {
+                        if (character.CharacterId.empty())
+                        {
+                            character.CharacterId = GenerateCharacterId();
+                            ++assigned;
+                        }
+                    }
+                }
+            }
+
+            if (assigned > 0)
+            {
+                // Written straight back out. Ids generated but never persisted would be
+                // different on every restart, which is worse than not having them - an id
+                // an admin wrote down would stop working overnight.
+                m_dirty = true;
+                Flush();
+
+                spdlog::info("Gave {} existing character(s) a permanent id", assigned);
+            }
         }
         catch (const std::exception& e)
         {
@@ -188,10 +227,32 @@ struct PlayerStore
      * the next timed flush is not a trade worth making for one file write.
      */
     void SaveCharacter(const std::string& acDiscordId, const std::string& acUsername,
-                       const CharacterRecord& acCharacter)
+                       CharacterRecord acCharacter)
     {
         if (acDiscordId.empty())
             return;
+
+        // Given an id the first time it is stored, and never again.
+        //
+        // Assigned here rather than at creation because this is the single point every
+        // character passes through - the creator, a ripperdoc edit, a rename and an admin
+        // change all end up on this line. Anything that arrives without an id is either
+        // brand new or predates ids existing, and both want the same treatment.
+        if (acCharacter.CharacterId.empty())
+        {
+            if (const auto* pExisting = FindCharacter(acDiscordId, acCharacter.Slot);
+                pExisting && !pExisting->CharacterId.empty())
+            {
+                // Editing a character that already has one. Keeping it is the whole point:
+                // an id that changed when you visited a ripperdoc would be no use to any
+                // command that references it.
+                acCharacter.CharacterId = pExisting->CharacterId;
+            }
+            else
+            {
+                acCharacter.CharacterId = GenerateCharacterId();
+            }
+        }
 
         auto* pRecord = FindMutable(acDiscordId);
 

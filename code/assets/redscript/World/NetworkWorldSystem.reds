@@ -7,6 +7,11 @@ public native class NetworkWorldSystem extends IGameSystem {
     public native func Connect() -> Void;
     public native func Disconnect() -> Void;
     public native func RequestJoin() -> Void;
+
+    // Declared here as well as in C++, because native means "the body lives in C++", not
+    // "redscript will work it out". Without this line the call fails with
+    // UNRESOLVED_METHOD and takes every other script in the mod down with it.
+    public native func MarkNewCharacter() -> Void;
     public native func ConsumeJoinRequest() -> Bool;
     public native func GetEntityIdByServerId(serverId: Uint64) -> EntityID;
     public native func GetAppearanceSystem() -> ref<AppearanceSystem>;

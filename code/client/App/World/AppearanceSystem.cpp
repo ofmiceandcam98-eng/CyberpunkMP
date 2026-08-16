@@ -458,6 +458,27 @@ bool AppearanceSystem::ApplyAppearance(Red::Handle<Red::game::Object> object)
         stateHandle.instance->GetArmsCustomization("holstered_default", true, keys);
         stateHandle.instance->GetArmsCustomization("nails", true, keys);
 
+        // How many appearance keys the remote player's state actually produced.
+        //
+        // This one number decides where the face bug lives, and nothing else in the log
+        // can tell us. Established so far: the correct remote appearance arrives (6586
+        // bytes where the local player's is 6518), deserialises, and their clothes apply
+        // from the separate equipment path - yet each player sees the OTHER wearing their
+        // own whole character. The puppet is built from player_ma_tpp_cutscene.ent, the
+        // PLAYER template, which customises itself from the local player - so "the change
+        // did not take" and "they look exactly like me" are the same outcome.
+        //
+        //   0 keys  -> the state is not resolving its options. The bytes are right but
+        //              GetHeadCustomization has nothing to map them through, so an empty
+        //              change is scheduled and the template's own face survives.
+        //   n keys  -> the keys exist and something downstream overrides them, which puts
+        //              the fault in the entity template rather than in this state.
+        //
+        // Guessing between those two means editing native appearance code blind, and a
+        // wrong guess here crashes the game on spawn rather than failing visibly.
+        spdlog::info("[Appearance] remote state produced {} customization key(s), male={}",
+                     keys.size, stateHandle.instance->isBodyGenderMale);
+
         auto changer = Red::GetRuntimeSystem<Red::world::RuntimeSystemEntityAppearanceChanger>();
         Red::WeakHandle<Red::game::Object> weakHandle = object;
         Span<Red::world::EntityAppearanceChangeParameter::Key> old_keys = {

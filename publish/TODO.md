@@ -1,48 +1,43 @@
-**Legend** — 🧍 can be done alone · 👥 needs two people online · ✅ done
+**Legend** — 🧍 can be done alone · 👥 needs two people online · 🔧 being worked on
 
-## 👥 Needs a second player
+## 👥 The one thing that helps most
 
-*The most useful thing anyone can offer right now. Ten minutes online unblocks all of these.*
+**Two people in the world at once on v0.3.55+, then post your client log.**
 
-- **Confirm FLATLINED is gone for everyone.** v0.1.31 caught it for one player and missed it for another. The reason: a health floor is *spent* once it is reached, so only the first death of a session was protected. v0.2.0 re-arms it after every revive and blocks the death menu outright. **Please die on purpose, twice, and say whether the vanilla screen appeared either time.**
-- **Confirm the new "YOU WERE FLATLINED" message.** Brief, centre screen, gone in four seconds. No menu, no Load Last Checkpoint.
-- **Confirm other players move smoothly.** Update rate went from 10 to 30 a second and the interpolation was rewritten to run between two real samples instead of chasing the last drawn pose. Walking should look like walking, not teleporting.
-- **Confirm cars stop duplicating.** Getting in and out of the same car used to spawn a fresh copy in everyone else's world every single time, and nothing ever removed them. One session left seven.
-- **Confirm chat ranges filter.** Local carries 30m, `/yell` 60m, `/whisper` 5m. Stand ~40m apart: local should be silent, `/yell` should carry.
+Right now everyone sees *other players wearing a copy of their own character*. The data is fine — the correct appearance arrives, unpacks, and their clothes apply properly. Only the face and body fail. The last two builds log the single number that says why, and it takes one minute of standing near each other to capture.
+
+Log lives in `red4ext\plugins\zzzCyberpunkMP\logs\` — post the **whole file**, not a screenshot. Ignore the size Explorer shows; Windows reports it stale while the game has the file open, so a full log can look empty.
+
+## 👥 Also worth confirming
+
+- **Do other players have clothes now?** Equipping was being skipped for anything the body already carried. Fixed in v0.3.51, unconfirmed.
+- **Does the name box appear?** Finish the creator and a box captioned CHARACTER NAME should open. Escape skips it; `/name` works any time.
+- **Does NEW CHARACTER actually replace your character?** It genuinely could not until v0.3.56 — the server only saved a character for someone who had none, so remaking yourself was silently thrown away.
+- **Do new characters arrive at the Japan Town spawn?** Fixed server-side; it was deciding "brand new" from the account instead of the character.
 
 ## 🧍 Can be done alone
 
-- **Report crashes with the log.** `red4ext\plugins\zzzCyberpunkMP\logs\` — post the whole file, not a screenshot. This is how the last three bugs were found.
-- **Check `/tp` leaves the car behind.** Summoning a driver now takes them out of the vehicle first.
-- **Check `/return`** puts you back a few metres short of where you were, facing the same way.
-- **Try a fresh install.** It was broken outright from v0.1.4 to v0.1.9 and nobody noticed, because it only fails for people who *don't* already have the mod.
+- **Report crashes with the log.** This is how nearly every bug so far was found.
+- **Try the weapon wheel as a passenger in a moving car.** It crashed a client once and we cannot chase it without a reliable repro. Tell us what you were doing when it happened.
+- **Hit Verify files in the launcher.** It now reports every copy of the mod installed and which release each came from. An old copy still loads and overrides the current one.
+- **Try a fresh install.** It breaks in ways that only affect people who *don't* already have the mod, so nobody notices.
+
+## 🔧 Being worked on
+
+- **Remote players are built on Panam's character record.** Blanking her name stopped the PANAM nameplates, but the game now invents a random one instead — and her gang and criminal record still show when you scan someone. Everything scanner-related waits on this.
+- **First and last name**, with real validation, instead of one free-text box.
+- **Kiroshi scanner reading multiplayer characters** — name, occupation, affiliation, bio, in the game's own scanner rather than a custom menu. Server sends a public profile only.
 
 ## Known issues
 
-- **Clothing does not always match.** Wardrobe outfits were never being read — only the individual clothing slots underneath them, which on most saves is the starting outfit. v0.2.0 reads the outfit slot too. Still unconfirmed whether that covers every case.
-- **Two remote players can look like each other.** Reported, not yet diagnosed. Their appearance data does arrive distinct, so this is in how it gets applied.
-- **Vehicles are only loosely synchronised.** Riding as a passenger is buggy and cars can bounce, because each machine simulates the physics independently. Fixing it properly means one machine owning each vehicle and the others following — a real piece of work, not a patch.
-- **Frame rate while driving.** Some of it was ours — the duplicated cars above, and a lock on the animation thread that every NPC in the city was queueing on. Both fixed in v0.2.0.
+- **Mistyped commands go out as public chat.** Typing `/setname` when you meant `/name` says it to everyone instead of telling you the command doesn't exist.
+- **Vehicles are only loosely synchronised.** Riding as a passenger is buggy and cars can bounce, because each machine simulates physics independently. Fixing it properly means one machine owning each vehicle — real work, not a patch.
+- **Damage between players doesn't register.**
+- **Quests are still on for everyone.** Deliberate — being turned off when the server moves to real hosting.
 
-## In progress
+## Recently fixed
 
-- 👥 **Damage between players.** Shooting each other does not register. The puppet record other players spawn as is a launch flag so it can be tried without a release.
-
-## Next up
-
-- 👥 **Character slots.** Your identity should be a character you made, not whichever singleplayer save you loaded. Server-side position saving landed first and is the foundation.
-- 🧍 **The `/` chat hotkey.** The mod overrides a 2.2-era interface file, which is what registers the key. Needs the game asset rebuilding — not a code fix.
-
-## Not right now
-
-- **Hosting the server somewhere other than Cam's PC.** It would mean the server is up whether or not he is. Shelved deliberately — the cloud setup is fiddly and there are better things to spend the time on while we are still finding crashes. The server runs on Cam's machine in the meantime.
-
-## ✅ Recently done
-
-- ~~**Cyber Engine Tweaks works — and the console is back.**~~ The old instruction to disable it is withdrawn. Press `~` in game
-- ~~The spawn crash~~ — confirmed fixed with real players
-- ~~Join from the main menu~~ — MULTIPLAYER sits beside Continue and Load Game
-- ~~Chat with range, colour and `/help`~~ — yells red, whispers pink-purple, adverts yellow
-- ~~`/tp`, `/return`, `/kill`, `/jail`, `/setspawn`~~ — in-game admin tools
-- ~~Launcher updates itself~~ · ~~Server remembers where you were~~ · ~~Mouse wheel scrolls chat~~
-- ~~Player cap~~ — was 4, exactly the size of the group. Now 16
+- Chat was never broken, only invisible — the box was never being drawn.
+- The launcher was forcing one shared starter save on every launch, so everyone arrived as the same person and it overwrote any character they'd made.
+- Two fixes that "didn't work" had never been deployed — the build shipped code but not data files.
+- You can no longer launch the game twice, and a leftover copy of the mod is moved aside automatically.
