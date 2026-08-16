@@ -44,8 +44,36 @@ message NotifyVehicleLoad {
     uint64 tweak_id = 4;
 }
 
+// DEPRECATED - subsumed by NotifyAuthorityAssigned. Never sent any more; kept so the
+// oneof numbering stays stable. Remove once nothing has referenced it for a release.
 message NotifyVehicleControlAssigned {
     uint64 vehicle_id = 1;
+}
+
+// This client is now the simulator for an entity.
+//
+// Authority on the server is entity parentage - that has always been the case, and the
+// server refuses movement from anyone but the owner. What was missing is telling the
+// CLIENTS when it changes hands: an ex-driver's machine kept simulating a car it no
+// longer owned and fought the interpolation, which passengers felt as bouncing.
+//
+// On receipt: wake the entity's local physics, start streaming MoveEntityRequest for it,
+// and stamp every one with this epoch. The epoch orders grants across handoffs - it only
+// increments when the owner actually changes, so a re-announcement to the same owner
+// does not invalidate movement already in flight.
+message NotifyAuthorityAssigned {
+    uint64 entity_id = 1;
+    uint32 epoch = 2;
+}
+
+// This client is no longer the simulator for an entity.
+//
+// The missing half described above. On receipt: put the entity back under remote
+// control (kinematic, interpolated) and stop streaming movement for it. Everyone else
+// hears nothing - they were interpolating and keep interpolating.
+message NotifyAuthorityRevoked {
+    uint64 entity_id = 1;
+    uint32 epoch = 2;
 }
 
 message NotifyVehicleEnter {
@@ -158,5 +186,7 @@ message Protocol {
         NotifyTeleport notify_teleport = 13;
         OpenCharacterCreator open_character_creator = 14;
         RequestCharacterName request_character_name = 15;
+        NotifyAuthorityAssigned notify_authority_assigned = 16;
+        NotifyAuthorityRevoked notify_authority_revoked = 17;
     }
 }

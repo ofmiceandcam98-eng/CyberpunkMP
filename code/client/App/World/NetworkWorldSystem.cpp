@@ -675,6 +675,11 @@ void NetworkWorldSystem::UpdatePlayerLocation() const
             request.set_speed(speed);
             request.set_tick(GetTick());
 
+            // Which grant of authority this movement belongs to. The server drops
+            // anything stale, which is what keeps an ex-driver's in-flight packets from
+            // fighting the new simulator after a handoff.
+            request.set_epoch(GetVehicleSystem()->GetAuthorityEpoch());
+
             const auto pNetworkService = Core::Container::Get<NetworkService>();
             pNetworkService->Send(request);
 
