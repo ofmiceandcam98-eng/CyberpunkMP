@@ -19,6 +19,10 @@ struct VehicleSystem : RED4ext::IScriptable
     std::optional<uint64_t> GetVehicleRemoteId() const;
     std::optional<Red::EntityID> GetVehicleGameId() const;
 
+    // Stamped on every MoveEntityRequest for the vehicle we simulate. The server drops
+    // movement whose epoch is stale - packets from before we lost (or gained) the car.
+    uint32_t GetAuthorityEpoch() const;
+
 protected:
 
     void OnVehicleEnter(Red::EntityID aVehicle, const Red::TweakDBID& aVehicleTdbid, Red::CName aName, const Red::Vector4& aPostion, const Red::Quaternion& aOrientation);
@@ -28,7 +32,8 @@ protected:
     bool HandleVehicleLoadMessage(const PacketEvent<server::NotifyVehicleLoad>& aMessage);
     bool HandleVehicleEnterMessage(const PacketEvent<server::NotifyVehicleEnter>& aMessage);
     bool HandleVehicleExitMessage(const PacketEvent<server::NotifyVehicleExit>& aMessage);
-    bool HandleVehicleControlMessage(const PacketEvent<server::NotifyVehicleControlAssigned>& aMessage);
+    bool HandleAuthorityAssigned(const PacketEvent<server::NotifyAuthorityAssigned>& aMessage);
+    bool HandleAuthorityRevoked(const PacketEvent<server::NotifyAuthorityRevoked>& aMessage);
 
     void DoMount(flecs::entity aCharacter, Red::EntityID aVehicle, Red::CName aSit);
 
@@ -40,6 +45,7 @@ private:
     Red::CBaseFunction* m_pExitVehicle;
     std::optional<uint64_t> m_vehicleRemoteId;
     std::optional<Red::EntityID> m_vehicleGameId;
+    uint32_t m_authorityEpoch{0};
 };
 
 RTTI_DEFINE_CLASS(VehicleSystem, { 

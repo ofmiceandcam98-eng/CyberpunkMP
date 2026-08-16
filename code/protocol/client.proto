@@ -54,6 +54,14 @@ message MoveEntityRequest {
     float speed = 4;
     common.Vector3 full_rotation = 5;
     uint64 tick = 6;
+
+    // Which grant of authority this movement belongs to (see NotifyAuthorityAssigned).
+    //
+    // This message is unreliable and unordered across an authority handoff, so packets
+    // from the PREVIOUS simulator can arrive after the transfer. The epoch names the
+    // grant; the server drops anything stale, silently - that race is expected, not an
+    // attack. Entities that never change hands (player puppets) stay at zero.
+    uint32 epoch = 7;
 }
 
 message EnterVehicleRequest {

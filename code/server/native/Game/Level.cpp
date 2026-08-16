@@ -8,6 +8,7 @@
 #include "Components/CellComponent.h"
 #include <Components/CharacterComponent.h>
 #include <Components/VehicleComponent.h>
+#include <Components/AuthorityComponent.h>
 
 #include "GameServer.h"
 #include "World.h"
@@ -163,13 +164,62 @@ void Level::RemovePlayer(flecs::entity aEntity) noexcept
     aEntity.remove<LevelSystemTag>();
 }
 
-// Takes a leaving player's cars with them.
+// The occupant who should inherit a departing simulator's car, front passenger first.
+//
+// Excludes everyone belonging to the departing PLAYER (their puppet may still be marked
+// as sitting in the driver seat at disconnect time). The hashes are CNames - FNV1a64 of
+// the seat names; the algorithm is verified because the front-left constant the seat
+// guard has used all along reproduces exactly from FNV1a64("seat_front_left"). A seat
+// not in the list (a bike pillion, a future vehicle) still counts as a fallback - an
+// arbitrary simulator beats none.
+static flecs::entity NextOccupant(flecs::entity aVehicle, flecs::entity aDepartingPlayer) noexcept
+{
+    constexpr uint64_t cSeatPriority[] = {
+        0x63c846db887c0035ULL, // seat_front_right
+        0xb06da35221954b3eULL, // seat_back_left
+        0xc90fa7831f484433ULL, // seat_back_right
+    };
+    constexpr size_t cSeatCount = sizeof(cSeatPriority) / sizeof(cSeatPriority[0]);
+
+    flecs::entity bySeat[cSeatCount]{};
+    flecs::entity fallback{};
+
+    aVehicle.world().each(
+        [&](flecs::entity aOccupant, const AttachmentComponent& aAttachment)
+        {
+            if (aAttachment.Parent != aVehicle || aOccupant.parent() == aDepartingPlayer)
+                return;
+
+            for (size_t i = 0; i < cSeatCount; ++i)
+            {
+                if (aAttachment.SlotId == cSeatPriority[i])
+                {
+                    bySeat[i] = aOccupant;
+                    return;
+                }
+            }
+
+            if (!fallback)
+                fallback = aOccupant;
+        });
+
+    for (const auto& occupant : bySeat)
+        if (occupant)
+            return occupant;
+
+    return fallback;
+}
+
+// Takes a leaving player's cars with them - unless somebody is still inside.
 //
 // Vehicles are created as children of whoever is driving, so flecs destroys them when the
 // player entity goes - silently. Everyone else's client had been told to spawn a copy and
 // is never told to remove it, so every disconnect while driving left a permanent
 // abandoned car in the other players' worlds. Routing it through Remove() sends the
 // unload first.
+//
+// A passenger changes the answer entirely: deleting the car around them is worse than
+// any alternative, so the car is handed to them instead and lives on.
 void Level::RemoveOwnedVehicles(flecs::entity aPlayer) noexcept
 {
     if (!aPlayer)
@@ -186,7 +236,15 @@ void Level::RemoveOwnedVehicles(flecs::entity aPlayer) noexcept
 
     // Collected first. Destroying entities from inside the iteration would invalidate it.
     for (auto vehicle : owned)
+    {
+        if (const auto next = NextOccupant(vehicle, aPlayer))
+        {
+            TransferAuthority(vehicle, next.parent());
+            continue;
+        }
+
         Remove(vehicle);
+    }
 }
 
 void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterRequest>& aMessage) noexcept
@@ -462,6 +520,17 @@ void Level::HandleMoveEntityRequest(PacketEvent<client::MoveEntityRequest>& aMes
         return;
     }
 
+    // Stale-authority guard. Movement is unreliable and unordered across a handoff, so
+    // the PREVIOUS simulator's packets can arrive after a transfer. The epoch names the
+    // grant; a mismatch is dropped silently - that race is expected after every handoff,
+    // not an attack, and a warning per stale packet would be pure noise. Entities that
+    // never change hands (player puppets) carry no AuthorityComponent and skip this.
+    if (const auto* pAuthority = target.get<AuthorityComponent>())
+    {
+        if (aMessage.get_epoch() != pAuthority->Epoch)
+            return;
+    }
+
     MovementComponent component;
 
     auto& pos = aMessage.get_position();
@@ -577,7 +646,10 @@ void Level::HandleEnterVehicleRequest(PacketEvent<client::EnterVehicleRequest>& 
             pos += glm::vec3(5, 0, 0);
         }
 
-        vehicle = GetWorld()->entity().child_of(player).set<MovementComponent>({pos, rot, {}}).set<VehicleComponent>({aMessage.get_vehicle_id()});
+        // AuthorityComponent from birth: the creator is the first simulator (they are the
+        // parent, and their client's movement arrives with epoch 0, which matches). Every
+        // later change of hands goes through TransferAuthority.
+        vehicle = GetWorld()->entity().child_of(player).set<MovementComponent>({pos, rot, {}}).set<VehicleComponent>({aMessage.get_vehicle_id()}).set<AuthorityComponent>({});
 
         spdlog::info("Player {:x} spawned and entered vehicle {:x}", aMessage.get_id(), vehicle.id());
     }
@@ -657,6 +729,16 @@ void Level::HandleExitVehicleRequest(PacketEvent<client::ExitVehicleRequest>& aM
 
     // Start interpolation again
     target.remove<AttachmentComponent>();
+
+    // If the leaver was the simulator, hand the car to somebody still inside - exactly
+    // one simulator at all times is the invariant. The heir cannot drive from the
+    // passenger seat, but their machine keeps the car coherent instead of leaving it
+    // ownerless with people in it, which was the old behaviour.
+    if (vehicle && vehicle.is_alive() && vehicle.parent() == player)
+    {
+        if (const auto next = NextOccupant(vehicle, player))
+            TransferAuthority(vehicle, next.parent());
+    }
 
     ReleaseVehicleIfEmpty(vehicle);
 }

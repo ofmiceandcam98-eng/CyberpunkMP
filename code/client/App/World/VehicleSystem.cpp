@@ -43,6 +43,24 @@ static void MakeRemoteDriven(const Red::Handle<Red::vehicle::WheeledBaseObject>&
     SetKinematic(aVehicle, true);
 }
 
+// The inverse of MakeRemoteDriven: hands a vehicle to the LOCAL simulation. Called when
+// the server assigns us authority over a network-spawned car - MakeRemoteDriven put its
+// physics to sleep at spawn, and without waking it back up you can be assigned a car you
+// cannot actually drive (the control-handoff gap MakeRemoteDriven's introduction
+// documented). Engine state is left alone - it is already running on a car anyone was
+// just driving, and DoMount manages it for fresh mounts.
+static void MakeLocallyDriven(const Red::Handle<Red::vehicle::WheeledBaseObject>& aVehicle)
+{
+    if (!aVehicle)
+        return;
+
+    static Core::RawFunc<4039776020UL, void (*)(Red::vehicle::BaseObject*, bool)> SetIsPlayerControlled;
+    static Core::RawFunc<1585713002UL, void (*)(Red::vehicle::BaseObject*, bool)> SetKinematic;
+
+    SetKinematic(aVehicle, false);
+    SetIsPlayerControlled(aVehicle, true);
+}
+
 void VehicleSystem::OnWorldAttached(RED4ext::world::RuntimeScene* aScene)
 {
     m_ready = true;
@@ -58,6 +76,7 @@ void VehicleSystem::OnDisconnected()
 {
     m_vehicleRemoteId = std::nullopt;
     m_vehicleGameId = std::nullopt;
+    m_authorityEpoch = 0;
 }
 
 void VehicleSystem::OnInitialize(const RED4ext::JobHandle& aJob)
@@ -66,7 +85,8 @@ void VehicleSystem::OnInitialize(const RED4ext::JobHandle& aJob)
     pNetworkService->RegisterHandler<&VehicleSystem::HandleVehicleLoadMessage>(this);
     pNetworkService->RegisterHandler<&VehicleSystem::HandleVehicleEnterMessage>(this);
     pNetworkService->RegisterHandler<&VehicleSystem::HandleVehicleExitMessage>(this);
-    pNetworkService->RegisterHandler<&VehicleSystem::HandleVehicleControlMessage>(this);
+    pNetworkService->RegisterHandler<&VehicleSystem::HandleAuthorityAssigned>(this);
+    pNetworkService->RegisterHandler<&VehicleSystem::HandleAuthorityRevoked>(this);
 
     m_pSpawnVehicle = Red::Detail::GetFunction(GetType(), "SpawnVehicle");
     m_pEnterVehicle = Red::Detail::GetFunction(GetType(), "EnterVehicle");
@@ -81,6 +101,11 @@ std::optional<uint64_t> VehicleSystem::GetVehicleRemoteId() const
 std::optional<Red::EntityID> VehicleSystem::GetVehicleGameId() const
 {
     return m_vehicleGameId;
+}
+
+uint32_t VehicleSystem::GetAuthorityEpoch() const
+{
+    return m_authorityEpoch;
 }
 
 void VehicleSystem::OnVehicleEnter(Red::EntityID aVehicle, const Red::TweakDBID& aVehicleTdbid, Red::CName aName, const Red::Vector4& aPostion, const Red::Quaternion& aOrientation)
@@ -264,9 +289,54 @@ bool VehicleSystem::HandleVehicleExitMessage(const PacketEvent<server::NotifyVeh
     return true;
 }
 
-bool VehicleSystem::HandleVehicleControlMessage(const PacketEvent<server::NotifyVehicleControlAssigned>& aMessage)
+bool VehicleSystem::HandleAuthorityAssigned(const PacketEvent<server::NotifyAuthorityAssigned>& aMessage)
 {
-    m_vehicleRemoteId = aMessage.get_vehicle_id();
+    spdlog::info("[VehicleSystem] authority assigned: entity {:x}, epoch {}", aMessage.get_entity_id(),
+                 aMessage.get_epoch());
+
+    m_vehicleRemoteId = aMessage.get_entity_id();
+    m_authorityEpoch = aMessage.get_epoch();
+
+    const auto worldSystem = Red::GetGameSystem<NetworkWorldSystem>();
+
+    // A network-spawned car resolves through its EntityComponent. Two things hang on
+    // storing its game id here: UpdatePlayerLocation only streams vehicle movement when
+    // m_vehicleGameId is set (an adopted car's driver never sent a single move before
+    // this), and the physics MakeRemoteDriven put to sleep at spawn has to be woken for
+    // the new simulator.
+    const auto gameId = worldSystem->GetEntityIdByServerId(aMessage.get_entity_id());
+    if (gameId.hash != 0)
+    {
+        m_vehicleGameId = gameId;
+        MakeLocallyDriven(Red::Cast<Red::vehicle::WheeledBaseObject>(worldSystem->GetEntity(gameId)));
+    }
+    // else: our own locally-entered car. m_vehicleGameId was already set in
+    // OnVehicleEnter, and its physics never stopped being ours.
+
+    return true;
+}
+
+bool VehicleSystem::HandleAuthorityRevoked(const PacketEvent<server::NotifyAuthorityRevoked>& aMessage)
+{
+    spdlog::info("[VehicleSystem] authority revoked: entity {:x}, epoch {}", aMessage.get_entity_id(),
+                 aMessage.get_epoch());
+
+    if (!m_vehicleRemoteId || *m_vehicleRemoteId != aMessage.get_entity_id())
+        return true; // not ours - nothing to stop
+
+    m_vehicleRemoteId = std::nullopt;
+
+    // Usually we already exited and OnVehicleExit cleared everything. If we still hold
+    // the entity - we are now a passenger in a car somebody else took over - our machine
+    // must stop simulating it and go back to following the wire. This is the revoke half
+    // that never existed: two machines simulating one car is what passengers felt as
+    // bouncing.
+    if (m_vehicleGameId)
+    {
+        const auto worldSystem = Red::GetGameSystem<NetworkWorldSystem>();
+        MakeRemoteDriven(Red::Cast<Red::vehicle::WheeledBaseObject>(worldSystem->GetEntity(*m_vehicleGameId)));
+    }
+
     return true;
 }
 
