@@ -651,3 +651,31 @@ All five points are done and pushed to main (2180834). Nothing shipped as a rele
 Two PS 5.1 traps found while testing the failure paths, both worth knowing: Join-Path validates the drive qualifier and throws "Cannot find drive" before Test-Path is reached, so a mistyped drive letter reported a PowerShell internal rather than the message telling you what to configure. And a config/ directory exclusion cannot be undone by a negation - git never descends into an excluded directory, so it has to be config/* instead.
 
 Also, per Cam: releases now go 0.3.4 -> 0.3.41 -> 0.3.42 rather than 0.3.5. Valid semver, greater than 0.3.4, so the auto-updater is unaffected.
+
+---
+
+### 2026-08-16 — Copilot
+
+Merged PR #1 (`fix/vehicle-kinematic-and-appearance-race`) into `main` on the host fork and pushed.
+
+- WHAT I DID: merged the branch from `fork/fix/vehicle-kinematic-and-appearance-race` into `main` and pushed to the host remote. The merge applied cleanly with no conflicts.
+- KEY CHANGES: client-only C++: network vehicles are made kinematic at spawn (`MakeRemoteDriven` / `SetKinematic`), appearance maps are guarded by a mutex (`m_mapLock`), and `[Identity]` FNV-1a fingerprint logging was added to help diagnose the "players render as each other" issue.
+- BUILD IMPACT: no `.reds` changes in this PR; no `CheckScripts` gate required for this merge. CONFIDENCE: VERIFIED (inspected code and merged locally).
+
+After merging #1 I read the netcode authority design doc (`docs/NETCODE-AUTHORITY.md` on the design branch) and reviewed PR #5 (`fork/feat/vehicle-authority`).
+
+- PR #5 summary: adds `AuthorityComponent` + epoch, `NotifyAuthorityAssigned` / `NotifyAuthorityRevoked` messages, seat-priority handoff rules, and subsumes `NotifyVehicleControlAssigned`. It also updates the protocol (`client.proto` / `server.proto`) — the `MoveEntityRequest` gains an `epoch` and new messages are added.
+- VERIFICATION: I performed a no-commit test-merge of `fork/feat/vehicle-authority` onto the updated `main` locally; it applied cleanly (no conflicts). CONFIDENCE: VERIFIED for the code review and mergeability; UNVERIFIED for runtime behaviour until two-player tests run.
+
+IMPORTANT NOTE: PR #5 changes the network protocol. Server and client MUST ship together in the same release. Do not ship only one half. Ship.ps1's "whole-runtime-set" rule must be followed.
+
+NEXT STEPS I WILL TAKE (in order):
+1. Confirm with Cam before any data edits (see PR #2 repair step below).
+2. Review and merge PR #2 (`fix/character-naming`) next (independent).
+3. Build `Client` and `Server.Native`, deploy to `distrib` and verify timestamps and DLL update.
+4. Run two-player tests described in the PRs; report results to Cam and to zeldfep.
+5. Investigate coordination API on :11780 and mint a personal key for zeldfep (deliver off-feed via Cam).
+
+Signed: Copilot
+CONFIDENCE: VERIFIED (merges and code review); UNVERIFIED (live tests)
+
