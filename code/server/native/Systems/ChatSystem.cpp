@@ -1,4 +1,4 @@
-#include "ChatSystem.h"
+﻿#include "ChatSystem.h"
 
 #include "GameServer.h"
 #include "Components/PlayerComponent.h"
@@ -888,6 +888,213 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         // than the character, it is the key everything on the server is filed under, and
         // nothing an admin does in chat needs it - /tp and the rest already accept the
         // character id, which is safe to paste anywhere.
+        return true;
+    }
+
+    // ---------------------------------------------------------- /profile ----
+    //
+    // Inspect full Character Profile:
+    // Discord Account -> Player ID -> Character ID -> Character Profile -> Entity
+    if (command == "/profile" || command == "/charprofile")
+    {
+        const auto nameStart = acLine.find(' ');
+        std::string query = (nameStart == std::string::npos) ? std::string{} : acLine.substr(nameStart + 1);
+
+        while (!query.empty() && query.front() == ' ')
+            query.erase(query.begin());
+
+        const CharacterRecord* pCharacter = nullptr;
+        std::string accountName;
+        std::string discordId;
+
+        if (query.empty())
+        {
+            discordId = acSender.DiscordId;
+            accountName = acSender.Username;
+            pCharacter = GServer->GetPlayerStore().FindCharacter(discordId);
+        }
+        else
+        {
+            const auto who = findPlayer(query);
+            if (who)
+            {
+                const auto* pWho = who.get<PlayerComponent>();
+                discordId = pWho->DiscordId;
+                accountName = pWho->Username;
+                pCharacter = GServer->GetPlayerStore().FindCharacter(discordId);
+            }
+            else
+            {
+                Tell(acSender, fmt::format("Nobody matching '{}' is online.", query));
+                return true;
+            }
+        }
+
+        if (!pCharacter)
+        {
+            Tell(acSender, "Character profile not found.");
+            return true;
+        }
+
+        Tell(acSender, "==== CHARACTER PROFILE ====");
+        Tell(acSender, fmt::format("Name         : {}", pCharacter->Name.empty() ? accountName : pCharacter->Name));
+        Tell(acSender, fmt::format("Character ID : {}", pCharacter->CharacterId));
+        Tell(acSender, fmt::format("Account      : {} (Discord: {})", accountName, discordId));
+        Tell(acSender, fmt::format("Lifepath     : {}", pCharacter->Lifepath));
+        Tell(acSender, fmt::format("Occupation   : {}", pCharacter->Occupation));
+        Tell(acSender, fmt::format("Affiliation  : {}{}", pCharacter->Affiliation, pCharacter->IsAffiliationLeader ? " (Leader)" : ""));
+        Tell(acSender, fmt::format("Level        : {} (Body:{} Ref:{} Tech:{} Intel:{} Cool:{})",
+                                   pCharacter->Level,
+                                   pCharacter->Attributes.Body,
+                                   pCharacter->Attributes.Reflexes,
+                                   pCharacter->Attributes.TechnicalAbility,
+                                   pCharacter->Attributes.Intelligence,
+                                   pCharacter->Attributes.Cool));
+        Tell(acSender, fmt::format("Health       : {:.0f} / {:.0f}", pCharacter->Health, pCharacter->MaxHealth));
+        Tell(acSender, fmt::format("Wallet       : ${} Eddies", pCharacter->Money));
+        Tell(acSender, fmt::format("Wanted Level : Level {} (Bounty: ${:.0f})",
+                                   pCharacter->WantedStatus.Level, pCharacter->WantedStatus.Bounty));
+        Tell(acSender, fmt::format("Bio          : {}", pCharacter->Bio.empty() ? "(No bio written yet)" : pCharacter->Bio));
+        Tell(acSender, fmt::format("Position     : ({:.1f}, {:.1f}, {:.1f})", pCharacter->PositionX, pCharacter->PositionY, pCharacter->PositionZ));
+        Tell(acSender, "===========================");
+        return true;
+    }
+
+    // ----------------------------------------------------------- /setbio ----
+    //
+    // Set character backstory/bio.
+    // RULE: Non-admin players can set their bio ONCE. Subsequent updates require an Admin.
+    if (command == "/setbio")
+    {
+        const auto textStart = acLine.find(' ');
+        std::string newBio = (textStart == std::string::npos) ? std::string{} : acLine.substr(textStart + 1);
+
+        while (!newBio.empty() && newBio.front() == ' ')
+            newBio.erase(newBio.begin());
+
+        if (newBio.empty())
+        {
+            Tell(acSender, "Usage: /setbio <character backstory text>");
+            return true;
+        }
+
+        auto& store = GServer->GetPlayerStore();
+        const auto* pCharacter = store.FindCharacter(acSender.DiscordId);
+
+        if (!pCharacter)
+        {
+            Tell(acSender, "You have no character yet.");
+            return true;
+        }
+
+        const bool isAdmin = acSender.HasAtLeast(EPermissionLevel::kAdmin);
+
+        if (pCharacter->BioSet && !isAdmin)
+        {
+            Tell(acSender, "Your character bio has already been set and locked. Contact an admin to update it.");
+            return true;
+        }
+
+        auto updated = *pCharacter;
+        updated.Bio = newBio;
+        updated.BioSet = true;
+
+        store.SaveCharacter(acSender.DiscordId, acSender.Username, updated);
+
+        Tell(acSender, "Character bio updated successfully.");
+        spdlog::info("{} updated character bio for '{}'", acSender.Username, updated.Name);
+        return true;
+    }
+
+    // ---------------------------------------------------- /setoccupation ----
+    if (command == "/setoccupation" || command == "/setocc")
+    {
+        const auto textStart = acLine.find(' ');
+        std::string newOcc = (textStart == std::string::npos) ? std::string{} : acLine.substr(textStart + 1);
+
+        while (!newOcc.empty() && newOcc.front() == ' ')
+            newOcc.erase(newOcc.begin());
+
+        if (newOcc.empty())
+        {
+            Tell(acSender, "Usage: /setoccupation <Solo|Netrunner|Techie|Nomad|Fixer|Medtech|Rockerboy|Corp|...>");
+            return true;
+        }
+
+        auto& store = GServer->GetPlayerStore();
+        const auto* pCharacter = store.FindCharacter(acSender.DiscordId);
+
+        if (!pCharacter)
+        {
+            Tell(acSender, "You have no character yet.");
+            return true;
+        }
+
+        auto updated = *pCharacter;
+        updated.Occupation = newOcc;
+
+        store.SaveCharacter(acSender.DiscordId, acSender.Username, updated);
+
+        Tell(acSender, fmt::format("Occupation set to '{}'.", newOcc));
+        return true;
+    }
+
+    // --------------------------------------------------- /setaffiliation ----
+    //
+    // Set faction/gang/corp affiliation.
+    // RULE: Players can only change affiliation ONCE PER WEEK (604,800 seconds).
+    // Future expansion: Require leader permission for protected affiliations.
+    if (command == "/setaffiliation" || command == "/setaffil")
+    {
+        const auto textStart = acLine.find(' ');
+        std::string newAffil = (textStart == std::string::npos) ? std::string{} : acLine.substr(textStart + 1);
+
+        while (!newAffil.empty() && newAffil.front() == ' ')
+            newAffil.erase(newAffil.begin());
+
+        if (newAffil.empty())
+        {
+            Tell(acSender, "Usage: /setaffiliation <Unaffiliated|Maelstrom|Mox|Valentinos|Arasaka|Militech|NCPD|...>");
+            return true;
+        }
+
+        auto& store = GServer->GetPlayerStore();
+        const auto* pCharacter = store.FindCharacter(acSender.DiscordId);
+
+        if (!pCharacter)
+        {
+            Tell(acSender, "You have no character yet.");
+            return true;
+        }
+
+        const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        
+        constexpr int64_t kOneWeekSeconds = 7 * 24 * 3600;
+        const bool isAdmin = acSender.HasAtLeast(EPermissionLevel::kAdmin);
+
+        if (!isAdmin && pCharacter->LastAffiliationChange > 0)
+        {
+            const int64_t elapsed = now - pCharacter->LastAffiliationChange;
+            if (elapsed < kOneWeekSeconds)
+            {
+                const int64_t remaining = kOneWeekSeconds - elapsed;
+                const int days = static_cast<int>(remaining / 86400);
+                const int hours = static_cast<int>((remaining % 86400) / 3600);
+                Tell(acSender, fmt::format("Affiliation can only be changed once per week. Next change available in {}d {}h.", days, hours));
+                Tell(acSender, "Note: Future updates will require permission from an Affiliation Leader to join official factions.");
+                return true;
+            }
+        }
+
+        auto updated = *pCharacter;
+        updated.Affiliation = newAffil;
+        updated.LastAffiliationChange = now;
+
+        store.SaveCharacter(acSender.DiscordId, acSender.Username, updated);
+
+        Tell(acSender, fmt::format("Affiliation set to '{}'.", newAffil));
+        spdlog::info("{} changed affiliation to '{}'", acSender.Username, newAffil);
         return true;
     }
 

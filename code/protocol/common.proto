@@ -7,3 +7,60 @@ message Vector3 {
 	float y = 2;
 	float z = 3;
 }
+
+message AttributesData {
+	uint32 body = 1;
+	uint32 reflexes = 2;
+	uint32 technical_ability = 3;
+	uint32 intelligence = 4;
+	uint32 cool = 5;
+}
+
+message ItemData {
+	string tweak_id = 1;
+	uint32 count = 2;
+	uint32 slot = 3;
+}
+
+message CyberwareData {
+	string slot = 1;
+	string item_tweak_id = 2;
+	bool equipped = 3;
+}
+
+message WantedStatusData {
+	uint32 level = 1;
+	float bounty = 2;
+	string reason = 3;
+}
+
+message CharacterProfileData {
+	string character_id = 1;
+	string name = 2;
+	string appearance = 3;
+	bool is_male = 4;
+
+	uint32 level = 5;
+	AttributesData attributes = 6;
+	repeated string perks = 7;
+
+	float health = 8;
+	float max_health = 9;
+	int64 money = 10;
+
+	repeated ItemData inventory = 11;
+	repeated CyberwareData cyberware = 12;
+
+	string occupation = 13;
+	string lifepath = 14;
+	string affiliation = 15;
+	string bio = 16;
+	bool bio_set = 17;
+
+	WantedStatusData wanted_status = 18;
+	Vector3 position = 19;
+	float yaw = 20;
+
+	int64 created_at = 21;
+	int64 updated_at = 22;
+}

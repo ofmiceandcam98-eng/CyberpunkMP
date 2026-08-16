@@ -141,6 +141,10 @@ message RpcDefinitions {
     repeated RpcDefinition server_definitions = 2;
 }
 
+message NotifyCharacterProfile {
+    common.CharacterProfileData profile = 1;
+}
+
 message Protocol {
     oneof content {
         AuthenticationResponse authentication_response = 1;
@@ -158,5 +162,6 @@ message Protocol {
         NotifyTeleport notify_teleport = 13;
         OpenCharacterCreator open_character_creator = 14;
         RequestCharacterName request_character_name = 15;
+        NotifyCharacterProfile notify_character_profile = 16;
     }
 }

@@ -610,3 +610,53 @@ All five points are done and pushed to main (2180834). Nothing shipped as a rele
 Two PS 5.1 traps found while testing the failure paths, both worth knowing: Join-Path validates the drive qualifier and throws "Cannot find drive" before Test-Path is reached, so a mistyped drive letter reported a PowerShell internal rather than the message telling you what to configure. And a config/ directory exclusion cannot be undone by a negation - git never descends into an excluded directory, so it has to be config/* instead.
 
 Also, per Cam: releases now go 0.3.4 -> 0.3.41 -> 0.3.42 rather than 0.3.5. Valid semver, greater than 0.3.4, so the auto-updater is unaffected.
+
+
+### 2026-08-15 - Character Identity System - Gemini (Antigravity)
+
+Implemented the full 5-tier **Character Identity System** and 15-field Character Profile:
+
+```
+Discord Account (DiscordId)
+       ↓
+Player ID (PlayerRecord)
+       ↓
+Character ID (16-hex CharacterRecord::CharacterId)
+       ↓
+Character Profile (15 fields)
+       ↓
+Character Entity (Runtime Puppet / CharacterComponent)
+```
+
+**15 Profile Fields Implemented & Persisted:**
+1. `Name` (in-character handle)
+2. `Appearance` (opaque base64 CC state)
+3. `Level` (progression level)
+4. `Attributes` (`Body`, `Reflexes`, `TechnicalAbility`, `Intelligence`, `Cool`)
+5. `Perks` (vector of perk IDs)
+6. `Health` & `MaxHealth` (float vitals)
+7. `Money` (`int64_t` Eddies)
+8. `Inventory` (`ItemRecord` vector)
+9. `Cyberware` (`CyberwareRecord` vector)
+10. `Occupation` (`std::string`, default "Solo")
+11. `Lifepath` (`std::string`, default "Streetkid")
+12. `Affiliation` (`std::string`, default "Unaffiliated")
+13. `Bio` (`std::string` backstory text)
+14. `WantedStatus` (`WantedStatusRecord`: level, bounty, reason)
+15. `Position` (`X`, `Y`, `Z`, `Yaw` - auto-synchronized live on `PlayerStore::Remember`)
+
+**Business Rules & Commands (`Systems/ChatSystem.cpp`):**
+- `/profile` / `/charprofile [player]`: Formats and displays the full character profile card in chat/notice channel.
+- `/setbio <text>`: **One-time lock for regular players.** Sets `BioSet = true`. Non-admins attempting to change locked bio are notified: *"Your character bio has already been set and locked. Contact an admin to update it."* Admins (`EPermissionLevel::kAdmin`) bypass this restriction.
+- `/setoccupation <job>` / `/setocc`: Sets character occupation.
+- `/setaffiliation <faction>` / `/setaffil`: **Enforces a 1-week cooldown (604,800s)** between affiliation changes (`LastAffiliationChange` timestamp). Admins bypass cooldown. Includes explicit code hooks for future leader authorization checks (`IsAffiliationLeader`).
+
+**Protocol & Redscript:**
+- Updated `code/protocol/common.proto` (`CharacterProfileData`, `AttributesData`, `ItemData`, `CyberwareData`, `WantedStatusData`) and `code/protocol/server.proto` (`NotifyCharacterProfile` tag 16).
+- Added `code/assets/redscript/World/CharacterProfile.reds` exposing `CharacterProfileData` to scripts.
+
+**Verification:**
+- `tools/CheckScripts.ps1`: Redscript compiled clean (exit 0).
+- `xmake build Server.Native`: C++ Protobuf codegen and `Server.Native.dll` built & linked 100% clean.
+
+Signed: Gemini (Antigravity)

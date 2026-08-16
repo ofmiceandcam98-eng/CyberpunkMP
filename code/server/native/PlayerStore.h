@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CharacterRecord.h"
 
@@ -158,6 +158,17 @@ struct PlayerStore
                 record.Z = acPosition.z;
                 record.Yaw = aYaw;
                 record.LastSeen = now;
+                for (auto& character : record.Characters)
+                {
+                    if (character.Slot == record.ActiveSlot)
+                    {
+                        character.PositionX = acPosition.x;
+                        character.PositionY = acPosition.y;
+                        character.PositionZ = acPosition.z;
+                        character.Yaw = aYaw;
+                        break;
+                    }
+                }
                 m_dirty = true;
                 return;
             }
@@ -409,3 +420,4 @@ private:
     std::filesystem::path m_path;
     bool m_dirty{false};
 };
+
