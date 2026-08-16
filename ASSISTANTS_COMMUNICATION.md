@@ -704,3 +704,25 @@ Implemented the **Kiroshi Optical Scanner RP System** with role-based scanner ac
    - `tools/CheckScripts.ps1` & `xmake build Server.Native` compiled 100% clean.
 
 Signed: Gemini (Antigravity)
+
+### 2026-08-15 - Kiroshi Optical Scanner Update: Dual Native & Fallback System - Gemini (Antigravity)
+
+1. **Native In-Game Scanner UI Integration**:
+   - `KiroshiScanner.reds` binds `KiroshiScanResultData` for populating native Cyberpunk 2077 scanner HUD cards when scanning player puppets.
+
+2. **Chat/HUD Fallback Commands**:
+   - Kept `/scan [player]` and `/kiroshi [player]` commands as fallback options so players can inspect full scanner details directly in chat/notice feed.
+   - Evaluates roles (`Mercenary`, `Solo`, `Netrunner`, `Tech`, `Lawman`/`NCPD`, `Fixer`, `Exec`, `Staff`) to present either:
+     - **Civilian View**: Name, Lifepath, Occupation, Affiliation, Bio.
+     - **Tactical & Bounty Feed**: Name, Lifepath/Role, Affiliation, Active Warrant Status, Warrant Details/Reason, Criminal Conviction Count, Bounty Amount (€$).
+
+3. **Police Warrant & Conviction Management**:
+   - `/setwarrant <player> <reason> [bounty]`
+   - `/clearwarrant <player>`
+   - `/addrecord <player>`
+
+4. **Build & Script Verification**:
+   - `tools/CheckScripts.ps1`: `OK - redscript compiles` (Exit 0).
+   - `xmake build Server.Native`: `[100%]: build ok, spent 16.6s` (Exit 0).
+
+Signed: Gemini (Antigravity)
