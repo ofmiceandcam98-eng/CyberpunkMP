@@ -3387,7 +3387,9 @@ ipcMain.handle('devKey:fetch', async () => {
   if (!token) return { ok: false, error: 'Sign in with Discord first.' }
 
   const published = await fetchPublishedServer()
-  const host = loadSettings().serverHost || published?.host
+  // coordHost first: the coordination API stays on Cam's machine even when the game
+  // server moves, and a dev's server override must not drag this request with it.
+  const host = published?.coordHost || loadSettings().serverHost || published?.host
   const port = published?.coordPort || 11780
 
   if (!host) return { ok: false, error: 'No server address is published yet.' }
