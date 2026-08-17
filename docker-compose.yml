@@ -1,4 +1,34 @@
 services:
+  # The deployment's own network identity. This sidecar joins the tailnet the players
+  # use, so a server is reachable at its OWN stable Tailscale address wherever it runs -
+  # the network node travels with the deployment instead of belonging to whatever
+  # machine happens to host it. TS_AUTHKEY comes from .env on first start and is
+  # ignored once state exists (TS_AUTH_ONCE), so a redeploy never re-registers.
+  # Without TS_AUTHKEY the sidecar idles unauthenticated and the game still serves
+  # on the LAN ports below - a checkout with no tailnet still works.
+  tailscale:
+    image: tailscale/tailscale:stable
+    container_name: cyberpunkmp-tailscale
+    restart: unless-stopped
+    hostname: nco-server
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_STATE_DIR: /var/lib/tailscale
+      # Userspace networking: no /dev/net/tun, no NET_ADMIN, works unprivileged on any
+      # host. Inbound tailnet traffic reaches sockets in this network namespace - which
+      # is exactly where the game server's sockets live (see network_mode below).
+      TS_USERSPACE: "true"
+      TS_AUTH_ONCE: "true"
+    volumes:
+      # Node identity. Keep it or the server gets a new address on every recreate.
+      - ./tailscale-state:/var/lib/tailscale
+    ports:
+      # Game traffic, published on the host as before. GameNetworkingSockets is UDP;
+      # the same port serves the web/admin API over TCP. Published HERE because the
+      # server container shares this network namespace.
+      - "${CYBERPUNKMP_PORT:-11778}:11778/udp"
+      - "${CYBERPUNKMP_PORT:-11778}:11778/tcp"
+
   server:
     build:
       context: .
@@ -10,6 +40,12 @@ services:
     container_name: cyberpunkmp-server
     restart: unless-stopped
 
+    # The game server lives inside the sidecar's network namespace: one set of sockets
+    # answers the tailnet address, the LAN, and localhost alike.
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+
     # Release builds refuse to start without these - see WebApi.cs.
     environment:
       CYBERPUNKMP_ADMIN_USERNAME: ${CYBERPUNKMP_ADMIN_USERNAME:?set this in .env}
@@ -19,12 +55,6 @@ services:
       # which does not exist in this image, so every TLS connection fails verification.
       # OpenSSL honors this override; the bundle ships with the runtime image.
       SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
-
-    ports:
-      # Game traffic. GameNetworkingSockets is UDP; the same port also serves the
-      # web/admin API over TCP.
-      - "${CYBERPUNKMP_PORT:-11778}:11778/udp"
-      - "${CYBERPUNKMP_PORT:-11778}:11778/tcp"
 
     volumes:
       # Config is created on first run - keep it so settings survive a rebuild.
