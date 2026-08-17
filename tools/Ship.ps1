@@ -63,7 +63,6 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot "Environment.ps1")
 
 Assert-XMake
-Assert-GameDir
 
 # Nothing selected means everything - INCLUDING the server.
 #
@@ -218,6 +217,11 @@ if ($Launcher) {
 
 if ($Mod) {
     Step "Client mod"
+    # The game is needed HERE - the redscript check compiles against the installed game.
+    # Asserted per-path rather than at the top, matching Environment.ps1's own rule
+    # ("called by anything that actually needs the game"), so a launcher-only ship runs
+    # on a machine with no game installed at all.
+    Assert-GameDir
     if ($WhatIf) { Warn "would build + install Client" }
     else {
         & $XMake build -j 4 Client 2>&1 | Select-Object -Last 3

@@ -69,9 +69,9 @@ Moving a deployment to a new box = clone repo, copy `./config` and `.env`, start
 
 Launchers resolve the server address from `server.json` attached to the **latest
 GitHub release** (falling back to a dev's Settings override, then `MP_SERVER`, then
-localhost). The canonical copy is `tools/deploy/server.json` in this repo: the
-`publish-server-json` workflow replaces the release asset automatically whenever that
-file changes on main. Cutover to a new box is therefore: verify the new server
+localhost). The canonical copy is `publish/server.json` in this repo (the same file
+Ship.ps1 stages with every release): the `publish-server-json` workflow replaces the
+release asset automatically whenever that file changes on main. Cutover to a new box is therefore: verify the new server
 answers on `http://HOST:11778/api/v1/status/`, then commit a one-line `host` change.
 No client update is needed as long as the new server runs the same protocol as the
 shipped mod - which it does if it serves `main`.
