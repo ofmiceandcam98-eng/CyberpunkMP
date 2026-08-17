@@ -4,7 +4,12 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
-## What changed — v0.3.57
+## What changed — v0.3.58
+
+- **The server moved.** It now runs from a self-updating deployment on dedicated hardware instead of one person's PC, and it updates itself from GitHub within ten minutes of a push. Nothing to do on your side — the launcher reads the address from the release, so pressing Play lands you on the new server automatically. Character data starts fresh on the new machine.
+- **`/name` is once per character.** Pick a name and it's yours until you retire that character with NEW CHARACTER — dying doesn't reset it, and renames are refused. The name prompt no longer reappears after a ripperdoc visit either: saving your look was wiping the fields that remembered you'd already named yourself (and where you'd already spawned).
+- **Dev launcher: pick your server.** A Server tool in the Dev panel points Launch, the status pill and everything else at any server — the test box, localhost, or back to the published one with one click. Dev role required.
+- **Dev launcher: one-click test builds.** Pre-releases from GitHub now list in the Dev panel with an Install button. The download is checksum-verified, your shipped mod DLL is backed up automatically, and Restore puts it back. Players never see any of this — their launchers only update from full releases like this one.
 
 - **Every character now has a permanent ID of its own.** It's generated once, never reused, and stays the same through renames, ripperdoc visits and reconnects — while still filed under the Discord account that owns it. It's the identifier that will carry inventory, cyberware and RP profiles later.
 - **Admin commands find people by any name they have.** `/tp`, `/kick`, `/ban` and the rest now accept a character name, a Discord name, a Discord ID, or a character ID. Character names win over account names, so the person you're standing in front of is the one you get.
