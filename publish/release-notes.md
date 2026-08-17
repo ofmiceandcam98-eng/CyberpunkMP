@@ -4,6 +4,10 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.64
+
+- **You can see each other move.** Every session on the new server had players frozen as statues: the mod was a mixed build — its network serializer came from one branch and its headers from another, off by exactly one bit, so the server read every entity ID you sent as double its real value and refused it. The build system flaw that let two branches fuse into one DLL is fixed, the mod is rebuilt from scratch, and real-time sync works. This was also the cause of seeing a copy of yourself, and of movement never saving.
+
 ## What changed — v0.3.63
 
 - **Test builds get an Uninstall button.** The installed test build's row now offers Uninstall directly — it puts the shipped mod back (same as Restore) so builds can be checked one at a time without hunting for the way out. Dev panel only.
