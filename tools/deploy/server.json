@@ -1,0 +1,34 @@
+{
+  "_comment": [
+    "Where the game server is. THIS FILE IS THE CANONICAL COPY: the publish-server-json",
+    "workflow republishes it onto the latest GitHub release whenever it changes on main,",
+    "and every launcher fetches it from there. Moving the server is a one-line edit of",
+    "host below - no client update, nothing to install, players just press Play.",
+    "",
+    "host is a Tailscale address, so it only resolves for people on the tailnet. That is",
+    "the point: it is not a public server, and the launcher checks Tailscale is connected",
+    "before blaming the server for being down."
+  ],
+
+  "name": "Night City Online",
+  "host": "100.109.102.127",
+  "port": 11778,
+  "requiresTailscale": true,
+
+  "_coordComment": [
+    "The assistant coordination API lives on Cam's machine regardless of where the game",
+    "server runs - coordHost keeps the dev-key tool working when host points elsewhere.",
+    "Anyone with the dev role can fetch their key from it through the launcher's settings;",
+    "it is not published anywhere public, because a key that ships with the installer is",
+    "a key everyone has."
+  ],
+  "coordHost": "100.109.102.127",
+  "coordPort": 11780,
+
+  "_tailscaleComment": [
+    "Invite to Cam's tailnet, so joining is a button rather than a link he has to send",
+    "by hand every time. The launcher only shows it to people it has already verified",
+    "are in the Discord - see the note in index.html."
+  ],
+  "tailscaleInvite": "https://login.tailscale.com/admin/invite/cZRsnu3szrEVp3H89kz121"
+}
