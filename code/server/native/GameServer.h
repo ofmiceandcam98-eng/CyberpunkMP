@@ -73,10 +73,17 @@ private:
 
     struct DiscordIdentity
     {
+        // Constructor rather than a default member initializer: the m_discordCache
+        // declaration below instantiates the map's traits on this type while GameServer
+        // is still incomplete, and GCC refuses to evaluate a nested class's member
+        // initializer at that point. MSVC accepts it, which is why this only ever
+        // failed on the Linux build.
+        DiscordIdentity() : Level(EPermissionLevel::kPlayer) {}
+
         std::string Id;
         std::string Username;
         std::vector<std::string> RoleIds;
-        EPermissionLevel Level{EPermissionLevel::kPlayer};
+        EPermissionLevel Level;
     };
 
     // Asks Discord who a token belongs to and whether they are in the guild. The client's
