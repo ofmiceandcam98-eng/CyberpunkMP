@@ -11,6 +11,13 @@ FROM mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim AS build
 WORKDIR /app
 ENV XMAKE_ROOT y
 
+# pnpm imports packages from its store with copy_file_range, which ZFS-backed Docker
+# storage can fail with a spurious EAGAIN mid-install (OpenZFS + overlayfs interaction;
+# TrueNAS hosts are exactly that stack). Hardlinking from the store avoids the syscall
+# entirely - same filesystem inside the build stage, and the store is discarded with
+# the stage anyway.
+ENV npm_config_package_import_method hardlink
+
 RUN echo 'deb http://deb.debian.org/debian bookworm-backports main' >> /etc/apt/sources.list
 # xmake-data Recommends cmake, and apt installs recommends by default - which plants
 # Debian's cmake 3.25 in the image. With a system cmake present, xmake uses it instead
