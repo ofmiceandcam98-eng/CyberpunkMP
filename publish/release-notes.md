@@ -4,6 +4,10 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.59
+
+- **Multiplayer works again — sorry.** v0.3.58 shipped the wrong mod build: its release had been pre-created with test artifacts, and the launcher-only ship reused them instead of the real mod. In game that looked like multiplayer simply being gone — no chat, no other players, no map pins — and the server refusing every connection with a protocol mismatch. This build carries a mod compiled from exactly the code the server runs. The ship script now refuses to source mod files from anything but the latest full release, so this class of mistake can't repeat.
+
 ## What changed — v0.3.58
 
 - **The server moved.** It now runs from a self-updating deployment on dedicated hardware instead of one person's PC, and it updates itself from GitHub within ten minutes of a push. Nothing to do on your side — the launcher reads the address from the release, so pressing Play lands you on the new server automatically. Character data starts fresh on the new machine.
