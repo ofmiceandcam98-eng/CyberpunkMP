@@ -1,6 +1,12 @@
-.github/
-.vscode/
-.xmake/
-build/
-bin/
-obj/
+# Deployment runtime state lives next to the compose file but must never enter the
+# image or the build context: config holds the character database and secrets,
+# tailscale-state holds the node private key (root-owned - its mere presence in the
+# context makes the build fail with permission denied), and none of it is code.
+config
+logs
+plugins
+tailscale-state
+.env
+.git
+build
+distrib
