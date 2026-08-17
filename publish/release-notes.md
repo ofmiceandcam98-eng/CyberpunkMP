@@ -4,6 +4,11 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.62
+
+- **Body type moved fully in game.** The launcher's Body type toggle is gone — NEW CHARACTER runs the game's own creator, which asks, and since v0.3.61 that answer actually sticks. One place for the truth instead of two that could disagree.
+- **The dev Server tool tells the truth about the servers.** Its hint still described the old world (the published server as one person's PC, the old test address). It now points at the vehicle-authority test server and describes the self-deploying main server as what it is.
+
 ## What changed — v0.3.61
 
 - **NEW CHARACTER really means new.** Replacing your character now retires the old one properly, so the new person gets their own name prompt and starts at the arrivals point. Before this, the replacement quietly inherited the old character's name — and the once-per-character name lock along with it, so you could never name the person you'd just made. Old characters are retired, not deleted.

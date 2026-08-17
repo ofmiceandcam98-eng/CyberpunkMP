@@ -653,8 +653,9 @@
               <div class="tool-name">Server</div>
               <div class="tool-desc" id="devServerHint">
                 Which server Launch connects to. Leave blank to follow the published
-                server (Cam's PC). The test server is <b>100.90.85.33</b> - it rebuilds
-                itself from git within ten minutes of a push.
+                server - the main deployment everyone plays on, which redeploys itself
+                from git. The vehicle-authority test server is <b>100.125.74.56</b>
+                (pair it with the matching build from Test builds below).
               </div>
               <div class="btn-row" style="margin-top:8px">
                 <input type="text" id="devServerHost" placeholder="host or IP"
@@ -682,28 +683,6 @@
             <div class="btn-row" style="flex-direction:column;gap:6px">
               <button class="action ghost" id="prereleaseRefresh">Refresh</button>
               <button class="action ghost" id="prereleaseRestore">Restore</button>
-            </div>
-          </div>
-        </section>
-
-        <!-- CHARACTER
-             Body type is decided by which world template loads, so it has to be chosen
-             here rather than in game. Ripperdocs change everything else about how you
-             look; they cannot change this. -->
-        <section class="panel">
-          <h3>Character</h3>
-
-          <div class="tool">
-            <div>
-              <div class="tool-name">Body type</div>
-              <div class="tool-desc" id="bodyTypeHint">
-                Chosen here because it is built into the world you load. Everything else
-                about how you look can be changed at any ripperdoc.
-              </div>
-            </div>
-            <div class="btn-row">
-              <button class="action ghost" id="bodyFemale">Female</button>
-              <button class="action ghost" id="bodyMale">Male</button>
             </div>
           </div>
         </section>
@@ -1776,7 +1755,6 @@
     // rest. Showing both as equally available invites people to pick the wrong one.
     $('installAll').textContent = paths.modDir ? 'Reinstall all' : 'Install'
 
-    refreshBodyType()
 
     // The dev section rides on the same answer that decides the server controls, so a
     // dev sees the same launcher Cam does.
@@ -1796,34 +1774,9 @@
     }
   }
 
-  // Body type. Reflects what is chosen AND whether the choice can be honoured yet - a
-  // button that silently does nothing is worse than one that says it is unavailable.
-  async function refreshBodyType () {
-    const result = await window.launcher.getBodyType()
-    if (!result.ok) return
-
-    const female = $('bodyFemale')
-    const male = $('bodyMale')
-
-    female.classList.toggle('play', result.bodyType === 'female')
-    male.classList.toggle('play', result.bodyType === 'male')
-
-    male.disabled = !result.maleAvailable
-
-    $('bodyTypeHint').textContent = result.maleAvailable
-      ? 'Chosen here because it is built into the world you load. Everything else about how you look can be changed at any ripperdoc. Takes effect next launch.'
-      : 'Only the female starting world has been published so far, so this cannot be changed yet. Everything else about how you look can be changed at any ripperdoc.'
-  }
-
-  for (const [id, value] of [['bodyFemale', 'female'], ['bodyMale', 'male']]) {
-    $(id).addEventListener('click', async () => {
-      const result = await window.launcher.setBodyType(value)
-      if (result.ok) {
-        setSettingsStatus(`Body type set to ${result.bodyType}. It applies the next time you launch.`, 'good')
-        refreshBodyType()
-      }
-    })
-  }
+  // Body type moved in game: NEW CHARACTER runs the game's own creator, which asks -
+  // and the retire-first flow (v0.3.61) makes that answer stick. A launcher toggle for
+  // the same choice was a second place for the truth to live, and they disagreed.
 
   $('revealDevKey').addEventListener('click', async () => {
     const box = $('devKeyValue')
