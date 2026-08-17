@@ -15,7 +15,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } from 'electron'
 import electronUpdater from 'electron-updater'
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, copyFileSync, unlinkSync } from 'node:fs'
 import fsp from 'node:fs/promises'
 import AdmZip from 'adm-zip'
 import http from 'node:http'
@@ -3387,7 +3387,9 @@ ipcMain.handle('devKey:fetch', async () => {
   if (!token) return { ok: false, error: 'Sign in with Discord first.' }
 
   const published = await fetchPublishedServer()
-  const host = loadSettings().serverHost || published?.host
+  // coordHost first: the coordination API stays on Cam's machine even when the game
+  // server moves, and a dev's server override must not drag this request with it.
+  const host = published?.coordHost || loadSettings().serverHost || published?.host
   const port = published?.coordPort || 11780
 
   if (!host) return { ok: false, error: 'No server address is published yet.' }
@@ -3410,6 +3412,140 @@ ipcMain.handle('devKey:fetch', async () => {
       ok: false,
       error: 'Could not reach the coordination service. It needs Tailscale connected and Cam\'s PC on.'
     }
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Dev tools: server selection and test builds
+//
+// The game server no longer lives only on Cam's PC - there is a self-updating test
+// server too, and devs need to point their launcher at it without editing JSON by
+// hand. resolveServer() has honoured settings.serverHost above everything else since
+// the beginning; these are the controls for it. Status checks and the launch-anyway
+// rule follow automatically, because both already go through resolveServer().
+//
+// Every handler re-checks the dev role in the main process - the renderer asking
+// nicely is not authorisation.
+// ---------------------------------------------------------------------------
+
+ipcMain.handle('devServer:get', () => {
+  const settings = loadSettings()
+  return {
+    ok: true,
+    host: settings.serverHost || null,
+    port: settings.serverPort || null,
+    testBuildTag: settings.testBuildTag || null
+  }
+})
+
+ipcMain.handle('devServer:set', (_event, host, port) => {
+  if (!isAdmin()) return { ok: false, error: 'The server override is for people with the dev role.' }
+
+  if (!host) {
+    // undefined survives the merge spread but JSON.stringify drops it - which is
+    // exactly "remove the key" without a separate delete path.
+    saveSettings({ serverHost: undefined, serverPort: undefined })
+    return { ok: true, cleared: true }
+  }
+
+  const cleanHost = String(host).trim()
+  const cleanPort = Number(port) || 11778
+
+  saveSettings({ serverHost: cleanHost, serverPort: cleanPort })
+  return { ok: true, host: cleanHost, port: cleanPort }
+})
+
+// Pre-releases are how test builds travel: deliberately invisible to player launchers
+// (auto-update reads releases/latest, which skips them), one click for a dev.
+ipcMain.handle('prerelease:list', async () => {
+  if (!isAdmin()) return { ok: false, error: 'Test builds are for people with the dev role.' }
+
+  try {
+    const response = await axios.get(
+      `https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=15`,
+      { timeout: 8000 })
+
+    const activeTag = loadSettings().testBuildTag || null
+
+    const prereleases = (Array.isArray(response.data) ? response.data : [])
+      .filter((r) => r.prerelease)
+      .slice(0, 5)
+      .map((r) => ({
+        tag: r.tag_name,
+        name: r.name || r.tag_name,
+        publishedAt: r.published_at,
+        hasDll: (r.assets || []).some((a) => a.name === 'CyberpunkMP.dll'),
+        notesUrl: r.html_url,
+        active: r.tag_name === activeTag
+      }))
+
+    return { ok: true, prereleases, activeTag }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
+ipcMain.handle('prerelease:install', async (_event, tag) => {
+  if (!isAdmin()) return { ok: false, error: 'Test builds are for people with the dev role.' }
+
+  try {
+    const modDir = findModDir()
+    if (!modDir) return { ok: false, error: 'Mod folder not found - install the mod first.' }
+
+    const release = await axios.get(
+      `https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${encodeURIComponent(tag)}`,
+      { timeout: 8000 })
+
+    const asset = (release.data?.assets || []).find((a) => a.name === 'CyberpunkMP.dll')
+    if (!asset) return { ok: false, error: 'That pre-release has no CyberpunkMP.dll attached.' }
+
+    const download = await axios.get(asset.browser_download_url,
+      { responseType: 'arraybuffer', timeout: 120000, maxRedirects: 5 })
+    const bytes = Buffer.from(download.data)
+
+    // GitHub publishes the digest with the asset; a truncated download must not land.
+    const expected = String(asset.digest || '').replace(/^sha256:/, '').toLowerCase()
+    if (expected) {
+      const actual = crypto.createHash('sha256').update(bytes).digest('hex')
+      if (actual !== expected) return { ok: false, error: 'Download failed its checksum - not installed.' }
+    }
+
+    const dllPath = path.join(modDir, 'CyberpunkMP.dll')
+    const backupPath = path.join(modDir, 'CyberpunkMP.dll.shipped')
+
+    // The FIRST shipped dll is the one kept. Installing test build B over test build A
+    // must not make the backup a copy of test build A.
+    if (existsSync(dllPath) && !existsSync(backupPath)) copyFileSync(dllPath, backupPath)
+
+    writeFileSync(dllPath, bytes)
+    saveSettings({ testBuildTag: tag })
+
+    return { ok: true, tag }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
+ipcMain.handle('prerelease:restore', async () => {
+  if (!isAdmin()) return { ok: false, error: 'Test builds are for people with the dev role.' }
+
+  try {
+    const modDir = findModDir()
+    if (!modDir) return { ok: false, error: 'Mod folder not found.' }
+
+    const dllPath = path.join(modDir, 'CyberpunkMP.dll')
+    const backupPath = path.join(modDir, 'CyberpunkMP.dll.shipped')
+
+    if (!existsSync(backupPath))
+      return { ok: false, error: 'No shipped backup found - use Verify game files instead.' }
+
+    copyFileSync(backupPath, dllPath)
+    unlinkSync(backupPath)
+    saveSettings({ testBuildTag: undefined })
+
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err.message }
   }
 })
 
