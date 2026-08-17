@@ -1,0 +1,28 @@
+# Line endings are decided HERE, not by whichever OS or git config a contributor
+# happens to have. This project builds on Windows (MSVC, PowerShell) and deploys on
+# Linux (containers, bash) from the same tree - a file that silently changes endings
+# between the two is a build that fails on exactly one of them.
+
+# Sensible default: git normalizes anything it detects as text to LF in the repo.
+* text=auto
+
+# Linux executes or strictly parses these - CRLF breaks them outright.
+*.sh    text eol=lf
+*.bash  text eol=lf
+Dockerfile text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+
+# Windows-native scripts stay CRLF everywhere - cmd.exe misparses LF-only batch
+# files, and PowerShell diffs churn without this.
+*.ps1   text eol=crlf
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# Never touch binaries.
+*.png   binary
+*.jpg   binary
+*.ico   binary
+*.dll   binary
+*.exe   binary
+*.zip   binary
