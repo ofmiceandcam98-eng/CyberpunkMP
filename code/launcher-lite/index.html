@@ -1882,14 +1882,31 @@
       if (release.active) label.textContent += '  (installed)'
       row.appendChild(label)
 
+      // The installed build's button becomes Uninstall - testing builds one at a time
+      // means getting OUT of one cleanly matters as much as getting in.
       const button = document.createElement('button')
-      button.className = 'action ghost'
-      button.textContent = release.active ? 'Installed' : 'Install'
-      button.disabled = release.active || !release.hasDll
+      button.className = release.active ? 'action stop' : 'action ghost'
+      button.textContent = release.active ? 'Uninstall' : 'Install'
+      button.disabled = !release.active && !release.hasDll
       if (!release.hasDll) button.title = 'No CyberpunkMP.dll attached to this pre-release'
 
       button.addEventListener('click', async () => {
         button.disabled = true
+
+        if (release.active) {
+          button.textContent = 'Removing...'
+          const restored = await window.launcher.prereleaseRestore()
+          if (!restored.ok) {
+            button.disabled = false
+            button.textContent = 'Uninstall'
+            setSettingsStatus(restored.error, 'bad')
+            return
+          }
+          setSettingsStatus('Test build removed - the shipped mod is back. Set Server to Default to rejoin the main server.', 'good')
+          refreshPrereleases()
+          return
+        }
+
         button.textContent = 'Installing...'
         setSettingsStatus(`Downloading ${release.tag}...`)
 

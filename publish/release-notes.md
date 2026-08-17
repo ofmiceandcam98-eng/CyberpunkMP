@@ -4,6 +4,10 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.63
+
+- **Test builds get an Uninstall button.** The installed test build's row now offers Uninstall directly — it puts the shipped mod back (same as Restore) so builds can be checked one at a time without hunting for the way out. Dev panel only.
+
 ## What changed — v0.3.62
 
 - **Body type moved fully in game.** The launcher's Body type toggle is gone — NEW CHARACTER runs the game's own creator, which asks, and since v0.3.61 that answer actually sticks. One place for the truth instead of two that could disagree.
