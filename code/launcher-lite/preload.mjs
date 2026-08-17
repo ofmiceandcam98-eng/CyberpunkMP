@@ -161,6 +161,7 @@ contextBridge.exposeInMainWorld('launcher', {
   // Server controls. Every one of these re-checks admin in the main process -
   // the renderer asking nicely is not authorisation.
   serverStatus: () => ipcRenderer.invoke('server:status'),
+  serverOpenAdmin: () => ipcRenderer.invoke('server:openAdmin'),
   startServer: () => ipcRenderer.invoke('server:start'),
   stopServer: () => ipcRenderer.invoke('server:stop'),
   restartServer: () => ipcRenderer.invoke('server:restart'),

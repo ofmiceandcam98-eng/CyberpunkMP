@@ -869,6 +869,7 @@
         <button class="action start" id="startServer">Start</button>
         <button class="action restart" id="restartServer">Restart</button>
         <button class="action stop" id="stopServer">Stop</button>
+        <button class="action ghost" id="openServerAdmin" style="display:none">Open server admin</button>
       </div>
       <button class="linkbtn" id="pickServerDir">Server not found? Locate it</button>
       <div class="admin-note" id="serverPath"></div>
@@ -1235,17 +1236,42 @@
 
     const running = result.running
     $('serverDot').className = 'dot' + (running ? ' on' : '')
-    $('serverText').textContent = running ? 'online' : 'offline'
-    $('startServer').disabled = running || !result.exists
-    $('stopServer').disabled = !running
-    $('restartServer').disabled = !running || !result.exists
 
-    $('serverPath').textContent = result.exists
-      ? result.exePath
-      : 'Not found: ' + result.exePath
+    // Remote mode: the panel describes the actual game server - the one players are
+    // on - not a process on this PC. It runs itself; the only control that makes
+    // sense here is opening its web admin.
+    const remote = result.mode === 'remote'
+    for (const id of ['startServer', 'restartServer', 'stopServer']) {
+      $(id).style.display = remote ? 'none' : 'inline-block'
+    }
+    $('pickServerDir').style.display = remote ? 'none' : 'inline-block'
+    $('openServerAdmin').style.display = remote ? 'inline-block' : 'none'
+
+    if (remote) {
+      $('serverText').textContent = running
+        ? `online - ${result.players} ${result.players === 1 ? 'player' : 'players'}`
+        : 'offline'
+      $('serverPath').textContent =
+        `Runs at ${result.host}:${result.port}. Deploys itself from GitHub within ` +
+        'minutes of a push to main, and restarts automatically if it crashes.'
+    } else {
+      $('serverText').textContent = running ? 'online' : 'offline'
+      $('startServer').disabled = running || !result.exists
+      $('stopServer').disabled = !running
+      $('restartServer').disabled = !running || !result.exists
+
+      $('serverPath').textContent = result.exists
+        ? result.exePath
+        : 'Not found: ' + result.exePath
+    }
 
     refreshCoordStatus()
   }
+
+  $('openServerAdmin').addEventListener('click', async () => {
+    const result = await window.launcher.serverOpenAdmin()
+    if (!result.ok) setStatus(result.error, 'bad')
+  })
 
   // Rides on the same poll as the game server, so there is one heartbeat rather than two.
   async function refreshCoordStatus () {

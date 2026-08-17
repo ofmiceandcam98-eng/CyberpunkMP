@@ -4,6 +4,10 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.60
+
+- **The Server panel now shows the real server.** For admins, the panel used to control a server program on your own PC — a leftover from when the server was somebody's desktop. It now reports the actual game server everyone plays on (online state, player count, where it runs) and opens its web admin. The old local Start/Stop controls only appear on a machine that actually has a locally built server.
+
 ## What changed — v0.3.59
 
 - **Multiplayer works again — sorry.** v0.3.58 shipped the wrong mod build: its release had been pre-created with test artifacts, and the launcher-only ship reused them instead of the real mod. In game that looked like multiplayer simply being gone — no chat, no other players, no map pins — and the server refusing every connection with a protocol mismatch. This build carries a mod compiled from exactly the code the server runs. The ship script now refuses to source mod files from anything but the latest full release, so this class of mistake can't repeat.

@@ -2390,7 +2390,35 @@ async function restartServer () {
 
 ipcMain.handle('server:status', async () => {
   if (!isAdmin()) return { ok: false, error: 'Not permitted' }
-  return { ok: true, ...(await getServerStatus()) }
+
+  // A locally built server makes this machine a dev box - the panel controls that
+  // process, exactly as before. Everyone else's panel reports the REAL server: the
+  // deployment resolveServer() points at, which runs itself (redeploys from GitHub
+  // within minutes of a push, restarts automatically if it crashes) and is
+  // administered through its own web panel rather than by starting an exe here.
+  if (existsSync(serverExePath())) {
+    return { ok: true, mode: 'local', ...(await getServerStatus()) }
+  }
+
+  const server = await resolveServer()
+  const remote = await getGameServerStatus()
+  return {
+    ok: true,
+    mode: 'remote',
+    running: remote.online,
+    players: remote.players,
+    host: server.host,
+    port: server.port
+  }
+})
+
+// Opens the server's own web admin panel - status, plugins, admin actions - which is
+// served by the server itself and guarded by its admin credentials.
+ipcMain.handle('server:openAdmin', async () => {
+  if (!isAdmin()) return { ok: false, error: 'Not permitted' }
+  const server = await resolveServer()
+  shell.openExternal(`http://${server.host}:${server.port}/`)
+  return { ok: true }
 })
 
 ipcMain.handle('server:start', async () => {
