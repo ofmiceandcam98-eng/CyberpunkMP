@@ -63,7 +63,6 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot "Environment.ps1")
 
 Assert-XMake
-Assert-GameDir
 
 # Nothing selected means everything - INCLUDING the server.
 #
@@ -218,6 +217,11 @@ if ($Launcher) {
 
 if ($Mod) {
     Step "Client mod"
+    # The game is needed HERE - the redscript check compiles against the installed game.
+    # Asserted per-path rather than at the top, matching Environment.ps1's own rule
+    # ("called by anything that actually needs the game"), so a launcher-only ship runs
+    # on a machine with no game installed at all.
+    Assert-GameDir
     if ($WhatIf) { Warn "would build + install Client" }
     else {
         & $XMake build -j 4 Client 2>&1 | Select-Object -Last 3
@@ -624,7 +628,11 @@ if (-not $Mod) {
     $carry = Join-Path $env:TEMP ("ship_carry_" + (Get-Date -Format 'HHmmss'))
     New-Item -ItemType Directory -Path $carry -Force | Out-Null
 
-    $carryFrom = Invoke-Native { & gh release view --repo $GhRepo --json tagName -q .tagName }
+    # The LATEST RELEASE as GitHub defines it - never a pre-release, never a draft.
+    # `gh release view` with no tag returns the newest release INCLUDING pre-releases,
+    # which is how a launcher-only ship once carried a test build's mod to every player:
+    # the wrong DLL went out looking exactly like a clean ship, and nobody could connect.
+    $carryFrom = Invoke-Native { & gh api "repos/$GhRepo/releases/latest" -q .tag_name }
 
     if (-not $carryFrom) {
         Warn "no previous release to carry the mod forward from - this release will have no mod payload"

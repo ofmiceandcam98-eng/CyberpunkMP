@@ -1,0 +1,35 @@
+# server.json tells every launcher where the game server is. The canonical copy lives
+# in the repo at publish/server.json - the same file Ship.ps1 stages, so there is
+# exactly one source of truth. This workflow republishes it onto the latest release
+# whenever it changes on main. "Move the server" is therefore a one-line commit, and
+# every launcher - player and dev - follows it automatically the next time it starts.
+# No client update, no new installer, no addresses passed around by hand.
+name: Publish server.json
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - publish/server.json
+      - .github/workflows/publish-server-json.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate JSON before it can reach players
+        run: python3 -m json.tool publish/server.json > /dev/null
+
+      - name: Replace the asset on the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh api "repos/${{ github.repository }}/releases/latest" -q .tag_name)
+          echo "Publishing publish/server.json to release $tag"
+          gh release upload "$tag" publish/server.json --clobber

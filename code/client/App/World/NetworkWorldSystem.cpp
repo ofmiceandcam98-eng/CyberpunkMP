@@ -269,6 +269,12 @@ void NetworkWorldSystem::RequestJoin()
     m_joinRequested = true;
 }
 
+void NetworkWorldSystem::MarkNewCharacter()
+{
+    spdlog::info("[Character] NEW CHARACTER chosen - this appearance will replace the stored one");
+    m_newCharacterPending = true;
+}
+
 void NetworkWorldSystem::RequestRespawn()
 {
     const auto& service = Core::Container::Get<NetworkService>();
@@ -420,7 +426,12 @@ void NetworkWorldSystem::PollAppearanceChanges()
     client::SaveCharacterRequest request;
     request.set_ccstate(m_pendingAppearance);
     request.set_is_male(m_pendingIsMale);
-    request.set_name(Settings::Get().discordName.c_str());
+
+    // No name. An appearance save is not an identity change - this used to send the
+    // Discord name on every ripperdoc visit, and the server took any non-empty name as a
+    // rename: editing your hair as 'Silverhand92' walked you out named after your account,
+    // marked NameChosen, and silenced the name prompt forever. Names travel exactly two
+    // roads: /name, and /character save <name>.
 
     service->Send(request);
 
@@ -469,7 +480,11 @@ void NetworkWorldSystem::SaveCharacterAppearance()
     client::SaveCharacterRequest request;
     request.set_ccstate(writer.bytes);
     request.set_is_male(stateHandle->instance->isBodyGenderMale);
-    request.set_name(Settings::Get().discordName.c_str());
+
+    // No name here either - same reason as PollAppearanceChanges. This path also serves
+    // the first capture of a brand-new character (capture_only), and that case needs no
+    // name from us: the server labels a nameless new character with the account username
+    // and leaves NameChosen false, which is exactly what triggers the name prompt.
 
     service->Send(request);
 
@@ -599,6 +614,29 @@ void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::
     }
 
     SetRemotePlayerId(aMessage.get_id());
+
+    // A character made through NEW CHARACTER is sent up the moment we are in the world.
+    //
+    // The server only captures an appearance for a player with NO character, so replacing
+    // one was impossible: you went through the creator, connected, and were spawned as the
+    // character you had just replaced. hyliangenesis built a male V and stayed female for a
+    // day - their stored record was created on the 14th at 21:37 and never changed again,
+    // through several attempts.
+    //
+    // Sent from here because this is the first moment the world is real and the player is
+    // standing in it as whoever they just built. Reusing SaveCharacterRequest means no new
+    // message and no protocol change - the server already overwrites the stored character
+    // with what arrives, keeping level and perks.
+    //
+    // Cleared either way. A failed save must not leave the flag armed, or the next ordinary
+    // join would overwrite their character with whatever save happened to load.
+    if (m_newCharacterPending)
+    {
+        m_newCharacterPending = false;
+
+        spdlog::info("[Character] new character - sending this appearance to replace the stored one");
+        SaveCharacterAppearance();
+    }
 }
 
 static Core::RawFunc<

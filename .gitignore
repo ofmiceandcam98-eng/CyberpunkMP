@@ -53,6 +53,9 @@ config/*
 
 logs/
 plugins/
+# The deployment's tailnet node identity - a private key. Never committed; losing it
+# just means the server re-registers under a new address.
+tailscale-state/
 
 # Each machine's own paths - game install, xmake, publish target. Not a secret, but
 # specific to one PC, which is exactly why it must not be committed: hardcoding these was

@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <random>
 
 /**
  * A multiplayer character, owned by the server.
@@ -74,13 +75,65 @@ struct CharacterRecord
     // Defaults false, so every character that predates this gets asked once.
     bool NameChosen{false};
 
+    // Has this CHARACTER been into the world yet?
+    //
+    // The arrivals point set by /setstart is for brand-new characters, and "brand-new" was
+    // being decided by whether the ACCOUNT had a record - which is wrong twice over. A
+    // record is created the first time anything about a player is stored, so by the time
+    // anybody spawned they already had one and the start point was skipped; and somebody
+    // replacing their character with a new one kept the old character's position, which is
+    // precisely the case the arrivals point exists for.
+    //
+    // Kept on the character rather than the account so a replacement starts fresh: a new
+    // CharacterRecord defaults this to false and is therefore sent to the start point,
+    // without anything having to remember to reset it.
+    bool SpawnedBefore{false};
+
+    // This character's own permanent identifier.
+    //
+    // Everything so far has identified a character as "the one belonging to this Discord
+    // account", which works only while there is exactly one. It cannot name a retired
+    // character, cannot survive a second slot, and cannot be handed to an admin command
+    // without also handing over somebody's account id.
+    //
+    // Generated once, never derived from the account, and never reused - so it stays
+    // stable through renames, retirement and reconnects, while the record it lives in is
+    // still filed under the owner's Discord id. Associated with the account, not made out
+    // of it.
+    std::string CharacterId;
+
     int64_t CreatedAt{0};
     int64_t UpdatedAt{0};
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(CharacterRecord, Slot, Name, Appearance, IsMale,
                                                 Level, AttributePoints, PerkPoints, Initialised,
-                                                NameChosen, CreatedAt, UpdatedAt)
+                                                NameChosen, SpawnedBefore, CharacterId,
+                                                CreatedAt, UpdatedAt)
 };
+
+/**
+ * A fresh character id: 16 hex characters, random.
+ *
+ * Random rather than sequential or hashed. A counter leaks how many characters the server
+ * has ever created and collides the moment two servers merge data; a hash of the account
+ * makes the id a reversible restatement of who owns it, which defeats being able to pass
+ * it around.
+ */
+inline std::string GenerateCharacterId()
+{
+    static std::mt19937_64 engine{std::random_device{}()};
+    static std::uniform_int_distribution<uint64_t> dist;
+
+    const uint64_t value = dist(engine);
+
+    static constexpr char kHex[] = "0123456789abcdef";
+    std::string id(16, '0');
+
+    for (int i = 0; i < 16; ++i)
+        id[15 - i] = kHex[(value >> (i * 4)) & 0xF];
+
+    return id;
+}
 
 /**
  * Base64, so the appearance blob can live in the same human-readable JSON as everything

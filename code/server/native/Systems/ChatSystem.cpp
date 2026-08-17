@@ -59,51 +59,70 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
     }
 
     auto& store = GServer->GetPlayerStore();
+    const auto* pExisting = store.FindCharacter(pPlayer->DiscordId);
 
-    CharacterRecord character;
+    // Start from the record as stored, and overwrite only what an appearance save is
+    // allowed to change. SaveCharacter replaces the stored record wholesale with what it
+    // is given (CreatedAt and CharacterId excepted), so every field NOT copied here
+    // silently resets on every ripperdoc visit. Not hypothetical: building the record
+    // from scratch and hand-carrying fields is how SpawnedBefore got wiped by face edits
+    // - sending people back to the arrivals point on their next spawn - and it is how
+    // the next field added to CharacterRecord would break too. Copying first inverts the
+    // default: a new field survives unless a save deliberately changes it.
+    CharacterRecord character = pExisting ? *pExisting : CharacterRecord{};
     character.Slot = 0;
     character.IsMale = aMessage.get_is_male();
     character.Appearance = Base64::Encode(std::vector<uint8_t>(blob.begin(), blob.end()));
 
-    // What they typed with /character save wins over the name the client offered, which is
-    // only their launcher display name. Falls back through the client's name to their
-    // Discord name, so a character always has something to be called.
-    std::string name = pPlayer->PendingCharacterName;
-    if (name.empty())
-        name = aMessage.get_name().c_str();
-    if (name.size() > 32)
-        name.resize(32);
-
-    // Consumed, so a later save without a name does not silently re-apply an old one.
+    // Read BEFORE it is consumed. The old code cleared this field and then tested it, so
+    // "did they deliberately choose a name" could never come back true from here.
+    std::string chosenName = pPlayer->PendingCharacterName;
     pPlayer->PendingCharacterName.clear();
 
-    // An existing character keeps its name when the player is only editing their face.
-    if (name.empty())
+    // A name is chosen once per character, and only deliberately.
+    //
+    // Deliberately means /name or /character save <name> - never the message's own name
+    // field, which old clients filled with the Discord name on EVERY ripperdoc save. The
+    // server took any non-empty name as a rename, so editing your hair as 'Silverhand92'
+    // walked you out named after your account, with NameChosen set so the prompt never
+    // asked again. The guard meant to prevent that ("an existing character keeps its
+    // name") tested name.empty(), which the always-filled field made unreachable.
+    //
+    // Once means the FIRST deliberate choice sticks. The reset is a new character:
+    // /character new retires this one, and the fresh record starts with NameChosen false.
+    // Dying is not a reset - FLATLINED revives the same person, so their name survives;
+    // if permadeath ever retires the record instead, the unlock comes with it for free.
+    const bool alreadyNamed = pExisting && pExisting->NameChosen;
+
+    if (alreadyNamed && !chosenName.empty() && chosenName != pExisting->Name)
     {
-        if (const auto* pExisting = store.FindCharacter(pPlayer->DiscordId))
-            name = pExisting->Name;
+        Tell(*pPlayer, fmt::format("This character is already named '{}' - a name is chosen once.",
+                                   pExisting->Name));
+        Tell(*pPlayer, "Start a new character with /character new to choose a new name.");
+        chosenName.clear();
     }
 
-    // Carried over, so editing your face at a ripperdoc does not make the server think
-    // you never picked a name and ask again every visit.
-    if (const auto* pExisting = store.FindCharacter(pPlayer->DiscordId))
-        character.NameChosen = pExisting->NameChosen;
-
-    // Typing a name into /character save IS choosing one.
-    if (!pPlayer->PendingCharacterName.empty() || !aMessage.get_name().empty())
-        character.NameChosen = character.NameChosen || !name.empty();
-
-    character.Name = name.empty() ? pPlayer->Username : name;
-
-    // Progression carried forward, so editing your face does not reset your character and
-    // re-grant the starting loadout.
-    if (const auto* pExisting = store.FindCharacter(pPlayer->DiscordId))
+    if (!chosenName.empty())
     {
-        character.Level = pExisting->Level;
-        character.AttributePoints = pExisting->AttributePoints;
-        character.PerkPoints = pExisting->PerkPoints;
-        character.Initialised = pExisting->Initialised;
+        if (chosenName.size() > 32)
+            chosenName.resize(32);
+
+        character.Name = chosenName;
+        character.NameChosen = true;
     }
+    else if (!pExisting)
+    {
+        // First capture. The client's label if it sent one (first-capture clients send
+        // none), else the account username - so a character always has something to be
+        // called, and NameChosen stays false so the prompt asks properly.
+        std::string label = aMessage.get_name().c_str();
+        if (label.size() > 32)
+            label.resize(32);
+
+        character.Name = label.empty() ? pPlayer->Username : label;
+    }
+    // else: an existing character's Name and NameChosen came over with the copy,
+    // untouched - editing your face is not an identity change.
 
     store.SaveCharacter(pPlayer->DiscordId, pPlayer->Username, character);
 
@@ -353,27 +372,66 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
 
     // Find a connected player by name. Case-insensitive, because nobody types display
     // names exactly, and a moderator fumbling capitalisation during an incident is bad.
-    const auto findPlayer = [&](const std::string& acName) -> flecs::entity
+    // Four ways to name the same person, because staff know them by different things.
+    //
+    // Matching only the Discord username meant an admin watching somebody roleplay as
+    // "Silas Voss" had to go and look up that this was noremacxxi before they could do
+    // anything about them - and a character id, the one identifier that is stable and
+    // safe to paste anywhere, could not be used at all.
+    //
+    // Order matters. Character id first because it is exact and unambiguous by
+    // construction; then Discord id, equally exact; then the two human names. A character
+    // name is checked before an account name so that in-world identity wins - if somebody
+    // names their character after another player's account, the character they are
+    // standing in front of is the one an admin means.
+    const auto equalsInsensitive = [](const std::string& acLeft, const std::string& acRight)
     {
-        flecs::entity found{};
+        return acLeft.size() == acRight.size() &&
+               std::equal(acLeft.begin(), acLeft.end(), acRight.begin(),
+                          [](char a, char b) { return std::tolower(a) == std::tolower(b); });
+    };
+
+    const auto findPlayer = [&](const std::string& acQuery) -> flecs::entity
+    {
+        flecs::entity byCharacterId{};
+        flecs::entity byDiscordId{};
+        flecs::entity byCharacterName{};
+        flecs::entity byUsername{};
 
         m_pWorld->each(
             [&](flecs::entity aEntity, const PlayerComponent& aOther)
             {
-                if (found)
-                    return;
-
-                if (aOther.Username.size() != acName.size())
-                    return;
-
-                if (std::equal(aOther.Username.begin(), aOther.Username.end(), acName.begin(),
-                               [](char a, char b) { return std::tolower(a) == std::tolower(b); }))
+                if (equalsInsensitive(aOther.Username, acQuery))
                 {
-                    found = aEntity;
+                    if (!byUsername) byUsername = aEntity;
+                }
+
+                if (aOther.DiscordId == acQuery)
+                {
+                    if (!byDiscordId) byDiscordId = aEntity;
+                }
+
+                const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(aOther.DiscordId);
+                if (!pCharacter)
+                    return;
+
+                if (!pCharacter->CharacterId.empty() &&
+                    equalsInsensitive(pCharacter->CharacterId, acQuery))
+                {
+                    if (!byCharacterId) byCharacterId = aEntity;
+                }
+
+                if (!pCharacter->Name.empty() && equalsInsensitive(pCharacter->Name, acQuery))
+                {
+                    if (!byCharacterName) byCharacterName = aEntity;
                 }
             });
 
-        return found;
+        if (byCharacterId)   return byCharacterId;
+        if (byDiscordId)     return byDiscordId;
+        if (byCharacterName) return byCharacterName;
+
+        return byUsername;
     };
 
     // ---------------------------------------------------------------- /kick ---
@@ -534,6 +592,8 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         {
             Tell(acSender, "Usage: /tp <player>   (brings them to you)");
             Tell(acSender, "       /tp to <player>   (sends you to them)");
+            Tell(acSender, "  <player> can be a character name, a Discord name, a Discord id,");
+            Tell(acSender, "  or a character id from /whois.");
             return true;
         }
 
@@ -754,7 +814,11 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
     // "noremacxxi" and their character being someone else is the point of roleplay.
     //
     // Separate from appearance because the two are chosen at different moments: a face is
-    // fiddled with at a mirror and saves itself, a name is a decision typed once.
+    // fiddled with at a mirror and saves itself, a name is a decision typed ONCE. One
+    // name per character: it is part of who the character is, chosen when they are made
+    // and kept until they are retired. /character new starts a fresh character, and a
+    // fresh character chooses fresh. Dying is not the end of a character on this server -
+    // FLATLINED revives the same person - so a name survives death on purpose.
     if (command == "/name")
     {
         const auto nameStart = acLine.find(' ');
@@ -766,9 +830,14 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         if (wanted.empty())
         {
             const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(acSender.DiscordId);
-            Tell(acSender, fmt::format("You are called '{}'. Change it with /name <name>.",
+            const bool named = pCharacter && pCharacter->NameChosen;
+
+            Tell(acSender, fmt::format("You are called '{}'.",
                                        (pCharacter && !pCharacter->Name.empty()) ? pCharacter->Name
                                                                                  : acSender.Username));
+            // The hint matches what typing a name would actually do.
+            Tell(acSender, named ? "A name is chosen once per character - /character new starts one that can choose again."
+                                 : "Choose it with /name <name>.");
             return true;
         }
 
@@ -784,6 +853,16 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             return true;
         }
 
+        // Once per character. Refused rather than applied - if renaming were free, a name
+        // would be a chat status instead of an identity.
+        if (pCharacter->NameChosen)
+        {
+            Tell(acSender, fmt::format("This character is already named '{}' - a name is chosen once.",
+                                       pCharacter->Name));
+            Tell(acSender, "Start a new character with /character new to choose a new name.");
+            return true;
+        }
+
         auto updated = *pCharacter;
         updated.Name = wanted;
 
@@ -795,6 +874,58 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         spdlog::info("{} named their character '{}'", acSender.Username, wanted);
 
         Tell(acSender, fmt::format("You are now known as '{}'.", wanted));
+        return true;
+    }
+
+    // ------------------------------------------------------------- /whois ----
+    //
+    // Who is this, by every name they have?
+    //
+    // Staff see three different identities for one person - the character in front of them,
+    // the Discord account that owns it, and the id that outlives both - and until now there
+    // was no way to get from any one to the others. That made the character id useless in
+    // practice: nothing could tell you what it was.
+    if (command == "/whois")
+    {
+        if (!acSender.HasAtLeast(EPermissionLevel::kModerator))
+            return deny(EPermissionLevel::kModerator);
+
+        const auto nameStart = acLine.find(' ');
+        std::string query = (nameStart == std::string::npos) ? std::string{} : acLine.substr(nameStart + 1);
+
+        while (!query.empty() && query.front() == ' ')
+            query.erase(query.begin());
+
+        if (query.empty())
+        {
+            Tell(acSender, "Usage: /whois <player>   (character name, Discord name, or id)");
+            return true;
+        }
+
+        const auto who = findPlayer(query);
+        if (!who)
+        {
+            Tell(acSender, fmt::format("Nobody matching '{}' is online.", query));
+            return true;
+        }
+
+        const auto* pWho = who.get<PlayerComponent>();
+        const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(pWho->DiscordId);
+
+        Tell(acSender, fmt::format("Character : {}",
+                                   (pCharacter && !pCharacter->Name.empty()) ? pCharacter->Name
+                                                                             : "not named yet"));
+        Tell(acSender, fmt::format("Account   : {}", pWho->Username));
+
+        if (pCharacter && !pCharacter->CharacterId.empty())
+            Tell(acSender, fmt::format("Character id : {}", pCharacter->CharacterId));
+        else
+            Tell(acSender, "Character id : none yet - it is assigned when a character is saved.");
+
+        // The Discord id is deliberately NOT shown. It identifies the human being rather
+        // than the character, it is the key everything on the server is filed under, and
+        // nothing an admin does in chat needs it - /tp and the rest already accept the
+        // character id, which is safe to paste anywhere.
         return true;
     }
 

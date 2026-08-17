@@ -322,10 +322,28 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
     glm::vec3 startPosition;
     float startYaw = 0.f;
 
-    const bool isNewHere = GServer->GetPlayerStore().Find(pComponent->DiscordId) == nullptr;
+    // "Brand-new" means a brand-new CHARACTER, not an account nobody has seen.
+    //
+    // This is why /setstart appeared to do nothing. It tested whether the account had a
+    // PlayerRecord, and a record is created the moment anything about a player is stored -
+    // so by the time anyone reached this line they already had one, the condition was
+    // false, and the arrivals point was skipped every single time. It could only ever have
+    // fired for an account that had never been stored at all.
+    //
+    // Worse, it was the wrong question anyway: somebody who replaces their character with
+    // a new one is exactly who the arrivals point is for, and they always have a record.
+    //
+    // The character's own flag answers it properly, and a replacement character defaults
+    // to false so it is sent to the start point without anything having to reset it.
+    const auto* pExistingCharacter = GServer->GetPlayerStore().FindCharacter(pComponent->DiscordId);
+    const bool isNewHere = (pExistingCharacter == nullptr) || !pExistingCharacter->SpawnedBefore;
+
+    bool placedAtStart = false;
 
     if (isNewHere && GServer->GetStartPoint(startPosition, startYaw))
     {
+        placedAtStart = true;
+
         pos = startPosition;
         rot = glm::vec3(0.f, 0.f, startYaw);
 
@@ -342,9 +360,24 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
 
         spdlog::info("New arrival {} placed at the start point ({:.1f}, {:.1f}, {:.1f})",
                      pComponent->Username, startPosition.x, startPosition.y, startPosition.z);
+
+        // Recorded straight away, so this happens once per character rather than on every
+        // join. Written through with the rest of the character.
+        if (pExistingCharacter)
+        {
+            auto updated = *pExistingCharacter;
+            updated.SpawnedBefore = true;
+            GServer->GetPlayerStore().SaveCharacter(pComponent->DiscordId, pComponent->Username, updated);
+        }
     }
 
-    const auto* pSaved = GServer->GetPlayerStore().Find(pComponent->DiscordId);
+    // Skipped entirely when they were just placed at the arrivals point.
+    //
+    // Both branches teleport, and this one runs second - so without the guard it would
+    // immediately drag a new arrival back to the last position their account happened to
+    // have stored, undoing the placement above and leaving no trace of why.
+    const auto* pSaved = placedAtStart ? nullptr
+                                       : GServer->GetPlayerStore().Find(pComponent->DiscordId);
     if (pSaved)
     {
         pos = glm::vec3(pSaved->X, pSaved->Y, pSaved->Z);

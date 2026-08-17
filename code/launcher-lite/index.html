@@ -641,11 +641,48 @@
             <div>
               <div class="tool-name">Join the Tailscale network</div>
               <div class="tool-desc">
-                Opens Cam's invite. You need this before the server or the dev key will
-                reach you.
+                Opens the server network's invite. You need this before the game server
+                will reach you.
               </div>
             </div>
             <button class="action ghost" id="openTailscaleInvite">Open invite</button>
+          </div>
+
+          <div class="tool">
+            <div style="min-width:0">
+              <div class="tool-name">Server</div>
+              <div class="tool-desc" id="devServerHint">
+                Which server Launch connects to. Leave blank to follow the published
+                server (Cam's PC). The test server is <b>100.90.85.33</b> - it rebuilds
+                itself from git within ten minutes of a push.
+              </div>
+              <div class="btn-row" style="margin-top:8px">
+                <input type="text" id="devServerHost" placeholder="host or IP"
+                       style="flex:1;min-width:0;background:var(--bg,#111);color:inherit;border:1px solid rgba(255,255,255,.2);border-radius:6px;padding:6px 10px;font:inherit">
+                <input type="text" id="devServerPort" placeholder="11778"
+                       style="width:72px;background:var(--bg,#111);color:inherit;border:1px solid rgba(255,255,255,.2);border-radius:6px;padding:6px 10px;font:inherit">
+              </div>
+            </div>
+            <div class="btn-row" style="flex-direction:column;gap:6px">
+              <button class="action ghost" id="devServerApply">Apply</button>
+              <button class="action ghost" id="devServerClear">Default</button>
+            </div>
+          </div>
+
+          <div class="tool">
+            <div style="min-width:0;flex:1">
+              <div class="tool-name">Test builds</div>
+              <div class="tool-desc">
+                Pre-releases from GitHub. Players never see these - their launchers only
+                auto-update from full releases. Install swaps in the test mod DLL and
+                keeps the shipped one; Restore puts it back.
+              </div>
+              <div id="prereleaseList" style="margin-top:8px"></div>
+            </div>
+            <div class="btn-row" style="flex-direction:column;gap:6px">
+              <button class="action ghost" id="prereleaseRefresh">Refresh</button>
+              <button class="action ghost" id="prereleaseRestore">Restore</button>
+            </div>
           </div>
         </section>
 
@@ -832,6 +869,7 @@
         <button class="action start" id="startServer">Start</button>
         <button class="action restart" id="restartServer">Restart</button>
         <button class="action stop" id="stopServer">Stop</button>
+        <button class="action ghost" id="openServerAdmin" style="display:none">Open server admin</button>
       </div>
       <button class="linkbtn" id="pickServerDir">Server not found? Locate it</button>
       <div class="admin-note" id="serverPath"></div>
@@ -903,6 +941,9 @@
 
   const loginBtn = $('login')
   const playBtn = $('play')
+
+  // Mirrors the main process, which is the only side that can see the process list.
+  let gameState = { launching: false, running: false }
   const logoutBtn = $('logout')
   const statusEl = $('status')
 
@@ -1060,7 +1101,23 @@
     // what testing looks like, and they are the ones who can start it.
     const serverReady = Boolean(serverState?.online) || Boolean(user?.isAdmin)
 
-    playBtn.disabled = !verified || !filesReady || !serverReady
+    // A game already up, or on its way up, outranks every other reason.
+    //
+    // Two copies of Cyberpunk cannot share one install - they fight over the same saves
+    // and the same logs, and both sign in as the same account, which the server reads as
+    // one player teleporting between two places. So the button locks and SAYS what it is
+    // waiting for, because a dead button with no explanation reads as the launcher having
+    // broken during the least reassuring possible moment.
+    playBtn.disabled = !verified || !filesReady || !serverReady ||
+                       gameState.launching || gameState.running
+
+    if (gameState.launching) {
+      playBtn.textContent = 'Launching...'
+    } else if (gameState.running) {
+      playBtn.textContent = 'Game running'
+    } else {
+      playBtn.textContent = 'Launch Game'
+    }
 
     // Say WHY, in the order someone has to fix them. Signing in first, then files, then
     // the server - listing a server outage to someone who has not signed in yet sends
@@ -1179,17 +1236,42 @@
 
     const running = result.running
     $('serverDot').className = 'dot' + (running ? ' on' : '')
-    $('serverText').textContent = running ? 'online' : 'offline'
-    $('startServer').disabled = running || !result.exists
-    $('stopServer').disabled = !running
-    $('restartServer').disabled = !running || !result.exists
 
-    $('serverPath').textContent = result.exists
-      ? result.exePath
-      : 'Not found: ' + result.exePath
+    // Remote mode: the panel describes the actual game server - the one players are
+    // on - not a process on this PC. It runs itself; the only control that makes
+    // sense here is opening its web admin.
+    const remote = result.mode === 'remote'
+    for (const id of ['startServer', 'restartServer', 'stopServer']) {
+      $(id).style.display = remote ? 'none' : 'inline-block'
+    }
+    $('pickServerDir').style.display = remote ? 'none' : 'inline-block'
+    $('openServerAdmin').style.display = remote ? 'inline-block' : 'none'
+
+    if (remote) {
+      $('serverText').textContent = running
+        ? `online - ${result.players} ${result.players === 1 ? 'player' : 'players'}`
+        : 'offline'
+      $('serverPath').textContent =
+        `Runs at ${result.host}:${result.port}. Deploys itself from GitHub within ` +
+        'minutes of a push to main, and restarts automatically if it crashes.'
+    } else {
+      $('serverText').textContent = running ? 'online' : 'offline'
+      $('startServer').disabled = running || !result.exists
+      $('stopServer').disabled = !running
+      $('restartServer').disabled = !running || !result.exists
+
+      $('serverPath').textContent = result.exists
+        ? result.exePath
+        : 'Not found: ' + result.exePath
+    }
 
     refreshCoordStatus()
   }
+
+  $('openServerAdmin').addEventListener('click', async () => {
+    const result = await window.launcher.serverOpenAdmin()
+    if (!result.ok) setStatus(result.error, 'bad')
+  })
 
   // Rides on the same poll as the game server, so there is one heartbeat rather than two.
   async function refreshCoordStatus () {
@@ -1274,9 +1356,36 @@
   })
 
   playBtn.addEventListener('click', async () => {
+    // Locked on the way out as well as by the state message that follows. The main process
+    // is the authority, but its reply takes a moment to arrive and a second click can land
+    // inside that gap - which is precisely the double launch this exists to prevent.
+    if (playBtn.disabled) return
+    playBtn.disabled = true
+    playBtn.textContent = 'Launching...'
+
     setStatus('Starting game...')
     const result = await window.launcher.launchGame()
     setStatus(result.ok ? 'Game started.' : result.error, result.ok ? 'ok' : 'error')
+  })
+
+  // Launching / running / closed, pushed from the main process.
+  window.launcher.onGameState((state) => {
+    gameState = state
+    // signedInUser is what the rest of this file re-renders from - see line ~918. There
+    // is no `currentUser` in the renderer; that name belongs to the main process.
+    render(signedInUser)
+  })
+
+  // A duplicate copy of the mod was found and moved aside on the way to launch.
+  window.launcher.onModsCleaned((info) => {
+    setStatus(info.message, 'ok')
+  })
+
+  // The role check finishes after sign-in returns, so a dev's admin controls arrive
+  // as an update rather than in the login result. Re-rendering with the fresh profile
+  // is what actually makes the SERVER panel and dev tools appear for role-based devs.
+  window.launcher.onUserUpdated((user) => {
+    render(user)
   })
 
   // The process can fail to start after we have already handed off, so this
@@ -1680,6 +1789,11 @@
     $('devKeyValue').textContent = ''
     $('revealDevKey').textContent = 'Reveal'
     $('revealDevKey').disabled = false
+
+    if (debug && debug.admin) {
+      refreshDevServer()
+      refreshPrereleases()
+    }
   }
 
   // Body type. Reflects what is chosen AND whether the choice can be honoured yet - a
@@ -1755,6 +1869,102 @@
     const result = await window.launcher.openTailscaleInvite()
     if (!result.ok) setSettingsStatus(result.error, 'bad')
     else setSettingsStatus('Invite opened in your browser.', 'good')
+  })
+
+  // Server override. The inputs always show what is actually saved, not what was last
+  // typed - after Apply or Default they are re-read from settings.
+  async function refreshDevServer () {
+    const result = await window.launcher.devServerGet()
+    if (!result.ok) return
+
+    $('devServerHost').value = result.host || ''
+    $('devServerPort').value = result.port || ''
+  }
+
+  $('devServerApply').addEventListener('click', async () => {
+    const host = $('devServerHost').value.trim()
+    if (!host) {
+      setSettingsStatus('Enter a host, or press Default to follow the published server.', '')
+      return
+    }
+
+    const result = await window.launcher.devServerSet(host, $('devServerPort').value.trim())
+    if (!result.ok) { setSettingsStatus(result.error, 'bad'); return }
+
+    setSettingsStatus(`Launch now connects to ${result.host}:${result.port}.`, 'good')
+    refreshDevServer()
+  })
+
+  $('devServerClear').addEventListener('click', async () => {
+    const result = await window.launcher.devServerSet(null)
+    if (!result.ok) { setSettingsStatus(result.error, 'bad'); return }
+
+    setSettingsStatus('Back to the published server.', 'good')
+    refreshDevServer()
+  })
+
+  // Test builds. Built with DOM nodes rather than innerHTML - release names come from
+  // GitHub and go straight onto the page.
+  async function refreshPrereleases () {
+    const list = $('prereleaseList')
+    list.textContent = 'Checking GitHub...'
+
+    const result = await window.launcher.prereleaseList()
+    if (!result.ok) { list.textContent = result.error; return }
+
+    list.textContent = ''
+
+    if (!result.prereleases.length) {
+      list.textContent = 'No test builds published right now.'
+      return
+    }
+
+    for (const release of result.prereleases) {
+      const row = document.createElement('div')
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 0'
+
+      const label = document.createElement('span')
+      label.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'
+      label.textContent = release.name
+      if (release.active) label.textContent += '  (installed)'
+      row.appendChild(label)
+
+      const button = document.createElement('button')
+      button.className = 'action ghost'
+      button.textContent = release.active ? 'Installed' : 'Install'
+      button.disabled = release.active || !release.hasDll
+      if (!release.hasDll) button.title = 'No CyberpunkMP.dll attached to this pre-release'
+
+      button.addEventListener('click', async () => {
+        button.disabled = true
+        button.textContent = 'Installing...'
+        setSettingsStatus(`Downloading ${release.tag}...`)
+
+        const installed = await window.launcher.prereleaseInstall(release.tag)
+        if (!installed.ok) {
+          button.disabled = false
+          button.textContent = 'Install'
+          setSettingsStatus(installed.error, 'bad')
+          return
+        }
+
+        setSettingsStatus(`Test build ${installed.tag} installed. Point Server at the test server and launch.`, 'good')
+        refreshPrereleases()
+      })
+
+      row.appendChild(button)
+      list.appendChild(row)
+    }
+  }
+
+  $('prereleaseRefresh').addEventListener('click', refreshPrereleases)
+
+  $('prereleaseRestore').addEventListener('click', async () => {
+    const result = await window.launcher.prereleaseRestore()
+    if (!result.ok) { setSettingsStatus(result.error, 'bad'); return }
+
+    setSettingsStatus('Shipped build restored.', 'good')
+    refreshPrereleases()
   })
 
   function openSettings () {

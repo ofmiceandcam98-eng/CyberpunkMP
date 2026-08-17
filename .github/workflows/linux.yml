@@ -60,3 +60,15 @@ jobs:
     # Build the server
     - name: Build
       run: xmake -y
+
+  # The raw build above proves the code compiles on Linux; this proves the actual
+  # deployment artifact builds - same Dockerfile the servers pull and run. Green here
+  # means a push to the deployed branch will not brick the self-updating servers.
+  container:
+    runs-on: ubuntu-24.04
+    if: "!contains(github.event.head_commit.message, 'ci skip')"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the server container
+        run: docker build --build-arg BUILD_JOBS=4 .
