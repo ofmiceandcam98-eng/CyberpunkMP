@@ -4,6 +4,11 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.61
+
+- **NEW CHARACTER really means new.** Replacing your character now retires the old one properly, so the new person gets their own name prompt and starts at the arrivals point. Before this, the replacement quietly inherited the old character's name — and the once-per-character name lock along with it, so you could never name the person you'd just made. Old characters are retired, not deleted.
+- Movement desync on the server now logs exactly what it rejected, so the remaining sync bug can be caught in the act.
+
 ## What changed — v0.3.60
 
 - **The Server panel now shows the real server.** For admins, the panel used to control a server program on your own PC — a leftover from when the server was somebody's desktop. It now reports the actual game server everyone plays on (online state, player count, where it runs) and opens its web admin. The old local Start/Stop controls only appear on a machine that actually has a locally built server.
