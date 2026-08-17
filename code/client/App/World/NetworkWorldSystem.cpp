@@ -634,6 +634,20 @@ void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::
     {
         m_newCharacterPending = false;
 
+        // Retire the stored character FIRST, through the same command a player could
+        // type. The save below reuses SaveCharacterRequest, and the server builds a save
+        // by COPYING the stored record - so without the retire, the old character's name
+        // and its named-once lock (and SpawnedBefore) ride along onto the replacement,
+        // and the "new" character walks out pre-named after the old one. Retiring makes
+        // the save arrive to no record at all: fresh name prompt, arrivals spawn, a
+        // genuinely new person. Reliable messages on one connection stay ordered, so the
+        // retire always lands before the appearance.
+        {
+            client::ChatMessageRequest retire;
+            retire.set_message("/character new");
+            Core::Container::Get<NetworkService>()->Send(retire);
+        }
+
         spdlog::info("[Character] new character - sending this appearance to replace the stored one");
         SaveCharacterAppearance();
     }
