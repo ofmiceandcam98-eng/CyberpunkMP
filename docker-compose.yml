@@ -14,6 +14,11 @@ services:
     environment:
       CYBERPUNKMP_ADMIN_USERNAME: ${CYBERPUNKMP_ADMIN_USERNAME:?set this in .env}
       CYBERPUNKMP_ADMIN_PASSWORD: ${CYBERPUNKMP_ADMIN_PASSWORD:?set this in .env}
+      # The server's native HTTPS (Discord verification, server list) links a statically
+      # built OpenSSL whose baked-in CA path is the BUILD machine's package directory -
+      # which does not exist in this image, so every TLS connection fails verification.
+      # OpenSSL honors this override; the bundle ships with the runtime image.
+      SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
 
     ports:
       # Game traffic. GameNetworkingSockets is UDP; the same port also serves the
