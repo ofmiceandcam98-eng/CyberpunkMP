@@ -452,7 +452,12 @@ void Level::HandleMoveEntityRequest(PacketEvent<client::MoveEntityRequest>& aMes
     auto* pPlayer = player.get<PlayerComponent>();
     if (!pPlayer)
     {
-        spdlog::warn("The entity's owner is not a player! From connection {:x}", aMessage.ConnectionId);
+        // Every observed desync on the container deployment funnels through this branch,
+        // so it says everything it knows: which id the client sent (generation bits
+        // included), whether that entity is alive, and what the parent actually is.
+        spdlog::warn("The entity's owner is not a player! move id={:#x} alive={} target='{}' parent id={:#x} parent='{}' from connection {:x}",
+                     aMessage.get_id(), target.is_alive(), target.name().c_str(),
+                     player.raw_id(), player.name().c_str(), aMessage.ConnectionId);
         return;
     }
 
