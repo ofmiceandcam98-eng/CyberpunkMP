@@ -7,6 +7,13 @@ logs
 plugins
 tailscale-state
 .env
+
+# Build noise and editor state.
 .git
-build
+.github/
+.vscode/
+.xmake/
+build/
+bin/
+obj/
 distrib
