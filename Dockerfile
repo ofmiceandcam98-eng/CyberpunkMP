@@ -16,9 +16,12 @@ RUN echo 'deb http://deb.debian.org/debian bookworm-backports main' >> /etc/apt/
 # Debian's cmake 3.25 in the image. With a system cmake present, xmake uses it instead
 # of fetching its own, and entt v4.0.0 demands cmake >= 3.28. Removing it (a Recommends,
 # so xmake itself survives) puts xmake back on its fetch-a-modern-one path.
+# nodejs/npm: EmoteSystem's csproj builds its Admin web app with pnpm during publish.
+# pnpm pinned to 9 to match the toolchain pin used everywhere else on this project.
 RUN apt update \
-  && apt install -y xmake g++ unzip wget ca-certificates git \
+  && apt install -y xmake g++ unzip wget ca-certificates git nodejs npm \
   && apt remove -y cmake cmake-data \
+  && npm install --global pnpm@9 \
   && apt clean
 
 COPY . .
