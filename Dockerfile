@@ -4,7 +4,10 @@
 # host actually is. That matters for Oracle Cloud's Always Free tier, where the
 # generous shape (4 cores / 24 GB) is ARM: an amd64-pinned image either refuses to
 # run there or runs under emulation at a fraction of the speed.
-FROM mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim AS build
+# SDK 9, runtime 8: SdkGenerator (build-time codegen) targets net9.0, everything that
+# actually ships - Server.Loader and every plugin - targets net8.0. The SDK builds both;
+# the release stage keeps the exact runtime the shipped binaries ask for.
+FROM mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim AS build
 WORKDIR /app
 ENV XMAKE_ROOT y
 
