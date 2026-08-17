@@ -11,7 +11,7 @@
   ],
 
   "name": "Night City Online",
-  "host": "100.90.85.33",
+  "host": "100.80.243.29",
   "port": 11778,
   "requiresTailscale": true,
 
@@ -26,9 +26,11 @@
   "coordPort": 11780,
 
   "_tailscaleComment": [
-    "Invite to Cam's tailnet, so joining is a button rather than a link he has to send",
-    "by hand every time. The launcher only shows it to people it has already verified",
-    "are in the Discord - see the note in index.html."
+    "Invite to the server's network (the deployment carries its own tailnet node - see",
+    "the tailscale sidecar in docker-compose.yml), so joining is a button rather than a",
+    "link someone has to send by hand. The launcher only shows it to people it has",
+    "already verified are in the Discord - see the note in index.html. Invites may be",
+    "single-seat: rotate via the Tailscale API when one is consumed."
   ],
-  "tailscaleInvite": "https://login.tailscale.com/admin/invite/cZRsnu3szrEVp3H89kz121"
+  "tailscaleInvite": "https://login.tailscale.com/uinv/iLLWcnDrxW11eC16SYzEd11"
 }
