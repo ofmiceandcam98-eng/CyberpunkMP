@@ -8,8 +8,8 @@ plugins
 tailscale-state
 .env
 
-# Build noise and editor state.
-.git
+# Build noise and editor state. .git is deliberately NOT ignored: SdkGenerator finds
+# the repo root via LibGit2Sharp and silently generates nothing without it.
 .github/
 .vscode/
 .xmake/
