@@ -11,7 +11,7 @@
   ],
 
   "name": "Night City Online",
-  "host": "100.109.102.127",
+  "host": "100.90.85.33",
   "port": 11778,
   "requiresTailscale": true,
 
