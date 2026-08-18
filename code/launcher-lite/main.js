@@ -83,7 +83,10 @@ function defaultServerDir () {
   return 'C:\\Users\\Cam\\OneDrive\\Documents\\GitHub\\CyberpunkMP\\build\\windows\\x64\\release'
 }
 
-const GAME_ARGS = []
+// -skipStartScreen is the game's own documented launch option: boot lands on the main
+// menu instead of the "press any key" breach screen. Testers relaunch constantly, and
+// every screen between double-click and MULTIPLAYER is dead time.
+const GAME_ARGS = ['-skipStartScreen']
 
 // Where the game server is.
 //
