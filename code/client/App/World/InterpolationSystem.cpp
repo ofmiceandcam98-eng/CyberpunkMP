@@ -281,6 +281,13 @@ void HookIdleController_SetAnimation(Game::Controller* apController, AnimationDa
             if (apController->m_type == MultiMovementController::kMulti)
                 return;
 
+            // Reaching here means the engine handed this puppet a FRESH idle controller.
+            // At spawn that is expected (it is how the multi controller gets attached);
+            // any later sighting means the engine tore our controller off - the vehicle
+            // mount pipeline is the suspect - and this timestamp against the mount line
+            // in the log is the evidence.
+            spdlog::info("[Interpolation] idle controller (re)entered for puppet {:x} - attaching multi controller", pOwner->id.hash);
+
             // The kMulti guard above is evaluated on the ANIMATION thread while the attach
             // below happens later on the MAIN thread, so every animation frame in that gap
             // queues another attach for the same move component. Harmless - the second one

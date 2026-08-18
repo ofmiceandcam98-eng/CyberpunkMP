@@ -62,4 +62,8 @@ struct MultiMovementController
     float m_speed = 0.f;
     AnimationDriver m_animationDriver;
     UniquePtr<States::Base> m_pState;
+    // One-shot diagnostic flags for the vehicle-passenger crash hunt: each condition
+    // logs once per controller, on the animation thread, then stays quiet.
+    bool m_nullPlacementLogged = false;
+    bool m_runawayLogged = false;
 };

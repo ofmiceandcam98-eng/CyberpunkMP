@@ -506,8 +506,9 @@ void VehicleSystem::DoMount(flecs::entity aCharacter, Red::EntityID aVehicle, Re
         return;
     }
 
-    spdlog::info("[VehicleSystem] DoMount: entering character {:x} into vehicle {:x} seat {}",
-                 character.hash, vehicle->id.hash, aSit.hash);
+    spdlog::info("[VehicleSystem] DoMount: entering character {:x} into vehicle {:x} seat {} ({})",
+                 character.hash, vehicle->id.hash, aSit.hash,
+                 (m_vehicleGameId && *m_vehicleGameId == aVehicle) ? "OUR live car" : "network copy");
     Red::Detail::CallFunctionWithArgs(m_pEnterVehicle, handle, res, character, vehicle->id, aSit);
     spdlog::info("[VehicleSystem] DoMount: EnterVehicle returned {}", res);
 
