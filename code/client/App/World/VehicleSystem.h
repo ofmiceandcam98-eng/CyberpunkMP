@@ -35,16 +35,40 @@ protected:
     bool HandleAuthorityAssigned(const PacketEvent<server::NotifyAuthorityAssigned>& aMessage);
     bool HandleAuthorityRevoked(const PacketEvent<server::NotifyAuthorityRevoked>& aMessage);
 
+    // Listens alongside NetworkWorldSystem's own unload handling (entt sinks fan out).
+    // The server unloading the vehicle this client simulates is an implicit revoke -
+    // without this, the client kept streaming movement for a destroyed car (512
+    // rejected packets in one session). Queued mounts for the entity die with it too.
+    bool HandleEntityUnload(const PacketEvent<server::NotifyEntityUnload>& aMessage);
+
     void DoMount(flecs::entity aCharacter, Red::EntityID aVehicle, Red::CName aSit);
 
 private:
     bool m_ready{false};
-    Core::Map<Red::EntityID, Vector<PacketEvent<server::NotifyVehicleEnter>>> m_pendingMounts;
+    // Keyed by SERVER id, not engine EntityID: the engine id is resolved through the
+    // flecs mirror, which returns 0 whenever the mirror does not exist yet - and a mount
+    // queued under key 0 can never be found again. Both "Couldn't find vehicle" losses
+    // in the 2026-08-18 test were this. The server id is stable from the moment the
+    // message arrives.
+    Core::Map<uint64_t, Vector<PacketEvent<server::NotifyVehicleEnter>>> m_pendingMounts;
     Red::CBaseFunction* m_pSpawnVehicle;
     Red::CBaseFunction* m_pEnterVehicle;
     Red::CBaseFunction* m_pExitVehicle;
     std::optional<uint64_t> m_vehicleRemoteId;
     std::optional<Red::EntityID> m_vehicleGameId;
+    // What the local player is currently sitting in, for ExitVehicleRequest to name.
+    // m_mountedServerId is known at enter time for a resolved network car; for a car we
+    // spawned ourselves it arrives later via HandleAuthorityAssigned (m_vehicleRemoteId).
+    std::optional<uint64_t> m_mountedServerId;
+    uint64_t m_mountedSlot{0};
+    // Our own spawned car, remembered across exits. The server never replicates a
+    // vehicle spawn back to its owner, so FindEntity can never resolve our own car -
+    // without this memory every re-enter position-spawned a DUPLICATE server entity
+    // (two overlapping cars for everyone else) and a seat swap through a passenger
+    // door was refused as a desync fork. Cleared when the car is unloaded, when
+    // authority over it moves away, and on disconnect.
+    std::optional<Red::EntityID> m_lastOwnVehicleGameId;
+    std::optional<uint64_t> m_lastOwnVehicleServerId;
     uint32_t m_authorityEpoch{0};
 };
 
