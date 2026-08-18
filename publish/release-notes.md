@@ -4,6 +4,10 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.68
+
+- **Buttons that share a row share a size.** The Server panel's controls (and every other button row) are now uniform width — color still says what a button does, shape no longer says anything by accident.
+
 ## What changed — v0.3.67
 
 - **"Test server connection" in Tools.** Checks every link between your PC and the server — internet, Tailscale, the server's network, the server itself — and names the first broken one with how to fix it. "Server offline" used to mean five different problems; now each one says its own name.
