@@ -15,7 +15,6 @@
 #include "Systems/ChatSystem.h"   // telling someone their seat is taken
 #include "Validation.h"           // sanity checks on anything a client sent
 
-
 constexpr static float sCellSize = 60 * 100;
 constexpr static int16_t sCellLoadRadius = 3;
 constexpr static int16_t sCellUnloadRadius = 4;
@@ -132,7 +131,6 @@ void Level::Remove(flecs::entity aEntity) noexcept
 
     aEntity.destruct();
 }
-
 
 void Level::Update(flecs::entity aEntity) noexcept
 {
@@ -789,21 +787,6 @@ void Level::TransferCell(flecs::entity aEntity, GridCell* apOldCell, GridCell* a
         m_cells.erase(apOldCell->GetPosition());
 }
 
-
-/*void Level::SendToRelevant(Player* apCharacter, const ServerMessage& acMessage)
-{
-    ForEachInRange(
-        apCharacter->GetCell(), sCellLoadRadius,
-        [&acMessage, apCharacter](const Player* apPlayer)
-        {
-#ifndef DEBUG
-            if (apCharacter == apPlayer)
-                return;
-#endif
-            apPlayer->Send(acMessage);
-        });
-}*/
-
 gsl::not_null<GridCell*> Level::GetCell(const GridCell::TPosition aPosition) noexcept
 {
     auto itor = m_cells.find(aPosition);
@@ -835,13 +818,3 @@ void Level::CollectCells(const GridCell* apNewCell, const GridCell* apOldCell, S
         });
 }
 
-void Level::Test() noexcept
-{
-    for (auto i = -10; i < 10; ++i)
-        for (auto j = -10; j < 10; ++j)
-            TP_UNUSED(GetCell(GridCell::TPosition(i, j)));
-
-    auto pCell = GetCell(GridCell::TPosition(0, 0));
-    assert(pCell == GetCell(GridCell::TPosition(0, 0)));
-    assert(pCell != GetCell(GridCell::TPosition(1, 0)));
-}

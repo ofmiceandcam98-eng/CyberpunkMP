@@ -56,7 +56,6 @@ rule("codegen")
         local outputSourceFile = path.join(target:autogendir(), "rules", "netpack", path.basename(sourcefile) .. ".gen.cpp")
 
         local objectfile = target:objectfile(outputSourceFile)
-        --table.insert(target:objectfiles(), objectfile)
         batchcmds:compile(outputSourceFile, objectfile)
 
 		-- The staleness question this batch must answer is "is the OBJECT older than the

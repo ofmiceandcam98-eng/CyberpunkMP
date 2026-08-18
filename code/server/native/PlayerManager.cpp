@@ -70,15 +70,6 @@ gsl::not_null<PlayerManagerScriptInstance*> PlayerManager::GetScriptInstance() n
     return &m_scriptInstance;
 }
 
-void PlayerManager::SendMessageTo(flecs::entity aPlayer, String aMessage) const noexcept
-{
-    //apPlayer->SendSystemMessage(std::move(aMessage));
-}
-
-void PlayerManager::BroadcastMessage(String aMessage) const noexcept
-{
-}
-
 uint32_t PlayerManager::Count() const noexcept
 {
     return static_cast<uint32_t>(m_players.size());

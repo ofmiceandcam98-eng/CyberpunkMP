@@ -436,13 +436,6 @@
   .notes ul { margin: .2rem 0; padding-left: 1.1rem; }
   .notes li { margin: .2rem 0; }
   .notes p { margin: .4rem 0; }
-  .notes code {
-    font-family: var(--mono);
-    font-size: .92em;
-    background: #22262e;
-    padding: .05em .3em;
-    border-radius: 3px;
-  }
 </style>
 </head>
 <body>
@@ -1774,9 +1767,6 @@
     }
   }
 
-  // Body type moved in game: NEW CHARACTER runs the game's own creator, which asks -
-  // and the retire-first flow (v0.3.61) makes that answer stick. A launcher toggle for
-  // the same choice was a second place for the truth to live, and they disagreed.
 
   $('revealDevKey').addEventListener('click', async () => {
     const box = $('devKeyValue')
@@ -2251,10 +2241,6 @@
 
     // Says what actually landed. "Done" was indistinguishable from "did nothing and
     // said done", which is exactly what this used to do.
-    setSettingsStatus(
-      'Installed ' + result.modFiles + ' mod file(s) and ' + result.prerequisites +
-      ' prerequisite(s): ' + (result.components || []).join(', '), 'ok')
-
     setSettingsStatus(`Installed ${result.prerequisites} required mods and the multiplayer mod.`, 'ok')
     await refreshSettings()
     await checkUpdates()

@@ -73,11 +73,6 @@ contextBridge.exposeInMainWorld('launcher', {
   prereleaseInstall: (tag) => ipcRenderer.invoke('prerelease:install', tag),
   prereleaseRestore: () => ipcRenderer.invoke('prerelease:restore'),
 
-  // Which body a new character starts from. Chosen here because it is baked into the
-  // world template and cannot be changed once the game is running.
-  getBodyType: () => ipcRenderer.invoke('bodyType:get'),
-  setBodyType: (value) => ipcRenderer.invoke('bodyType:set', value),
-
   // The coordination service itself - started alongside the game server, controllable
   // on its own. Host machine only.
   coordStatus: () => ipcRenderer.invoke('coord:status'),
@@ -100,7 +95,6 @@ contextBridge.exposeInMainWorld('launcher', {
   nexusSsoLogin: () => ipcRenderer.invoke('nexus:ssoLogin'),
   nexusSignIn: (key) => ipcRenderer.invoke('nexus:signIn', key),
   nexusStatus: () => ipcRenderer.invoke('nexus:status'),
-  nexusSignOut: () => ipcRenderer.invoke('nexus:signOut'),
 
   // Desktop + Start Menu shortcuts. Asked once on first run; this is the way back.
   createShortcuts: () => ipcRenderer.invoke('shortcuts:create'),

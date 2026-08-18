@@ -673,12 +673,8 @@ void NetworkWorldSystem::UpdatePlayerLocation() const
 
     auto puppet = Red::Cast<Red::game::Puppet>(player);
 
-    // const auto mountingFacility = Red::GetGameSystem<Red::game::mounting::MountingFacility>();
-    // Red::game::mounting::MountingInfo mountingInfo;
-    // if (GetMountingInfo(mountingFacility, *puppet.instance, Red::CName("seat_front_left"), mountingInfo)) {
     if (auto vehicle_id = GetVehicleSystem()->GetVehicleGameId())
     {
-        // auto vehicle = Red::Cast<Red::vehicle::BaseObject>(GetEntity(mountingInfo.parentId));
         auto vehicle = Red::Cast<Red::vehicle::BaseObject>(GetEntity(*vehicle_id));
         if (!vehicle)
         {
@@ -690,21 +686,6 @@ void NetworkWorldSystem::UpdatePlayerLocation() const
             auto transform = Red::WorldTransform();
 
             transform = vehicle->rigidBody->currentTransform;
-
-            // const auto cEntityRotation = eulerAngles(Game::ToGlm(vehicle->placedComponent->worldTransform.Orientation));
-
-            // about the same
-            // transform = vehicle->worldTransform;
-
-            // about the same
-            // transform = vehicle->runtimeData->transform;
-
-            // try to get transform from move system
-            // seems to return 0 :/
-            // auto transform = Red::WorldTransform();
-            // const auto moveSystem = Red::GetGameSystem<Red::vehicle::MoveSystem>();
-            // // GetCurrentTransform
-            // reinterpret_cast<void (*)(const Red::vehicle::MoveSystem *, const Red::EntityID &, Red::WorldTransform*)>(*(uintptr_t*)(*(uintptr_t*)moveSystem + 0x250))(moveSystem, vehicle->id, &transform);
 
             const auto cEntityPosition = transform.Position;
             const auto cEntityRotation = eulerAngles(Game::ToGlm(transform.Orientation));

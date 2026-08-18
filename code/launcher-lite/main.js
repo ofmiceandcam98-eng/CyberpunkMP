@@ -18,7 +18,6 @@ import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, copyFileSync, unlinkSync } from 'node:fs'
 import fsp from 'node:fs/promises'
 import AdmZip from 'adm-zip'
-import http from 'node:http'
 import crypto from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1236,17 +1235,6 @@ function createPkcePair () {
   return { verifier, challenge }
 }
 
-// ---------------------------------------------------------------------------
-// The local callback server
-//
-// Discord cannot redirect to a desktop app, so we become a web server for a few
-// seconds. Discord sends the user's browser to 127.0.0.1, we read the code out
-// of the query string, show a "you can close this" page, and shut down.
-//
-// It binds to 127.0.0.1 rather than 0.0.0.0 so nothing outside this machine can
-// reach it, and it exists only for the duration of one login.
-// ---------------------------------------------------------------------------
-
 /**
  * Opens Discord's consent page in a window owned by the launcher, and resolves
  * with the authorization code once Discord redirects.
@@ -1342,80 +1330,6 @@ function signInWindow (authorizeUrl, expectedState) {
   })
 }
 
-// Kept for reference: the local-server variant, used when the login happens in
-// the user's own browser instead of a window we own.
-function waitForAuthorizationCode (expectedState) {
-  return new Promise((resolve, reject) => {
-    const server = http.createServer((req, res) => {
-      const url = new URL(req.url, `http://127.0.0.1:${CALLBACK_PORT}`)
-
-      if (url.pathname !== '/callback') {
-        res.writeHead(404).end()
-        return
-      }
-
-      const code = url.searchParams.get('code')
-      const state = url.searchParams.get('state')
-      const error = url.searchParams.get('error')
-
-      const reply = (title, message) => {
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-        res.end(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>
-          <style>
-            body{background:#0f1115;color:#e7e6df;font-family:system-ui,sans-serif;
-                 display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
-            div{text-align:center;max-width:28rem;padding:2rem}
-            h1{font-size:1.3rem;margin:0 0 .6rem}
-            p{color:#98968a;line-height:1.5;margin:0}
-          </style></head>
-          <body><div><h1>${title}</h1><p>${message}</p></div></body></html>`)
-      }
-
-      // The user declined on Discord's consent screen, or Discord refused.
-      if (error) {
-        reply('Sign-in cancelled', 'You can close this tab and return to the launcher.')
-        server.close()
-        reject(new Error(`Discord returned: ${error}`))
-        return
-      }
-
-      // CSRF check. `state` is a random value we generated and Discord echoes
-      // back untouched. If it does not match, this response did not originate
-      // from the request we made, and must be discarded - otherwise an attacker
-      // could feed us an authorization code belonging to their own account.
-      if (state !== expectedState) {
-        reply('Sign-in failed', 'The response did not match the request. Please try again.')
-        server.close()
-        reject(new Error('State mismatch - possible CSRF attempt'))
-        return
-      }
-
-      if (!code) {
-        reply('Sign-in failed', 'Discord did not return an authorization code.')
-        server.close()
-        reject(new Error('No authorization code in callback'))
-        return
-      }
-
-      reply('Signed in', 'You can close this tab and return to the launcher.')
-      server.close()
-      resolve(code)
-    })
-
-    server.on('error', reject)
-
-    // Give up rather than leaving a server listening forever if the user walks
-    // away mid-login.
-    const timeout = setTimeout(() => {
-      server.close()
-      reject(new Error('Timed out waiting for Discord sign-in'))
-    }, 5 * 60 * 1000)
-
-    server.on('close', () => clearTimeout(timeout))
-
-    server.listen(CALLBACK_PORT, '127.0.0.1')
-  })
-}
 
 // ---------------------------------------------------------------------------
 // The handshake, end to end
@@ -2713,11 +2627,6 @@ ipcMain.handle('nexus:status', async () => {
   return { ok: true, signedIn: Boolean(settings.nexusKey), name: settings.nexusName || null }
 })
 
-ipcMain.handle('nexus:signOut', async () => {
-  saveNexusKey(null)
-  return { ok: true }
-})
-
 function installedModsPath () {
   return path.join(app.getPath('userData'), 'mods-installed.json')
 }
@@ -2993,7 +2902,7 @@ ipcMain.handle('mods:verify', async () => {
 })
 
 // Opens the mod's Nexus page. From there "Mod Manager Download" comes back to us as an
-// nxm:// link - see registerNxmHandler.
+// nxm:// link.
 ipcMain.handle('mods:open', async (_event, modId) => {
   const mods = await fetchModList().catch(() => [])
   const mod = mods.find((m) => String(m.nexusModId) === String(modId))
@@ -3375,38 +3284,6 @@ ipcMain.handle('tailscale:invite', async () => {
 // never leaves the main process except to Discord itself and to Cam's own coordination
 // service.
 // ---------------------------------------------------------------------------
-
-// The body type a new character starts from.
-//
-// In the launcher rather than in game because it is decided by which save the world is
-// built from, and that is chosen before the game starts. Ripperdocs change everything
-// about how you look EXCEPT this.
-ipcMain.handle('bodyType:get', async () => {
-  const chosen = chosenBodyType()
-
-  // Whether the other option can actually be honoured yet. Offering a choice that
-  // silently does nothing is worse than showing it as unavailable.
-  let maleAvailable = false
-  try {
-    const head = await axios.head(TEMPLATE_URLS.male, {
-      timeout: 8000,
-      validateStatus: () => true
-    })
-    maleAvailable = head.status === 200
-  } catch { /* offline - assume not, and say so rather than guessing */ }
-
-  return { ok: true, bodyType: chosen, maleAvailable }
-})
-
-ipcMain.handle('bodyType:set', async (_event, value) => {
-  const wanted = value === 'male' ? 'male' : 'female'
-  saveSettings({ bodyType: wanted })
-
-  // Not installed here. It happens on the next launch, through the same path as a first
-  // install, so there is one place where the template is put in place rather than two
-  // that can disagree.
-  return { ok: true, bodyType: wanted }
-})
 
 ipcMain.handle('devKey:fetch', async () => {
   if (!isAdmin()) return { ok: false, error: 'The dev key is for people with the dev role.' }
