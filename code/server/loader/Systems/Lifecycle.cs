@@ -56,11 +56,37 @@ namespace Server.Loader.Systems
         /// authenticated start, runs nothing else. Blocks forever - leaving this state
         /// is always a process exit.
         /// </summary>
+        /// <summary>
+        /// The port, read WITHOUT the SDK. Stopped mode never initializes the native
+        /// server, and every CyberpunkSdk.Internal call routes through native vtables
+        /// that only exist once it has - asking the SDK here was a guaranteed
+        /// NullReference crashloop (found the hard way: the container restarted into
+        /// stopped mode, died on IConfig, restarted, died, forever). The config file is
+        /// just JSON; read it directly, and fall back to the default port the container
+        /// maps anyway.
+        /// </summary>
+        private static int ReadPortWithoutSdk()
+        {
+            try
+            {
+                var configPath = FileSystemHelper.GetPath("config", "server.json");
+                if (File.Exists(configPath))
+                {
+                    using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(configPath));
+                    if (doc.RootElement.TryGetProperty("Port", out var port) && port.TryGetInt32(out var value))
+                        return value;
+                }
+            }
+            catch { /* unreadable config - the default below still serves the container */ }
+
+            return 11778;
+        }
+
         public static void RunStoppedMode()
         {
             try { Logger.UnregisterLogger<ConsoleLogger>(); } catch { /* only registered when a console exists */ }
 
-            var port = CyberpunkSdk.Internal.IConfig.Get().Port;
+            var port = ReadPortWithoutSdk();
             var startedAt = DateTime.UtcNow;
 
             var server = new WebServer(o => o
