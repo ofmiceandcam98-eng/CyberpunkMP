@@ -156,6 +156,8 @@ contextBridge.exposeInMainWorld('launcher', {
   // the renderer asking nicely is not authorisation.
   serverStatus: () => ipcRenderer.invoke('server:status'),
   serverOpenAdmin: () => ipcRenderer.invoke('server:openAdmin'),
+  serverRemote: (action) => ipcRenderer.invoke('server:remote', action),
+  serverSetAdminCred: (username, password) => ipcRenderer.invoke('server:setAdminCred', username, password),
   startServer: () => ipcRenderer.invoke('server:start'),
   stopServer: () => ipcRenderer.invoke('server:stop'),
   restartServer: () => ipcRenderer.invoke('server:restart'),

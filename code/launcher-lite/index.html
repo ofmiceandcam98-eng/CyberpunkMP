@@ -847,6 +847,16 @@
       <button class="linkbtn" id="pickServerDir">Server not found? Locate it</button>
       <div class="admin-note" id="serverPath"></div>
 
+      <!-- The server's admin login, asked once. The server itself checks it on every
+           lifecycle request; the launcher only remembers it (encrypted). -->
+      <div class="btn-row" id="serverCredRow" style="display:none; margin-top:.5rem">
+        <input type="text" id="serverCredUser" placeholder="admin username"
+               style="flex:1;min-width:0;background:var(--bg,#111);color:inherit;border:1px solid rgba(255,255,255,.2);border-radius:6px;padding:6px 10px;font:inherit">
+        <input type="password" id="serverCredPass" placeholder="admin password"
+               style="flex:1;min-width:0;background:var(--bg,#111);color:inherit;border:1px solid rgba(255,255,255,.2);border-radius:6px;padding:6px 10px;font:inherit">
+        <button class="action ghost" id="serverCredSave">Save</button>
+      </div>
+
       <!-- The assistants' coordination service. Starts with the game server; controllable
            on its own because stopping the server should not silence the channel.
            Hidden entirely unless the source is on this machine. -->
@@ -1210,23 +1220,32 @@
     const running = result.running
     $('serverDot').className = 'dot' + (running ? ' on' : '')
 
-    // Remote mode: the panel describes the actual game server - the one players are
-    // on - not a process on this PC. It runs itself; the only control that makes
-    // sense here is opening its web admin.
+    // Remote mode: the panel controls the actual game server - the one players are
+    // on - not a process on this PC. Start/Stop/Restart go over the network to the
+    // server's own admin endpoints, which check the admin login themselves.
     const remote = result.mode === 'remote'
+    serverIsRemote = remote
     for (const id of ['startServer', 'restartServer', 'stopServer']) {
-      $(id).style.display = remote ? 'none' : 'inline-block'
+      $(id).style.display = 'inline-block'
     }
     $('pickServerDir').style.display = remote ? 'none' : 'inline-block'
     $('openServerAdmin').style.display = remote ? 'inline-block' : 'none'
+    $('serverCredRow').style.display = remote && !result.hasAdminCred ? 'flex' : 'none'
 
     if (remote) {
+      const stopped = result.state === 'stopped'
       $('serverText').textContent = running
         ? `online - ${result.players} ${result.players === 1 ? 'player' : 'players'}`
-        : 'offline'
+        : (stopped ? 'stopped by an admin' : 'offline')
+
+      $('startServer').disabled = !stopped
+      $('stopServer').disabled = !running
+      $('restartServer').disabled = !running
+
       $('serverPath').textContent =
         `Runs at ${result.host}:${result.port}. Deploys itself from GitHub within ` +
-        'minutes of a push to main, and restarts automatically if it crashes.'
+        'minutes of a push to main, and restarts automatically if it crashes.' +
+        (result.hasAdminCred ? '' : ' Enter the server admin login below to enable the buttons.')
     } else {
       $('serverText').textContent = running ? 'online' : 'offline'
       $('startServer').disabled = running || !result.exists
@@ -1294,32 +1313,54 @@
     }
   }
 
-  $('startServer').addEventListener('click', async () => {
-    setStatus('Starting server...')
-    const result = await window.launcher.startServer()
-    setStatus(result.ok ? 'Server starting in its own window.' : result.error,
-              result.ok ? 'ok' : 'error')
-    setTimeout(refreshServerStatus, 1500)
-  })
+  // Set by refreshServerStatus: whether the panel is controlling the real remote
+  // server or a locally built one.
+  let serverIsRemote = false
 
-  $('stopServer').addEventListener('click', async () => {
-    setStatus('Stopping server...')
-    const result = await window.launcher.stopServer()
-    setStatus(result.ok ? 'Server stopped.' : result.error, result.ok ? 'ok' : 'error')
-    setTimeout(refreshServerStatus, 1000)
-  })
+  // One handler shape for both worlds. Remote actions go to the server's own admin
+  // endpoints (it checks the login); local actions manage the process on this PC.
+  async function serverLifecycle (action, confirmText, busyText, doneText) {
+    if (serverIsRemote && confirmText && !window.confirm(confirmText)) return
 
-  $('restartServer').addEventListener('click', async () => {
-    // Disable all three while this runs - a restart takes several seconds, and a
-    // second click landing mid-sequence would start a server while one is still dying.
     const buttons = ['startServer', 'restartServer', 'stopServer']
     buttons.forEach((id) => { $(id).disabled = true })
+    setStatus(busyText)
 
-    setStatus('Restarting server...')
-    const result = await window.launcher.restartServer()
-    setStatus(result.ok ? 'Server restarted.' : result.error, result.ok ? 'ok' : 'error')
+    const result = serverIsRemote
+      ? await window.launcher.serverRemote(action)
+      : await window.launcher[action + 'Server']()
 
-    setTimeout(refreshServerStatus, 1500)
+    if (result.needCred) {
+      $('serverCredRow').style.display = 'flex'
+      setStatus(result.error || 'Enter the server admin login below first.', 'error')
+    } else {
+      setStatus(result.ok ? doneText : result.error, result.ok ? 'ok' : 'error')
+    }
+
+    // Remote transitions take a few seconds - the process exits and the container
+    // brings it back. Poll a little later so the panel shows where it landed.
+    setTimeout(refreshServerStatus, serverIsRemote ? 4000 : 1500)
+  }
+
+  $('startServer').addEventListener('click', () => serverLifecycle('start',
+    null, 'Starting server...', 'Server starting.'))
+
+  $('stopServer').addEventListener('click', () => serverLifecycle('stop',
+    'Stop the server for EVERYONE until an admin starts it again?',
+    'Stopping server...', 'Server stopping. It stays stopped until an admin presses Start.'))
+
+  $('restartServer').addEventListener('click', () => serverLifecycle('restart',
+    'Restart the server? Everyone online is disconnected for ~20 seconds.',
+    'Restarting server...', 'Server restarting - back in about 20 seconds.'))
+
+  $('serverCredSave').addEventListener('click', async () => {
+    const result = await window.launcher.serverSetAdminCred(
+      $('serverCredUser').value.trim(), $('serverCredPass').value)
+    if (!result.ok) { setStatus(result.error, 'error'); return }
+
+    $('serverCredPass').value = ''
+    setStatus('Admin login saved. The server checks it on every action.', 'ok')
+    refreshServerStatus()
   })
 
   logoutBtn.addEventListener('click', async () => {

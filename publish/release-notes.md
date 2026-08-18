@@ -4,6 +4,10 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.66
+
+- **Admins control the real server from the launcher.** The Server panel's Start, Restart and Stop now command the actual server everyone plays on — not a program on your own PC. Stop keeps it stopped (through reboots and redeploys) until an admin presses Start; Restart takes about 20 seconds. The server checks the admin login on every action; the launcher asks for it once and remembers it encrypted. Both destructive buttons confirm first, and the panel shows "stopped by an admin" as its own state instead of a generic offline.
+
 ## What changed — v0.3.65
 
 - **Uninstalling actually uninstalls.** Removing the launcher now also clears everything it saved on your PC — signed-in Discord session, settings, keys. Updates never touch your data (only a real uninstall does), and your game folder and the mod stay untouched as before — "Remove mod" remains the explicit way to take that out first.

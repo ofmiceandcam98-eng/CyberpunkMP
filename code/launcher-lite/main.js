@@ -538,10 +538,18 @@ async function getGameServerStatus () {
 
   try {
     const response = await axios.get(`http://${host}:${server.port}/api/v1/status/`, { timeout: 4000 })
-    return { online: true, players: response.data?.Players ?? 0, host, source: server.source }
+    return {
+      online: true,
+      players: response.data?.Players ?? 0,
+      // Servers newer than v0.3.65 say whether they are running or deliberately
+      // stopped by an admin; older ones say nothing, and reachable means running.
+      state: response.data?.State || 'running',
+      host,
+      source: server.source
+    }
   } catch {
     // Any failure - refused, timed out, no route - means players cannot get in.
-    return { online: false, players: 0, host }
+    return { online: false, players: 0, state: 'unreachable', host }
   }
 }
 
@@ -2319,10 +2327,63 @@ ipcMain.handle('server:status', async () => {
   return {
     ok: true,
     mode: 'remote',
-    running: remote.online,
+    running: remote.online && remote.state === 'running',
+    state: remote.state,
     players: remote.players,
     host: server.host,
-    port: server.port
+    port: server.port,
+    hasAdminCred: Boolean(getServerAdminCred())
+  }
+})
+
+// The server's admin login, remembered so lifecycle buttons are one click rather than
+// a password prompt every time. Encrypted the same way the Discord token is; if the OS
+// cannot encrypt, it is not stored at all.
+function getServerAdminCred () {
+  const stored = loadSettings().serverAdminCred
+  if (!stored || !safeStorage.isEncryptionAvailable()) return null
+  try {
+    const [username, password] = safeStorage.decryptString(Buffer.from(stored, 'base64')).split('\n')
+    return { username, password }
+  } catch {
+    return null
+  }
+}
+
+ipcMain.handle('server:setAdminCred', (_event, username, password) => {
+  if (!isAdmin()) return { ok: false, error: 'Not permitted' }
+  if (!safeStorage.isEncryptionAvailable()) {
+    return { ok: false, error: 'This machine cannot store the login securely.' }
+  }
+  if (!username || !password) return { ok: false, error: 'Both fields are needed.' }
+
+  saveSettings({ serverAdminCred: safeStorage.encryptString(`${username}\n${password}`).toString('base64') })
+  return { ok: true }
+})
+
+// Start, stop or restart the REAL server, wherever it runs. The server itself enforces
+// the admin login; this just carries it. A 401 forgets the stored login, because a
+// wrong credential that keeps being resent is a lockout waiting to happen.
+ipcMain.handle('server:remote', async (_event, action) => {
+  if (!isAdmin()) return { ok: false, error: 'Not permitted' }
+  if (!['start', 'stop', 'restart'].includes(action)) return { ok: false, error: 'Unknown action' }
+
+  const cred = getServerAdminCred()
+  if (!cred) return { ok: false, needCred: true }
+
+  const server = await resolveServer()
+  try {
+    await axios.post(`http://${server.host}:${server.port}/api/v1/admin/${action}`, null, {
+      auth: cred,
+      timeout: 8000
+    })
+    return { ok: true, action }
+  } catch (err) {
+    if (err.response && err.response.status === 401) {
+      saveSettings({ serverAdminCred: undefined })
+      return { ok: false, needCred: true, error: 'Wrong admin login - enter it again.' }
+    }
+    return { ok: false, error: err.message }
   }
 })
 
