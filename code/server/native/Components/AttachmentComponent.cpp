@@ -1,4 +1,5 @@
 #include "AttachmentComponent.h"
+#include "AuthorityComponent.h"
 #include "GameServer.h"
 #include "PlayerComponent.h"
 
@@ -22,15 +23,12 @@ void ReplicateSetAttachmentComponent(flecs::entity aEntity, AttachmentComponent&
 
     if (aComponent.SlotId == 0xb000b1d029d0cea0ULL) // seat_front_left
     {
-        server::NotifyVehicleControlAssigned control;
-        control.set_vehicle_id(aComponent.Parent);
-
-        aComponent.Parent.child_of(aEntity.parent());
-
-        spdlog::info("Assign control of vehicle {:x}", control.get_vehicle_id());
-
-        if (auto* pPlayerComponent = aEntity.parent().get<PlayerComponent>())
-            GServer->Send(pPlayerComponent->Connection, control);
+        // The driver's machine simulates the car. TransferAuthority reparents, bumps the
+        // epoch when the owner actually changes, and tells BOTH sides - the revoke half
+        // is what was always missing here: the previous driver's client was never told to
+        // stop simulating, and two machines fighting over one car is what passengers felt
+        // as bouncing.
+        TransferAuthority(aComponent.Parent, aEntity.parent());
     }
 }
 
