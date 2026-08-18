@@ -46,7 +46,6 @@ struct Level
             }
     }
 
-    void Test() noexcept;
 
 protected:
     friend struct Handle;

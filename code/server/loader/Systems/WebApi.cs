@@ -51,6 +51,11 @@ namespace Server.Loader.Systems
                 .WithModule(new ActionModule("/api/v1/status/", HttpVerbs.Get, HandleStatus));
 
             RegisterAuthentication(server);
+            // AFTER authentication on purpose: EmbedIO evaluates modules in registration
+            // order, so anything registered before the auth module is public (that is how
+            // /status stays open) and anything after it is challenged. Lifecycle control
+            // must be on the challenged side.
+            RegisterAdmin(server);
             RegisterPlugins(server);
             RegisterAssets(server);
             return server;
@@ -120,6 +125,32 @@ namespace Server.Loader.Systems
             server.WithModule(module);
         }
 
+        /// <summary>
+        /// Remote lifecycle, for the launcher's admin panel. Exiting IS restarting - the
+        /// container's restart policy brings the process straight back - and stop is a
+        /// marker in the config volume that makes the next boot idle in stopped mode.
+        /// </summary>
+        private void RegisterAdmin(WebServer server)
+        {
+            server.WithModule(new ActionModule("/api/v1/admin/restart", HttpVerbs.Post, async context =>
+            {
+                await context.SendDataAsync(new { Ok = true, Action = "restarting" });
+                Lifecycle.ExitSoon();
+            }));
+
+            server.WithModule(new ActionModule("/api/v1/admin/stop", HttpVerbs.Post, async context =>
+            {
+                Lifecycle.RequestStop();
+                await context.SendDataAsync(new { Ok = true, Action = "stopping" });
+                Lifecycle.ExitSoon();
+            }));
+
+            // Meaningful only in stopped mode (Lifecycle.RunStoppedMode serves it there);
+            // answered here too so a start against a running server succeeds instead of 404ing.
+            server.WithModule(new ActionModule("/api/v1/admin/start", HttpVerbs.Post,
+                context => context.SendDataAsync(new { Ok = true, Action = "already-running" })));
+        }
+
         #region Routes
 
         private Task HandleModsRoute(IHttpContext context)
@@ -171,7 +202,8 @@ namespace Server.Loader.Systems
             return context.SendDataAsync(new
             {
                 Players = players,
-                Uptime = (int)(DateTime.UtcNow - StartedAtUtc).TotalSeconds
+                Uptime = (int)(DateTime.UtcNow - StartedAtUtc).TotalSeconds,
+                State = "running"
             });
         }
 

@@ -45,10 +45,6 @@ struct PlayerManager
     gsl::not_null<PlayerManagerScriptInstance*> GetScriptInstance() noexcept;
     gsl::not_null<const PlayerManagerScriptInstance*> GetScriptInstance() const noexcept;
 
-    //void SendToAll(const ServerMessage& acMessage) const noexcept;
-
-    void SendMessageTo(flecs::entity aPlayer, String acMessage) const noexcept;
-    void BroadcastMessage(String acMessage) const noexcept;
 
     uint32_t Count() const noexcept;
 

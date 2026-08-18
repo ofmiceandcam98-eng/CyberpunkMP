@@ -1,6 +1,19 @@
+# Deployment runtime state lives next to the compose file but must never enter the
+# image or the build context: config holds the character database and secrets,
+# tailscale-state holds the node private key (root-owned - its mere presence in the
+# context makes the build fail with permission denied), and none of it is code.
+config
+logs
+plugins
+tailscale-state
+.env
+
+# Build noise and editor state. .git is deliberately NOT ignored: SdkGenerator finds
+# the repo root via LibGit2Sharp and silently generates nothing without it.
 .github/
 .vscode/
 .xmake/
 build/
 bin/
 obj/
+distrib

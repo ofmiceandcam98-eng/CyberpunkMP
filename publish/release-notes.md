@@ -4,6 +4,47 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.69
+
+- **Players who were online before you now actually appear.** Spawns that arrived while your game was still loading used to be silently thrown away — whoever joined first simply didn't exist for you. They're now held and placed the moment your world is ready.
+- **No more frozen duplicate players.** A rejoin now replaces a player's old puppet instead of standing a second copy next to it.
+
+## What changed — v0.3.68
+
+- **Buttons that share a row share a size.** The Server panel's controls (and every other button row) are now uniform width — color still says what a button does, shape no longer says anything by accident.
+
+## What changed — v0.3.67
+
+- **"Test server connection" in Tools.** Checks every link between your PC and the server — internet, Tailscale, the server's network, the server itself — and names the first broken one with how to fix it. "Server offline" used to mean five different problems; now each one says its own name.
+- **The network invite moved to the top of Tools**, where new players can find it — it was buried in the dev-only section. Accepting the invite AND switching Tailscale to the joined network are both needed; the connection test now catches the second half being missed.
+- Fresh network invite published (the old one was used up).
+
+## What changed — v0.3.66
+
+- **Admins control the real server from the launcher.** The Server panel's Start, Restart and Stop now command the actual server everyone plays on — not a program on your own PC. Stop keeps it stopped (through reboots and redeploys) until an admin presses Start; Restart takes about 20 seconds. The server checks the admin login on every action; the launcher asks for it once and remembers it encrypted. Both destructive buttons confirm first, and the panel shows "stopped by an admin" as its own state instead of a generic offline.
+
+## What changed — v0.3.65
+
+- **Uninstalling actually uninstalls.** Removing the launcher now also clears everything it saved on your PC — signed-in Discord session, settings, keys. Updates never touch your data (only a real uninstall does), and your game folder and the mod stay untouched as before — "Remove mod" remains the explicit way to take that out first.
+
+## What changed — v0.3.64
+
+- **You can see each other move.** Every session on the new server had players frozen as statues: the mod was a mixed build — its network serializer came from one branch and its headers from another, off by exactly one bit, so the server read every entity ID you sent as double its real value and refused it. The build system flaw that let two branches fuse into one DLL is fixed, the mod is rebuilt from scratch, and real-time sync works. This was also the cause of seeing a copy of yourself, and of movement never saving.
+
+## What changed — v0.3.63
+
+- **Test builds get an Uninstall button.** The installed test build's row now offers Uninstall directly — it puts the shipped mod back (same as Restore) so builds can be checked one at a time without hunting for the way out. Dev panel only.
+
+## What changed — v0.3.62
+
+- **Body type moved fully in game.** The launcher's Body type toggle is gone — NEW CHARACTER runs the game's own creator, which asks, and since v0.3.61 that answer actually sticks. One place for the truth instead of two that could disagree.
+- **The dev Server tool tells the truth about the servers.** Its hint still described the old world (the published server as one person's PC, the old test address). It now points at the vehicle-authority test server and describes the self-deploying main server as what it is.
+
+## What changed — v0.3.61
+
+- **NEW CHARACTER really means new.** Replacing your character now retires the old one properly, so the new person gets their own name prompt and starts at the arrivals point. Before this, the replacement quietly inherited the old character's name — and the once-per-character name lock along with it, so you could never name the person you'd just made. Old characters are retired, not deleted.
+- Movement desync on the server now logs exactly what it rejected, so the remaining sync bug can be caught in the act.
+
 ## What changed — v0.3.60
 
 - **The Server panel now shows the real server.** For admins, the panel used to control a server program on your own PC — a leftover from when the server was somebody's desktop. It now reports the actual game server everyone plays on (online state, player count, where it runs) and opens its web admin. The old local Start/Stop controls only appear on a machine that actually has a locally built server.

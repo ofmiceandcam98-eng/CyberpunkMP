@@ -18,7 +18,6 @@ import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, copyFileSync, unlinkSync } from 'node:fs'
 import fsp from 'node:fs/promises'
 import AdmZip from 'adm-zip'
-import http from 'node:http'
 import crypto from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -539,10 +538,18 @@ async function getGameServerStatus () {
 
   try {
     const response = await axios.get(`http://${host}:${server.port}/api/v1/status/`, { timeout: 4000 })
-    return { online: true, players: response.data?.Players ?? 0, host, source: server.source }
+    return {
+      online: true,
+      players: response.data?.Players ?? 0,
+      // Servers newer than v0.3.65 say whether they are running or deliberately
+      // stopped by an admin; older ones say nothing, and reachable means running.
+      state: response.data?.State || 'running',
+      host,
+      source: server.source
+    }
   } catch {
     // Any failure - refused, timed out, no route - means players cannot get in.
-    return { online: false, players: 0, host }
+    return { online: false, players: 0, state: 'unreachable', host }
   }
 }
 
@@ -1236,17 +1243,6 @@ function createPkcePair () {
   return { verifier, challenge }
 }
 
-// ---------------------------------------------------------------------------
-// The local callback server
-//
-// Discord cannot redirect to a desktop app, so we become a web server for a few
-// seconds. Discord sends the user's browser to 127.0.0.1, we read the code out
-// of the query string, show a "you can close this" page, and shut down.
-//
-// It binds to 127.0.0.1 rather than 0.0.0.0 so nothing outside this machine can
-// reach it, and it exists only for the duration of one login.
-// ---------------------------------------------------------------------------
-
 /**
  * Opens Discord's consent page in a window owned by the launcher, and resolves
  * with the authorization code once Discord redirects.
@@ -1342,80 +1338,6 @@ function signInWindow (authorizeUrl, expectedState) {
   })
 }
 
-// Kept for reference: the local-server variant, used when the login happens in
-// the user's own browser instead of a window we own.
-function waitForAuthorizationCode (expectedState) {
-  return new Promise((resolve, reject) => {
-    const server = http.createServer((req, res) => {
-      const url = new URL(req.url, `http://127.0.0.1:${CALLBACK_PORT}`)
-
-      if (url.pathname !== '/callback') {
-        res.writeHead(404).end()
-        return
-      }
-
-      const code = url.searchParams.get('code')
-      const state = url.searchParams.get('state')
-      const error = url.searchParams.get('error')
-
-      const reply = (title, message) => {
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-        res.end(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>
-          <style>
-            body{background:#0f1115;color:#e7e6df;font-family:system-ui,sans-serif;
-                 display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
-            div{text-align:center;max-width:28rem;padding:2rem}
-            h1{font-size:1.3rem;margin:0 0 .6rem}
-            p{color:#98968a;line-height:1.5;margin:0}
-          </style></head>
-          <body><div><h1>${title}</h1><p>${message}</p></div></body></html>`)
-      }
-
-      // The user declined on Discord's consent screen, or Discord refused.
-      if (error) {
-        reply('Sign-in cancelled', 'You can close this tab and return to the launcher.')
-        server.close()
-        reject(new Error(`Discord returned: ${error}`))
-        return
-      }
-
-      // CSRF check. `state` is a random value we generated and Discord echoes
-      // back untouched. If it does not match, this response did not originate
-      // from the request we made, and must be discarded - otherwise an attacker
-      // could feed us an authorization code belonging to their own account.
-      if (state !== expectedState) {
-        reply('Sign-in failed', 'The response did not match the request. Please try again.')
-        server.close()
-        reject(new Error('State mismatch - possible CSRF attempt'))
-        return
-      }
-
-      if (!code) {
-        reply('Sign-in failed', 'Discord did not return an authorization code.')
-        server.close()
-        reject(new Error('No authorization code in callback'))
-        return
-      }
-
-      reply('Signed in', 'You can close this tab and return to the launcher.')
-      server.close()
-      resolve(code)
-    })
-
-    server.on('error', reject)
-
-    // Give up rather than leaving a server listening forever if the user walks
-    // away mid-login.
-    const timeout = setTimeout(() => {
-      server.close()
-      reject(new Error('Timed out waiting for Discord sign-in'))
-    }, 5 * 60 * 1000)
-
-    server.on('close', () => clearTimeout(timeout))
-
-    server.listen(CALLBACK_PORT, '127.0.0.1')
-  })
-}
 
 // ---------------------------------------------------------------------------
 // The handshake, end to end
@@ -2405,10 +2327,63 @@ ipcMain.handle('server:status', async () => {
   return {
     ok: true,
     mode: 'remote',
-    running: remote.online,
+    running: remote.online && remote.state === 'running',
+    state: remote.state,
     players: remote.players,
     host: server.host,
-    port: server.port
+    port: server.port,
+    hasAdminCred: Boolean(getServerAdminCred())
+  }
+})
+
+// The server's admin login, remembered so lifecycle buttons are one click rather than
+// a password prompt every time. Encrypted the same way the Discord token is; if the OS
+// cannot encrypt, it is not stored at all.
+function getServerAdminCred () {
+  const stored = loadSettings().serverAdminCred
+  if (!stored || !safeStorage.isEncryptionAvailable()) return null
+  try {
+    const [username, password] = safeStorage.decryptString(Buffer.from(stored, 'base64')).split('\n')
+    return { username, password }
+  } catch {
+    return null
+  }
+}
+
+ipcMain.handle('server:setAdminCred', (_event, username, password) => {
+  if (!isAdmin()) return { ok: false, error: 'Not permitted' }
+  if (!safeStorage.isEncryptionAvailable()) {
+    return { ok: false, error: 'This machine cannot store the login securely.' }
+  }
+  if (!username || !password) return { ok: false, error: 'Both fields are needed.' }
+
+  saveSettings({ serverAdminCred: safeStorage.encryptString(`${username}\n${password}`).toString('base64') })
+  return { ok: true }
+})
+
+// Start, stop or restart the REAL server, wherever it runs. The server itself enforces
+// the admin login; this just carries it. A 401 forgets the stored login, because a
+// wrong credential that keeps being resent is a lockout waiting to happen.
+ipcMain.handle('server:remote', async (_event, action) => {
+  if (!isAdmin()) return { ok: false, error: 'Not permitted' }
+  if (!['start', 'stop', 'restart'].includes(action)) return { ok: false, error: 'Unknown action' }
+
+  const cred = getServerAdminCred()
+  if (!cred) return { ok: false, needCred: true }
+
+  const server = await resolveServer()
+  try {
+    await axios.post(`http://${server.host}:${server.port}/api/v1/admin/${action}`, null, {
+      auth: cred,
+      timeout: 8000
+    })
+    return { ok: true, action }
+  } catch (err) {
+    if (err.response && err.response.status === 401) {
+      saveSettings({ serverAdminCred: undefined })
+      return { ok: false, needCred: true, error: 'Wrong admin login - enter it again.' }
+    }
+    return { ok: false, error: err.message }
   }
 })
 
@@ -2713,11 +2688,6 @@ ipcMain.handle('nexus:status', async () => {
   return { ok: true, signedIn: Boolean(settings.nexusKey), name: settings.nexusName || null }
 })
 
-ipcMain.handle('nexus:signOut', async () => {
-  saveNexusKey(null)
-  return { ok: true }
-})
-
 function installedModsPath () {
   return path.join(app.getPath('userData'), 'mods-installed.json')
 }
@@ -2993,7 +2963,7 @@ ipcMain.handle('mods:verify', async () => {
 })
 
 // Opens the mod's Nexus page. From there "Mod Manager Download" comes back to us as an
-// nxm:// link - see registerNxmHandler.
+// nxm:// link.
 ipcMain.handle('mods:open', async (_event, modId) => {
   const mods = await fetchModList().catch(() => [])
   const mod = mods.find((m) => String(m.nexusModId) === String(modId))
@@ -3144,8 +3114,9 @@ ipcMain.handle('launcher:uninstall', async () => {
     type: 'warning',
     title: 'Uninstall Night City Online Launcher',
     message: 'Remove the launcher from this PC?',
-    detail: 'This removes the launcher only. The mod stays installed in your game folder, ' +
-            'and Cyberpunk 2077 is not touched. Use "Remove mod" first if you want that gone too.',
+    detail: 'This removes the launcher and everything it saved here - your sign-in, settings ' +
+            'and keys. The mod stays installed in your game folder, and Cyberpunk 2077 is not ' +
+            'touched. Use "Remove mod" first if you want that gone too.',
     buttons: ['Uninstall', 'Cancel'],
     defaultId: 1,
     cancelId: 1,
@@ -3338,6 +3309,70 @@ ipcMain.handle('tailscale:status', async () => {
   return { ok: true, ...(await getTailscaleStatus()) }
 })
 
+// Every link between this PC and the game server, tested in order, with the first
+// broken one named alongside its fix. Exists because every failure in this chain used
+// to present identically as "Server offline" - a person on the wrong Tailscale
+// network, a person with no Tailscale at all, and a genuinely down server all saw the
+// same two words and none of them knew what to do next.
+ipcMain.handle('connectivity:test', async () => {
+  const steps = []
+  let verdict = null
+
+  // 1. Internet at all.
+  try {
+    await axios.head('https://github.com', { timeout: 6000 })
+    steps.push({ name: 'Internet', ok: true, detail: 'online' })
+  } catch {
+    steps.push({ name: 'Internet', ok: false, detail: 'no connection' })
+    verdict = 'No internet connection. Nothing past this can work until that is back.'
+  }
+
+  // 2 + 3. Tailscale installed, and connected.
+  let ts = null
+  if (!verdict) {
+    ts = await getTailscaleStatus()
+    if (!ts.installed) {
+      steps.push({ name: 'Tailscale installed', ok: false, detail: 'not found' })
+      verdict = 'Tailscale is not installed. Use the Tailscale link at the bottom of the launcher to get it, then come back.'
+    } else {
+      steps.push({ name: 'Tailscale installed', ok: true, detail: 'found' })
+      if (!ts.connected) {
+        steps.push({ name: 'Tailscale connected', ok: false, detail: 'signed out or stopped' })
+        verdict = 'Tailscale is installed but not connected. Open Tailscale from the system tray and sign in.'
+      } else {
+        steps.push({ name: 'Tailscale connected', ok: true, detail: ts.ip || 'connected' })
+      }
+    }
+  }
+
+  // 4 + 5. The server, over that network - reachable, and actually running.
+  if (!verdict) {
+    const server = await resolveServer()
+    const status = await getGameServerStatus()
+
+    if (!status.online) {
+      steps.push({ name: `Server reachable (${server.host})`, ok: false, detail: 'no route' })
+      verdict = 'You are on a Tailscale network, but the server is not on it. Use "Join the ' +
+                "server's network\" above, accept the invite, and make sure Tailscale is " +
+                'switched to the network the invite joined (click the Tailscale tray icon to ' +
+                'check which network you are on). If you already did all that, the server may ' +
+                'genuinely be down - ask in the Discord.'
+    } else {
+      steps.push({ name: `Server reachable (${server.host})`, ok: true, detail: 'answers' })
+
+      if (status.state === 'stopped') {
+        steps.push({ name: 'Server running', ok: false, detail: 'stopped by an admin' })
+        verdict = 'Everything on your side works. The server is deliberately stopped right now - an admin can start it from the launcher.'
+      } else {
+        steps.push({ name: 'Server running', ok: true, detail: `${status.players} player(s) online` })
+        verdict = 'Everything works. Press Launch and play.'
+      }
+    }
+  }
+
+  return { ok: true, steps, verdict }
+})
+
 ipcMain.handle('tailscale:download', async () => {
   await shell.openExternal(TAILSCALE_DOWNLOAD)
   return { ok: true }
@@ -3375,38 +3410,6 @@ ipcMain.handle('tailscale:invite', async () => {
 // never leaves the main process except to Discord itself and to Cam's own coordination
 // service.
 // ---------------------------------------------------------------------------
-
-// The body type a new character starts from.
-//
-// In the launcher rather than in game because it is decided by which save the world is
-// built from, and that is chosen before the game starts. Ripperdocs change everything
-// about how you look EXCEPT this.
-ipcMain.handle('bodyType:get', async () => {
-  const chosen = chosenBodyType()
-
-  // Whether the other option can actually be honoured yet. Offering a choice that
-  // silently does nothing is worse than showing it as unavailable.
-  let maleAvailable = false
-  try {
-    const head = await axios.head(TEMPLATE_URLS.male, {
-      timeout: 8000,
-      validateStatus: () => true
-    })
-    maleAvailable = head.status === 200
-  } catch { /* offline - assume not, and say so rather than guessing */ }
-
-  return { ok: true, bodyType: chosen, maleAvailable }
-})
-
-ipcMain.handle('bodyType:set', async (_event, value) => {
-  const wanted = value === 'male' ? 'male' : 'female'
-  saveSettings({ bodyType: wanted })
-
-  // Not installed here. It happens on the next launch, through the same path as a first
-  // install, so there is one place where the template is put in place rather than two
-  // that can disagree.
-  return { ok: true, bodyType: wanted }
-})
 
 ipcMain.handle('devKey:fetch', async () => {
   if (!isAdmin()) return { ok: false, error: 'The dev key is for people with the dev role.' }

@@ -31,11 +31,14 @@ rule("codegen")
         local sourcebatch = target:sourcebatches()["codegen"]
         if not sourcebatch then return end
 
+        -- Unconditionally, every build. An mtime guard lived here briefly and created the
+        -- worst bug of the project's life: switching branches can leave a generated file
+        -- NEWER than its .proto, so generation silently skips and the build compiles the
+        -- OTHER branch's wire format - a client that frames one bit differently than its
+        -- own protocol identifier claims, shipping corruption that no identifier check
+        -- can catch. Three proto files regenerate in milliseconds; correctness is free.
         for _, sourcefile in ipairs(sourcebatch.sourcefiles) do
-            local header = path.join(output_dir, path.basename(sourcefile) .. ".gen.h")
-            if not os.isfile(header) or os.mtime(sourcefile) > os.mtime(header) then
-                os.vrunv(netpack, {sourcefile, output_dir})
-            end
+            os.vrunv(netpack, {sourcefile, output_dir})
         end
     end)
 
@@ -53,12 +56,18 @@ rule("codegen")
         local outputSourceFile = path.join(target:autogendir(), "rules", "netpack", path.basename(sourcefile) .. ".gen.cpp")
 
         local objectfile = target:objectfile(outputSourceFile)
-        --table.insert(target:objectfiles(), objectfile)
         batchcmds:compile(outputSourceFile, objectfile)
 
-		-- add deps
-		batchcmds:add_depfiles(sourcefile)
-		batchcmds:set_depmtime(os.mtime(outputHeaderFile))
-		batchcmds:set_depcache(target:dependfile(outputHeaderFile))
-        batchcmds:set_depcache(target:dependfile(outputSourceFile))
+		-- The staleness question this batch must answer is "is the OBJECT older than the
+		-- GENERATED SOURCES" - nothing else. It used to compare the proto against the
+		-- header, which inverted the logic once generation moved to before_build: the
+		-- header is re-stamped before this check ever runs, so the batch always judged
+		-- itself up to date and a regenerated .gen.cpp was NEVER recompiled. That linked
+		-- one branch's serializer objects under another branch's headers - a client whose
+		-- wire framing disagreed with its own protocol identifier by one bit, doubling
+		-- every entity id it sent. Depfiles are now the generated files themselves (plus
+		-- the proto), measured against the object.
+		batchcmds:add_depfiles(sourcefile, outputSourceFile, outputHeaderFile)
+		batchcmds:set_depmtime(os.mtime(objectfile))
+		batchcmds:set_depcache(target:dependfile(objectfile))
     end)

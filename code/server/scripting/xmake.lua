@@ -34,13 +34,9 @@ target("Server.Scripting")
     end
 
     on_build(function (target, opt)
-        import("core.project.depend")
         import("utils.progress")
 
-        local dependfile = target:dependfile("scripting")
-
-        --depend.on_changed(function ()
-            local output = path.join(target:targetdir(), "plugins")
+        local output = path.join(target:targetdir(), "plugins")
             local sdk_output = path.join(target:targetdir(), "sdk")
             local script = target:scriptdir()
             local sdk_gen_proj = path.join(script, "SdkGenerator", "SdkGenerator.csproj")
@@ -73,12 +69,6 @@ target("Server.Scripting")
                 progress.show(opt.progress, "${color.build.target}build " .. label)
                 os.run("dotnet publish " .. proj .. " -c " .. mode .. " -o " .. path.join(output, name))
             end
-	--[[	end,
-		{
-			dependfile = dependfile,
-			files = target:extrafiles(),
-			changed = target:is_rebuilt()
-		})]]--
     end)
 
     on_install(function (target)
