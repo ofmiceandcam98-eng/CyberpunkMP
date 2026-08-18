@@ -116,6 +116,20 @@ private:
     // UpdatePlayerLocation. Mutable because that function is const and only reports.
     mutable glm::vec3 m_lastPosition{};
     mutable std::chrono::steady_clock::time_point m_lastPositionAt{};
+    // A spawn that arrived before the world was ready. These used to be silently
+    // dropped with no retry - whoever was already online when you loaded in simply
+    // never existed for you. Queued here and replayed the moment the world attaches.
+    struct PendingSpawn
+    {
+        uint64_t ServerId;
+        Red::Vector4 Position;
+        Red::Quaternion Rotation;
+        Red::DynArray<Red::TweakDBID> Equipment;
+        Vector<uint8_t> Ccstate;
+        std::string Username;
+    };
+    std::vector<PendingSpawn> m_pendingSpawns;
+
     mutable bool m_hasLastPosition{false};
     Red::CBaseFunction* m_pCreatePuppet;
     Red::CBaseFunction* m_pDeletePuppet;

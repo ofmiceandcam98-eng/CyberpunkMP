@@ -4,6 +4,11 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.69
+
+- **Players who were online before you now actually appear.** Spawns that arrived while your game was still loading used to be silently thrown away — whoever joined first simply didn't exist for you. They're now held and placed the moment your world is ready.
+- **No more frozen duplicate players.** A rejoin now replaces a player's old puppet instead of standing a second copy next to it.
+
 ## What changed — v0.3.68
 
 - **Buttons that share a row share a size.** The Server panel's controls (and every other button row) are now uniform width — color still says what a button does, shape no longer says anything by accident.
