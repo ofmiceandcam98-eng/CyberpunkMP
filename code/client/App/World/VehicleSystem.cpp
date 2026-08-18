@@ -33,14 +33,21 @@ static void MakeRemoteDriven(const Red::Handle<Red::vehicle::WheeledBaseObject>&
     static Core::RawFunc<1620777158UL, void (*)(Red::vehicle::BaseObject*, uint32_t)> SetFlags;
     static Core::RawFunc<1585713002UL, void (*)(Red::vehicle::BaseObject*, bool)> SetKinematic;
 
+    // Step logging bisects a native crash in this path: the last line printed before
+    // silence names the killer. Cheap, and this path runs a handful of times per session.
+    spdlog::info("[VehicleSystem] MakeRemoteDriven: SetIsPlayerControlled");
     SetIsPlayerControlled(aVehicle, false);
     // turn on engine
+    spdlog::info("[VehicleSystem] MakeRemoteDriven: engine vcall");
     reinterpret_cast<void (*)(Red::vehicle::WheeledBaseObject*, bool)>(*(uintptr_t*)(*(uintptr_t*)aVehicle.instance + 0x328))(aVehicle, true);
+    spdlog::info("[VehicleSystem] MakeRemoteDriven: engineData {}", aVehicle->engineData ? "set" : "null");
     if (aVehicle->engineData)
         aVehicle->engineData->unk61 = 0;
     SetFlags(aVehicle, 0x10);
     SetFlags(aVehicle, 0x80);
+    spdlog::info("[VehicleSystem] MakeRemoteDriven: SetKinematic");
     SetKinematic(aVehicle, true);
+    spdlog::info("[VehicleSystem] MakeRemoteDriven: done");
 }
 
 // The inverse of MakeRemoteDriven: hands a vehicle to the LOCAL simulation. Called when
@@ -261,7 +268,10 @@ void VehicleSystem::OnVehicleReady(const Red::EntityID& aVehicleEntityId)
 
             const auto vehicle = worldSystem->GetEntityIdByServerId(message.get_vehicle_id());
 
+            spdlog::info("[VehicleSystem] OnVehicleReady: mounting queued character {} into vehicle {}",
+                         message.get_character_id(), message.get_vehicle_id());
             DoMount(character, vehicle, sit);
+            spdlog::info("[VehicleSystem] OnVehicleReady: mount done");
         }
 
         m_pendingMounts.erase(aVehicleEntityId);
@@ -354,7 +364,10 @@ void VehicleSystem::DoMount(flecs::entity aCharacter, Red::EntityID aVehicle, Re
         return;
     }
 
+    spdlog::info("[VehicleSystem] DoMount: entering character {:x} into vehicle {:x} seat {}",
+                 character.hash, vehicle->id.hash, aSit.hash);
     Red::Detail::CallFunctionWithArgs(m_pEnterVehicle, handle, res, character, vehicle->id, aSit);
+    spdlog::info("[VehicleSystem] DoMount: EnterVehicle returned {}", res);
 
     aCharacter.add<AttachedComponent>();
 
