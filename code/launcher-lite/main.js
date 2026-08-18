@@ -3053,8 +3053,9 @@ ipcMain.handle('launcher:uninstall', async () => {
     type: 'warning',
     title: 'Uninstall Night City Online Launcher',
     message: 'Remove the launcher from this PC?',
-    detail: 'This removes the launcher only. The mod stays installed in your game folder, ' +
-            'and Cyberpunk 2077 is not touched. Use "Remove mod" first if you want that gone too.',
+    detail: 'This removes the launcher and everything it saved here - your sign-in, settings ' +
+            'and keys. The mod stays installed in your game folder, and Cyberpunk 2077 is not ' +
+            'touched. Use "Remove mod" first if you want that gone too.',
     buttons: ['Uninstall', 'Cancel'],
     defaultId: 1,
     cancelId: 1,
