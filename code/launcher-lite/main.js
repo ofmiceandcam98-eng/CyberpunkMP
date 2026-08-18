@@ -19,6 +19,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync
 import fsp from 'node:fs/promises'
 import AdmZip from 'adm-zip'
 import crypto from 'node:crypto'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import axios from 'axios'
@@ -898,6 +899,91 @@ async function installEverything (onProgress = () => {}) {
   return { installed: true, gameDir, modDir: modTarget, prerequisites: installed.length, modFiles, components: installed }
 }
 
+// ---------------------------------------------------------------------------
+// Client log shipping
+//
+// Every session's mod log is pushed to the server automatically, so debugging never
+// depends on a player finding a file and pasting it somewhere. The server files them
+// under logs/clients/<player>/ and keeps only the newest ten, so nothing goes stale.
+//
+// Always aimed at the canonical published server, NOT the dev-selected play server:
+// the point is one collection point that whoever is debugging can read in one place,
+// regardless of which server the session ran on. The log itself says where it connected.
+// ---------------------------------------------------------------------------
+
+let logShipInFlight = false
+
+async function shipClientLogs (reason) {
+  // A crash and the game-closed poll can fire together; one shipment is plenty.
+  if (logShipInFlight) return
+  logShipInFlight = true
+
+  try {
+    const modDir = findModDir()
+    if (!modDir) return
+
+    const logDir = path.join(modDir, 'logs')
+    if (!existsSync(logDir)) return
+
+    const shipped = loadSettings().shippedLogs || {}
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
+
+    const candidates = readdirSync(logDir)
+      .filter((f) => f.startsWith('CyberpunkMP_') && f.endsWith('.log'))
+      .map((f) => {
+        const full = path.join(logDir, f)
+        const stat = statSync(full)
+        return { name: f, full, size: stat.size, mtime: stat.mtimeMs }
+      })
+      // A week-old log is outdated data, not evidence. Size is part of the shipped
+      // record so a log that grew since its last shipment goes again; one that
+      // has not is skipped instead of re-sent forever.
+      .filter((f) => f.size > 0 && f.mtime > weekAgo && shipped[f.name] !== f.size)
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, 3)
+
+    if (!candidates.length) return
+
+    const published = await fetchPublishedServer()
+    if (!published?.host) return
+
+    const player = currentUser?.handle || os.userInfo().username || 'unknown'
+    const base = `http://${published.host}:${published.port || 11778}/api/v1/logs/`
+    let sent = 0
+
+    for (const log of candidates) {
+      const body = readFileSync(log.full, 'utf8')
+
+      // The server rejects anything over 4 MB; do not waste the bandwidth finding out.
+      if (body.length > 3_500_000) continue
+
+      await axios.post(
+        `${base}?player=${encodeURIComponent(player)}&file=${encodeURIComponent(log.name)}`,
+        body,
+        { headers: { 'Content-Type': 'text/plain' }, timeout: 20000 }
+      )
+
+      shipped[log.name] = log.size
+      sent++
+    }
+
+    // Forget records for files the client-side pruning already deleted, so this
+    // bookkeeping cannot grow without bound.
+    const stillThere = new Set(readdirSync(logDir))
+    for (const key of Object.keys(shipped)) {
+      if (!stillThere.has(key)) delete shipped[key]
+    }
+
+    saveSettings({ shippedLogs: shipped })
+    if (sent) console.log(`[logs] shipped ${sent} log(s) to the server (${reason})`)
+  } catch (err) {
+    // Never let log delivery become its own problem - next trigger retries anyway.
+    console.warn('[logs] could not ship logs:', err.message)
+  } finally {
+    logShipInFlight = false
+  }
+}
+
 /**
  * The game died. Put the log somewhere obvious and tell the player.
  *
@@ -907,6 +993,8 @@ async function installEverything (onProgress = () => {}) {
  * crashed is annoyed and should not also be given a scavenger hunt.
  */
 function handleGameCrash (exitCode) {
+  shipClientLogs('game crash')
+
   const modDir = findModDir()
   const hex = '0x' + (exitCode >>> 0).toString(16).toUpperCase()
 
@@ -944,9 +1032,8 @@ function handleGameCrash (exitCode) {
   }
 
   const detail = savedTo
-    ? `Your log has been copied to your Desktop:\n\n${savedTo}\n\n` +
-      'The path is on your clipboard. Send that FILE in the Discord - the whole file, ' +
-      'not a screenshot.'
+    ? `Your log was sent to the dev server automatically, and a copy is on your Desktop:\n\n${savedTo}\n\n` +
+      'The path is on your clipboard in case anyone asks for the file directly.'
     : 'The log could not be found automatically. Look in:\n\n' +
       `${modDir ? path.join(modDir, 'logs') : 'your mod folder'}\n\nand send the newest file.`
 
@@ -1771,6 +1858,11 @@ function watchForGameExit () {
     gameWatcher = null
     setGameState({ launching: false, running: false })
     console.log('[launch] the game has closed - unlocked')
+
+    // The session just ended, so its log just stopped growing - ship it while the
+    // machine is still on. Crashes are shipped by handleGameCrash; the in-flight
+    // guard keeps the two from doubling up.
+    shipClientLogs('game closed')
   }, 3000)
 }
 
@@ -3942,6 +4034,11 @@ app.whenReady().then(() => {
     offerShortcuts()
     initAutoUpdater()
   })
+
+  // Catch-up sweep for logs nobody shipped live: a crash that took the launcher down
+  // with it, or a session played while the launcher was closed. Delayed so startup
+  // (sign-in restore, update check) is not competing with an upload.
+  setTimeout(() => shipClientLogs('startup sweep'), 15000)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

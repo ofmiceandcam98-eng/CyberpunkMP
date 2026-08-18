@@ -48,7 +48,8 @@ namespace Server.Loader.Systems
                 .WithMode(HttpListenerMode.EmbedIO))
                 .WithModule(new ActionModule("/api/v1/mods/", HttpVerbs.Get, HandleModsRoute))
                 .WithModule(new ActionModule("/api/v1/statistics/", HttpVerbs.Get, HandleStatistics))
-                .WithModule(new ActionModule("/api/v1/status/", HttpVerbs.Get, HandleStatus));
+                .WithModule(new ActionModule("/api/v1/status/", HttpVerbs.Get, HandleStatus))
+                .WithModule(new ActionModule("/api/v1/logs/", HttpVerbs.Post, HandleLogUpload));
 
             RegisterAuthentication(server);
             // AFTER authentication on purpose: EmbedIO evaluates modules in registration
@@ -208,6 +209,92 @@ namespace Server.Loader.Systems
         }
 
         private static readonly DateTime StartedAtUtc = DateTime.UtcNow;
+
+        private const int MaxLogUploadBytes = 4 * 1024 * 1024;
+        private const int LogsKeptPerPlayer = 10;
+
+        /// <summary>
+        /// Client log intake, for the launcher.
+        ///
+        /// Launchers push each session's mod log here so debugging never depends on a
+        /// player finding a file and pasting it somewhere. Filed under
+        /// logs/clients/&lt;player&gt;/, newest ten kept per player - older uploads are
+        /// deleted on arrival of new ones, so the folder is a rolling window, not an
+        /// archive.
+        ///
+        /// Deliberately unauthenticated (players have no admin credentials), so it is
+        /// bounded instead: 4 MB cap per upload, names reduced to a safe character set
+        /// (no path traversal possible), and the per-player rotation caps disk use.
+        /// </summary>
+        private async Task HandleLogUpload(IHttpContext context)
+        {
+            if (context.Request.ContentLength64 > MaxLogUploadBytes)
+            {
+                context.Response.StatusCode = 413;
+                await context.SendDataAsync(new { Ok = false, Error = "Log too large" });
+                return;
+            }
+
+            var player = SanitizeName(context.Request.QueryString["player"], "unknown");
+            var file = SanitizeName(context.Request.QueryString["file"],
+                $"client-{DateTime.UtcNow:yyyy-MM-dd_HH-mm-ss}.log");
+
+            if (!file.EndsWith(".log"))
+            {
+                file += ".log";
+            }
+
+            var body = await context.GetRequestBodyAsStringAsync();
+
+            if (body.Length > MaxLogUploadBytes)
+            {
+                context.Response.StatusCode = 413;
+                await context.SendDataAsync(new { Ok = false, Error = "Log too large" });
+                return;
+            }
+
+            var dir = FileSystemHelper.GetPath("logs", "clients", player);
+            Directory.CreateDirectory(dir);
+            await File.WriteAllTextAsync(Path.Combine(dir, file), body);
+
+            // The rolling window. Session logs are timestamped so re-uploads overwrite
+            // in place rather than pile up; everything beyond the newest ten goes.
+            var stale = Directory.GetFiles(dir, "*.log")
+                .OrderByDescending(File.GetLastWriteTimeUtc)
+                .Skip(LogsKeptPerPlayer);
+
+            foreach (var old in stale)
+            {
+                try { File.Delete(old); } catch { /* a locked file just waits for next time */ }
+            }
+
+            await context.SendDataAsync(new { Ok = true, Stored = file });
+        }
+
+        /// <summary>
+        /// Reduces untrusted input to a string safe to use as a file or folder name:
+        /// letters, digits, dot, dash and underscore only, no leading/trailing dots
+        /// (so ".." cannot survive), bounded length. Anything left empty becomes the
+        /// fallback.
+        /// </summary>
+        private static string SanitizeName(string? value, string fallback)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return fallback;
+            }
+
+            var cleaned = new string(value
+                .Where(c => char.IsLetterOrDigit(c) || c is '.' or '_' or '-')
+                .ToArray()).Trim('.');
+
+            if (cleaned.Length == 0)
+            {
+                return fallback;
+            }
+
+            return cleaned.Length > 80 ? cleaned[..80] : cleaned;
+        }
 
         private Task HandleListPlugins(IHttpContext context)
         {

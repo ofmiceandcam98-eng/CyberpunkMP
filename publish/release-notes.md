@@ -4,6 +4,10 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.70
+
+- **Crash logs deliver themselves.** After every session — normal quit or crash — the launcher sends your mod log to the dev server automatically. No more finding files, no more dragging things into Discord (a copy still lands on your Desktop after a crash, in case someone asks for the file directly). The server keeps only each player's ten newest logs, so nothing piles up and nothing stale gets debugged.
+
 ## What changed — v0.3.69
 
 - **Players who were online before you now actually appear.** Spawns that arrived while your game was still loading used to be silently thrown away — whoever joined first simply didn't exist for you. They're now held and placed the moment your world is ready.
