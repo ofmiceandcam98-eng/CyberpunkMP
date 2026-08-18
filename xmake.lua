@@ -39,6 +39,13 @@ add_requires(
 -- change rebuilds gamenetworkingsockets once; that is the announced cost.
 add_requireconfs("**.protobuf-cpp", { version = "29.3", override = true })
 
+-- Same treatment for abseil, protobuf's own dependency. Left floating it resolves to
+-- "latest", and gamenetworkingsockets caps it - at <=20260107.1 on one repo snapshot,
+-- <=20250127.0 on the CI runner's - so any machine whose snapshot has moved past the
+-- cap fails to resolve at all. 20250127.0 is the newest version every observed cap
+-- accepts, and the protobuf 29.3 era pairs with it.
+add_requireconfs("**.abseil", { version = "20250127.0", override = true })
+
 if is_plat("windows") then
     set_arch("x64")
     add_cxflags("/bigobj")
