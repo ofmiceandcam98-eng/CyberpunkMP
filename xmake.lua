@@ -23,6 +23,21 @@ add_requires(
     "entt",
     "microsoft-gsl")
 
+-- The 29.3 pin above only covers OUR requirement. Dependencies resolve their own -
+-- gamenetworkingsockets asks for protobuf too, and on the Linux container build (which
+-- the lockfile does not cover) it resolved to 35.1: the version CONTRIBUTING documents
+-- as broken. This forces every transitive protobuf to the version the code is written
+-- against, so the container links exactly one protobuf.
+--
+-- Deliberately NOT applied on Windows. There, the cached gamenetworkingsockets binary
+-- was built against its own newer protobuf and the two versions currently coexist in
+-- the link by MSVC name-decoration accident - it works, everyone's caches assume it,
+-- and unifying it means a coordinated package-cache rebuild on every Windows machine.
+-- That cleanup deserves its own change, announced, not a side effect of fixing Linux.
+if not is_plat("windows") then
+    add_requireconfs("**.protobuf-cpp", { version = "29.3", override = true })
+end
+
 if is_plat("windows") then
     set_arch("x64")
     add_cxflags("/bigobj")

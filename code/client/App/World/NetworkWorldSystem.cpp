@@ -34,8 +34,25 @@ NetworkWorldSystem::NetworkWorldSystem()
 
 bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition, const Red::Quaternion& aRotation, const Red::DynArray<Red::TweakDBID>& aEquipment, const Vector<uint8_t> aCcstate, const std::string& acUsername)
 {
+    // Not ready is a WHEN problem, not a whether problem. The server front-loads
+    // everyone already online the moment we join, which can beat the world attach -
+    // dropping those spawns meant whoever was online first simply never existed for
+    // the person loading in. Queue them; OnWorldAttached replays the queue.
     if (!m_ready)
-        return false;
+    {
+        spdlog::info("[Spawn] remote id {} arrived before the world was ready - queued", aServerId);
+        m_pendingSpawns.push_back({aServerId, aPosition, aRotation, aEquipment, aCcstate, acUsername});
+        return true;
+    }
+
+    // A spawn for an id we already track replaces the old puppet instead of standing a
+    // second copy next to it. Reconnects re-announce, and a missed unload in between
+    // used to leave a frozen duplicate behind forever.
+    if (GetEntityByServerId(aServerId))
+    {
+        spdlog::info("[Spawn] remote id {} already has a puppet - replacing it", aServerId);
+        DeSpawn(aServerId);
+    }
 
     const auto handle = Red::GetGameSystem<NetworkWorldSystem>();
     Red::EntityID id;
@@ -126,6 +143,11 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
 
 void NetworkWorldSystem::DeSpawn(uint64_t aServerId) const
 {
+    // An unload for a spawn still waiting in the queue cancels the queue entry - the
+    // player left again before our world even finished loading.
+    std::erase_if(const_cast<NetworkWorldSystem*>(this)->m_pendingSpawns,
+                  [aServerId](const PendingSpawn& s) { return s.ServerId == aServerId; });
+
     const auto entity = GetEntityByServerId(aServerId);
 
     if (!entity)
@@ -236,6 +258,17 @@ void NetworkWorldSystem::OnWorldAttached(RED4ext::world::RuntimeScene* aScene)
 
     m_ready = true;
 
+    // Replay every spawn that arrived while the world was still loading. Swapped out
+    // first so a spawn arriving DURING the replay queues fresh instead of interleaving.
+    if (!m_pendingSpawns.empty())
+    {
+        auto pending = std::exchange(m_pendingSpawns, {});
+        spdlog::info("[Spawn] world ready - replaying {} queued spawn(s)", pending.size());
+
+        for (const auto& spawn : pending)
+            Spawn(spawn.ServerId, spawn.Position, spawn.Rotation, spawn.Equipment, spawn.Ccstate, spawn.Username);
+    }
+
     // NO automatic connecting.
     //
     // This used to connect here, and it was wrong twice over. Cyberpunk's MAIN MENU is
@@ -267,6 +300,12 @@ void NetworkWorldSystem::RequestJoin()
 {
     spdlog::info("[NetworkWorldSystem] join requested from the main menu");
     m_joinRequested = true;
+}
+
+void NetworkWorldSystem::MarkNewCharacter()
+{
+    spdlog::info("[Character] NEW CHARACTER chosen - this appearance will replace the stored one");
+    m_newCharacterPending = true;
 }
 
 void NetworkWorldSystem::RequestRespawn()
@@ -420,7 +459,12 @@ void NetworkWorldSystem::PollAppearanceChanges()
     client::SaveCharacterRequest request;
     request.set_ccstate(m_pendingAppearance);
     request.set_is_male(m_pendingIsMale);
-    request.set_name(Settings::Get().discordName.c_str());
+
+    // No name. An appearance save is not an identity change - this used to send the
+    // Discord name on every ripperdoc visit, and the server took any non-empty name as a
+    // rename: editing your hair as 'Silverhand92' walked you out named after your account,
+    // marked NameChosen, and silenced the name prompt forever. Names travel exactly two
+    // roads: /name, and /character save <name>.
 
     service->Send(request);
 
@@ -469,7 +513,11 @@ void NetworkWorldSystem::SaveCharacterAppearance()
     client::SaveCharacterRequest request;
     request.set_ccstate(writer.bytes);
     request.set_is_male(stateHandle->instance->isBodyGenderMale);
-    request.set_name(Settings::Get().discordName.c_str());
+
+    // No name here either - same reason as PollAppearanceChanges. This path also serves
+    // the first capture of a brand-new character (capture_only), and that case needs no
+    // name from us: the server labels a nameless new character with the account username
+    // and leaves NameChosen false, which is exactly what triggers the name prompt.
 
     service->Send(request);
 
@@ -501,6 +549,8 @@ void NetworkWorldSystem::OnAfterWorldDetach()
     }
     spdlog::info("[NetworkWorldSystem] OnAfterWorldDetach");
     m_ready = false;
+    // Anything still queued belongs to the world we just left.
+    m_pendingSpawns.clear();
 
     m_interpolationSystem->OnAfterWorldDetach();
     m_chatSystem->OnAfterWorldDetach();
@@ -599,6 +649,43 @@ void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::
     }
 
     SetRemotePlayerId(aMessage.get_id());
+
+    // A character made through NEW CHARACTER is sent up the moment we are in the world.
+    //
+    // The server only captures an appearance for a player with NO character, so replacing
+    // one was impossible: you went through the creator, connected, and were spawned as the
+    // character you had just replaced. hyliangenesis built a male V and stayed female for a
+    // day - their stored record was created on the 14th at 21:37 and never changed again,
+    // through several attempts.
+    //
+    // Sent from here because this is the first moment the world is real and the player is
+    // standing in it as whoever they just built. Reusing SaveCharacterRequest means no new
+    // message and no protocol change - the server already overwrites the stored character
+    // with what arrives, keeping level and perks.
+    //
+    // Cleared either way. A failed save must not leave the flag armed, or the next ordinary
+    // join would overwrite their character with whatever save happened to load.
+    if (m_newCharacterPending)
+    {
+        m_newCharacterPending = false;
+
+        // Retire the stored character FIRST, through the same command a player could
+        // type. The save below reuses SaveCharacterRequest, and the server builds a save
+        // by COPYING the stored record - so without the retire, the old character's name
+        // and its named-once lock (and SpawnedBefore) ride along onto the replacement,
+        // and the "new" character walks out pre-named after the old one. Retiring makes
+        // the save arrive to no record at all: fresh name prompt, arrivals spawn, a
+        // genuinely new person. Reliable messages on one connection stay ordered, so the
+        // retire always lands before the appearance.
+        {
+            client::ChatMessageRequest retire;
+            retire.set_message("/character new");
+            Core::Container::Get<NetworkService>()->Send(retire);
+        }
+
+        spdlog::info("[Character] new character - sending this appearance to replace the stored one");
+        SaveCharacterAppearance();
+    }
 }
 
 static Core::RawFunc<
@@ -621,12 +708,8 @@ void NetworkWorldSystem::UpdatePlayerLocation() const
 
     auto puppet = Red::Cast<Red::game::Puppet>(player);
 
-    // const auto mountingFacility = Red::GetGameSystem<Red::game::mounting::MountingFacility>();
-    // Red::game::mounting::MountingInfo mountingInfo;
-    // if (GetMountingInfo(mountingFacility, *puppet.instance, Red::CName("seat_front_left"), mountingInfo)) {
     if (auto vehicle_id = GetVehicleSystem()->GetVehicleGameId())
     {
-        // auto vehicle = Red::Cast<Red::vehicle::BaseObject>(GetEntity(mountingInfo.parentId));
         auto vehicle = Red::Cast<Red::vehicle::BaseObject>(GetEntity(*vehicle_id));
         if (!vehicle)
         {
@@ -638,21 +721,6 @@ void NetworkWorldSystem::UpdatePlayerLocation() const
             auto transform = Red::WorldTransform();
 
             transform = vehicle->rigidBody->currentTransform;
-
-            // const auto cEntityRotation = eulerAngles(Game::ToGlm(vehicle->placedComponent->worldTransform.Orientation));
-
-            // about the same
-            // transform = vehicle->worldTransform;
-
-            // about the same
-            // transform = vehicle->runtimeData->transform;
-
-            // try to get transform from move system
-            // seems to return 0 :/
-            // auto transform = Red::WorldTransform();
-            // const auto moveSystem = Red::GetGameSystem<Red::vehicle::MoveSystem>();
-            // // GetCurrentTransform
-            // reinterpret_cast<void (*)(const Red::vehicle::MoveSystem *, const Red::EntityID &, Red::WorldTransform*)>(*(uintptr_t*)(*(uintptr_t*)moveSystem + 0x250))(moveSystem, vehicle->id, &transform);
 
             const auto cEntityPosition = transform.Position;
             const auto cEntityRotation = eulerAngles(Game::ToGlm(transform.Orientation));
@@ -674,6 +742,11 @@ void NetworkWorldSystem::UpdatePlayerLocation() const
             request.set_id(*remote_id);
             request.set_speed(speed);
             request.set_tick(GetTick());
+
+            // Which grant of authority this movement belongs to. The server drops
+            // anything stale, which is what keeps an ex-driver's in-flight packets from
+            // fighting the new simulator after a handoff.
+            request.set_epoch(GetVehicleSystem()->GetAuthorityEpoch());
 
             const auto pNetworkService = Core::Container::Get<NetworkService>();
             pNetworkService->Send(request);

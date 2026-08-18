@@ -17,7 +17,13 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="CppSharp" Version="1.1.84.17100" />
+    <!-- CppSharp 1.1.84 ships its linux-x64 assembly built for net10.0, which a net9.0
+         app cannot load - the container build compiled fine (against the ref assembly)
+         and then died at run with FileNotFoundException: CppSharp.Generator. Older
+         releases ship linux-x64 as net6.0, which net9.0 loads happily. Windows keeps
+         the exact version it has always used; only non-Windows builds differ. -->
+    <PackageReference Include="CppSharp" Version="1.1.84.17100" Condition="'$(OS)' == 'Windows_NT'" />
+    <PackageReference Include="CppSharp" Version="1.1.5.3168" Condition="'$(OS)' != 'Windows_NT'" />
     <PackageReference Include="LibGit2Sharp" Version="0.29.0" />
   </ItemGroup>
 

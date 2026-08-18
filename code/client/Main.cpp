@@ -6,8 +6,6 @@
 
 #include "RED4ext/Api/EMainReason.hpp"
 
-extern void CoreStubsInit();
-
 std::filesystem::path GCyberpunkMpLocation;
 
 EXTERN_C IMAGE_DOS_HEADER __ImageBase;

@@ -35,6 +35,23 @@ void MultiMovementController::Tick(float delta)
 
 void MultiMovementController::GetDeltaTransform(Red::Vector4& positionDelta, Red::Quaternion& rotationDelta)
 {
+    // Runs every animation frame on the ANIMATION thread, and mounting a puppet into a
+    // vehicle REPARENTS its entity - the placement chain below can go away mid-seat.
+    // These were unchecked dereferences until a driver's game died ~25s after a remote
+    // puppet mounted into their moving car; a zero delta is always a safe answer.
+    if (!m_pComponent || !m_pComponent->owner || !m_pComponent->owner->placedComponent)
+    {
+        if (!m_nullPlacementLogged)
+        {
+            m_nullPlacementLogged = true;
+            spdlog::warn("[MultiMovement] GetDeltaTransform with missing placement chain - entity reparented under us (mounted?)");
+        }
+
+        positionDelta = {0.f, 0.f, 0.f, 0.f};
+        rotationDelta = {0.f, 0.f, 0.f, 1.f};
+        return;
+    }
+
     const auto& rawPosition = m_pComponent->owner->placedComponent->localTransform.Position;
     const auto& rawRotation = m_pComponent->owner->placedComponent->localTransform.Orientation;
     const glm::vec3 pos = Game::ToGlm(rawPosition);
@@ -47,6 +64,19 @@ void MultiMovementController::GetDeltaTransform(Red::Vector4& positionDelta, Red
 
     positionDelta = {m_position.X - position.X, m_position.Y - position.Y, m_position.Z - position.Z, 0.f};
     rotationDelta = Game::ToRed(glm::quat(angles));
+
+    // Interpolation stops feeding SetTransform while a puppet is seated (AttachedComponent
+    // gates it), so m_position freezes at the mount spot. If the engine still asks this
+    // controller for deltas while the car drives away, the answer grows without bound -
+    // exactly the kind of impulse that hurls entities. Log the first sighting; the
+    // timestamp against the mount line names the guilty tick.
+    const float dx = positionDelta.X, dy = positionDelta.Y, dz = positionDelta.Z;
+    if (dx * dx + dy * dy + dz * dz > 100.f * 100.f && !m_runawayLogged)
+    {
+        m_runawayLogged = true;
+        spdlog::warn("[MultiMovement] delta runaway ({:.0f}m) - frozen target queried while the entity moves (seated in a driving car?)",
+                     std::sqrt(dx * dx + dy * dy + dz * dz));
+    }
 }
 
 void MultiMovementController::sub_28(bool& unk)

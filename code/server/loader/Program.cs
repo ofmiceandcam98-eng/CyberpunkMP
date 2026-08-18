@@ -20,6 +20,16 @@ internal class Program
 
     private static void Main(string[] args)
     {
+        // An admin stopped this server. Idle in stopped mode - status plus an
+        // authenticated start endpoint, nothing else - instead of booting the game.
+        // See Systems/Lifecycle.cs for how the marker and the container's restart
+        // policy fit together.
+        if (Server.Loader.Systems.Lifecycle.IsStopRequested)
+        {
+            Server.Loader.Systems.Lifecycle.RunStoppedMode();
+            return;
+        }
+
         try
         {
             if (CyberpunkMp.ServerAPI.Initialize())

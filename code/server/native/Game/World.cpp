@@ -8,6 +8,7 @@
 #include "Components/PlayerComponent.h"
 #include "Components/AttachmentComponent.h"
 #include "Components/VehicleComponent.h"
+#include "Components/AuthorityComponent.h"
 
 #include "Systems/ChatSystem.h"
 #include "Systems/ServerListSystem.h"
@@ -52,6 +53,7 @@ World::World(const FlecsConfig& acFlecsConfig)
     AttachmentComponent::Register(*this);
     PlayerComponent::Register(*this);
     VehicleComponent::Register(*this);
+    AuthorityComponent::Register(*this);
 }
 
 World::~World()

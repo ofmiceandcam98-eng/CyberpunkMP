@@ -114,6 +114,12 @@ function option (name, fallback) {
 const PORT = Number(option('--port', 11780))
 const PUBLISHING = !flag('--no-publish')
 
+// Optional override so the service can advertise a different public host/port
+// than the one it binds to. This is useful when the game server and coord API
+// should be presented at the same (external) address/port for clients.
+const OVERRIDE_PUBLIC_HOST = process.env.NCO_COORD_HOST || null
+const OVERRIDE_PUBLIC_PORT = process.env.NCO_COORD_PORT ? Number(process.env.NCO_COORD_PORT) : null
+
 // ---------------------------------------------------------------------------
 // Storage
 // ---------------------------------------------------------------------------
@@ -546,7 +552,8 @@ async function handleDevKey (req, res) {
     id: participant.id,
     label: participant.label,
     key: participant.key,
-    baseUrl: `http://${findTailscaleAddress() || 'localhost'}:${PORT}`
+    baseUrl: (process.env.NCO_COORD_BASEURL)
+      || `http://${OVERRIDE_PUBLIC_HOST || findTailscaleAddress() || 'localhost'}:${OVERRIDE_PUBLIC_PORT || PORT}`
   })
 }
 
@@ -744,10 +751,13 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log('')
   console.log('  Night City Online - assistant coordination API')
   console.log('  ---------------------------------------------')
+  // Print the key console URL and the public address that others should use. Both
+  // can be overridden by environment variables so operators can present a single
+  // stable address (for example, the game server's tailnet IP and game port).
+  const publicHost = OVERRIDE_PUBLIC_HOST || tailscale || '127.0.0.1'
+  const publicPort = OVERRIDE_PUBLIC_PORT || PORT
   console.log(`  Key console   http://127.0.0.1:${PORT}/   (this machine only)`)
-  console.log(tailscale
-    ? `  For others    http://${tailscale}:${PORT}/v1/   (over Tailscale)`
-    : '  For others    no Tailscale address found - only this machine can reach it')
+  console.log(`  For others    http://${publicHost}:${publicPort}/v1/   (over Tailscale)`) 
   console.log(`  Participants  ${active.length} of ${MAX_PARTICIPANTS}`)
   console.log(`  Publishing    ${PUBLISHING ? 'publish/ + GitHub release' : 'off (--no-publish)'}`)
   console.log('')

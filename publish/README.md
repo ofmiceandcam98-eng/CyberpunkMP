@@ -81,45 +81,15 @@ every link already shared in Discord goes stale.
 
 ## Cutting a new release
 
-1. Build and deploy, confirming the DLL timestamp actually moved:
+One command does the whole thing - build, package, verify, publish, announce:
 
-   ```
-   xmake build -j 4 Client
-   xmake install -o distrib Client
-   ```
+```
+powershell -File tools\Ship.ps1
+```
 
-2. Rebuild the zip. It must contain, at minimum:
-   - `mod/` — `CyberpunkMP.dll`, `assets/`, `Rpc/`. **Exclude `logs/` and `*.log`.**
-   - `prerequisites/` — the six mod zips
-   - `LICENSES/` — one license file per prerequisite
-   - `INSTALL.txt`
-
-3. Update `INSTALL.txt` and `release-notes.md` — especially **Known issues**.
-
-4. Create the release:
-
-   ```
-   gh release create nightcity-YYYY.MM.DD \
-     --repo ofmiceandcam98-eng/CyberpunkMP \
-     --target <branch> \
-     --title "Night City Online - YYYY-MM-DD build (game patch 2.31)" \
-     --notes-file publish/release-notes.md \
-     --latest \
-     <path-to-zip>
-   ```
-
-5. Update the status page (above), then announce it:
-
-   ```
-   powershell -File tools\AnnounceRelease.ps1
-   ```
-
-   That reads the live release from GitHub and posts it to `#server-update`, so the Discord
-   message can never disagree with what people actually download. Add `-Highlights "..."` to
-   lead with what changed, or `-DryRun` to see the message without sending it.
-
-   It refuses to post a draft release, or one with no file attached — both would send people
-   to a dead download.
+See the header of Ship.ps1 for the switches (launcher-only, mod-only, dry run). It
+refuses to publish anything that failed a check, carries the mod forward on
+launcher-only ships, and posts to #server-update by itself.
 
 ### Packaging traps, both already hit once
 

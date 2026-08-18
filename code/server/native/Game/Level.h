@@ -46,7 +46,6 @@ struct Level
             }
     }
 
-    void Test() noexcept;
 
 protected:
     friend struct Handle;
@@ -75,4 +74,5 @@ private:
     Map<GridCell::TPosition, UniquePtr<GridCell>> m_cells;
     World* m_pWorld;
     flecs::system m_updateSystem;
+    flecs::system m_releaseSystem;
 };

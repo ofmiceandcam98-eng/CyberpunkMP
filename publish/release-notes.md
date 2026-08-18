@@ -4,6 +4,101 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.69
+
+- **Players who were online before you now actually appear.** Spawns that arrived while your game was still loading used to be silently thrown away — whoever joined first simply didn't exist for you. They're now held and placed the moment your world is ready.
+- **No more frozen duplicate players.** A rejoin now replaces a player's old puppet instead of standing a second copy next to it.
+
+## What changed — v0.3.68
+
+- **Buttons that share a row share a size.** The Server panel's controls (and every other button row) are now uniform width — color still says what a button does, shape no longer says anything by accident.
+
+## What changed — v0.3.67
+
+- **"Test server connection" in Tools.** Checks every link between your PC and the server — internet, Tailscale, the server's network, the server itself — and names the first broken one with how to fix it. "Server offline" used to mean five different problems; now each one says its own name.
+- **The network invite moved to the top of Tools**, where new players can find it — it was buried in the dev-only section. Accepting the invite AND switching Tailscale to the joined network are both needed; the connection test now catches the second half being missed.
+- Fresh network invite published (the old one was used up).
+
+## What changed — v0.3.66
+
+- **Admins control the real server from the launcher.** The Server panel's Start, Restart and Stop now command the actual server everyone plays on — not a program on your own PC. Stop keeps it stopped (through reboots and redeploys) until an admin presses Start; Restart takes about 20 seconds. The server checks the admin login on every action; the launcher asks for it once and remembers it encrypted. Both destructive buttons confirm first, and the panel shows "stopped by an admin" as its own state instead of a generic offline.
+
+## What changed — v0.3.65
+
+- **Uninstalling actually uninstalls.** Removing the launcher now also clears everything it saved on your PC — signed-in Discord session, settings, keys. Updates never touch your data (only a real uninstall does), and your game folder and the mod stay untouched as before — "Remove mod" remains the explicit way to take that out first.
+
+## What changed — v0.3.64
+
+- **You can see each other move.** Every session on the new server had players frozen as statues: the mod was a mixed build — its network serializer came from one branch and its headers from another, off by exactly one bit, so the server read every entity ID you sent as double its real value and refused it. The build system flaw that let two branches fuse into one DLL is fixed, the mod is rebuilt from scratch, and real-time sync works. This was also the cause of seeing a copy of yourself, and of movement never saving.
+
+## What changed — v0.3.63
+
+- **Test builds get an Uninstall button.** The installed test build's row now offers Uninstall directly — it puts the shipped mod back (same as Restore) so builds can be checked one at a time without hunting for the way out. Dev panel only.
+
+## What changed — v0.3.62
+
+- **Body type moved fully in game.** The launcher's Body type toggle is gone — NEW CHARACTER runs the game's own creator, which asks, and since v0.3.61 that answer actually sticks. One place for the truth instead of two that could disagree.
+- **The dev Server tool tells the truth about the servers.** Its hint still described the old world (the published server as one person's PC, the old test address). It now points at the vehicle-authority test server and describes the self-deploying main server as what it is.
+
+## What changed — v0.3.61
+
+- **NEW CHARACTER really means new.** Replacing your character now retires the old one properly, so the new person gets their own name prompt and starts at the arrivals point. Before this, the replacement quietly inherited the old character's name — and the once-per-character name lock along with it, so you could never name the person you'd just made. Old characters are retired, not deleted.
+- Movement desync on the server now logs exactly what it rejected, so the remaining sync bug can be caught in the act.
+
+## What changed — v0.3.60
+
+- **The Server panel now shows the real server.** For admins, the panel used to control a server program on your own PC — a leftover from when the server was somebody's desktop. It now reports the actual game server everyone plays on (online state, player count, where it runs) and opens its web admin. The old local Start/Stop controls only appear on a machine that actually has a locally built server.
+
+## What changed — v0.3.59
+
+- **Multiplayer works again — sorry.** v0.3.58 shipped the wrong mod build: its release had been pre-created with test artifacts, and the launcher-only ship reused them instead of the real mod. In game that looked like multiplayer simply being gone — no chat, no other players, no map pins — and the server refusing every connection with a protocol mismatch. This build carries a mod compiled from exactly the code the server runs. The ship script now refuses to source mod files from anything but the latest full release, so this class of mistake can't repeat.
+
+## What changed — v0.3.58
+
+- **The server moved.** It now runs from a self-updating deployment on dedicated hardware instead of one person's PC, and it updates itself from GitHub within ten minutes of a push. Nothing to do on your side — the launcher reads the address from the release, so pressing Play lands you on the new server automatically. Character data starts fresh on the new machine.
+- **`/name` is once per character.** Pick a name and it's yours until you retire that character with NEW CHARACTER — dying doesn't reset it, and renames are refused. The name prompt no longer reappears after a ripperdoc visit either: saving your look was wiping the fields that remembered you'd already named yourself (and where you'd already spawned).
+- **Dev launcher: pick your server.** A Server tool in the Dev panel points Launch, the status pill and everything else at any server — the test box, localhost, or back to the published one with one click. Dev role required.
+- **Dev launcher: one-click test builds.** Pre-releases from GitHub now list in the Dev panel with an Install button. The download is checksum-verified, your shipped mod DLL is backed up automatically, and Restore puts it back. Players never see any of this — their launchers only update from full releases like this one.
+
+- **Every character now has a permanent ID of its own.** It's generated once, never reused, and stays the same through renames, ripperdoc visits and reconnects — while still filed under the Discord account that owns it. It's the identifier that will carry inventory, cyberware and RP profiles later.
+- **Admin commands find people by any name they have.** `/tp`, `/kick`, `/ban` and the rest now accept a character name, a Discord name, a Discord ID, or a character ID. Character names win over account names, so the person you're standing in front of is the one you get.
+- **`/whois`** — shows a player's character name, account, and character ID. Moderator and above.
+
+## What changed — v0.3.56
+
+- **NEW CHARACTER actually replaces your character now.** It never could. The server only saved an appearance for a player who had *no* character, so anyone who already had one went through the whole creator, connected, and was spawned as the character they had just replaced — the creation was thrown away silently. That is why hyliangenesis built a male V and stayed female. The client now tells the server that what is arriving is a replacement.
+- Your character is still keyed to your Discord account, as it always has been — it follows you to any machine you sign in from.
+
+## What changed — v0.3.55
+
+- Diagnostic build for the "everyone looks like me" bug. Your clothes, name and position all sync correctly — only the face and body don't, and each player sees the other wearing a whole copy of their own character. This build records the one measurement that separates the two possible causes. Play for a minute with someone else and send the client log.
+
+## What changed — v0.3.54
+
+- **A leftover copy of the mod is moved aside automatically.** The game loads every mod folder it finds, so an old copy kept overriding the current one. The launcher now handles it on the way to launch — nothing to find, nothing to delete. The old copy is *moved*, not deleted, into `red4ext\disabled-by-launcher\`, so it can be dragged back if you wanted it. If you have deliberately pointed the launcher at your own build in Settings, that is the one it keeps.
+- **You can't start the game twice.** Launch Game greys out and reads **Launching…**, then **Game running**, and only comes back once Cyberpunk has actually closed. It checks the real process list, so a game you started from Steam — or one still running from before you opened the launcher — counts too.
+
+## What changed — v0.3.53
+
+- **Verify files now catches a stale second copy of the mod.** The game loads *every* mod folder it finds, but the launcher only ever looked at the first — so a leftover copy kept running, its scripts overrode the current ones, and the launcher truthfully reported the copy it knew about as up to date. That is how you get an old main menu under a launcher saying v0.3.51. Verify now names every copy, and which release each came from.
+- Each install stamps its version into its own folder, so the copies can be told apart.
+
+## What changed — v0.3.52
+
+- **The dev launcher appears for devs.** Access granted by a Discord role resolved *after* sign-in had already drawn the page, so the admin controls never showed up for anyone who was not on the hardcoded list. The page is now told when the role check finishes. Thanks to zeldfep for finding and fixing it.
+- **New characters arrive where `/setstart` says.** Server-side fix, already live — it was deciding "brand-new" from the account rather than the character, so it never fired for anyone who had connected before.
+
+## What changed — v0.3.51
+
+- **Other players wear their clothes.** Equipping was nested inside the check for whether the puppet already *had* the item — so anything it was already carrying got skipped and left in the inventory instead of being put on. Remote players are built on an NPC record that ships with its own loadout, so that overlap was the normal case, not an edge case. Having an item and wearing it are now asked separately.
+
+## What changed — v0.3.50
+
+- **You are your own character again.** This was the big one. The launcher installs a starter save so new players skip Act 1 — and it was forcing that save to load on **every** launch, for everyone. Since it is one save built from one person's character, pressing MULTIPLAYER handed you *their* character, and it overwrote whatever you made through NEW CHARACTER. It is now only used until you have a character of your own, then your saves are left alone.
+- **Chat appears straight away.** It was showing up late — usually once you got in a car — because the HUD finishes assembling after chat sets itself up and puts it back. Visibility is now re-asserted on every message, so the first line that arrives brings it back.
+
+**Known and not fixed yet:** a crash when opening the weapon wheel as a passenger in a moving vehicle, and clothing that only partly applies to other players.
+
 ## What changed — v0.3.49
 
 Most of this was already written and simply never reached your game. The build was only deploying the mod's code, not its data files — so two fixes sat finished in the repo while everyone kept hitting the bugs they fixed.

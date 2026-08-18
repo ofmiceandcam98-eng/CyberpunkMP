@@ -26,6 +26,26 @@ contextBridge.exposeInMainWorld('launcher', {
   // Forget the session in the main process.
   logout: () => ipcRenderer.invoke('discord:logout'),
 
+  // Fired when the signed-in user's profile changes after sign-in. The Discord role
+  // check runs asynchronously, so anyone whose access comes from a role (rather than
+  // the hardcoded list) only resolves to admin a moment after login/restore returned -
+  // this is how the page learns about it.
+  onUserUpdated: (callback) => {
+    ipcRenderer.on('user-updated', (_e, user) => callback(user))
+  },
+
+  // Whether a game is starting or already running, so the play button can lock itself.
+  // Pushed from the main process rather than polled here - it is the side that can see
+  // the process list, and the answer has to survive the launcher being reopened.
+  onGameState: (callback) => {
+    ipcRenderer.on('game-state', (_e, state) => callback(state))
+  },
+
+  // Sent when a duplicate copy of the mod was found and moved aside on the way to launch.
+  onModsCleaned: (callback) => {
+    ipcRenderer.on('mods-cleaned', (_e, info) => callback(info))
+  },
+
   // Update checks. Play is refused unless the check says up to date.
   checkUpdate: () => ipcRenderer.invoke('update:check'),
   applyUpdate: () => ipcRenderer.invoke('update:apply'),
@@ -42,10 +62,16 @@ contextBridge.exposeInMainWorld('launcher', {
   // rather than pushed, so it is never sitting in the page for someone screen-sharing.
   devKey: () => ipcRenderer.invoke('devKey:fetch'),
 
-  // Which body a new character starts from. Chosen here because it is baked into the
-  // world template and cannot be changed once the game is running.
-  getBodyType: () => ipcRenderer.invoke('bodyType:get'),
-  setBodyType: (value) => ipcRenderer.invoke('bodyType:set', value),
+  // Dev server selection. Which server Launch connects to - the live published one, or
+  // a test server. The main process re-checks the dev role on set.
+  devServerGet: () => ipcRenderer.invoke('devServer:get'),
+  devServerSet: (host, port) => ipcRenderer.invoke('devServer:set', host, port),
+
+  // Test builds: pre-releases from GitHub, invisible to player launchers. Install swaps
+  // the mod DLL (keeping the shipped one); restore puts it back. Dev role required.
+  prereleaseList: () => ipcRenderer.invoke('prerelease:list'),
+  prereleaseInstall: (tag) => ipcRenderer.invoke('prerelease:install', tag),
+  prereleaseRestore: () => ipcRenderer.invoke('prerelease:restore'),
 
   // The coordination service itself - started alongside the game server, controllable
   // on its own. Host machine only.
@@ -69,7 +95,6 @@ contextBridge.exposeInMainWorld('launcher', {
   nexusSsoLogin: () => ipcRenderer.invoke('nexus:ssoLogin'),
   nexusSignIn: (key) => ipcRenderer.invoke('nexus:signIn', key),
   nexusStatus: () => ipcRenderer.invoke('nexus:status'),
-  nexusSignOut: () => ipcRenderer.invoke('nexus:signOut'),
 
   // Desktop + Start Menu shortcuts. Asked once on first run; this is the way back.
   createShortcuts: () => ipcRenderer.invoke('shortcuts:create'),
@@ -130,6 +155,10 @@ contextBridge.exposeInMainWorld('launcher', {
   // Server controls. Every one of these re-checks admin in the main process -
   // the renderer asking nicely is not authorisation.
   serverStatus: () => ipcRenderer.invoke('server:status'),
+  serverOpenAdmin: () => ipcRenderer.invoke('server:openAdmin'),
+  serverRemote: (action) => ipcRenderer.invoke('server:remote', action),
+  connectivityTest: () => ipcRenderer.invoke('connectivity:test'),
+  serverSetAdminCred: (username, password) => ipcRenderer.invoke('server:setAdminCred', username, password),
   startServer: () => ipcRenderer.invoke('server:start'),
   stopServer: () => ipcRenderer.invoke('server:stop'),
   restartServer: () => ipcRenderer.invoke('server:restart'),

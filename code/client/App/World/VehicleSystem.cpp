@@ -33,14 +33,39 @@ static void MakeRemoteDriven(const Red::Handle<Red::vehicle::WheeledBaseObject>&
     static Core::RawFunc<1620777158UL, void (*)(Red::vehicle::BaseObject*, uint32_t)> SetFlags;
     static Core::RawFunc<1585713002UL, void (*)(Red::vehicle::BaseObject*, bool)> SetKinematic;
 
+    // Step logging bisects a native crash in this path: the last line printed before
+    // silence names the killer. Cheap, and this path runs a handful of times per session.
+    spdlog::info("[VehicleSystem] MakeRemoteDriven: SetIsPlayerControlled");
     SetIsPlayerControlled(aVehicle, false);
     // turn on engine
+    spdlog::info("[VehicleSystem] MakeRemoteDriven: engine vcall");
     reinterpret_cast<void (*)(Red::vehicle::WheeledBaseObject*, bool)>(*(uintptr_t*)(*(uintptr_t*)aVehicle.instance + 0x328))(aVehicle, true);
+    spdlog::info("[VehicleSystem] MakeRemoteDriven: engineData {}", aVehicle->engineData ? "set" : "null");
     if (aVehicle->engineData)
         aVehicle->engineData->unk61 = 0;
     SetFlags(aVehicle, 0x10);
     SetFlags(aVehicle, 0x80);
+    spdlog::info("[VehicleSystem] MakeRemoteDriven: SetKinematic");
     SetKinematic(aVehicle, true);
+    spdlog::info("[VehicleSystem] MakeRemoteDriven: done");
+}
+
+// The inverse of MakeRemoteDriven: hands a vehicle to the LOCAL simulation. Called when
+// the server assigns us authority over a network-spawned car - MakeRemoteDriven put its
+// physics to sleep at spawn, and without waking it back up you can be assigned a car you
+// cannot actually drive (the control-handoff gap MakeRemoteDriven's introduction
+// documented). Engine state is left alone - it is already running on a car anyone was
+// just driving, and DoMount manages it for fresh mounts.
+static void MakeLocallyDriven(const Red::Handle<Red::vehicle::WheeledBaseObject>& aVehicle)
+{
+    if (!aVehicle)
+        return;
+
+    static Core::RawFunc<4039776020UL, void (*)(Red::vehicle::BaseObject*, bool)> SetIsPlayerControlled;
+    static Core::RawFunc<1585713002UL, void (*)(Red::vehicle::BaseObject*, bool)> SetKinematic;
+
+    SetKinematic(aVehicle, false);
+    SetIsPlayerControlled(aVehicle, true);
 }
 
 void VehicleSystem::OnWorldAttached(RED4ext::world::RuntimeScene* aScene)
@@ -58,6 +83,48 @@ void VehicleSystem::OnDisconnected()
 {
     m_vehicleRemoteId = std::nullopt;
     m_vehicleGameId = std::nullopt;
+    m_mountedServerId = std::nullopt;
+    m_mountedSlot = 0;
+    m_authorityEpoch = 0;
+    m_pendingMounts.clear();
+}
+
+bool VehicleSystem::HandleEntityUnload(const PacketEvent<server::NotifyEntityUnload>& aMessage)
+{
+    const auto serverId = aMessage.get_id();
+
+    m_pendingMounts.erase(serverId);
+
+    // The unloaded entity can also be a CHARACTER with a mount still queued for some
+    // other, still-spawning vehicle. Replaying that mount later would hand DoMount a
+    // despawned mirror - engine id 0 into EnterVehicle and a component add on a dead
+    // flecs entity.
+    for (auto it = m_pendingMounts.begin(); it != m_pendingMounts.end();)
+    {
+        auto& queue = it.value();
+        std::erase_if(queue, [serverId](const PacketEvent<server::NotifyVehicleEnter>& aQueued)
+                      { return aQueued.get_character_id() == serverId; });
+
+        it = queue.empty() ? m_pendingMounts.erase(it) : std::next(it);
+    }
+
+    if (m_vehicleRemoteId && *m_vehicleRemoteId == serverId)
+    {
+        spdlog::info("[VehicleSystem] simulated vehicle {:x} unloaded by the server - dropping authority state", serverId);
+        m_vehicleRemoteId = std::nullopt;
+        m_vehicleGameId = std::nullopt;
+    }
+
+    if (m_mountedServerId && *m_mountedServerId == serverId)
+        m_mountedServerId = std::nullopt;
+
+    if (m_lastOwnVehicleServerId && *m_lastOwnVehicleServerId == serverId)
+    {
+        m_lastOwnVehicleServerId = std::nullopt;
+        m_lastOwnVehicleGameId = std::nullopt;
+    }
+
+    return true;
 }
 
 void VehicleSystem::OnInitialize(const RED4ext::JobHandle& aJob)
@@ -66,7 +133,9 @@ void VehicleSystem::OnInitialize(const RED4ext::JobHandle& aJob)
     pNetworkService->RegisterHandler<&VehicleSystem::HandleVehicleLoadMessage>(this);
     pNetworkService->RegisterHandler<&VehicleSystem::HandleVehicleEnterMessage>(this);
     pNetworkService->RegisterHandler<&VehicleSystem::HandleVehicleExitMessage>(this);
-    pNetworkService->RegisterHandler<&VehicleSystem::HandleVehicleControlMessage>(this);
+    pNetworkService->RegisterHandler<&VehicleSystem::HandleAuthorityAssigned>(this);
+    pNetworkService->RegisterHandler<&VehicleSystem::HandleAuthorityRevoked>(this);
+    pNetworkService->RegisterHandler<&VehicleSystem::HandleEntityUnload>(this);
 
     m_pSpawnVehicle = Red::Detail::GetFunction(GetType(), "SpawnVehicle");
     m_pEnterVehicle = Red::Detail::GetFunction(GetType(), "EnterVehicle");
@@ -81,6 +150,11 @@ std::optional<uint64_t> VehicleSystem::GetVehicleRemoteId() const
 std::optional<Red::EntityID> VehicleSystem::GetVehicleGameId() const
 {
     return m_vehicleGameId;
+}
+
+uint32_t VehicleSystem::GetAuthorityEpoch() const
+{
+    return m_authorityEpoch;
 }
 
 void VehicleSystem::OnVehicleEnter(Red::EntityID aVehicle, const Red::TweakDBID& aVehicleTdbid, Red::CName aName, const Red::Vector4& aPostion, const Red::Quaternion& aOrientation)
@@ -103,6 +177,29 @@ void VehicleSystem::OnVehicleEnter(Red::EntityID aVehicle, const Red::TweakDBID&
         request.set_remote_vehicle_id(serverVehicle);
 
         m_vehicleGameId = std::nullopt;
+        m_mountedServerId = serverVehicle;
+
+        // Boarding a car somebody ELSE simulates: the engine's mount flow just woke this
+        // copy's physics for the local player, undoing the kinematic state OnVehicleReady
+        // set. Left that way, the passenger's copy simulates a parked car while the real
+        // driver drives away on his own screen - "he's able to drive but I'm stationary".
+        // Re-assert remote-driven; if the seat later comes with authority,
+        // HandleAuthorityAssigned wakes the physics back up.
+        if (!m_vehicleRemoteId || *m_vehicleRemoteId != static_cast<uint64_t>(serverVehicle))
+        {
+            MakeRemoteDriven(Red::Cast<Red::vehicle::WheeledBaseObject>(handle->GetEntity(aVehicle)));
+        }
+    }
+    else if (m_lastOwnVehicleGameId && *m_lastOwnVehicleGameId == aVehicle && m_lastOwnVehicleServerId)
+    {
+        // Re-entering our own car, resolved from memory (see the field's comment: our
+        // own car never has a mirror). It stays a LOCAL car - our physics, our input,
+        // no MakeRemoteDriven - the server just needs to know this is the same entity
+        // so the enter joins it (any seat) instead of forking a duplicate.
+        request.set_remote_vehicle_id(*m_lastOwnVehicleServerId);
+
+        m_vehicleGameId = aVehicle;
+        m_mountedServerId = *m_lastOwnVehicleServerId;
     }
     else
     {
@@ -116,15 +213,30 @@ void VehicleSystem::OnVehicleEnter(Red::EntityID aVehicle, const Red::TweakDBID&
         request.set_rotation(cEntityRotation.z);
 
         m_vehicleGameId = aVehicle;
+        m_mountedServerId = std::nullopt;
+
+        // The other half of the pairing (the server id) arrives with the authority
+        // assignment this spawn triggers.
+        m_lastOwnVehicleGameId = aVehicle;
+        m_lastOwnVehicleServerId = std::nullopt;
     }
+
+    m_mountedSlot = aName.hash;
 
     pNetworkService->Send(request);
 }
 
 void VehicleSystem::OnVehicleExit()
 {
+    // Name the mount this exit is about BEFORE forgetting it. For a car we spawned
+    // ourselves the server id arrived via HandleAuthorityAssigned rather than at enter.
+    const auto exitedVehicle = m_mountedServerId ? m_mountedServerId : m_vehicleRemoteId;
+    const auto exitedSlot = m_mountedSlot;
+
     m_vehicleGameId = std::nullopt;
     m_vehicleRemoteId = std::nullopt;
+    m_mountedServerId = std::nullopt;
+    m_mountedSlot = 0;
 
     spdlog::info("[VehicleSystem] OnVehicleExit");
     const auto pNetworkService = Core::Container::Get<NetworkService>();
@@ -135,6 +247,12 @@ void VehicleSystem::OnVehicleExit()
 
     const auto handle = Red::GetGameSystem<NetworkWorldSystem>();
     request.set_id(*handle->GetRemotePlayerId());
+
+    if (exitedVehicle)
+    {
+        request.set_vehicle_id(*exitedVehicle);
+        request.set_sit_id(exitedSlot);
+    }
 
     pNetworkService->Send(request);
 }
@@ -189,16 +307,15 @@ bool VehicleSystem::HandleVehicleEnterMessage(const PacketEvent<server::NotifyVe
     else
     {
         const auto entity = worldSystem->GetEntityByServerId(aMessage.get_vehicle_id());
-        if (entity.has<EntityComponent>())
+        if (entity && entity.has<EntityComponent>())
         {
             DoMount(character, entity.get<EntityComponent>()->Id, sit);
         }
         else
         {
-            // spdlog::info("[VehicleSystem] * Queueing vehicle, server: {}", aMessage.get_vehicle_id());
-            const auto vehicle = worldSystem->GetEntityIdByServerId(aMessage.get_vehicle_id());
-            // spdlog::info("[VehicleSystem]                     entity: {}", vehicle.hash);
-            m_pendingMounts[vehicle].push_back(aMessage);
+            spdlog::info("[VehicleSystem] HandleVehicleEnterMessage: queueing mount for vehicle {:x}",
+                         aMessage.get_vehicle_id());
+            m_pendingMounts[aMessage.get_vehicle_id()].push_back(aMessage);
         }
     }
 
@@ -223,50 +340,146 @@ void VehicleSystem::OnVehicleReady(const Red::EntityID& aVehicleEntityId)
     // simulate, whether or not anyone has been mounted into it yet.
     MakeRemoteDriven(Red::Cast<Red::vehicle::WheeledBaseObject>(worldSystem->GetEntity(aVehicleEntityId)));
 
-    if (m_pendingMounts.find(aVehicleEntityId) != m_pendingMounts.end())
+    auto mirror = worldSystem->FindEntity(aVehicleEntityId);
+    if (!mirror)
     {
-        for (auto& message : m_pendingMounts[aVehicleEntityId])
+        spdlog::warn("[VehicleSystem] OnVehicleReady: no mirror for engine entity {:x} - it unloaded mid-spawn",
+                     aVehicleEntityId.hash);
+        return;
+    }
+
+    const uint64_t serverId = mirror;
+
+    // Promote unconditionally, not only when a mount is queued: a copy that finished
+    // spawning with nothing queued used to keep SpawningComponent forever, and stayed
+    // half-resolvable to everything keyed on EntityComponent.
+    mirror.emplace<EntityComponent>(aVehicleEntityId, true, nullptr);
+    mirror.remove<SpawningComponent>();
+
+    const auto pending = m_pendingMounts.find(serverId);
+    if (pending != m_pendingMounts.end())
+    {
+        for (auto& message : pending->second)
         {
             const auto sit = Red::CName(message.get_sit_id());
             const auto character = worldSystem->GetEntityByServerId(message.get_character_id());
 
-            auto vehicleEntity = worldSystem->GetEntityByServerId(message.get_vehicle_id());
-            vehicleEntity.emplace<EntityComponent>(aVehicleEntityId, true, nullptr);
-            vehicleEntity.remove<SpawningComponent>();
+            // The character can die while its vehicle was still spawning (disconnect,
+            // cell unload). HandleEntityUnload purges these, but the unload and this
+            // callback can race - never mount a corpse.
+            if (!character || !character.is_alive())
+            {
+                spdlog::warn("[VehicleSystem] OnVehicleReady: queued character {:x} no longer exists - mount dropped",
+                             message.get_character_id());
+                continue;
+            }
 
-            const auto vehicle = worldSystem->GetEntityIdByServerId(message.get_vehicle_id());
-
-            DoMount(character, vehicle, sit);
+            spdlog::info("[VehicleSystem] OnVehicleReady: mounting queued character {} into vehicle {}",
+                         message.get_character_id(), message.get_vehicle_id());
+            DoMount(character, aVehicleEntityId, sit);
+            spdlog::info("[VehicleSystem] OnVehicleReady: mount done");
         }
 
-        m_pendingMounts.erase(aVehicleEntityId);
-    }
-    else
-    {
-        spdlog::info("[VehicleSystem] * Couldn't find vehicle: {}", aVehicleEntityId.hash);
+        m_pendingMounts.erase(pending);
     }
 }
 
 bool VehicleSystem::HandleVehicleExitMessage(const PacketEvent<server::NotifyVehicleExit>& aMessage)
 {
-    spdlog::info("[VehicleSystem] HandleVehicleExitMessage");
+    // A client died ~3.5s after this handler's (then only) log line, everything past it
+    // unlogged. Step logging plus the zero-id guard until that crash is named.
+    spdlog::info("[VehicleSystem] HandleVehicleExitMessage: character {:x}", aMessage.get_character_id());
 
     const auto worldSystem = Red::GetGameSystem<NetworkWorldSystem>();
-    const auto handle = Red::Handle(this);
-    bool res;
     const auto character = worldSystem->GetEntityIdByServerId(aMessage.get_character_id());
-    Red::Detail::CallFunctionWithArgs(m_pExitVehicle, handle, res, character);
+
+    if (character.hash != 0)
+    {
+        const auto handle = Red::Handle(this);
+        bool res;
+        spdlog::info("[VehicleSystem] HandleVehicleExitMessage: ExitVehicle vcall");
+        Red::Detail::CallFunctionWithArgs(m_pExitVehicle, handle, res, character);
+        spdlog::info("[VehicleSystem] HandleVehicleExitMessage: ExitVehicle returned {}", res);
+    }
+    else
+    {
+        // A puppet this client never resolved has nothing to unmount - and handing the
+        // engine a zero id here is a crash candidate, not a no-op.
+        spdlog::warn("[VehicleSystem] HandleVehicleExitMessage: unknown character {:x} - unmount skipped",
+                     aMessage.get_character_id());
+    }
 
     auto characterEntity = worldSystem->GetEntityByServerId(aMessage.get_character_id());
+    if (characterEntity && characterEntity.is_alive())
+        characterEntity.remove<AttachedComponent>();
 
-    characterEntity.remove<AttachedComponent>();
+    spdlog::info("[VehicleSystem] HandleVehicleExitMessage: done");
+    return true;
+}
+
+bool VehicleSystem::HandleAuthorityAssigned(const PacketEvent<server::NotifyAuthorityAssigned>& aMessage)
+{
+    spdlog::info("[VehicleSystem] authority assigned: entity {:x}, epoch {}", aMessage.get_entity_id(),
+                 aMessage.get_epoch());
+
+    m_vehicleRemoteId = aMessage.get_entity_id();
+    m_authorityEpoch = aMessage.get_epoch();
+
+    const auto worldSystem = Red::GetGameSystem<NetworkWorldSystem>();
+
+    // A network-spawned car resolves through its EntityComponent. Two things hang on
+    // storing its game id here: UpdatePlayerLocation only streams vehicle movement when
+    // m_vehicleGameId is set (an adopted car's driver never sent a single move before
+    // this), and the physics MakeRemoteDriven put to sleep at spawn has to be woken for
+    // the new simulator.
+    const auto gameId = worldSystem->GetEntityIdByServerId(aMessage.get_entity_id());
+    if (gameId.hash != 0)
+    {
+        m_vehicleGameId = gameId;
+        MakeLocallyDriven(Red::Cast<Red::vehicle::WheeledBaseObject>(worldSystem->GetEntity(gameId)));
+    }
+    else
+    {
+        // Our own locally-entered car. m_vehicleGameId was already set in
+        // OnVehicleEnter, and its physics never stopped being ours. This assignment is
+        // also where we learn our own car's server id - complete the memory pairing.
+        if (m_lastOwnVehicleGameId && !m_lastOwnVehicleServerId)
+            m_lastOwnVehicleServerId = aMessage.get_entity_id();
+    }
 
     return true;
 }
 
-bool VehicleSystem::HandleVehicleControlMessage(const PacketEvent<server::NotifyVehicleControlAssigned>& aMessage)
+bool VehicleSystem::HandleAuthorityRevoked(const PacketEvent<server::NotifyAuthorityRevoked>& aMessage)
 {
-    m_vehicleRemoteId = aMessage.get_vehicle_id();
+    spdlog::info("[VehicleSystem] authority revoked: entity {:x}, epoch {}", aMessage.get_entity_id(),
+                 aMessage.get_epoch());
+
+    // Authority moving away also ends our claim to the own-car memory: resolving a
+    // future enter against a car somebody else now simulates would put two machines
+    // on one car's physics.
+    if (m_lastOwnVehicleServerId && *m_lastOwnVehicleServerId == aMessage.get_entity_id())
+    {
+        m_lastOwnVehicleServerId = std::nullopt;
+        m_lastOwnVehicleGameId = std::nullopt;
+    }
+
+    if (!m_vehicleRemoteId || *m_vehicleRemoteId != aMessage.get_entity_id())
+        return true; // not ours - nothing to stop
+
+    m_vehicleRemoteId = std::nullopt;
+
+    // Usually we already exited and OnVehicleExit cleared everything. If we still hold
+    // the entity - we are now a passenger in a car somebody else took over - our machine
+    // must stop simulating it and go back to following the wire. This is the revoke half
+    // that never existed: two machines simulating one car is what passengers felt as
+    // bouncing.
+    if (m_vehicleGameId)
+    {
+        const auto worldSystem = Red::GetGameSystem<NetworkWorldSystem>();
+        MakeRemoteDriven(Red::Cast<Red::vehicle::WheeledBaseObject>(worldSystem->GetEntity(*m_vehicleGameId)));
+    }
+
     return true;
 }
 
@@ -284,9 +497,23 @@ void VehicleSystem::DoMount(flecs::entity aCharacter, Red::EntityID aVehicle, Re
         return;
     }
 
-    Red::Detail::CallFunctionWithArgs(m_pEnterVehicle, handle, res, character, vehicle->id, aSit);
+    // A zero engine id means the character's mirror is gone (or never resolved) - the
+    // engine's EnterVehicle on id 0 is a crash candidate, not a no-op.
+    if (character.hash == 0)
+    {
+        spdlog::warn("[VehicleSystem] DoMount: character {:x} has no engine entity - mount dropped",
+                     static_cast<uint64_t>(aCharacter));
+        return;
+    }
 
-    aCharacter.add<AttachedComponent>();
+    spdlog::info("[VehicleSystem] DoMount: entering character {:x} into vehicle {:x} seat {} ({})",
+                 character.hash, vehicle->id.hash, aSit.hash,
+                 (m_vehicleGameId && *m_vehicleGameId == aVehicle) ? "OUR live car" : "network copy");
+    Red::Detail::CallFunctionWithArgs(m_pEnterVehicle, handle, res, character, vehicle->id, aSit);
+    spdlog::info("[VehicleSystem] DoMount: EnterVehicle returned {}", res);
+
+    if (aCharacter && aCharacter.is_alive())
+        aCharacter.add<AttachedComponent>();
 
     // Never our own car - the local player's vehicle keeps local physics and input.
     if (!m_vehicleGameId || *m_vehicleGameId != aVehicle)

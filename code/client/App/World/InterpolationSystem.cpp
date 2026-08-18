@@ -29,11 +29,6 @@
 
 #include <Math/Spline.h>
 
-inline void ResetWithNewTransform(Red::vehicle::BaseObject* self, const Red::WorldTransform& transform)
-{
-    reinterpret_cast<void (*)(Red::vehicle::BaseObject*, const Red::WorldTransform&)>(*(uintptr_t*)(*(uintptr_t*)self + 0x280))(self, transform);
-}
-
 inline void SetSimpleMovement(Red::vehicle::IMoveSystem* apMoveSystem, const Red::EntityID& aEntityId, bool enabled)
 {
     reinterpret_cast<void (*)(Red::vehicle::IMoveSystem*, const Red::EntityID&, bool)>(*(uintptr_t*)(*(uintptr_t*)apMoveSystem + 0x1F0))(apMoveSystem, aEntityId, enabled);
@@ -285,6 +280,13 @@ void HookIdleController_SetAnimation(Game::Controller* apController, AnimationDa
         {
             if (apController->m_type == MultiMovementController::kMulti)
                 return;
+
+            // Reaching here means the engine handed this puppet a FRESH idle controller.
+            // At spawn that is expected (it is how the multi controller gets attached);
+            // any later sighting means the engine tore our controller off - the vehicle
+            // mount pipeline is the suspect - and this timestamp against the mount line
+            // in the log is the evidence.
+            spdlog::info("[Interpolation] idle controller (re)entered for puppet {:x} - attaching multi controller", pOwner->id.hash);
 
             // The kMulti guard above is evaluated on the ANIMATION thread while the attach
             // below happens later on the MAIN thread, so every animation frame in that gap

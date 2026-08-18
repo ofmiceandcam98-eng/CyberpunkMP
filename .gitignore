@@ -4,18 +4,12 @@ vsxmake*/
 .vs/
 .idea
 compile_commands.json
-code/scripting/CyberpunkSdk/CyberpunkSdk.csproj.user
-code/scripting/JobSystem/Properties/PublishProfiles/FolderProfile.pubxml.user
 
 # Dependencies
 .xmake/*
 package/*
 .cache/*
 node_modules
-
-# Generated
-**.netpack.gen.cpp
-**.netpack.gen.h
 
 # Builds
 build/*
@@ -38,7 +32,6 @@ CYBERPUNKMP_BRIEFING.md
 # Only the build OUTPUT is ignored: FullInstall.zip is reassembled from
 # publish/fullinstall-base + the current build on every ship.
 publish/FullInstall.zip
-code/client/Archives/CyberpunkMP.zip
 Cyberpunk2077.exe*
 imgui.ini
 
@@ -53,6 +46,9 @@ config/*
 
 logs/
 plugins/
+# The deployment's tailnet node identity - a private key. Never committed; losing it
+# just means the server re-registers under a new address.
+tailscale-state/
 
 # Each machine's own paths - game install, xmake, publish target. Not a secret, but
 # specific to one PC, which is exactly why it must not be committed: hardcoding these was

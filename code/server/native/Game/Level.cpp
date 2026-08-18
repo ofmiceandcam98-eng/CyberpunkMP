@@ -8,6 +8,7 @@
 #include "Components/CellComponent.h"
 #include <Components/CharacterComponent.h>
 #include <Components/VehicleComponent.h>
+#include <Components/AuthorityComponent.h>
 
 #include "GameServer.h"
 #include "World.h"
@@ -15,10 +16,21 @@
 #include "Systems/ChatSystem.h"   // telling someone their seat is taken
 #include "Validation.h"           // sanity checks on anything a client sent
 
+#include <chrono>
 
 constexpr static float sCellSize = 60 * 100;
 constexpr static int16_t sCellLoadRadius = 3;
 constexpr static int16_t sCellUnloadRadius = 4;
+
+// An empty vehicle awaiting teardown. ReleaseVehicleIfEmpty schedules instead of
+// destroying because "empty" is routinely a transient: a seat swap is an exit and an
+// enter a millisecond apart, and destroying at the exit deleted the car out from under
+// the re-enter - with its simulator still driving it. Any occupant arriving before the
+// deadline cancels the teardown.
+struct PendingReleaseComponent
+{
+    std::chrono::steady_clock::time_point At;
+};
 
 GridCell::TPosition Level::ToCell(const glm::vec3& acLocation) noexcept
 {
@@ -40,6 +52,34 @@ Level::Level(World* apWorld) noexcept
         });
 
     m_updateSystem.child_of(m_pWorld->entity("systems"));
+
+    // Sweeps vehicles whose teardown grace expired. Occupancy is re-checked at the
+    // deadline because an enter can arrive by a path that never touches the tag.
+    m_releaseSystem = m_pWorld->system<const PendingReleaseComponent>("Vehicle release grace")
+        .each([this](flecs::entity aVehicle, const PendingReleaseComponent& aPending)
+        {
+            if (std::chrono::steady_clock::now() < aPending.At)
+                return;
+
+            bool occupied = false;
+
+            GetWorld()->each(
+                [aVehicle, &occupied](flecs::entity, const AttachmentComponent& aAttachment)
+                {
+                    if (aAttachment.Parent == aVehicle)
+                        occupied = true;
+                });
+
+            if (occupied)
+            {
+                aVehicle.remove<PendingReleaseComponent>();
+                return;
+            }
+
+            Remove(aVehicle);
+        });
+
+    m_releaseSystem.child_of(m_pWorld->entity("systems"));
 }
 
 Level::Level(Level&& aLevel) noexcept
@@ -110,13 +150,36 @@ void Level::Remove(flecs::entity aEntity) noexcept
 
     flecs::entity owner = aEntity.parent();
 
-    GetWorld()->each([this, &unload, owner](flecs::entity aEntity, const PlayerComponent& aPlayerComponent)
+    // Vehicles are the exception to skipping the owner: an ADOPTED car's owner holds a
+    // network mirror (and engine copy) of it, and a spawned car's owner holds a memory
+    // pairing its ids - without the unload, both linger as the ghost cars players kept
+    // trying to board. Puppets keep the skip; a client must not be told to unload its
+    // own character.
+    const bool includeOwner = aEntity.has<AuthorityComponent>();
+
+    GetWorld()->each([this, &unload, owner, includeOwner](flecs::entity aEntity, const PlayerComponent& aPlayerComponent)
     {
-        if (!IsDebug() && owner == aEntity)
+        if (!IsDebug() && owner == aEntity && !includeOwner)
             return;
 
         GServer->Send(aPlayerComponent.Connection, unload);
     });
+
+    // The owner is skipped by the unload broadcast, so when the server destroys an
+    // entity whose simulator still believes they are driving it, nothing told their
+    // client to stop. That silence was a 512-packet rejected-move flood in one session.
+    // An explicit revoke runs the client's existing stop-simulating path.
+    if (const auto* pAuthority = aEntity.get<AuthorityComponent>(); pAuthority && owner)
+    {
+        if (const auto* pPlayer = owner.get<PlayerComponent>())
+        {
+            server::NotifyAuthorityRevoked revoked;
+            revoked.set_entity_id(aEntity);
+            revoked.set_epoch(pAuthority->Epoch);
+
+            GServer->Send(pPlayer->Connection, revoked);
+        }
+    }
 
     if (auto* pCellComponent = aEntity.get<CellComponent>(); pCellComponent)
     {
@@ -132,7 +195,6 @@ void Level::Remove(flecs::entity aEntity) noexcept
 
     aEntity.destruct();
 }
-
 
 void Level::Update(flecs::entity aEntity) noexcept
 {
@@ -163,13 +225,62 @@ void Level::RemovePlayer(flecs::entity aEntity) noexcept
     aEntity.remove<LevelSystemTag>();
 }
 
-// Takes a leaving player's cars with them.
+// The occupant who should inherit a departing simulator's car, front passenger first.
+//
+// Excludes everyone belonging to the departing PLAYER (their puppet may still be marked
+// as sitting in the driver seat at disconnect time). The hashes are CNames - FNV1a64 of
+// the seat names; the algorithm is verified because the front-left constant the seat
+// guard has used all along reproduces exactly from FNV1a64("seat_front_left"). A seat
+// not in the list (a bike pillion, a future vehicle) still counts as a fallback - an
+// arbitrary simulator beats none.
+static flecs::entity NextOccupant(flecs::entity aVehicle, flecs::entity aDepartingPlayer) noexcept
+{
+    constexpr uint64_t cSeatPriority[] = {
+        0x63c846db887c0035ULL, // seat_front_right
+        0xb06da35221954b3eULL, // seat_back_left
+        0xc90fa7831f484433ULL, // seat_back_right
+    };
+    constexpr size_t cSeatCount = sizeof(cSeatPriority) / sizeof(cSeatPriority[0]);
+
+    flecs::entity bySeat[cSeatCount]{};
+    flecs::entity fallback{};
+
+    aVehicle.world().each(
+        [&](flecs::entity aOccupant, const AttachmentComponent& aAttachment)
+        {
+            if (aAttachment.Parent != aVehicle || aOccupant.parent() == aDepartingPlayer)
+                return;
+
+            for (size_t i = 0; i < cSeatCount; ++i)
+            {
+                if (aAttachment.SlotId == cSeatPriority[i])
+                {
+                    bySeat[i] = aOccupant;
+                    return;
+                }
+            }
+
+            if (!fallback)
+                fallback = aOccupant;
+        });
+
+    for (const auto& occupant : bySeat)
+        if (occupant)
+            return occupant;
+
+    return fallback;
+}
+
+// Takes a leaving player's cars with them - unless somebody is still inside.
 //
 // Vehicles are created as children of whoever is driving, so flecs destroys them when the
 // player entity goes - silently. Everyone else's client had been told to spawn a copy and
 // is never told to remove it, so every disconnect while driving left a permanent
 // abandoned car in the other players' worlds. Routing it through Remove() sends the
 // unload first.
+//
+// A passenger changes the answer entirely: deleting the car around them is worse than
+// any alternative, so the car is handed to them instead and lives on.
 void Level::RemoveOwnedVehicles(flecs::entity aPlayer) noexcept
 {
     if (!aPlayer)
@@ -186,7 +297,15 @@ void Level::RemoveOwnedVehicles(flecs::entity aPlayer) noexcept
 
     // Collected first. Destroying entities from inside the iteration would invalidate it.
     for (auto vehicle : owned)
+    {
+        if (const auto next = NextOccupant(vehicle, aPlayer))
+        {
+            TransferAuthority(vehicle, next.parent());
+            continue;
+        }
+
         Remove(vehicle);
+    }
 }
 
 void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterRequest>& aMessage) noexcept
@@ -264,10 +383,28 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
     glm::vec3 startPosition;
     float startYaw = 0.f;
 
-    const bool isNewHere = GServer->GetPlayerStore().Find(pComponent->DiscordId) == nullptr;
+    // "Brand-new" means a brand-new CHARACTER, not an account nobody has seen.
+    //
+    // This is why /setstart appeared to do nothing. It tested whether the account had a
+    // PlayerRecord, and a record is created the moment anything about a player is stored -
+    // so by the time anyone reached this line they already had one, the condition was
+    // false, and the arrivals point was skipped every single time. It could only ever have
+    // fired for an account that had never been stored at all.
+    //
+    // Worse, it was the wrong question anyway: somebody who replaces their character with
+    // a new one is exactly who the arrivals point is for, and they always have a record.
+    //
+    // The character's own flag answers it properly, and a replacement character defaults
+    // to false so it is sent to the start point without anything having to reset it.
+    const auto* pExistingCharacter = GServer->GetPlayerStore().FindCharacter(pComponent->DiscordId);
+    const bool isNewHere = (pExistingCharacter == nullptr) || !pExistingCharacter->SpawnedBefore;
+
+    bool placedAtStart = false;
 
     if (isNewHere && GServer->GetStartPoint(startPosition, startYaw))
     {
+        placedAtStart = true;
+
         pos = startPosition;
         rot = glm::vec3(0.f, 0.f, startYaw);
 
@@ -284,9 +421,24 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
 
         spdlog::info("New arrival {} placed at the start point ({:.1f}, {:.1f}, {:.1f})",
                      pComponent->Username, startPosition.x, startPosition.y, startPosition.z);
+
+        // Recorded straight away, so this happens once per character rather than on every
+        // join. Written through with the rest of the character.
+        if (pExistingCharacter)
+        {
+            auto updated = *pExistingCharacter;
+            updated.SpawnedBefore = true;
+            GServer->GetPlayerStore().SaveCharacter(pComponent->DiscordId, pComponent->Username, updated);
+        }
     }
 
-    const auto* pSaved = GServer->GetPlayerStore().Find(pComponent->DiscordId);
+    // Skipped entirely when they were just placed at the arrivals point.
+    //
+    // Both branches teleport, and this one runs second - so without the guard it would
+    // immediately drag a new arrival back to the last position their account happened to
+    // have stored, undoing the placement above and leaving no trace of why.
+    const auto* pSaved = placedAtStart ? nullptr
+                                       : GServer->GetPlayerStore().Find(pComponent->DiscordId);
     if (pSaved)
     {
         pos = glm::vec3(pSaved->X, pSaved->Y, pSaved->Z);
@@ -419,7 +571,12 @@ void Level::HandleMoveEntityRequest(PacketEvent<client::MoveEntityRequest>& aMes
     auto* pPlayer = player.get<PlayerComponent>();
     if (!pPlayer)
     {
-        spdlog::warn("The entity's owner is not a player! From connection {:x}", aMessage.ConnectionId);
+        // Every observed desync on the container deployment funnels through this branch,
+        // so it says everything it knows: which id the client sent (generation bits
+        // included), whether that entity is alive, and what the parent actually is.
+        spdlog::warn("The entity's owner is not a player! move id={:#x} alive={} target='{}' parent id={:#x} parent='{}' from connection {:x}",
+                     aMessage.get_id(), target.is_alive(), target.name().c_str(),
+                     player.raw_id(), player.name().c_str(), aMessage.ConnectionId);
         return;
     }
 
@@ -427,6 +584,17 @@ void Level::HandleMoveEntityRequest(PacketEvent<client::MoveEntityRequest>& aMes
     {
         spdlog::warn("The entity's owner is not the current player! From connection {:x}", aMessage.ConnectionId);
         return;
+    }
+
+    // Stale-authority guard. Movement is unreliable and unordered across a handoff, so
+    // the PREVIOUS simulator's packets can arrive after a transfer. The epoch names the
+    // grant; a mismatch is dropped silently - that race is expected after every handoff,
+    // not an attack, and a warning per stale packet would be pure noise. Entities that
+    // never change hands (player puppets) carry no AuthorityComponent and skip this.
+    if (const auto* pAuthority = target.get<AuthorityComponent>())
+    {
+        if (aMessage.get_epoch() != pAuthority->Epoch)
+            return;
     }
 
     MovementComponent component;
@@ -533,9 +701,28 @@ void Level::HandleEnterVehicleRequest(PacketEvent<client::EnterVehicleRequest>& 
         }
 
         spdlog::info("Player {:x} entered vehicle {:x}", aMessage.get_id(), vehicle.id());
+
+        // Someone is boarding - any scheduled teardown is off.
+        vehicle.remove<PendingReleaseComponent>();
     }
     else
     {
+        // Position-spawning a car into a PASSENGER seat is never intent - it means the
+        // client failed to resolve a car it can see (its network copy just unloaded, or
+        // never loaded). Honoring it forks a split-brain duplicate: one player driving
+        // the real entity, the other sitting in a private copy nobody else can see.
+        // Refused the same way a taken seat is refused - told, then left alone.
+        if (aMessage.get_sit_id() != 0xb000b1d029d0cea0ULL) // seat_front_left
+        {
+            spdlog::warn("Player {:x} tried to spawn a vehicle into seat {:x} - refused as a desync fork (connection {:x})",
+                         aMessage.get_id(), aMessage.get_sit_id(), aMessage.ConnectionId);
+
+            if (auto* pChat = GetWorld()->get_mut<ChatSystem>())
+                pChat->Tell(*pPlayer, "Couldn't sync that car - give it a moment, or take the driver's seat.");
+
+            return;
+        }
+
         glm::vec3 pos = {aMessage.get_position().get_x(), aMessage.get_position().get_y(), aMessage.get_position().get_z()};
         glm::vec3 rot = {0.f, 0.f, aMessage.get_rotation()};
 
@@ -544,7 +731,10 @@ void Level::HandleEnterVehicleRequest(PacketEvent<client::EnterVehicleRequest>& 
             pos += glm::vec3(5, 0, 0);
         }
 
-        vehicle = GetWorld()->entity().child_of(player).set<MovementComponent>({pos, rot, {}}).set<VehicleComponent>({aMessage.get_vehicle_id()});
+        // AuthorityComponent from birth: the creator is the first simulator (they are the
+        // parent, and their client's movement arrives with epoch 0, which matches). Every
+        // later change of hands goes through TransferAuthority.
+        vehicle = GetWorld()->entity().child_of(player).set<MovementComponent>({pos, rot, {}}).set<VehicleComponent>({aMessage.get_vehicle_id()}).set<AuthorityComponent>({});
 
         spdlog::info("Player {:x} spawned and entered vehicle {:x}", aMessage.get_id(), vehicle.id());
     }
@@ -619,11 +809,40 @@ void Level::HandleExitVehicleRequest(PacketEvent<client::ExitVehicleRequest>& aM
 
     // Which vehicle they were in, before we forget.
     flecs::entity vehicle;
+    uint64_t currentSlot = 0;
     if (const auto* pAttachment = target.get<AttachmentComponent>())
+    {
         vehicle = pAttachment->Parent;
+        currentSlot = pAttachment->SlotId;
+    }
+
+    // The stale-exit guard. A seat swap is exit+enter a millisecond apart; when the
+    // enter is applied first, the trailing exit no longer describes reality - honoring
+    // it emptied a car whose driver believed he was driving it, and it was destroyed
+    // under him. An exit that names a mount we do not currently have is dropped.
+    // Requests without the fields (older clients) keep the old unconditional behaviour.
+    if (aMessage.has_vehicle_id() && vehicle &&
+        (aMessage.get_vehicle_id() != static_cast<uint64_t>(vehicle) ||
+         (aMessage.has_sit_id() && aMessage.get_sit_id() != currentSlot)))
+    {
+        spdlog::info("Stale exit from player {:x}: names vehicle {:x} seat {:x}, but they are in vehicle {:x} seat {:x} - dropped",
+                     aMessage.get_id(), aMessage.get_vehicle_id(), aMessage.get_sit_id(),
+                     vehicle.id(), currentSlot);
+        return;
+    }
 
     // Start interpolation again
     target.remove<AttachmentComponent>();
+
+    // If the leaver was the simulator, hand the car to somebody still inside - exactly
+    // one simulator at all times is the invariant. The heir cannot drive from the
+    // passenger seat, but their machine keeps the car coherent instead of leaving it
+    // ownerless with people in it, which was the old behaviour.
+    if (vehicle && vehicle.is_alive() && vehicle.parent() == player)
+    {
+        if (const auto next = NextOccupant(vehicle, player))
+            TransferAuthority(vehicle, next.parent());
+    }
 
     ReleaseVehicleIfEmpty(vehicle);
 }
@@ -657,9 +876,15 @@ void Level::ReleaseVehicleIfEmpty(flecs::entity aVehicle) noexcept
         });
 
     if (occupied)
+    {
+        aVehicle.remove<PendingReleaseComponent>();
         return;
+    }
 
-    Remove(aVehicle);
+    // Schedule, never destroy on the spot - see PendingReleaseComponent for the race
+    // this absorbs. Two seconds is far beyond any reordered exit/enter pair and far
+    // below anyone noticing an abandoned car linger.
+    aVehicle.set<PendingReleaseComponent>({std::chrono::steady_clock::now() + std::chrono::seconds(2)});
 }
 
 server::NotifyCharacterLoad Level::Serialize(flecs::entity aEntity) noexcept
@@ -751,21 +976,6 @@ void Level::TransferCell(flecs::entity aEntity, GridCell* apOldCell, GridCell* a
         m_cells.erase(apOldCell->GetPosition());
 }
 
-
-/*void Level::SendToRelevant(Player* apCharacter, const ServerMessage& acMessage)
-{
-    ForEachInRange(
-        apCharacter->GetCell(), sCellLoadRadius,
-        [&acMessage, apCharacter](const Player* apPlayer)
-        {
-#ifndef DEBUG
-            if (apCharacter == apPlayer)
-                return;
-#endif
-            apPlayer->Send(acMessage);
-        });
-}*/
-
 gsl::not_null<GridCell*> Level::GetCell(const GridCell::TPosition aPosition) noexcept
 {
     auto itor = m_cells.find(aPosition);
@@ -797,13 +1007,3 @@ void Level::CollectCells(const GridCell* apNewCell, const GridCell* apOldCell, S
         });
 }
 
-void Level::Test() noexcept
-{
-    for (auto i = -10; i < 10; ++i)
-        for (auto j = -10; j < 10; ++j)
-            TP_UNUSED(GetCell(GridCell::TPosition(i, j)));
-
-    auto pCell = GetCell(GridCell::TPosition(0, 0));
-    assert(pCell == GetCell(GridCell::TPosition(0, 0)));
-    assert(pCell != GetCell(GridCell::TPosition(1, 0)));
-}

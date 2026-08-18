@@ -15,10 +15,9 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } from 'electron'
 import electronUpdater from 'electron-updater'
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, copyFileSync, unlinkSync } from 'node:fs'
 import fsp from 'node:fs/promises'
 import AdmZip from 'adm-zip'
-import http from 'node:http'
 import crypto from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -340,6 +339,129 @@ function findModDir () {
   return null
 }
 
+/**
+ * EVERY copy of the mod installed under the game, not just the first one found.
+ *
+ * findModDir stops at the first match, which is fine for updating but hides the failure
+ * that actually happens to developers: RED4ext loads every plugin subdirectory it finds,
+ * so a second copy is not ignored - it is loaded alongside, and one of the two sets of
+ * scripts wins. The launcher updates the copy it found and reports "up to date" while the
+ * game runs the other one.
+ *
+ * That is exactly what zeldfep hit - a launcher saying v0.3.51 next to a main menu from
+ * before v0.3.45 - and nothing in the launcher could see it, because everything it checked
+ * was about the copy it already knew.
+ *
+ * The usual cause is a dev junction at red4ext\plugins\zzzCyberpunkMP pointing at a build
+ * output, sitting beside an install the launcher made itself.
+ */
+function findAllModDirs () {
+  const found = []
+
+  const chosen = loadSettings().modDir
+  if (chosen && existsSync(path.join(chosen, 'CyberpunkMP.dll'))) found.push(chosen)
+
+  const gameDir = findGameDir()
+  if (gameDir) {
+    const pluginRoot = path.join(gameDir, 'red4ext', 'plugins')
+
+    if (existsSync(pluginRoot)) {
+      for (const entry of readdirSync(pluginRoot)) {
+        const dir = path.join(pluginRoot, entry)
+        try {
+          if (existsSync(path.join(dir, 'CyberpunkMP.dll')) && !found.includes(dir)) {
+            found.push(dir)
+          }
+        } catch { /* unreadable entry - keep looking */ }
+      }
+    }
+  }
+
+  return found
+}
+
+/**
+ * Moves every copy of the mod except the one we mean to run out of the plugins folder.
+ *
+ * Reporting duplicates was not enough. Nobody should have to work out which of two folders
+ * is the stale one and delete it by hand to make a launcher's own update take effect - that
+ * is the launcher's job, and it has every fact needed to do it.
+ *
+ * MOVED, not renamed and not deleted:
+ *   - Renaming does not work. RED4ext scans every subdirectory of plugins for a DLL and
+ *     does not care what the folder is called, so a renamed copy is still loaded. Getting
+ *     this wrong looks like the fix silently failing.
+ *   - Deleting is not ours to do. A second copy is usually a developer's junction pointing
+ *     at their own build; removing it would throw away their working setup, and for a
+ *     junction the target might not even be theirs to lose. Moving is reversible by drag
+ *     and drop.
+ *
+ * Which copy survives, in order: the folder the player explicitly chose in Settings - a
+ * developer pointing the launcher at their own build has said which one they want, and
+ * that answer outranks ours - then the one carrying the current release's marker, then
+ * whatever came first.
+ */
+async function resolveDuplicateInstalls (currentVersion) {
+  const installs = findAllModDirs()
+  if (installs.length < 2) return { moved: [], kept: installs[0] || null }
+
+  const chosen = loadSettings().modDir
+
+  const keep =
+    installs.find((dir) => chosen && path.resolve(dir) === path.resolve(chosen)) ||
+    installs.find((dir) => currentVersion && installedVersionAt(dir) === currentVersion) ||
+    installs[0]
+
+  const gameDir = findGameDir()
+  if (!gameDir) return { moved: [], kept: keep }
+
+  const parked = path.join(gameDir, 'red4ext', 'disabled-by-launcher')
+  await fsp.mkdir(parked, { recursive: true })
+
+  const moved = []
+
+  for (const dir of installs) {
+    if (dir === keep) continue
+
+    // Only touch copies inside the plugins folder. One somewhere else is not being loaded
+    // by RED4ext and is therefore not the problem - moving it would be meddling.
+    const pluginRoot = path.join(gameDir, 'red4ext', 'plugins')
+    if (path.resolve(path.dirname(dir)) !== path.resolve(pluginRoot)) continue
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+    const destination = path.join(parked, `${path.basename(dir)}-${stamp}`)
+
+    try {
+      await fsp.rename(dir, destination)
+      moved.push({ from: dir, to: destination, version: installedVersionAt(destination) })
+      console.log(`[mods] moved a duplicate install out of plugins: ${dir} -> ${destination}`)
+    } catch (err) {
+      // Across volumes, or held open by a running game. Reported rather than thrown - a
+      // launch with a duplicate still present is worse informed, not impossible.
+      console.warn(`[mods] could not move ${dir}:`, err.message)
+    }
+  }
+
+  return { moved, kept: keep, parked }
+}
+
+/**
+ * Which release a copy of the mod came from, read from the marker written at install.
+ *
+ * Returns null for a copy installed before markers existed, or built by hand - which is
+ * itself informative, since the launcher's own installs always have one.
+ */
+function installedVersionAt (modDir) {
+  const marker = path.join(modDir, '.nco-version')
+  if (!existsSync(marker)) return null
+
+  try {
+    return readFileSync(marker, 'utf8').trim() || null
+  } catch {
+    return null
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Tailscale
 //
@@ -416,10 +538,18 @@ async function getGameServerStatus () {
 
   try {
     const response = await axios.get(`http://${host}:${server.port}/api/v1/status/`, { timeout: 4000 })
-    return { online: true, players: response.data?.Players ?? 0, host, source: server.source }
+    return {
+      online: true,
+      players: response.data?.Players ?? 0,
+      // Servers newer than v0.3.65 say whether they are running or deliberately
+      // stopped by an admin; older ones say nothing, and reachable means running.
+      state: response.data?.State || 'running',
+      host,
+      source: server.source
+    }
   } catch {
     // Any failure - refused, timed out, no route - means players cannot get in.
-    return { online: false, players: 0, host }
+    return { online: false, players: 0, state: 'unreachable', host }
   }
 }
 
@@ -555,6 +685,28 @@ async function verifyInstall () {
 
   if (redscriptCount === 0) {
     problems.push('No script files found - the install looks incomplete')
+  }
+
+  // More than one copy of the mod is the failure that looks like nothing at all.
+  //
+  // RED4ext loads every plugin subdirectory, so a second copy is not dormant - it is
+  // running, and its scripts can be the ones the game actually compiles. The launcher
+  // updates the copy it finds first and truthfully reports that one as current, which is
+  // how somebody ends up staring at an old main menu under a launcher saying it is up to
+  // date. Reported with paths and versions, because the answer is always "delete the one
+  // you did not mean to keep" and that requires knowing which is which.
+  const allInstalls = findAllModDirs()
+
+  if (allInstalls.length > 1) {
+    const described = allInstalls
+      .map((dir) => `${dir} (${installedVersionAt(dir) || 'version not recorded - built by hand?'})`)
+      .join('  |  ')
+
+    problems.push(
+      `The mod is installed ${allInstalls.length} times and the game loads all of them: ${described}. ` +
+      'Remove the ones you are not using - a copy the launcher does not update will still run, ' +
+      'and its scripts can override the current ones.'
+    )
   }
 
   // The mods this one is built on top of.
@@ -727,6 +879,18 @@ async function installEverything (onProgress = () => {}) {
   const info = await checkForUpdates()
   if (info.remoteStamp) {
     saveSettings({ installedStamp: info.remoteStamp, installedVersion: info.version })
+
+  // Stamped into the folder itself, not just into settings.
+  //
+  // Settings describe "the install the launcher knows about"; this describes THIS copy on
+  // disk. When two copies exist that difference is the whole diagnosis - it is what lets
+  // verify say which folder is current and which is the stale one still being loaded.
+  try {
+    writeFileSync(path.join(modDir, '.nco-version'), String(info.version || 'unknown'))
+  } catch (err) {
+    console.warn('[install] could not record the version marker:', err.message)
+  }
+
   }
 
   onProgress('Done')
@@ -848,6 +1012,18 @@ async function applyUpdate () {
   zip.extractAllTo(modDir, true)
 
   saveSettings({ installedStamp: info.remoteStamp, installedVersion: info.version })
+
+  // Stamped into the folder itself, not just into settings.
+  //
+  // Settings describe "the install the launcher knows about"; this describes THIS copy on
+  // disk. When two copies exist that difference is the whole diagnosis - it is what lets
+  // verify say which folder is current and which is the stale one still being loaded.
+  try {
+    writeFileSync(path.join(modDir, '.nco-version'), String(info.version || 'unknown'))
+  } catch (err) {
+    console.warn('[install] could not record the version marker:', err.message)
+  }
+
 
   return { version: info.version }
 }
@@ -1067,17 +1243,6 @@ function createPkcePair () {
   return { verifier, challenge }
 }
 
-// ---------------------------------------------------------------------------
-// The local callback server
-//
-// Discord cannot redirect to a desktop app, so we become a web server for a few
-// seconds. Discord sends the user's browser to 127.0.0.1, we read the code out
-// of the query string, show a "you can close this" page, and shut down.
-//
-// It binds to 127.0.0.1 rather than 0.0.0.0 so nothing outside this machine can
-// reach it, and it exists only for the duration of one login.
-// ---------------------------------------------------------------------------
-
 /**
  * Opens Discord's consent page in a window owned by the launcher, and resolves
  * with the authorization code once Discord redirects.
@@ -1173,80 +1338,6 @@ function signInWindow (authorizeUrl, expectedState) {
   })
 }
 
-// Kept for reference: the local-server variant, used when the login happens in
-// the user's own browser instead of a window we own.
-function waitForAuthorizationCode (expectedState) {
-  return new Promise((resolve, reject) => {
-    const server = http.createServer((req, res) => {
-      const url = new URL(req.url, `http://127.0.0.1:${CALLBACK_PORT}`)
-
-      if (url.pathname !== '/callback') {
-        res.writeHead(404).end()
-        return
-      }
-
-      const code = url.searchParams.get('code')
-      const state = url.searchParams.get('state')
-      const error = url.searchParams.get('error')
-
-      const reply = (title, message) => {
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-        res.end(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>
-          <style>
-            body{background:#0f1115;color:#e7e6df;font-family:system-ui,sans-serif;
-                 display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
-            div{text-align:center;max-width:28rem;padding:2rem}
-            h1{font-size:1.3rem;margin:0 0 .6rem}
-            p{color:#98968a;line-height:1.5;margin:0}
-          </style></head>
-          <body><div><h1>${title}</h1><p>${message}</p></div></body></html>`)
-      }
-
-      // The user declined on Discord's consent screen, or Discord refused.
-      if (error) {
-        reply('Sign-in cancelled', 'You can close this tab and return to the launcher.')
-        server.close()
-        reject(new Error(`Discord returned: ${error}`))
-        return
-      }
-
-      // CSRF check. `state` is a random value we generated and Discord echoes
-      // back untouched. If it does not match, this response did not originate
-      // from the request we made, and must be discarded - otherwise an attacker
-      // could feed us an authorization code belonging to their own account.
-      if (state !== expectedState) {
-        reply('Sign-in failed', 'The response did not match the request. Please try again.')
-        server.close()
-        reject(new Error('State mismatch - possible CSRF attempt'))
-        return
-      }
-
-      if (!code) {
-        reply('Sign-in failed', 'Discord did not return an authorization code.')
-        server.close()
-        reject(new Error('No authorization code in callback'))
-        return
-      }
-
-      reply('Signed in', 'You can close this tab and return to the launcher.')
-      server.close()
-      resolve(code)
-    })
-
-    server.on('error', reject)
-
-    // Give up rather than leaving a server listening forever if the user walks
-    // away mid-login.
-    const timeout = setTimeout(() => {
-      server.close()
-      reject(new Error('Timed out waiting for Discord sign-in'))
-    }, 5 * 60 * 1000)
-
-    server.on('close', () => clearTimeout(timeout))
-
-    server.listen(CALLBACK_PORT, '127.0.0.1')
-  })
-}
 
 // ---------------------------------------------------------------------------
 // The handshake, end to end
@@ -1372,6 +1463,17 @@ async function hydrateUserFromToken () {
       if (currentUser && level && level !== 'player') {
         currentUser.isAdmin = isAdmin()
         console.log(`[roles] ${currentUser.handle} resolved to ${level}`)
+
+        // Tell the page, or the controls never actually appear. The profile the
+        // renderer got at sign-in was built before this answer arrived, with isAdmin
+        // still false for anyone whose access comes from a Discord role rather than
+        // the hardcoded list. The comment above promised the controls "a moment
+        // later" and nothing delivered them: the only admin so far was on the
+        // hardcoded list, resolved synchronously, so the gap was invisible until the
+        // first role-based dev signed in and stayed a player.
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('user-updated', publicProfile())
+        }
       }
     })
     .catch(() => {})
@@ -1493,7 +1595,103 @@ async function ensureTemplateSave () {
   // Records WHICH body is installed, so a later change of mind is noticed.
   await fsp.writeFile(stampPath, wanted)
 
+  // And WHEN, which is what tells us later whether the player has built a world of their
+  // own since. The folder's own timestamp cannot answer that - stampTemplateNewest
+  // rewrites it to the future on every launch - so the real install time is recorded
+  // separately and never touched again.
+  await fsp.writeFile(path.join(target, '.installed-at'), String(Date.now()))
+
   return { installed: existsSync(path.join(target, 'sav.dat')), fresh: true, bodyType: wanted }
+}
+
+/**
+ * When the template was installed, or null if that is not recorded.
+ */
+function templateInstalledAt () {
+  const target = templateDir()
+  const marker = path.join(target, '.installed-at')
+
+  if (existsSync(marker)) {
+    const value = Number(readFileSync(marker, 'utf8').trim())
+    if (Number.isFinite(value)) return value
+  }
+
+  if (!existsSync(path.join(target, 'sav.dat'))) return null
+
+  // A template installed before this marker existed, which is everyone playing today.
+  //
+  // Its real install time is unrecoverable: stampTemplateNewest rewrites every timestamp
+  // in the folder to the future on every launch, including the .bodytype file, so nothing
+  // in there remembers when it arrived.
+  //
+  // Backdated a week, which resolves the case that actually matters. Anyone affected by
+  // the identity bug has played recently - that is how they noticed - so their own saves
+  // land inside the window and they stop being handed the template. Someone genuinely new
+  // is not in this branch at all, because their template installs fresh and passes its
+  // real timestamp.
+  const assumed = Date.now() - 7 * 24 * 60 * 60 * 1000
+
+  try {
+    writeFileSync(marker, String(assumed))
+  } catch (err) {
+    console.warn('[template] could not record an install time:', err.message)
+  }
+
+  return assumed
+}
+
+/**
+ * Has this player made a world of their own since the template was installed?
+ *
+ * This is the question behind the worst bug the project has had. The template is ONE save,
+ * built from one person's character, and it was being forced to the front on every single
+ * launch - so MULTIPLAYER loaded it every time and everybody arrived wearing the character
+ * it was made from. Two players reported it as "I spawned in as your old character", and
+ * hyliangenesis found the workaround that proves the diagnosis exactly: loading their own
+ * save from the singleplayer menu and then connecting with '/' produced the right
+ * character every time.
+ *
+ * The template's job is to give somebody with NO character a world past Act 1 to arrive
+ * in. Once they have been through NEW CHARACTER, the game has written saves of their own
+ * and those are the ones that hold who they are. Continuing to override them is what
+ * turned a bootstrap into an identity swap.
+ *
+ * Saves older than the install are ignored on purpose. Everyone has singleplayer saves
+ * from before any of this, and loading a random one of those is the behaviour the template
+ * was introduced to stop.
+ */
+async function hasOwnWorldSince (installedAt) {
+  if (!installedAt) return false
+
+  const saves = savesDir()
+  if (!existsSync(saves)) return false
+
+  const template = templateDir()
+
+  let entries
+  try {
+    entries = await fsp.readdir(saves, { withFileTypes: true })
+  } catch (err) {
+    console.warn('[template] could not read the saves folder:', err.message)
+    return false
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+
+    const full = path.join(saves, entry.name)
+    if (full === template) continue
+
+    // A folder is only a save if the game wrote one there.
+    if (!existsSync(path.join(full, 'sav.dat'))) continue
+
+    try {
+      const stat = await fsp.stat(path.join(full, 'sav.dat'))
+      if (stat.mtimeMs > installedAt) return true
+    } catch { /* unreadable save - treat as not theirs */ }
+  }
+
+  return false
 }
 
 /**
@@ -1522,12 +1720,81 @@ async function stampTemplateNewest () {
   }
 }
 
+// Is a game running, or on its way up?
+//
+// Two copies of Cyberpunk cannot share one install: they fight over the same save folder
+// and the same mod logs, and both connect to the server as the same account, which the
+// server sees as one player teleporting between two positions. The launch button is
+// disabled in the UI while this is true, and refused here as well - the UI is not a
+// security boundary, and the check that matters is the one nothing can route around.
+let gameState = { launching: false, running: false }
+let gameWatcher = null
+
+function setGameState (next) {
+  gameState = { ...gameState, ...next }
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('game-state', gameState)
+  }
+}
+
+/**
+ * Watches for the game to close, then unlocks the button.
+ *
+ * Polls the process list rather than trusting the spawned child to represent the game.
+ * It often does not: Cyberpunk is started through REDprelauncher, which exits almost
+ * immediately after handing off, so the child exiting means nothing about whether anybody
+ * is playing. Asking the OS what is running is the only answer that stays true.
+ */
+function watchForGameExit () {
+  if (gameWatcher) clearInterval(gameWatcher)
+
+  let sawItStart = false
+
+  gameWatcher = setInterval(async () => {
+    const running = await isProcessRunning('Cyberpunk2077.exe')
+
+    if (running) {
+      sawItStart = true
+      if (!gameState.running || gameState.launching) {
+        setGameState({ launching: false, running: true })
+      }
+      return
+    }
+
+    // Not running. Before it has ever appeared this is just the loading screen taking its
+    // time, so the button stays locked - unlocking there would let someone start a second
+    // copy during the slowest, most tempting part of the wait.
+    if (!sawItStart) return
+
+    clearInterval(gameWatcher)
+    gameWatcher = null
+    setGameState({ launching: false, running: false })
+    console.log('[launch] the game has closed - unlocked')
+  }, 3000)
+}
+
 async function launchGame () {
   if (!currentUser) {
     // Belt and braces. The button is disabled in the UI, but the UI is not a
     // security boundary - a renderer could send this message anyway.
     throw new Error('Not signed in')
   }
+
+  if (gameState.launching) {
+    throw new Error('Already starting the game - give it a moment.')
+  }
+
+  // Asked of the OS, not just of our own flag. The flag only knows about launches this
+  // launcher made: a game started from Steam, or one still running after the launcher was
+  // restarted, is invisible to it and is exactly the case worth catching.
+  if (gameState.running || await isProcessRunning('Cyberpunk2077.exe')) {
+    setGameState({ launching: false, running: true })
+    watchForGameExit()
+    throw new Error('Cyberpunk 2077 is already running. Close it before launching again.')
+  }
+
+  setGameState({ launching: true })
 
   if (!currentUser.isMember) {
     throw new Error('You must join the Night City Online Discord to play.')
@@ -1570,8 +1837,17 @@ async function launchGame () {
     const template = await ensureTemplateSave()
 
     if (template.installed) {
-      await stampTemplateNewest()
-      console.log('[template] ready - multiplayer will load it rather than a personal save')
+      // Only until they have a world of their own. See hasOwnWorldSince - forcing this
+      // every launch is what made everybody spawn as the character the template was built
+      // from, and it overrode the character they had just created through NEW CHARACTER.
+      const own = await hasOwnWorldSince(template.fresh ? Date.now() : templateInstalledAt())
+
+      if (own) {
+        console.log('[template] player has their own world - leaving their saves alone')
+      } else {
+        await stampTemplateNewest()
+        console.log('[template] no character yet - multiplayer will start from the template')
+      }
     } else {
       console.warn('[template] not available:', template.reason || 'unknown')
     }
@@ -1633,6 +1909,32 @@ async function launchGame () {
     throw new Error('Could not find Cyberpunk 2077. Use "Locate game" to point at it.')
   }
 
+  // Last thing before starting: make sure only one copy of the mod will load.
+  //
+  // Here rather than at install time because a duplicate does not have to arrive through
+  // the launcher - a developer's junction, a manual unzip, a copy restored by a backup
+  // tool. The only moment it is certainly true is the moment before the game reads them.
+  //
+  // Non-fatal by design. A launch with a duplicate still present is a launch that might
+  // run old scripts; a launch refused over it is definitely no game at all.
+  let duplicates = { moved: [] }
+
+  try {
+    duplicates = await resolveDuplicateInstalls(loadSettings().installedVersion)
+
+    if (duplicates.moved.length && mainWindow && !mainWindow.isDestroyed()) {
+      const names = duplicates.moved.map((m) => path.basename(m.from)).join(', ')
+      mainWindow.webContents.send('mods-cleaned', {
+        moved: duplicates.moved,
+        parked: duplicates.parked,
+        message: `Found another copy of the mod (${names}) and moved it aside - the game ` +
+                 'loads every copy it finds, so the old one would have overridden this update.'
+      })
+    }
+  } catch (err) {
+    console.warn('[mods] duplicate check failed:', err.message)
+  }
+
   const child = spawn(exe, args, {
     detached: true,
     stdio: 'ignore'
@@ -1660,7 +1962,10 @@ async function launchGame () {
 
   child.unref()
 
-  return { launched: true, executable: exe }
+  // The button stays locked from here until the game is gone from the process list.
+  watchForGameExit()
+
+  return { launched: true, executable: exe, cleaned: duplicates.moved.length }
 }
 
 // ---------------------------------------------------------------------------
@@ -2007,7 +2312,88 @@ async function restartServer () {
 
 ipcMain.handle('server:status', async () => {
   if (!isAdmin()) return { ok: false, error: 'Not permitted' }
-  return { ok: true, ...(await getServerStatus()) }
+
+  // A locally built server makes this machine a dev box - the panel controls that
+  // process, exactly as before. Everyone else's panel reports the REAL server: the
+  // deployment resolveServer() points at, which runs itself (redeploys from GitHub
+  // within minutes of a push, restarts automatically if it crashes) and is
+  // administered through its own web panel rather than by starting an exe here.
+  if (existsSync(serverExePath())) {
+    return { ok: true, mode: 'local', ...(await getServerStatus()) }
+  }
+
+  const server = await resolveServer()
+  const remote = await getGameServerStatus()
+  return {
+    ok: true,
+    mode: 'remote',
+    running: remote.online && remote.state === 'running',
+    state: remote.state,
+    players: remote.players,
+    host: server.host,
+    port: server.port,
+    hasAdminCred: Boolean(getServerAdminCred())
+  }
+})
+
+// The server's admin login, remembered so lifecycle buttons are one click rather than
+// a password prompt every time. Encrypted the same way the Discord token is; if the OS
+// cannot encrypt, it is not stored at all.
+function getServerAdminCred () {
+  const stored = loadSettings().serverAdminCred
+  if (!stored || !safeStorage.isEncryptionAvailable()) return null
+  try {
+    const [username, password] = safeStorage.decryptString(Buffer.from(stored, 'base64')).split('\n')
+    return { username, password }
+  } catch {
+    return null
+  }
+}
+
+ipcMain.handle('server:setAdminCred', (_event, username, password) => {
+  if (!isAdmin()) return { ok: false, error: 'Not permitted' }
+  if (!safeStorage.isEncryptionAvailable()) {
+    return { ok: false, error: 'This machine cannot store the login securely.' }
+  }
+  if (!username || !password) return { ok: false, error: 'Both fields are needed.' }
+
+  saveSettings({ serverAdminCred: safeStorage.encryptString(`${username}\n${password}`).toString('base64') })
+  return { ok: true }
+})
+
+// Start, stop or restart the REAL server, wherever it runs. The server itself enforces
+// the admin login; this just carries it. A 401 forgets the stored login, because a
+// wrong credential that keeps being resent is a lockout waiting to happen.
+ipcMain.handle('server:remote', async (_event, action) => {
+  if (!isAdmin()) return { ok: false, error: 'Not permitted' }
+  if (!['start', 'stop', 'restart'].includes(action)) return { ok: false, error: 'Unknown action' }
+
+  const cred = getServerAdminCred()
+  if (!cred) return { ok: false, needCred: true }
+
+  const server = await resolveServer()
+  try {
+    await axios.post(`http://${server.host}:${server.port}/api/v1/admin/${action}`, null, {
+      auth: cred,
+      timeout: 8000
+    })
+    return { ok: true, action }
+  } catch (err) {
+    if (err.response && err.response.status === 401) {
+      saveSettings({ serverAdminCred: undefined })
+      return { ok: false, needCred: true, error: 'Wrong admin login - enter it again.' }
+    }
+    return { ok: false, error: err.message }
+  }
+})
+
+// Opens the server's own web admin panel - status, plugins, admin actions - which is
+// served by the server itself and guarded by its admin credentials.
+ipcMain.handle('server:openAdmin', async () => {
+  if (!isAdmin()) return { ok: false, error: 'Not permitted' }
+  const server = await resolveServer()
+  shell.openExternal(`http://${server.host}:${server.port}/`)
+  return { ok: true }
 })
 
 ipcMain.handle('server:start', async () => {
@@ -2302,11 +2688,6 @@ ipcMain.handle('nexus:status', async () => {
   return { ok: true, signedIn: Boolean(settings.nexusKey), name: settings.nexusName || null }
 })
 
-ipcMain.handle('nexus:signOut', async () => {
-  saveNexusKey(null)
-  return { ok: true }
-})
-
 function installedModsPath () {
   return path.join(app.getPath('userData'), 'mods-installed.json')
 }
@@ -2582,7 +2963,7 @@ ipcMain.handle('mods:verify', async () => {
 })
 
 // Opens the mod's Nexus page. From there "Mod Manager Download" comes back to us as an
-// nxm:// link - see registerNxmHandler.
+// nxm:// link.
 ipcMain.handle('mods:open', async (_event, modId) => {
   const mods = await fetchModList().catch(() => [])
   const mod = mods.find((m) => String(m.nexusModId) === String(modId))
@@ -2733,8 +3114,9 @@ ipcMain.handle('launcher:uninstall', async () => {
     type: 'warning',
     title: 'Uninstall Night City Online Launcher',
     message: 'Remove the launcher from this PC?',
-    detail: 'This removes the launcher only. The mod stays installed in your game folder, ' +
-            'and Cyberpunk 2077 is not touched. Use "Remove mod" first if you want that gone too.',
+    detail: 'This removes the launcher and everything it saved here - your sign-in, settings ' +
+            'and keys. The mod stays installed in your game folder, and Cyberpunk 2077 is not ' +
+            'touched. Use "Remove mod" first if you want that gone too.',
     buttons: ['Uninstall', 'Cancel'],
     defaultId: 1,
     cancelId: 1,
@@ -2927,6 +3309,70 @@ ipcMain.handle('tailscale:status', async () => {
   return { ok: true, ...(await getTailscaleStatus()) }
 })
 
+// Every link between this PC and the game server, tested in order, with the first
+// broken one named alongside its fix. Exists because every failure in this chain used
+// to present identically as "Server offline" - a person on the wrong Tailscale
+// network, a person with no Tailscale at all, and a genuinely down server all saw the
+// same two words and none of them knew what to do next.
+ipcMain.handle('connectivity:test', async () => {
+  const steps = []
+  let verdict = null
+
+  // 1. Internet at all.
+  try {
+    await axios.head('https://github.com', { timeout: 6000 })
+    steps.push({ name: 'Internet', ok: true, detail: 'online' })
+  } catch {
+    steps.push({ name: 'Internet', ok: false, detail: 'no connection' })
+    verdict = 'No internet connection. Nothing past this can work until that is back.'
+  }
+
+  // 2 + 3. Tailscale installed, and connected.
+  let ts = null
+  if (!verdict) {
+    ts = await getTailscaleStatus()
+    if (!ts.installed) {
+      steps.push({ name: 'Tailscale installed', ok: false, detail: 'not found' })
+      verdict = 'Tailscale is not installed. Use the Tailscale link at the bottom of the launcher to get it, then come back.'
+    } else {
+      steps.push({ name: 'Tailscale installed', ok: true, detail: 'found' })
+      if (!ts.connected) {
+        steps.push({ name: 'Tailscale connected', ok: false, detail: 'signed out or stopped' })
+        verdict = 'Tailscale is installed but not connected. Open Tailscale from the system tray and sign in.'
+      } else {
+        steps.push({ name: 'Tailscale connected', ok: true, detail: ts.ip || 'connected' })
+      }
+    }
+  }
+
+  // 4 + 5. The server, over that network - reachable, and actually running.
+  if (!verdict) {
+    const server = await resolveServer()
+    const status = await getGameServerStatus()
+
+    if (!status.online) {
+      steps.push({ name: `Server reachable (${server.host})`, ok: false, detail: 'no route' })
+      verdict = 'You are on a Tailscale network, but the server is not on it. Use "Join the ' +
+                "server's network\" above, accept the invite, and make sure Tailscale is " +
+                'switched to the network the invite joined (click the Tailscale tray icon to ' +
+                'check which network you are on). If you already did all that, the server may ' +
+                'genuinely be down - ask in the Discord.'
+    } else {
+      steps.push({ name: `Server reachable (${server.host})`, ok: true, detail: 'answers' })
+
+      if (status.state === 'stopped') {
+        steps.push({ name: 'Server running', ok: false, detail: 'stopped by an admin' })
+        verdict = 'Everything on your side works. The server is deliberately stopped right now - an admin can start it from the launcher.'
+      } else {
+        steps.push({ name: 'Server running', ok: true, detail: `${status.players} player(s) online` })
+        verdict = 'Everything works. Press Launch and play.'
+      }
+    }
+  }
+
+  return { ok: true, steps, verdict }
+})
+
 ipcMain.handle('tailscale:download', async () => {
   await shell.openExternal(TAILSCALE_DOWNLOAD)
   return { ok: true }
@@ -2965,38 +3411,6 @@ ipcMain.handle('tailscale:invite', async () => {
 // service.
 // ---------------------------------------------------------------------------
 
-// The body type a new character starts from.
-//
-// In the launcher rather than in game because it is decided by which save the world is
-// built from, and that is chosen before the game starts. Ripperdocs change everything
-// about how you look EXCEPT this.
-ipcMain.handle('bodyType:get', async () => {
-  const chosen = chosenBodyType()
-
-  // Whether the other option can actually be honoured yet. Offering a choice that
-  // silently does nothing is worse than showing it as unavailable.
-  let maleAvailable = false
-  try {
-    const head = await axios.head(TEMPLATE_URLS.male, {
-      timeout: 8000,
-      validateStatus: () => true
-    })
-    maleAvailable = head.status === 200
-  } catch { /* offline - assume not, and say so rather than guessing */ }
-
-  return { ok: true, bodyType: chosen, maleAvailable }
-})
-
-ipcMain.handle('bodyType:set', async (_event, value) => {
-  const wanted = value === 'male' ? 'male' : 'female'
-  saveSettings({ bodyType: wanted })
-
-  // Not installed here. It happens on the next launch, through the same path as a first
-  // install, so there is one place where the template is put in place rather than two
-  // that can disagree.
-  return { ok: true, bodyType: wanted }
-})
-
 ipcMain.handle('devKey:fetch', async () => {
   if (!isAdmin()) return { ok: false, error: 'The dev key is for people with the dev role.' }
 
@@ -3004,7 +3418,9 @@ ipcMain.handle('devKey:fetch', async () => {
   if (!token) return { ok: false, error: 'Sign in with Discord first.' }
 
   const published = await fetchPublishedServer()
-  const host = loadSettings().serverHost || published?.host
+  // coordHost first: the coordination API stays on Cam's machine even when the game
+  // server moves, and a dev's server override must not drag this request with it.
+  const host = published?.coordHost || loadSettings().serverHost || published?.host
   const port = published?.coordPort || 11780
 
   if (!host) return { ok: false, error: 'No server address is published yet.' }
@@ -3027,6 +3443,140 @@ ipcMain.handle('devKey:fetch', async () => {
       ok: false,
       error: 'Could not reach the coordination service. It needs Tailscale connected and Cam\'s PC on.'
     }
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Dev tools: server selection and test builds
+//
+// The game server no longer lives only on Cam's PC - there is a self-updating test
+// server too, and devs need to point their launcher at it without editing JSON by
+// hand. resolveServer() has honoured settings.serverHost above everything else since
+// the beginning; these are the controls for it. Status checks and the launch-anyway
+// rule follow automatically, because both already go through resolveServer().
+//
+// Every handler re-checks the dev role in the main process - the renderer asking
+// nicely is not authorisation.
+// ---------------------------------------------------------------------------
+
+ipcMain.handle('devServer:get', () => {
+  const settings = loadSettings()
+  return {
+    ok: true,
+    host: settings.serverHost || null,
+    port: settings.serverPort || null,
+    testBuildTag: settings.testBuildTag || null
+  }
+})
+
+ipcMain.handle('devServer:set', (_event, host, port) => {
+  if (!isAdmin()) return { ok: false, error: 'The server override is for people with the dev role.' }
+
+  if (!host) {
+    // undefined survives the merge spread but JSON.stringify drops it - which is
+    // exactly "remove the key" without a separate delete path.
+    saveSettings({ serverHost: undefined, serverPort: undefined })
+    return { ok: true, cleared: true }
+  }
+
+  const cleanHost = String(host).trim()
+  const cleanPort = Number(port) || 11778
+
+  saveSettings({ serverHost: cleanHost, serverPort: cleanPort })
+  return { ok: true, host: cleanHost, port: cleanPort }
+})
+
+// Pre-releases are how test builds travel: deliberately invisible to player launchers
+// (auto-update reads releases/latest, which skips them), one click for a dev.
+ipcMain.handle('prerelease:list', async () => {
+  if (!isAdmin()) return { ok: false, error: 'Test builds are for people with the dev role.' }
+
+  try {
+    const response = await axios.get(
+      `https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=15`,
+      { timeout: 8000 })
+
+    const activeTag = loadSettings().testBuildTag || null
+
+    const prereleases = (Array.isArray(response.data) ? response.data : [])
+      .filter((r) => r.prerelease)
+      .slice(0, 5)
+      .map((r) => ({
+        tag: r.tag_name,
+        name: r.name || r.tag_name,
+        publishedAt: r.published_at,
+        hasDll: (r.assets || []).some((a) => a.name === 'CyberpunkMP.dll'),
+        notesUrl: r.html_url,
+        active: r.tag_name === activeTag
+      }))
+
+    return { ok: true, prereleases, activeTag }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
+ipcMain.handle('prerelease:install', async (_event, tag) => {
+  if (!isAdmin()) return { ok: false, error: 'Test builds are for people with the dev role.' }
+
+  try {
+    const modDir = findModDir()
+    if (!modDir) return { ok: false, error: 'Mod folder not found - install the mod first.' }
+
+    const release = await axios.get(
+      `https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${encodeURIComponent(tag)}`,
+      { timeout: 8000 })
+
+    const asset = (release.data?.assets || []).find((a) => a.name === 'CyberpunkMP.dll')
+    if (!asset) return { ok: false, error: 'That pre-release has no CyberpunkMP.dll attached.' }
+
+    const download = await axios.get(asset.browser_download_url,
+      { responseType: 'arraybuffer', timeout: 120000, maxRedirects: 5 })
+    const bytes = Buffer.from(download.data)
+
+    // GitHub publishes the digest with the asset; a truncated download must not land.
+    const expected = String(asset.digest || '').replace(/^sha256:/, '').toLowerCase()
+    if (expected) {
+      const actual = crypto.createHash('sha256').update(bytes).digest('hex')
+      if (actual !== expected) return { ok: false, error: 'Download failed its checksum - not installed.' }
+    }
+
+    const dllPath = path.join(modDir, 'CyberpunkMP.dll')
+    const backupPath = path.join(modDir, 'CyberpunkMP.dll.shipped')
+
+    // The FIRST shipped dll is the one kept. Installing test build B over test build A
+    // must not make the backup a copy of test build A.
+    if (existsSync(dllPath) && !existsSync(backupPath)) copyFileSync(dllPath, backupPath)
+
+    writeFileSync(dllPath, bytes)
+    saveSettings({ testBuildTag: tag })
+
+    return { ok: true, tag }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
+ipcMain.handle('prerelease:restore', async () => {
+  if (!isAdmin()) return { ok: false, error: 'Test builds are for people with the dev role.' }
+
+  try {
+    const modDir = findModDir()
+    if (!modDir) return { ok: false, error: 'Mod folder not found.' }
+
+    const dllPath = path.join(modDir, 'CyberpunkMP.dll')
+    const backupPath = path.join(modDir, 'CyberpunkMP.dll.shipped')
+
+    if (!existsSync(backupPath))
+      return { ok: false, error: 'No shipped backup found - use Verify game files instead.' }
+
+    copyFileSync(backupPath, dllPath)
+    unlinkSync(backupPath)
+    saveSettings({ testBuildTag: undefined })
+
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err.message }
   }
 })
 
@@ -3084,6 +3634,18 @@ ipcMain.handle('game:launch', async () => {
   try {
     return { ok: true, ...(await launchGame()) }
   } catch (err) {
+    // Unlocked on every failure, without needing to know which check refused.
+    //
+    // launchGame sets `launching` early - the checks before the spawn include network
+    // calls and can take seconds, and the button has to be dead for all of it. Every one
+    // of those checks can throw, and any path that threw without clearing the flag would
+    // leave the button disabled until the launcher was restarted. One reset here covers
+    // all of them, including ones added later.
+    //
+    // `running` is deliberately not touched: "already running" is one of the errors, and
+    // that state is true and still needs to be.
+    if (!gameState.running) setGameState({ launching: false })
+
     return { ok: false, error: err.message }
   }
 })
