@@ -24,19 +24,20 @@ add_requires(
     "microsoft-gsl")
 
 -- The 29.3 pin above only covers OUR requirement. Dependencies resolve their own -
--- gamenetworkingsockets asks for protobuf too, and on the Linux container build (which
--- the lockfile does not cover) it resolved to 35.1: the version CONTRIBUTING documents
--- as broken. This forces every transitive protobuf to the version the code is written
--- against, so the container links exactly one protobuf.
+-- gamenetworkingsockets asks for protobuf too, and left free it resolves to 35.x: the
+-- version CONTRIBUTING documents as broken. This forces every transitive protobuf to
+-- the version the code is written against, so exactly one protobuf gets linked.
 --
--- Deliberately NOT applied on Windows. There, the cached gamenetworkingsockets binary
--- was built against its own newer protobuf and the two versions currently coexist in
--- the link by MSVC name-decoration accident - it works, everyone's caches assume it,
--- and unifying it means a coordinated package-cache rebuild on every Windows machine.
--- That cleanup deserves its own change, announced, not a side effect of fixing Linux.
-if not is_plat("windows") then
-    add_requireconfs("**.protobuf-cpp", { version = "29.3", override = true })
-end
+-- Windows was deliberately excluded for a while: cached gamenetworkingsockets binaries
+-- were built against their own newer protobuf, the two versions coexisted in the link
+-- by MSVC name-decoration accident, and unifying meant a one-time package rebuild on
+-- every Windows machine. That grace ended 2026-08-18, when the package repo moved
+-- abseil past the <=20260107.1 cap gamenetworkingsockets declares while free-floating
+-- protobuf 35.x demanded the newer one - an unsatisfiable resolve, and every Windows CI
+-- run failed at configure. Unified, the whole tree resolves the way Linux (and every
+-- machine with the old lockfile) already proved works. First Windows build after this
+-- change rebuilds gamenetworkingsockets once; that is the announced cost.
+add_requireconfs("**.protobuf-cpp", { version = "29.3", override = true })
 
 if is_plat("windows") then
     set_arch("x64")
