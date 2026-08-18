@@ -3309,6 +3309,70 @@ ipcMain.handle('tailscale:status', async () => {
   return { ok: true, ...(await getTailscaleStatus()) }
 })
 
+// Every link between this PC and the game server, tested in order, with the first
+// broken one named alongside its fix. Exists because every failure in this chain used
+// to present identically as "Server offline" - a person on the wrong Tailscale
+// network, a person with no Tailscale at all, and a genuinely down server all saw the
+// same two words and none of them knew what to do next.
+ipcMain.handle('connectivity:test', async () => {
+  const steps = []
+  let verdict = null
+
+  // 1. Internet at all.
+  try {
+    await axios.head('https://github.com', { timeout: 6000 })
+    steps.push({ name: 'Internet', ok: true, detail: 'online' })
+  } catch {
+    steps.push({ name: 'Internet', ok: false, detail: 'no connection' })
+    verdict = 'No internet connection. Nothing past this can work until that is back.'
+  }
+
+  // 2 + 3. Tailscale installed, and connected.
+  let ts = null
+  if (!verdict) {
+    ts = await getTailscaleStatus()
+    if (!ts.installed) {
+      steps.push({ name: 'Tailscale installed', ok: false, detail: 'not found' })
+      verdict = 'Tailscale is not installed. Use the Tailscale link at the bottom of the launcher to get it, then come back.'
+    } else {
+      steps.push({ name: 'Tailscale installed', ok: true, detail: 'found' })
+      if (!ts.connected) {
+        steps.push({ name: 'Tailscale connected', ok: false, detail: 'signed out or stopped' })
+        verdict = 'Tailscale is installed but not connected. Open Tailscale from the system tray and sign in.'
+      } else {
+        steps.push({ name: 'Tailscale connected', ok: true, detail: ts.ip || 'connected' })
+      }
+    }
+  }
+
+  // 4 + 5. The server, over that network - reachable, and actually running.
+  if (!verdict) {
+    const server = await resolveServer()
+    const status = await getGameServerStatus()
+
+    if (!status.online) {
+      steps.push({ name: `Server reachable (${server.host})`, ok: false, detail: 'no route' })
+      verdict = 'You are on a Tailscale network, but the server is not on it. Use "Join the ' +
+                "server's network\" above, accept the invite, and make sure Tailscale is " +
+                'switched to the network the invite joined (click the Tailscale tray icon to ' +
+                'check which network you are on). If you already did all that, the server may ' +
+                'genuinely be down - ask in the Discord.'
+    } else {
+      steps.push({ name: `Server reachable (${server.host})`, ok: true, detail: 'answers' })
+
+      if (status.state === 'stopped') {
+        steps.push({ name: 'Server running', ok: false, detail: 'stopped by an admin' })
+        verdict = 'Everything on your side works. The server is deliberately stopped right now - an admin can start it from the launcher.'
+      } else {
+        steps.push({ name: 'Server running', ok: true, detail: `${status.players} player(s) online` })
+        verdict = 'Everything works. Press Launch and play.'
+      }
+    }
+  }
+
+  return { ok: true, steps, verdict }
+})
+
 ipcMain.handle('tailscale:download', async () => {
   await shell.openExternal(TAILSCALE_DOWNLOAD)
   return { ok: true }

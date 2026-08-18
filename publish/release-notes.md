@@ -4,6 +4,12 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.67
+
+- **"Test server connection" in Tools.** Checks every link between your PC and the server — internet, Tailscale, the server's network, the server itself — and names the first broken one with how to fix it. "Server offline" used to mean five different problems; now each one says its own name.
+- **The network invite moved to the top of Tools**, where new players can find it — it was buried in the dev-only section. Accepting the invite AND switching Tailscale to the joined network are both needed; the connection test now catches the second half being missed.
+- Fresh network invite published (the old one was used up).
+
 ## What changed — v0.3.66
 
 - **Admins control the real server from the launcher.** The Server panel's Start, Restart and Stop now command the actual server everyone plays on — not a program on your own PC. Stop keeps it stopped (through reboots and redeploys) until an admin presses Start; Restart takes about 20 seconds. The server checks the admin login on every action; the launcher asks for it once and remembers it encrypted. Both destructive buttons confirm first, and the panel shows "stopped by an admin" as its own state instead of a generic offline.

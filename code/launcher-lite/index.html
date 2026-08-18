@@ -499,6 +499,31 @@
 
           <div class="tool">
             <div>
+              <div class="tool-name">Join the server's network</div>
+              <div class="tool-desc">
+                Opens the network invite. You need this once, before the game server can
+                reach you: accept the invite, then make sure Tailscale is switched to the
+                network it joined.
+              </div>
+            </div>
+            <button class="action ghost" id="openTailscaleInvite">Open invite</button>
+          </div>
+
+          <div class="tool">
+            <div style="min-width:0">
+              <div class="tool-name">Test server connection</div>
+              <div class="tool-desc">
+                Checks every link between this PC and the game server - internet,
+                Tailscale, the server's network, the server itself - and names the first
+                one that's broken and how to fix it.
+              </div>
+              <div id="connTestResults" style="margin-top:8px"></div>
+            </div>
+            <button class="action ghost" id="runConnTest">Run test</button>
+          </div>
+
+          <div class="tool">
+            <div>
               <div class="tool-name">Install everything</div>
               <div class="tool-desc">
                 Downloads and installs the mod and all six required mods. Use this on a
@@ -629,17 +654,6 @@
               <div class="devkey" id="devKeyValue" style="display:none"></div>
             </div>
             <button class="action ghost" id="revealDevKey">Reveal</button>
-          </div>
-
-          <div class="tool">
-            <div>
-              <div class="tool-name">Join the Tailscale network</div>
-              <div class="tool-desc">
-                Opens the server network's invite. You need this before the game server
-                will reach you.
-              </div>
-            </div>
-            <button class="action ghost" id="openTailscaleInvite">Open invite</button>
           </div>
 
           <div class="tool">
@@ -1848,6 +1862,29 @@
         setSettingsStatus('Select the text above and copy it.', '')
       }
     }
+  })
+
+  $('runConnTest').addEventListener('click', async () => {
+    const box = $('connTestResults')
+    const btn = $('runConnTest')
+
+    btn.disabled = true
+    btn.textContent = 'Testing...'
+    box.innerHTML = ''
+
+    const result = await window.launcher.connectivityTest()
+
+    btn.disabled = false
+    btn.textContent = 'Run test'
+    if (!result.ok) { setSettingsStatus('The test itself failed - try again.', 'error'); return }
+
+    box.innerHTML = result.steps.map(s => check(s.ok, `${s.name} - ${s.detail}`)).join('')
+
+    const verdict = document.createElement('div')
+    verdict.className = 'tool-desc'
+    verdict.style.marginTop = '6px'
+    verdict.textContent = result.verdict
+    box.appendChild(verdict)
   })
 
   $('openTailscaleInvite').addEventListener('click', async () => {

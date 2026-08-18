@@ -157,6 +157,7 @@ contextBridge.exposeInMainWorld('launcher', {
   serverStatus: () => ipcRenderer.invoke('server:status'),
   serverOpenAdmin: () => ipcRenderer.invoke('server:openAdmin'),
   serverRemote: (action) => ipcRenderer.invoke('server:remote', action),
+  connectivityTest: () => ipcRenderer.invoke('connectivity:test'),
   serverSetAdminCred: (username, password) => ipcRenderer.invoke('server:setAdminCred', username, password),
   startServer: () => ipcRenderer.invoke('server:start'),
   stopServer: () => ipcRenderer.invoke('server:stop'),
