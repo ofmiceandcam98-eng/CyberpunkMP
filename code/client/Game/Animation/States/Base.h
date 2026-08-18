@@ -6,8 +6,12 @@ namespace States
 {
 struct Base
 {
-    static inline float kWalkSpeed = 3.f;
-    static inline float kRunSpeed = 5.f;
+    // Bands around the game's REAL locomotion speeds: walk ~1.8 m/s, jog ~5.5,
+    // sprint ~7.5+. kWalkSpeed sat at 3.0 for the project's whole life - above actual
+    // walking speed - so a walking player never left Idling and appeared to glide.
+    static inline float kWalkSpeed = 1.2f;
+    static inline float kJogSpeed = 4.f;
+    static inline float kSprintSpeed = 6.5f;
 
     struct Update
     {

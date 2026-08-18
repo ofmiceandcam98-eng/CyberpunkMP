@@ -1,13 +1,14 @@
 #include "Walking.h"
 
 #include "Idling.h"
+#include "Jogging.h"
 #include "Sprinting.h"
 
 #include "Game/Animation/AnimationData.h"
 #include "Game/Animation/MultiMovementController.h"
 
 namespace States
-{ 
+{
 void Walking::Enter() noexcept
 {
     m_timer = 0.f;
@@ -19,17 +20,23 @@ void Walking::GetAnimationData(AnimationData& aData) const
     aData.action = MTA_Move;
     aData.style = LS_Walk;
     aData.time = m_timer;
+    // The graph's blend parameter. It was never written by any state - permanently
+    // zero - which flattened every locomotion blend toward the idle pose.
+    aData.speed = m_parent.m_speed;
 }
 
 std::optional<Base::Transition> Walking::Process(const Update& acEvent) noexcept
 {
-    if (acEvent.Speed >= kRunSpeed)
+    if (acEvent.Speed >= kSprintSpeed)
         return Transit<Sprinting>();
+    if (acEvent.Speed >= kJogSpeed)
+        return Transit<Jogging>();
     if (acEvent.Speed < kWalkSpeed)
         return Transit<Idling>();
 
     m_timer += acEvent.Delta;
-    m_timer = std::fmodf(m_timer, m_duration);
+    // See Jogging::Process - a missing clip must not fmodf by zero.
+    m_timer = m_duration > 0.f ? std::fmodf(m_timer, m_duration) : 0.f;
 
     return std::nullopt;
 }
