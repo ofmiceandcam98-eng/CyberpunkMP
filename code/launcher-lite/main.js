@@ -144,6 +144,40 @@ async function resolveServer () {
   return { host: '127.0.0.1', port: 11778, source: 'fallback' }
 }
 
+/**
+ * Is a game server actually listening on this machine?
+ *
+ * Asked only when address resolution has fallen all the way through to 127.0.0.1. That
+ * address is correct for exactly one person - whoever is hosting - and wrong for everybody
+ * else, and the two cases are indistinguishable from the launcher's point of view until
+ * you look at whether anything is there.
+ *
+ * UDP, because that is what the game server binds. A TCP probe finds nothing even on a
+ * perfectly healthy host and would turn every local session into a false alarm.
+ *
+ * Treated as "yes" if the check itself fails. Being unable to read the socket table is not
+ * evidence that nobody is hosting, and guessing "no" there would block a launch that would
+ * have worked.
+ */
+function isServerListeningLocally (port) {
+  return new Promise((resolve) => {
+    try {
+      const check = spawn('netstat', ['-ano', '-p', 'UDP'], { windowsHide: true })
+
+      let out = ''
+      check.stdout.on('data', (c) => { out += c.toString() })
+      check.on('error', () => resolve(true))
+      check.on('close', () => {
+        // Matches ":11778" at the end of a local-address column, so port 117780 or a
+        // remote address that merely contains the digits cannot be mistaken for it.
+        resolve(new RegExp(`:${port}\\b`).test(out))
+      })
+    } catch {
+      resolve(true)
+    }
+  })
+}
+
 // ---------------------------------------------------------------------------
 // State held only in the main process
 // ---------------------------------------------------------------------------
@@ -2004,6 +2038,29 @@ async function launchGame () {
   // else the game silently used its own 127.0.0.1 default - connecting to their own PC
   // and timing out with nothing in the log explaining why.
   const server = await resolveServer()
+
+  // Refuse the launch that was always going to fail.
+  //
+  // Reaching 'fallback' means every real source was unavailable: nothing saved in
+  // Settings, server.json unfetchable, no MP_SERVER. The address left is 127.0.0.1, which
+  // is right for whoever is hosting and wrong for everybody else - and the player was
+  // never told which of those they are. They launched, waited through a load screen,
+  // connected to their own PC, and timed out with nothing anywhere explaining it.
+  //
+  // The check is what makes this safe to be strict about: if a server really is listening
+  // here, this is a host testing locally and the launch proceeds untouched.
+  if (server.source === 'fallback' && !(await isServerListeningLocally(server.port))) {
+    console.warn('[launch] refused - address resolution fell through to 127.0.0.1 with nothing listening')
+
+    throw new Error(
+      'Could not find out where the server is, so there is nothing to connect to.\n\n' +
+      'The address normally comes from the latest release, which means this is usually a ' +
+      'connection problem at this end - check your internet and try again in a minute.\n\n' +
+      'If it keeps happening, ask in the Discord: the address may need republishing. ' +
+      '(An admin can set one by hand in Settings to get in meanwhile.)'
+    )
+  }
+
   args.push(`--ip=${server.host}`)
   args.push(`--port=${server.port}`)
 
@@ -2396,6 +2453,25 @@ async function startCoordApiQuietly () {
   } catch (err) {
     console.warn('[coord] could not start:', err.message)
   }
+}
+
+/**
+ * Does THIS machine host the coordination feed?
+ *
+ * Having the source is not the same as owning the service. Any checkout has the source,
+ * and a second instance is not a spare - it has its own participant keys and its own
+ * append-only history, and the two diverge silently from the moment both are running.
+ *
+ * Holding the participant file is what makes a machine the host, so that is the question
+ * asked. A fresh clone does not have one and stays out of the way; the machine that has
+ * been running the feed all along keeps doing so.
+ */
+function hostsCoordApi () {
+  const script = coordApiPath()
+  if (!script) return false
+
+  const dataDir = process.env.NCO_COORD_DATA || path.join(path.dirname(script), 'data')
+  return existsSync(path.join(dataDir, 'participants.json'))
 }
 
 async function restartServer () {
@@ -4067,6 +4143,23 @@ app.whenReady().then(() => {
   mainWindow.once('ready-to-show', () => {
     offerShortcuts()
     initAutoUpdater()
+
+    // Bring the coordination feed up with the launcher, on the machine that hosts it.
+    //
+    // It was only ever started by server:start and server:restart, which was right while
+    // Cam hosted the game server - the feed came up beside it. After the servers moved to
+    // the NAS he stopped starting one, so neither handler fired again and the service that
+    // "starts automatically" quietly stopped being started at all.
+    //
+    // Nothing broke; the trigger simply stopped happening. The feed was then down for two
+    // days without anyone noticing, and posts made from the other side during that window
+    // were not queued - they were never made. Seventeen releases are missing from the
+    // history because of it.
+    //
+    // Tied to the launcher instead, because that is the thing Cam actually opens. Guarded
+    // by hostsCoordApi so a checkout on someone else's machine does not start a second
+    // one, and startCoordApiQuietly returns early if it is already up.
+    if (hostsCoordApi()) startCoordApiQuietly()
   })
 
   // Catch-up sweep for logs nobody shipped live: a crash that took the launcher down
