@@ -49,9 +49,15 @@ struct Settings
     // rather than a rebuild and a release per guess.
     //
     // Candidates worth trying: Character.Player_Puppet_Base (what the real player is
-    // built from), Character.MaMuppet (the current mannequin, no targeting).
-    String puppetRecordMale = "Character.MaMuppet";
-    String puppetRecordFemale = "Character.WaMuppet";
+    // built from), Character.MaMuppet (the mannequin, no targeting).
+    //
+    // Default is now Player_Puppet_Base for BOTH genders - the live verdict on the
+    // mannequins came in 2026-08-19: "stop treating us as one unit". The player base
+    // record carries the game's own full moveset (real walk/jog/sprint/jump instead of
+    // the glide) and body gender comes from the customization state, not the record.
+    // The launch flags remain the escape hatch if it drags in unwanted behaviour.
+    String puppetRecordMale = "Character.Player_Puppet_Base";
+    String puppetRecordFemale = "Character.Player_Puppet_Base";
     Vector<fs::path> mods = {};
     bool enabled = false;
     bool RpcOnly = false;

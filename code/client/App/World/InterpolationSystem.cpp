@@ -293,15 +293,48 @@ void HookIdleController_SetAnimation(Game::Controller* apController, AnimationDa
             // queues another attach for the same move component. Harmless - the second one
             // finds the controller already multi - but it is why the same entity shows up
             // several times in a row in the logs.
-            ThreadService::RunInMainThread([id = pOwner->id, pMoveComponent, apController]
+            // ONLY the id crosses the thread boundary. This lambda used to capture the
+            // animation thread's raw component pointer and attach through it later on
+            // the main thread - but the engine rebuilds a puppet's components during a
+            // vehicle mount, in exactly the window where mounts tear our controller off
+            // and queue this re-attach. Attaching through the freed pointer was a
+            // use-after-free with no log line: the observing client died seconds after
+            // a remote car materialized with its driver, twice, on the faster machine
+            // only. Everything is re-resolved from the id once we are ON the main
+            // thread, where the entity cannot be rebuilt out from under us.
+            ThreadService::RunInMainThread([id = pOwner->id]
             {
                 const auto pSystem = Red::GetGameSystem<NetworkWorldSystem>();
+
+                const auto entityHandle = pSystem->GetEntity(id);
+                if (!entityHandle)
+                {
+                    spdlog::warn("[Interpolation] puppet {:x} vanished before its controller attach - skipped", id.hash);
+                    return;
+                }
+
+                Red::Handle<Red::move::Component> moveComponent;
+                for (const auto& component : entityHandle->componentsStorage.components)
+                {
+                    if (auto casted = Red::Cast<Red::move::Component>(component))
+                    {
+                        moveComponent = casted;
+                        break;
+                    }
+                }
+
+                if (!moveComponent)
+                {
+                    spdlog::warn("[Interpolation] puppet {:x} has no move component right now - attach skipped", id.hash);
+                    return;
+                }
+
                 const auto entityQuery = pSystem->query<const EntityComponent>();
                 auto flecsEntity = entityQuery.find([id](const EntityComponent& component) { return component.Id == id; });
 
                 auto* pController = Red::Memory::New<MultiMovementController>();
 
-                AttachController(pMoveComponent, pController);
+                AttachController(moveComponent.instance, pController);
 
                 if (flecsEntity)
                 {
@@ -315,7 +348,7 @@ void HookIdleController_SetAnimation(Game::Controller* apController, AnimationDa
                     {
                         flecsEntity.get_mut<SpawningComponent>()->Controller = pController;
                     }
-                }                
+                }
             });
 
             return;
