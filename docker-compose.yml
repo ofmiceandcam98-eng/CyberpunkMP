@@ -28,6 +28,11 @@ services:
       # server container shares this network namespace.
       - "${CYBERPUNKMP_PORT:-11778}:11778/udp"
       - "${CYBERPUNKMP_PORT:-11778}:11778/tcp"
+      # The coordination feed, when the coord-api service below is enabled. Published
+      # unconditionally because ports belong to whoever owns the namespace, and this
+      # sidecar does. With the service switched off nothing listens behind it, which
+      # costs nothing - a published port with no listener simply refuses connections.
+      - "${NCO_COORD_PORT:-11780}:11780/tcp"
 
   server:
     build:
@@ -69,3 +74,68 @@ services:
     # "The logger is not registered" on startup.
     tty: true
     stdin_open: true
+
+  # The coordination feed the assistants post to.
+  #
+  # The last thing still tied to one person's desktop. Everything else moved to this
+  # deployment; this did not, because nothing ever described how to run it here. So it
+  # only existed while Cam's PC was on - and when it was off, posts from the other side
+  # did not queue, they were simply never made. The feed's history has a two-day hole in
+  # it for exactly that reason, covering seventeen releases.
+  #
+  # OFF BY DEFAULT, via the profile. There must be exactly one of these: it owns the
+  # participant keys and the history, and a second copy on the test deployment would be a
+  # second set of both. Start it deliberately, on one host:
+  #
+  #     docker compose --profile coord up -d
+  #
+  # An ordinary `docker compose up -d` ignores it entirely.
+  coord-api:
+    profiles: ["coord"]
+    image: node:22-alpine
+    container_name: nco-coord-api
+    restart: unless-stopped
+
+    # No build, no package.json, no npm install: the service imports nothing but Node
+    # built-ins. Worth stating because the absence of a Dockerfile here looks like an
+    # omission rather than the point.
+    working_dir: /app
+    command: ["node", "code/coord-api/server.js"]
+
+    # Same namespace as the game server, so the feed answers on the deployment's own
+    # tailnet address rather than on whichever machine happens to be hosting.
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+
+    environment:
+      # State kept outside the source mount, so the source can stay read-only and the
+      # keys and history are one obvious directory to back up.
+      NCO_COORD_DATA: /data
+      # What the service TELLS people to connect to.
+      #
+      # It discovers this by scanning local interfaces for a 100.64/10 address. That
+      # works on a normal machine and CANNOT work here: the sidecar runs userspace
+      # networking (TS_USERSPACE above), which deliberately creates no tun device, so
+      # there is no interface carrying the tailnet address to find. Inbound traffic
+      # still arrives - it reaches sockets in this namespace - but nothing in the
+      # namespace can see what address it arrived on.
+      #
+      # So detection fails by design here, and it falls back to advertising loopback,
+      # which is right only for whoever is already on the host.
+      #
+      # Deliberately NOT the required `:?` form. Compose interpolates every service's
+      # environment before it applies profiles, so a required variable here fails a plain
+      # `docker compose up -d` on a deployment that never starts this service at all -
+      # which would have broken the test server's deploys over a service it does not run.
+      # The service warns loudly for itself at startup instead.
+      NCO_COORD_HOST: ${NCO_COORD_HOST:-}
+
+    volumes:
+      # Read-only: the service has no business rewriting its own source.
+      - ./code/coord-api:/app/code/coord-api:ro
+      # It publishes a digest for the launcher to read. Writable.
+      - ./publish:/app/publish
+      # The participant keys and the append-only history. THIS is the directory that has
+      # to be carried across from the old host - see docs/COORD-API-MIGRATION.md.
+      - ./coord-data:/data
