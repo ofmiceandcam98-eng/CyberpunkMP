@@ -3,6 +3,7 @@
 #include "Config.h"
 #include "PlayerManager.h"
 #include "Level.h"
+#include "WorldClock.h"
 
 #include "Components/MovementComponent.h"
 #include "Components/PlayerComponent.h"
@@ -19,6 +20,7 @@ World::World(const FlecsConfig& acFlecsConfig)
 
     emplace<Level>(this);
     emplace<PlayerManager>(this);
+    emplace<WorldClock>(this);
     emplace<ChatSystem>(this);
     emplace<ServerListSystem>(this);
 

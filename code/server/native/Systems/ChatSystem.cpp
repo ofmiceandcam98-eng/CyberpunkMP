@@ -7,6 +7,7 @@
 #include "CharacterRecord.h"
 #include "Components/CharacterComponent.h"
 #include "Game/Level.h"
+#include "Game/WorldClock.h"
 
 #include "PlayerManager.h"
 
@@ -955,6 +956,87 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         return true;
     }
 
+    // --------------------------------------------------------------- /time ----
+    //
+    // Sets the shared world clock. The day number is kept - only the hour moves - so
+    // repeatedly testing sunset does not also fast-forward the city's calendar.
+    if (command == "/time")
+    {
+        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
+            return deny(EPermissionLevel::kAdmin);
+
+        int hours = -1, minutes = 0;
+        if (std::sscanf(target.c_str(), "%d:%d", &hours, &minutes) < 1 || hours < 0 || hours > 23 ||
+            minutes < 0 || minutes > 59)
+        {
+            Tell(acSender, "Usage: /time HH:MM  (24h, e.g. /time 21:30)");
+            return true;
+        }
+
+        auto* pClock = m_pWorld->get_mut<WorldClock>();
+        if (!pClock)
+            return true;
+
+        const uint64_t day = pClock->GetGameTimeSeconds() / 86400;
+        pClock->SetTime(day * 86400 + static_cast<uint64_t>(hours) * 3600 + static_cast<uint64_t>(minutes) * 60);
+
+        spdlog::info("{} set the world clock to {:02}:{:02}", acSender.Username, hours, minutes);
+        Tell(acSender, fmt::format("World clock set to {:02}:{:02} for everyone.", hours, minutes));
+        return true;
+    }
+
+    // ------------------------------------------------------------ /weather ----
+    //
+    // Sets the shared sky. Accepts the game's 24_hour_weather_* record names, with or
+    // without the prefix - "/weather rain" and "/weather 24_hour_weather_rain" are the
+    // same request. The id is the game's TweakDBID (crc32 + length), computable here
+    // without the game because that is the whole point of the format.
+    if (command == "/weather")
+    {
+        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
+            return deny(EPermissionLevel::kAdmin);
+
+        if (target.empty())
+        {
+            Tell(acSender, "Usage: /weather <state> - e.g. sunny, rain, toxic_rain, fog, pollution, "
+                           "light_clouds, cloudy, heavy_clouds, sandstorm - or 'reset'");
+            return true;
+        }
+
+        auto* pClock = m_pWorld->get_mut<WorldClock>();
+        if (!pClock)
+            return true;
+
+        // 0 is the documented "leave the sky alone" sentinel - the client releases the
+        // weather back to its natural cycle.
+        if (target == "reset" || target == "natural")
+        {
+            pClock->SetWeather(0, 10.f);
+            Tell(acSender, "Weather released back to the natural cycle.");
+            return true;
+        }
+
+        std::string state = target;
+        if (state.rfind("24h_weather_", 0) != 0)
+            state = "24h_weather_" + state;
+
+        // The wire carries the CName hash (FNV1a64) - the same convention the client's
+        // weather setter consumes. NOT a TweakDBID: weather states are named worldWeather
+        // states, not tweak records.
+        uint64_t weatherId = 0xCBF29CE484222325ULL;
+        for (const unsigned char c : state)
+        {
+            weatherId ^= c;
+            weatherId *= 0x100000001B3ULL;
+        }
+
+        pClock->SetWeather(weatherId, 10.f);
+
+        spdlog::info("{} set the weather to {} ({:x})", acSender.Username, state, weatherId);
+        Tell(acSender, fmt::format("Weather set to {} for everyone.", state));
+        return true;
+    }
+
     // --------------------------------------------------------------- /jail ----
     //
     // The cell is wherever the staff member is standing. No configuration, no coordinates
@@ -1301,6 +1383,8 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             Tell(acSender, "       /return <player>");
             Tell(acSender, "       /setspawn - where players wake up after being downed");
             Tell(acSender, "       /setstart - where brand-new characters arrive");
+            Tell(acSender, "       /time HH:MM - set the shared world clock");
+            Tell(acSender, "       /weather <state> - set the shared sky (sunny, rain, fog...)");
         }
 
         return true;

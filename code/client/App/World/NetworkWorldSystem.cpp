@@ -10,6 +10,8 @@
 #include <RED4ext/Scripting/Natives/Generated/game/mounting/MountingFacility.hpp>
 #include <RED4ext/Scripting/Natives/Generated/game/mounting/MountingInfo.hpp>
 #include <RED4ext/Scripting/Natives/Generated/vehicle/MoveSystem.hpp>
+#include <RED4ext/Scripting/Natives/Generated/game/TimeSystem.hpp>
+#include <RED4ext/Scripting/Natives/Generated/world/WeatherScriptInterface.hpp>
 
 #include "App/Components/EntityComponent.h"
 #include "App/Components/SpawningComponent.h"
@@ -229,6 +231,12 @@ void NetworkWorldSystem::Update(uint64_t aTick)
     const auto delta = std::min(aTick - m_lastTick, 1000ull);
     m_lastTick = aTick;
 
+    // Re-assert the server's clock and sky - the singleplayer simulation drifts them
+    // between broadcasts, and thirty seconds of drift at high time scale is visible.
+    if (m_worldState &&
+        std::chrono::steady_clock::now() - m_lastWorldStateApply > std::chrono::seconds(30))
+        ApplyWorldState();
+
     const auto service = Core::Container::Get<NetworkService>();
     if (service && service->IsConnected())
         progress(static_cast<float>(delta) / 1000.f);
@@ -294,6 +302,62 @@ void NetworkWorldSystem::HandleTeleport(const PacketEvent<server::NotifyTeleport
     // it deals with streaming the destination in and putting the camera somewhere sane,
     // which writing a position straight into the entity does not.
     Red::CallVirtual(this, "TeleportLocalPlayer", position, aMessage.get_rotation());
+}
+
+void NetworkWorldSystem::HandleWorldState(const PacketEvent<server::NotifyWorldState>& aMessage)
+{
+    const auto total = aMessage.get_game_time_seconds();
+    spdlog::info("[WorldState] server clock: day {} {:02}:{:02} (x{}), weather {:x}",
+                 total / 86400, (total % 86400) / 3600, (total % 3600) / 60,
+                 aMessage.get_time_scale(), aMessage.get_weather_id());
+
+    m_worldState = WorldState{
+        static_cast<double>(total),
+        aMessage.get_time_scale(),
+        aMessage.get_weather_id(),
+        aMessage.get_transition_seconds(),
+        std::chrono::steady_clock::now(),
+    };
+
+    ApplyWorldState();
+}
+
+void NetworkWorldSystem::ApplyWorldState()
+{
+    if (!m_worldState || !m_ready)
+        return;
+
+    m_lastWorldStateApply = std::chrono::steady_clock::now();
+
+    // Advance from the snapshot rather than replaying it: a re-assert with the stale
+    // value would rewind the sky every thirty seconds.
+    const auto elapsed =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - m_worldState->ReceivedAt).count();
+    const auto seconds =
+        static_cast<int32_t>(m_worldState->GameTimeSeconds + elapsed * m_worldState->TimeScale);
+
+    if (auto* pTimeSystem = Red::GetGameSystem<Red::game::TimeSystem>())
+        Red::CallVirtual(pTimeSystem, "SetGameTimeBySeconds", seconds);
+
+    // 0 = the server has no opinion; the local sky keeps its natural cycle.
+    if (m_worldState->WeatherId != 0)
+    {
+        Red::ScriptGameInstance game;
+        Red::Handle<Red::world::WeatherScriptInterface> weatherSystem;
+
+        // SetWeather is Codeware's extension (a hard prerequisite of this mod). The
+        // optional blend/priority parameters must still be passed - the invoker
+        // enforces exact argument counts.
+        if (Red::CallStatic("ScriptGameInstance", "GetWeatherSystem", weatherSystem, game) && weatherSystem)
+        {
+            bool ok = false;
+            Red::CallVirtual(weatherSystem, "SetWeather", ok, Red::CName(m_worldState->WeatherId),
+                             m_worldState->TransitionSeconds, 5u);
+
+            if (!ok)
+                spdlog::warn("[WorldState] SetWeather refused state {:x}", m_worldState->WeatherId);
+        }
+    }
 }
 
 void NetworkWorldSystem::RequestJoin()
@@ -872,6 +936,7 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleSpawnCharacterResponse>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleOpenCharacterCreator>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleRequestCharacterName>(this);
+    pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleWorldState>(this);
 
     m_remotePlayerId = std::nullopt;
 

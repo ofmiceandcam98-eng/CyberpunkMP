@@ -13,6 +13,7 @@
 #include "GameServer.h"
 #include "World.h"
 #include "PlayerManager.h"
+#include "WorldClock.h"
 #include "Systems/ChatSystem.h"   // telling someone their seat is taken
 #include "Validation.h"           // sanity checks on anything a client sent
 
@@ -207,6 +208,11 @@ void Level::AddPlayer(flecs::entity aEntity) noexcept
     auto* pPlayerComponent = aEntity.get<PlayerComponent>();
     if (!pPlayerComponent)
         return;
+
+    // The world's clock and sky, before anything stands in the world - so the city a
+    // player loads into is already showing the same hour everyone else is living in.
+    if (auto* pClock = GetWorld()->get_mut<WorldClock>())
+        pClock->SendTo(pPlayerComponent->Connection);
 
     Add(pPlayerComponent->Puppet);
 

@@ -169,6 +169,26 @@ message RpcDefinitions {
     repeated RpcDefinition server_definitions = 2;
 }
 
+// The server's metronome. Clock and weather come from the server, not each client's
+// private singleplayer simulation - sent on join, on change, and re-asserted on an
+// interval because the singleplayer brain drifts the clock and rolls its own weather
+// given the chance. See docs/WORLD-STATE.md.
+message NotifyWorldState {
+    // Seconds of game time since midnight day 0 - the canonical server clock. It ticks
+    // even when the server is empty, so the city has one continuous timeline.
+    uint64 game_time_seconds = 1;
+
+    // How many game-seconds pass per real second.
+    float time_scale = 2;
+
+    // CName hash (FNV1a64) of the worldWeatherState name, e.g. "24h_weather_rain".
+    // 0 = leave the local sky on its natural cycle.
+    uint64 weather_id = 3;
+
+    // Blend time so weather rolls in rather than pops.
+    float transition_seconds = 4;
+}
+
 message Protocol {
     oneof content {
         AuthenticationResponse authentication_response = 1;
@@ -188,5 +208,6 @@ message Protocol {
         RequestCharacterName request_character_name = 15;
         NotifyAuthorityAssigned notify_authority_assigned = 16;
         NotifyAuthorityRevoked notify_authority_revoked = 17;
+        NotifyWorldState notify_world_state = 18;
     }
 }

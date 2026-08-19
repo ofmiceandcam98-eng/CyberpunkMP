@@ -106,6 +106,12 @@ protected:
     bool m_newCharacterPending{false};
     void HandleTeleport(const PacketEvent<server::NotifyTeleport>& aMessage);
 
+    // The server's metronome: shared clock and sky. Applied on arrival, then re-asserted
+    // on an interval, because the singleplayer brain drifts the clock and rolls its own
+    // weather given the chance. See docs/WORLD-STATE.md.
+    void HandleWorldState(const PacketEvent<server::NotifyWorldState>& aMessage);
+    void ApplyWorldState();
+
     void UpdatePlayerLocation() const;
 
 private:
@@ -131,6 +137,20 @@ private:
     std::vector<PendingSpawn> m_pendingSpawns;
 
     mutable bool m_hasLastPosition{false};
+
+    // Last world state the server sent, advanced locally between re-broadcasts so a
+    // re-assert never rewinds the sky. Empty until the first NotifyWorldState.
+    struct WorldState
+    {
+        double GameTimeSeconds{0.0};
+        float TimeScale{0.f};
+        uint64_t WeatherId{0};
+        float TransitionSeconds{0.f};
+        std::chrono::steady_clock::time_point ReceivedAt{};
+    };
+    std::optional<WorldState> m_worldState;
+    std::chrono::steady_clock::time_point m_lastWorldStateApply{};
+
     Red::CBaseFunction* m_pCreatePuppet;
     Red::CBaseFunction* m_pDeletePuppet;
     std::optional<uint64_t> m_remotePlayerId;
