@@ -1047,66 +1047,6 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         return true;
     }
 
-    // --------------------------------------------------------------- /push ----
-    //
-    // The first player-to-player interaction, and deliberately a silly one: it proves
-    // the ask-don't-tell pipeline (request -> server validates -> broadcast -> the
-    // TARGET's own client applies it, everyone else sees the result through ordinary
-    // movement sync) on something nobody can grief with. Any player may push; the
-    // server checks reach, so nobody gets shoved from across the map.
-    if (command == "/push")
-    {
-        if (target.empty())
-        {
-            Tell(acSender, "Usage: /push <player> - they need to be within arm's reach.");
-            return true;
-        }
-
-        const auto pushee = findPlayer(target);
-        if (!pushee)
-        {
-            Tell(acSender, fmt::format("Nobody called '{}' is here.", target));
-            return true;
-        }
-
-        const auto* pTheirPlayer = pushee.get<PlayerComponent>();
-        if (!pTheirPlayer || pushee == aSender)
-        {
-            Tell(acSender, "Pushing yourself is a personal matter.");
-            return true;
-        }
-
-        const auto* pMine = acSender.Puppet ? acSender.Puppet.get<MovementComponent>() : nullptr;
-        const auto* pTheirs = pTheirPlayer->Puppet ? pTheirPlayer->Puppet.get<MovementComponent>() : nullptr;
-
-        if (!pMine || !pTheirs)
-            return true;
-
-        // Arm's reach, decided HERE. A client can ask to push anyone; it cannot make
-        // distance be true.
-        constexpr float kReach = 3.f;
-        if (glm::distance(pMine->Position, pTheirs->Position) > kReach)
-        {
-            Tell(acSender, fmt::format("{} is too far away to push.", pTheirPlayer->Username));
-            return true;
-        }
-
-        server::NotifyInteraction interaction;
-        interaction.set_target_id(pTheirPlayer->Puppet);
-        interaction.set_actor_id(acSender.Puppet);
-        interaction.set_interaction_id(1); // push
-
-        m_pWorld->get_mut<PlayerManager>()->ForEach(
-            [&interaction](flecs::entity aPlayer)
-            {
-                if (const auto* pPlayer = aPlayer.get<PlayerComponent>())
-                    GServer->Send(pPlayer->Connection, interaction);
-            });
-
-        spdlog::info("{} pushed {}", acSender.Username, pTheirPlayer->Username);
-        return true;
-    }
-
     // --------------------------------------------------------------- /jail ----
     //
     // The cell is wherever the staff member is standing. No configuration, no coordinates
