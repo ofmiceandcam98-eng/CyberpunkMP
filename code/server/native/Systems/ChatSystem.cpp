@@ -843,6 +843,14 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             return true;
         }
 
+        // A name beginning with '/' is a mistyped command, not an identity - one such
+        // capture persisted a character literally named '/help' and locked it in.
+        if (wanted.front() == '/')
+        {
+            Tell(acSender, "That looks like a command, not a name - try /name <name> without the slash.");
+            return true;
+        }
+
         if (wanted.size() > 32)
             wanted.resize(32);
 
@@ -1370,6 +1378,13 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             if (!rest.empty())
             {
                 auto* pMutable = aSender.get_mut<PlayerComponent>();
+                // Same guard as /name: a slash-prefixed reply is a mistyped command.
+                if (!rest.empty() && rest.front() == '/')
+                {
+                    Tell(acSender, "That looks like a command, not a name - names cannot start with '/'.");
+                    return true;
+                }
+
                 pMutable->PendingCharacterName = rest.substr(0, 32);
             }
 
