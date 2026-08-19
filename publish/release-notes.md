@@ -4,6 +4,12 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.75
+
+- **The car-materialization crash is fixed for everyone.** When another player's car appeared nearby, your game could die seconds later - a use-after-free between the game's animation thread and ours. This was already fixed on the test channel; tonight's session proved the shipped mod still had it, so it ships now.
+- **Reconnects are clean.** After a server restart, a rejoining game no longer identifies itself with its dead session - which made you invisible-in-motion to everyone until a full game restart.
+- **GOG installs are found automatically.** The launcher now asks GOG Galaxy's registry for the exact install path, the same way it asks Steam - no more manual folder hunting for GOG players.
+
 ## What changed — v0.3.74
 
 - **A retired test build can't strand you anymore.** Dev panel: when the test build you have installed gets superseded and removed from GitHub, it now stays in your list as "(retired)" with its Uninstall button intact — before, it silently vanished while your game kept running it, with no visible way back to the shipped mod.

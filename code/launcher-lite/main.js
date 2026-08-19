@@ -248,6 +248,22 @@ function findGameDir () {
 
   const candidates = []
 
+  // GOG Galaxy records the exact install path in the registry, same idea as Steam's
+  // library file - authoritative, drive letters and custom folders included. 1423049311
+  // is Cyberpunk 2077's GOG product id. Checked FIRST because a GOG player's install
+  // is the one the folder-guessing below most often misses.
+  try {
+    const { execSync } = require('node:child_process')
+    for (const key of ['HKLM\\SOFTWARE\\WOW6432Node\\GOG.com\\Games\\1423049311',
+                       'HKLM\\SOFTWARE\\GOG.com\\Games\\1423049311']) {
+      try {
+        const out = execSync(`reg query "${key}" /v path`, { windowsHide: true }).toString()
+        const match = out.match(/path\s+REG_SZ\s+(.+)/)
+        if (match) candidates.push(match[1].trim())
+      } catch { /* key absent - not a GOG install */ }
+    }
+  } catch { /* reg unavailable - fall through to guessing */ }
+
   // Steam knows where its own libraries are - far better than guessing.
   for (const root of steamRoots()) {
     candidates.push(path.join(root, 'steamapps', 'common', 'Cyberpunk 2077'))

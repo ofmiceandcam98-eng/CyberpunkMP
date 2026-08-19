@@ -986,6 +986,12 @@ void NetworkWorldSystem::OnDisconnected(Client::EDisconnectReason aReason)
     m_interpolationSystem->OnDisconnected();
     m_vehicleSystem->OnDisconnected();
 
+    // The session id dies with the session. Only world detach cleared it before, so a
+    // disconnect with the world still attached (server restart mid-play) left the old
+    // id behind - and the reconnect streamed it at the new session, which the server
+    // rejected packet by packet as an invalid entity: a player nobody could see move.
+    m_remotePlayerId = std::nullopt;
+
     RED4ext::StackArgs_t args;
     auto reason = (uint32_t)aReason;
     args.emplace_back(RED4ext::CRTTISystem::Get()->GetType("Uint32"), &reason);
