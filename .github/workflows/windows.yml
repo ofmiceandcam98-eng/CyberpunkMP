@@ -67,9 +67,13 @@ jobs:
           actions-cache-folder: '.xmake-cache' # This doesn't cache dependencies, only xmake itself
           actions-cache-key: ${{ runner.os }}-xmake-cache-3.1.0
 
-      # SDK pin matches the developer toolchain (10.0.22621), not the retired 19041.
+      # NO --vs_sdkver here, deliberately. The SDK pin is a DEV-MACHINE necessity (those
+      # boxes install exactly one SDK); GitHub's runner images ship whichever SDKs they
+      # ship and rotate them without notice - pinning any version eventually makes the
+      # compiler unable to find windows.h/stdio.h at all, which is how this workflow
+      # died twice (19041 first, then 22621). Auto-detection tracks the image.
       - name: 'Configure xmake and install dependencies'
-        run: xmake config --arch=${{ matrix.arch }} --mode=${{ matrix.mode }} --vs_sdkver=10.0.22621.0 --yes
+        run: xmake config --arch=${{ matrix.arch }} --mode=${{ matrix.mode }} --yes
 
       # Build the game
       - name: 'Build with xmake'
