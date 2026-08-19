@@ -57,8 +57,13 @@ tailscale-state/
 tools/ship.local.ps1
 
 # Discord credentials. The bot token is a password - never commit either of these.
-tools/.discord-webhook
-tools/.discord-bot
+#
+# Wildcarded, because the exact-name form only protected the file somebody was
+# careful with. Anyone copying it aside before an edit - .bak, .old, .2 - produced
+# a second copy of the same secret that git offered to commit. That happened while
+# replacing a stale token, and the backup showed up as untracked rather than ignored.
+tools/.discord-webhook*
+tools/.discord-bot*
 
 # Which channel the to-do list lives in and which message to edit. Not a credential,
 # but it belongs with them rather than in the repo - it is specific to one Discord.
