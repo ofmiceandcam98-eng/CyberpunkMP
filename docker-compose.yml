@@ -50,6 +50,9 @@ services:
     environment:
       CYBERPUNKMP_ADMIN_USERNAME: ${CYBERPUNKMP_ADMIN_USERNAME:?set this in .env}
       CYBERPUNKMP_ADMIN_PASSWORD: ${CYBERPUNKMP_ADMIN_PASSWORD:?set this in .env}
+      # The world clock's real-time mode (/time real) mirrors THIS timezone - the
+      # crew's community time is US Central. DST comes free with tzdata.
+      TZ: ${TZ:-America/Chicago}
       # The server's native HTTPS (Discord verification, server list) links a statically
       # built OpenSSL whose baked-in CA path is the BUILD machine's package directory -
       # which does not exist in this image, so every TLS connection fails verification.
