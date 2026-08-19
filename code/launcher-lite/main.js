@@ -2422,6 +2422,25 @@ async function startCoordApiQuietly () {
   }
 }
 
+/**
+ * Does THIS machine host the coordination feed?
+ *
+ * Having the source is not the same as owning the service. Any checkout has the source,
+ * and a second instance is not a spare - it has its own participant keys and its own
+ * append-only history, and the two diverge silently from the moment both are running.
+ *
+ * Holding the participant file is what makes a machine the host, so that is the question
+ * asked. A fresh clone does not have one and stays out of the way; the machine that has
+ * been running the feed all along keeps doing so.
+ */
+function hostsCoordApi () {
+  const script = coordApiPath()
+  if (!script) return false
+
+  const dataDir = process.env.NCO_COORD_DATA || path.join(path.dirname(script), 'data')
+  return existsSync(path.join(dataDir, 'participants.json'))
+}
+
 async function restartServer () {
   await stopServer()
 
@@ -3831,6 +3850,23 @@ app.whenReady().then(() => {
   mainWindow.once('ready-to-show', () => {
     offerShortcuts()
     initAutoUpdater()
+
+    // Bring the coordination feed up with the launcher, on the machine that hosts it.
+    //
+    // It was only ever started by server:start and server:restart, which was right while
+    // Cam hosted the game server - the feed came up beside it. After the servers moved to
+    // the NAS he stopped starting one, so neither handler fired again and the service that
+    // "starts automatically" quietly stopped being started at all.
+    //
+    // Nothing broke; the trigger simply stopped happening. The feed was then down for two
+    // days without anyone noticing, and posts made from the other side during that window
+    // were not queued - they were never made. Seventeen releases are missing from the
+    // history because of it.
+    //
+    // Tied to the launcher instead, because that is the thing Cam actually opens. Guarded
+    // by hostsCoordApi so a checkout on someone else's machine does not start a second
+    // one, and startCoordApiQuietly returns early if it is already up.
+    if (hostsCoordApi()) startCoordApiQuietly()
   })
 
   app.on('activate', () => {
