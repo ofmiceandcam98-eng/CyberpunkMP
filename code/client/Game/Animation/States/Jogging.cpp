@@ -13,6 +13,17 @@ void Jogging::Enter() noexcept
 {
     m_timer = 0.f;
     m_duration = m_parent.GetAnimLength("jog_0");
+    m_style = LS_Jog;
+
+    // Default run speed lands in this band, and a template with sprint clips but no
+    // jog clip used to SPRINT-animate here at baseline - degrading to idle-glide was a
+    // visible regression. Borrow the sprint clip before giving up entirely.
+    if (m_duration <= 0.f)
+    {
+        m_duration = m_parent.GetAnimLength("sprint_0");
+        if (m_duration > 0.f)
+            m_style = LS_Sprint;
+    }
 }
 
 void Jogging::GetAnimationData(AnimationData& aData) const
@@ -26,7 +37,7 @@ void Jogging::GetAnimationData(AnimationData& aData) const
     }
 
     aData.action = MTA_Move;
-    aData.style = LS_Jog;
+    aData.style = m_style;
     aData.time = m_timer;
     aData.speed = m_parent.GetCurrentSpeed();
 }

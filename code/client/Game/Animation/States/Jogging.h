@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Base.h"
+#include "Game/Animation/Base.h" // Locomotion_Style
 
 namespace States
 {
@@ -21,5 +22,6 @@ private:
 
     float m_timer = 0.f;
     float m_duration = 0.f;
+    Locomotion_Style m_style{LS_Jog};
 };
 } // namespace States
