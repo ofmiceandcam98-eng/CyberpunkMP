@@ -189,6 +189,23 @@ message NotifyWorldState {
     float transition_seconds = 4;
 }
 
+// An interaction the server decided happened. Ask-don't-tell (docs/WORLD-STATE.md §4):
+// clients REQUEST interactions, the server validates (existence, distance, state) and
+// broadcasts the outcome - including to the actor, whose client plays it on receipt.
+// No client can assert a world change; it can only ask for one.
+message NotifyInteraction {
+    // Server entity the interaction happened TO (a player's character, later a door
+    // or container overlay entity).
+    uint64 target_id = 1;
+
+    // Who did it - so clients can play the right animation on the right puppet.
+    uint64 actor_id = 2;
+
+    // What happened. 1 = push. Extended as interactions are added; unknown values
+    // must be ignored, not errored - older clients meeting newer interactions.
+    uint64 interaction_id = 3;
+}
+
 message Protocol {
     oneof content {
         AuthenticationResponse authentication_response = 1;
@@ -209,5 +226,6 @@ message Protocol {
         NotifyAuthorityAssigned notify_authority_assigned = 16;
         NotifyAuthorityRevoked notify_authority_revoked = 17;
         NotifyWorldState notify_world_state = 18;
+        NotifyInteraction notify_interaction = 19;
     }
 }

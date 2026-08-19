@@ -112,6 +112,10 @@ protected:
     void HandleWorldState(const PacketEvent<server::NotifyWorldState>& aMessage);
     void ApplyWorldState();
 
+    // An interaction the server decided happened (ask-don't-tell). Only the TARGET's
+    // client acts on it - everyone else sees the outcome through ordinary sync.
+    void HandleInteraction(const PacketEvent<server::NotifyInteraction>& aMessage);
+
     void UpdatePlayerLocation() const;
 
 private:

@@ -31,6 +31,12 @@ struct WorldClock
     void SetTime(uint64_t aGameTimeSeconds) noexcept;
     void SetWeather(uint64_t aWeatherId, float aTransitionSeconds) noexcept;
 
+    // Mirror the real world: game time = the server machine's wall clock (honours the
+    // container's TZ), scale 1:1. Night in Night City when it is night outside. /time
+    // HH:MM leaves this mode; /time real enters it. Persisted like everything else.
+    void SetRealTime(bool aEnabled) noexcept;
+    bool IsRealTime() const noexcept { return m_realTime; }
+
 protected:
     void Tick() noexcept;
     void Load() noexcept;
@@ -45,6 +51,7 @@ private:
     // seconds, and integer truncation every tick would make the clock run slow.
     double m_gameTimeSeconds{8.0 * 3600.0}; // day 0, 08:00 - a sensible first sunrise
     float m_timeScale{8.f};                 // game-seconds per real second
+    bool m_realTime{false};                 // when true, the wall clock IS the game clock
     uint64_t m_weatherId{0};                // 0 = leave the local sky alone
     float m_transitionSeconds{10.f};
 

@@ -304,6 +304,53 @@ void NetworkWorldSystem::HandleTeleport(const PacketEvent<server::NotifyTeleport
     Red::CallVirtual(this, "TeleportLocalPlayer", position, aMessage.get_rotation());
 }
 
+void NetworkWorldSystem::HandleInteraction(const PacketEvent<server::NotifyInteraction>& aMessage)
+{
+    // Only the TARGET's client acts. The pusher and every bystander see the outcome
+    // through ordinary movement sync - one machine owns each body, same rule as always.
+    if (!m_remotePlayerId || aMessage.get_target_id() != *m_remotePlayerId)
+        return;
+
+    // 1 = push. Unknown interactions are ignored, not errored - an older client meeting
+    // a newer server's interactions should shrug, not break.
+    if (aMessage.get_interaction_id() != 1)
+        return;
+
+    if (!m_hasLastPosition)
+        return;
+
+    // Direction: away from whoever pushed. Their puppet's last synced position is in
+    // the mirror's interpolation buffer.
+    const auto actor = GetEntityByServerId(aMessage.get_actor_id());
+    const auto* pInterpolation = actor ? actor.get<InterpolationComponent>() : nullptr;
+    if (!pInterpolation || !pInterpolation->HasPrevious)
+        return;
+
+    const glm::vec3 from = pInterpolation->PreviousFrame.Position;
+    glm::vec3 dir = m_lastPosition - from;
+    dir.z = 0.f;
+
+    const float length = glm::length(dir);
+    if (length < 0.01f)
+        return; // standing inside each other - no sane direction to stumble
+
+    dir /= length;
+
+    constexpr float kStumble = 1.5f;
+    const glm::vec3 dest = m_lastPosition + dir * kStumble;
+
+    // Face the pusher - anyone shoved turns around to see who did it. The game's yaw
+    // convention has facing = (-sin(yaw), cos(yaw)); solving for the vector pointing
+    // back along the push gives:
+    const float yaw = std::atan2(dir.x, -dir.y);
+
+    spdlog::info("[Interaction] pushed by {:x} - stumbling to ({:.1f}, {:.1f})",
+                 aMessage.get_actor_id(), dest.x, dest.y);
+
+    const Red::Vector4 position{dest.x, dest.y, dest.z, 1.f};
+    Red::CallVirtual(this, "TeleportLocalPlayer", position, yaw);
+}
+
 void NetworkWorldSystem::HandleWorldState(const PacketEvent<server::NotifyWorldState>& aMessage)
 {
     const auto total = aMessage.get_game_time_seconds();
@@ -937,6 +984,7 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleOpenCharacterCreator>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleRequestCharacterName>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleWorldState>(this);
+    pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleInteraction>(this);
 
     m_remotePlayerId = std::nullopt;
 

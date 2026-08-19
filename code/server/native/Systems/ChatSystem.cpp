@@ -965,17 +965,27 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
             return deny(EPermissionLevel::kAdmin);
 
+        auto* pClock = m_pWorld->get_mut<WorldClock>();
+        if (!pClock)
+            return true;
+
+        // Mirror the real world: the server machine's wall clock becomes the game
+        // clock at 1:1 - night in Night City when it is night outside.
+        if (target == "real")
+        {
+            pClock->SetRealTime(true);
+            spdlog::info("{} switched the world clock to real time", acSender.Username);
+            Tell(acSender, "World clock now mirrors real time for everyone. /time HH:MM takes it back.");
+            return true;
+        }
+
         int hours = -1, minutes = 0;
         if (std::sscanf(target.c_str(), "%d:%d", &hours, &minutes) < 1 || hours < 0 || hours > 23 ||
             minutes < 0 || minutes > 59)
         {
-            Tell(acSender, "Usage: /time HH:MM  (24h, e.g. /time 21:30)");
+            Tell(acSender, "Usage: /time HH:MM (24h), or /time real to mirror the real world");
             return true;
         }
-
-        auto* pClock = m_pWorld->get_mut<WorldClock>();
-        if (!pClock)
-            return true;
 
         const uint64_t day = pClock->GetGameTimeSeconds() / 86400;
         pClock->SetTime(day * 86400 + static_cast<uint64_t>(hours) * 3600 + static_cast<uint64_t>(minutes) * 60);
@@ -1034,6 +1044,66 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
 
         spdlog::info("{} set the weather to {} ({:x})", acSender.Username, state, weatherId);
         Tell(acSender, fmt::format("Weather set to {} for everyone.", state));
+        return true;
+    }
+
+    // --------------------------------------------------------------- /push ----
+    //
+    // The first player-to-player interaction, and deliberately a silly one: it proves
+    // the ask-don't-tell pipeline (request -> server validates -> broadcast -> the
+    // TARGET's own client applies it, everyone else sees the result through ordinary
+    // movement sync) on something nobody can grief with. Any player may push; the
+    // server checks reach, so nobody gets shoved from across the map.
+    if (command == "/push")
+    {
+        if (target.empty())
+        {
+            Tell(acSender, "Usage: /push <player> - they need to be within arm's reach.");
+            return true;
+        }
+
+        const auto pushee = findPlayer(target);
+        if (!pushee)
+        {
+            Tell(acSender, fmt::format("Nobody called '{}' is here.", target));
+            return true;
+        }
+
+        const auto* pTheirPlayer = pushee.get<PlayerComponent>();
+        if (!pTheirPlayer || pushee == aSender)
+        {
+            Tell(acSender, "Pushing yourself is a personal matter.");
+            return true;
+        }
+
+        const auto* pMine = acSender.Puppet ? acSender.Puppet.get<MovementComponent>() : nullptr;
+        const auto* pTheirs = pTheirPlayer->Puppet ? pTheirPlayer->Puppet.get<MovementComponent>() : nullptr;
+
+        if (!pMine || !pTheirs)
+            return true;
+
+        // Arm's reach, decided HERE. A client can ask to push anyone; it cannot make
+        // distance be true.
+        constexpr float kReach = 3.f;
+        if (glm::distance(pMine->Position, pTheirs->Position) > kReach)
+        {
+            Tell(acSender, fmt::format("{} is too far away to push.", pTheirPlayer->Username));
+            return true;
+        }
+
+        server::NotifyInteraction interaction;
+        interaction.set_target_id(pTheirPlayer->Puppet);
+        interaction.set_actor_id(acSender.Puppet);
+        interaction.set_interaction_id(1); // push
+
+        m_pWorld->get_mut<PlayerManager>()->ForEach(
+            [&interaction](flecs::entity aPlayer)
+            {
+                if (const auto* pPlayer = aPlayer.get<PlayerComponent>())
+                    GServer->Send(pPlayer->Connection, interaction);
+            });
+
+        spdlog::info("{} pushed {}", acSender.Username, pTheirPlayer->Username);
         return true;
     }
 
@@ -1383,7 +1453,7 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             Tell(acSender, "       /return <player>");
             Tell(acSender, "       /setspawn - where players wake up after being downed");
             Tell(acSender, "       /setstart - where brand-new characters arrive");
-            Tell(acSender, "       /time HH:MM - set the shared world clock");
+            Tell(acSender, "       /time HH:MM - set the shared world clock (/time real = mirror reality)");
             Tell(acSender, "       /weather <state> - set the shared sky (sunny, rain, fog...)");
         }
 
