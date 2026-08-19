@@ -6,7 +6,7 @@ namespace States
 {
 struct Idling : Base
 {
-    Idling(MultiMovementController& aParent)
+    Idling(ILocomotionHost& aParent)
         : Base(aParent)
     {
     }

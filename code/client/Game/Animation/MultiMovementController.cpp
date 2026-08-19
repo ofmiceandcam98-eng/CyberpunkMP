@@ -151,7 +151,7 @@ void MultiMovementController::Attach(Red::move::Component& movable)
 
     m_animationDriver.Attach(movable.owner);
 
-    m_pState = MakeUnique<States::Spawning>(*this);
+    m_pState = MakeUnique<States::Spawning>(m_host);
     m_pState->Enter();
 }
 
@@ -179,6 +179,16 @@ void MultiMovementController::SetTransform(const Red::Vector4& aPosition, float 
 float MultiMovementController::GetAnimLength(Red::CName aName) const
 {
     return m_animationDriver.GetAnimLength(aName);
+}
+
+float MultiMovementController::Host::GetAnimLength(Red::CName aName) const
+{
+    return Parent->GetAnimLength(aName);
+}
+
+float MultiMovementController::Host::GetCurrentSpeed() const
+{
+    return Parent->m_speed;
 }
 
 void MultiMovementController::Reset()

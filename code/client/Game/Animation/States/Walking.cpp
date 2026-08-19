@@ -34,7 +34,7 @@ void Walking::GetAnimationData(AnimationData& aData) const
     aData.time = m_timer;
     // The graph's blend parameter. It was never written by any state - permanently
     // zero - which flattened every locomotion blend toward the idle pose.
-    aData.speed = m_parent.m_speed;
+    aData.speed = m_parent.GetCurrentSpeed();
 }
 
 std::optional<Base::Transition> Walking::Process(const Update& acEvent) noexcept

@@ -6,7 +6,7 @@ namespace States
 {
 struct Sprinting : Base
 {
-    Sprinting(MultiMovementController& aParent)
+    Sprinting(ILocomotionHost& aParent)
         : Base(aParent)
     {
     }

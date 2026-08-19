@@ -50,6 +50,17 @@ struct MultiMovementController
 
     float GetAnimLength(Red::CName aName) const;
 
+    // States reach their host through this adapter member instead of this class
+    // inheriting ILocomotionHost: the controller's OWN vtable is an engine ABI (the
+    // idle-controller slots, called by index) and any base class would reorder it.
+    struct Host final : States::ILocomotionHost
+    {
+        explicit Host(MultiMovementController* apParent) : Parent(apParent) {}
+        float GetAnimLength(Red::CName aName) const override;
+        float GetCurrentSpeed() const override;
+        MultiMovementController* Parent;
+    };
+
     void Reset();
 
     Type m_type = kMulti;
@@ -62,6 +73,7 @@ struct MultiMovementController
     float m_speed = 0.f;
     AnimationDriver m_animationDriver;
     UniquePtr<States::Base> m_pState;
+    Host m_host{this};
     // One-shot diagnostic flags for the vehicle-passenger crash hunt: each condition
     // logs once per controller, on the animation thread, then stays quiet.
     bool m_nullPlacementLogged = false;

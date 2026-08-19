@@ -411,7 +411,19 @@ bool VehicleSystem::HandleVehicleExitMessage(const PacketEvent<server::NotifyVeh
 
     auto characterEntity = worldSystem->GetEntityByServerId(aMessage.get_character_id());
     if (characterEntity && characterEntity.is_alive())
+    {
         characterEntity.remove<AttachedComponent>();
+
+        // The interpolation anchor is stale from the moment of mounting - lerping from
+        // it after a drive would hurl the puppet across the map on the first frame.
+        // Start fresh from the next movement sample.
+        if (auto* pInterpolation = characterEntity.get_mut<InterpolationComponent>())
+        {
+            pInterpolation->TimePoints.clear();
+            pInterpolation->HasPrevious = false;
+            pInterpolation->LastRenderTick = 0.f;
+        }
+    }
 
     spdlog::info("[VehicleSystem] HandleVehicleExitMessage: done");
     return true;

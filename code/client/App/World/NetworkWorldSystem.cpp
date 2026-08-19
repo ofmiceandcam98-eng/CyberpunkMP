@@ -16,6 +16,7 @@
 #include "App/Components/EntityComponent.h"
 #include "App/Components/SpawningComponent.h"
 #include "App/Components/InterpolationComponent.h"
+#include "App/Components/DriverComponent.h"
 #include "App/World/PuppetRegistry.h"
 #include "Game/Utils.h"
 #include "Game/CharacterCustomizationSystem.h"
@@ -128,7 +129,13 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
 
     auto spawned = make_alive(aServerId);
 
-    spawned.emplace<SpawningComponent>(id);
+    // Player-record puppets never enter the NPC idle-controller pipeline the legacy
+    // path hooks - they are driven by the mod-owned PuppetDriver instead. The flag
+    // routes EVERYTHING through the driver for A/B testing the old path's retirement.
+    const bool usesDriver = Settings::Get().puppetDriverAll ||
+                            std::string_view(record.c_str()).rfind("Character.Player_Puppet", 0) == 0;
+
+    spawned.emplace<SpawningComponent>(id, nullptr, usesDriver);
 
     // Give the puppet somewhere to put movement immediately.
     //
@@ -1062,6 +1069,17 @@ void NetworkWorldSystem::OnConnected()
                     return;
 
                 aEntity.emplace<EntityComponent>(aSpawning.Id, false, aSpawning.Controller);
+
+                // Driver puppets get their animation writer bound here, on the main
+                // thread, with no engine hook involved - the driver re-binds itself if
+                // a mount rebuilds the component later.
+                if (aSpawning.UsesDriver)
+                {
+                    auto pDriver = std::make_shared<PuppetDriver>();
+                    pDriver->EnsureAttached(pEntity.GetPtr(), aEntity.raw_id());
+                    aEntity.set<DriverComponent>({std::move(pDriver)});
+                }
+
                 aEntity.remove<SpawningComponent>();
 
                 pOwner->tags.Add("CyberpunkMP.Puppet");

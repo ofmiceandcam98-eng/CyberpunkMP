@@ -28,7 +28,7 @@ void Jogging::GetAnimationData(AnimationData& aData) const
     aData.action = MTA_Move;
     aData.style = LS_Jog;
     aData.time = m_timer;
-    aData.speed = m_parent.m_speed;
+    aData.speed = m_parent.GetCurrentSpeed();
 }
 
 std::optional<Base::Transition> Jogging::Process(const Update& acEvent) noexcept

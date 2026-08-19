@@ -51,14 +51,20 @@ struct Settings
     // Candidates worth trying: Character.Player_Puppet_Base (what the real player is
     // built from), Character.MaMuppet (the mannequin, no targeting).
     //
-    // Player_Puppet_Base was tried live 2026-08-19: real faces and bodies appeared
-    // (identity works!) but the mod's movement machinery hooks the NPC idle-controller
-    // pipeline, which player records never enter - so the puppets stood frozen, and
-    // clothing applied as painted-on fragments. The mannequins return until the
-    // movement path is rebuilt to drive the animation component directly (phase plan
-    // c6) - identity and clothes ride that same rework.
-    String puppetRecordMale = "Character.MaMuppet";
-    String puppetRecordFemale = "Character.WaMuppet";
+    // Round 2 for Player_Puppet_Base: round 1 proved identity (real faces and bodies)
+    // and proved the OLD movement path can never drive player records - they never
+    // enter the NPC idle-controller pipeline it hooks. This build carries the
+    // PuppetDriver: mod-owned movement (placed-transform writes) and animation
+    // (feature writes), attached at promotion, self-healing across mounts. Player
+    // records route to it automatically; the mannequins stay on the proven legacy
+    // path as the escape hatch (-puppet-record Character.MaMuppet).
+    String puppetRecordMale = "Character.Player_Puppet_Base";
+    String puppetRecordFemale = "Character.Player_Puppet_Base";
+
+    // Route EVERY puppet through the mod-owned PuppetDriver (movement by placed
+    // transform, animation by feature writes) instead of only player-record puppets.
+    // The A/B lever for retiring the legacy idle-controller hijack.
+    bool puppetDriverAll = false;
     Vector<fs::path> mods = {};
     bool enabled = false;
     bool RpcOnly = false;

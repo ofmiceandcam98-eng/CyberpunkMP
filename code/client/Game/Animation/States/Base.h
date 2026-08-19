@@ -1,9 +1,20 @@
 #pragma once
 
-struct MultiMovementController;
+struct AnimationData;
 
 namespace States
 {
+// What a state actually needs from whoever hosts it. Two hosts exist: the legacy
+// MultiMovementController (engine-attached, NPC records only - via an adapter member,
+// because its own vtable is an ENGINE ABI and must not gain a base class) and
+// PuppetDriver (mod-owned, record-agnostic).
+struct ILocomotionHost
+{
+    virtual ~ILocomotionHost() = default;
+    virtual float GetAnimLength(Red::CName aName) const = 0;
+    virtual float GetCurrentSpeed() const = 0;
+};
+
 struct Base
 {
     // Bands around the game's REAL locomotion speeds: walk ~1.8 m/s, jog ~5.5,
@@ -36,7 +47,7 @@ struct Base
         UniquePtr<Base> State;
     };
 
-    Base(MultiMovementController& aParent)
+    Base(ILocomotionHost& aParent)
         : m_parent(aParent)
     {
     }
@@ -62,7 +73,7 @@ struct Base
     }
 
 protected:
-    MultiMovementController& m_parent;
+    ILocomotionHost& m_parent;
 };
 }
 

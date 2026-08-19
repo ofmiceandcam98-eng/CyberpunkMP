@@ -10,6 +10,7 @@
 #include "App/Network/NetworkService.h"
 #include "RED4ext/Scripting/Natives/Generated/game/EntityStubComponentPS.hpp"
 #include "RED4ext/Scripting/Natives/Generated/move/Component.hpp"
+#include "RED4ext/Scripting/Natives/Generated/ent/IPlacedComponent.hpp"
 #include "RED4ext/Scripting/Natives/Generated/ent/AnimationControllerComponent.hpp"
 #include <RED4ext/Scripting/Natives/Generated/vehicle/MoveSystem.hpp>
 #include "RED4ext/Scripting/Natives/Generated/vehicle/BaseObject.hpp"
@@ -19,6 +20,7 @@
 #include "Core/Hooking/HookingAgent.hpp"
 #include "NetworkWorldSystem.h"
 #include "App/Components/EntityComponent.h"
+#include "App/Components/DriverComponent.h"
 #include "Math/Math.h"
 #include "App/Components/InterpolationComponent.h"
 #include "App/Components/SpawningComponent.h"
@@ -32,6 +34,36 @@
 inline void SetSimpleMovement(Red::vehicle::IMoveSystem* apMoveSystem, const Red::EntityID& aEntityId, bool enabled)
 {
     reinterpret_cast<void (*)(Red::vehicle::IMoveSystem*, const Red::EntityID&, bool)>(*(uintptr_t*)(*(uintptr_t*)apMoveSystem + 0x1F0))(apMoveSystem, aEntityId, enabled);
+}
+
+// The driver path's movement primitive: write the placed transform directly - the
+// exact native Codeware's Entity.SetWorldTransform calls. No move controller, no
+// engine pipeline, works on any record type.
+static Core::RawFunc<1828854026UL, void (*)(Red::IPlacedComponent*, const Red::WorldTransform&)>
+    PlacedComponent_SetTransform;
+
+// Place a driver-puppet and advance its animation for this frame.
+static void DriveEntity(const DriverComponent& aDriver, const EntityComponent& aEntityComponent,
+                        const glm::vec3& aPosition, float aYaw, float aSpeed, float aFrameDeltaMs)
+{
+    const auto pSystem = Red::GetGameSystem<NetworkWorldSystem>();
+    const auto entityHandle = pSystem->GetEntity(aEntityComponent.Id);
+    if (!entityHandle || !entityHandle->placedComponent)
+        return;
+
+    Red::WorldTransform transform{};
+    transform.Position = Red::WorldPosition(Red::Vector4{aPosition.x, aPosition.y, aPosition.z, 0.f});
+    transform.Orientation = Game::ToRed(glm::quat(glm::vec3{0.f, 0.f, aYaw}));
+
+    PlacedComponent_SetTransform(entityHandle->placedComponent, transform);
+
+    if (aDriver.Driver)
+    {
+        // Mounts rebuild components; the driver re-binds itself (rate-limited) instead
+        // of dying the way the engine-attached controller did.
+        aDriver.Driver->EnsureAttached(entityHandle.GetPtr(), aEntityComponent.Id.hash);
+        aDriver.Driver->Tick(aFrameDeltaMs * 0.001f, aSpeed);
+    }
 }
 
 void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComponent, InterpolationComponent& aInterpolation, float aSimulationDelay, Red::vehicle::IMoveSystem* apMoveSystem)
@@ -79,15 +111,26 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
         if (ahead <= 0.f || ahead > kMaxExtrapolationMs)
             return;
 
-        if (aEntityComponent.IsVehicle || !aEntityComponent.Controller)
+        if (aEntityComponent.IsVehicle)
             return;
 
         // Velocity is metres per second and the tick is milliseconds.
         const glm::vec3 heading{-std::sin(first.Rotation.z), std::cos(first.Rotation.z), 0.f};
         const glm::vec3 guessed = first.Position + heading * (first.Velocity * ahead * 0.001f);
 
-        const auto pos = Red::Vector4{guessed.x, guessed.y, guessed.z, 0.f};
-        aEntityComponent.Controller->SetTransform(pos, first.Rotation.z, first.Velocity);
+        if (aEntityComponent.Controller)
+        {
+            const auto pos = Red::Vector4{guessed.x, guessed.y, guessed.z, 0.f};
+            aEntityComponent.Controller->SetTransform(pos, first.Rotation.z, first.Velocity);
+        }
+        else if (const auto* pDriver = aEntity.get<DriverComponent>())
+        {
+            const float frameDelta = (aInterpolation.LastRenderTick > 0.f)
+                                         ? std::max(tick - aInterpolation.LastRenderTick, 0.f)
+                                         : 16.f;
+            DriveEntity(*pDriver, aEntityComponent, guessed, first.Rotation.z, first.Velocity, frameDelta);
+            aInterpolation.LastRenderTick = tick;
+        }
         return;
     }
 
@@ -151,14 +194,25 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
     }
     else
     {
+        const auto speed{Lerp(first.Velocity, second.Velocity, ratio)};
+        const auto deltaAngle{DeltaAngle(first.Rotation.z, second.Rotation.z, true) * ratio};
+        const auto direction = Mod(first.Rotation.z + deltaAngle, 2.f * static_cast<float>(Pi));
+
         if (aEntityComponent.Controller)
         {
-            const auto speed{Lerp(first.Velocity, second.Velocity, ratio)};
-            const auto deltaAngle{DeltaAngle(first.Rotation.z, second.Rotation.z, true) * ratio};
-            const auto direction = Mod(first.Rotation.z + deltaAngle, 2.f * static_cast<float>(Pi));
-
+            // Legacy path: the engine-attached controller (NPC-record puppets).
             const auto pos = Red::Vector4{position.x, position.y, position.z, 0.f};
             aEntityComponent.Controller->SetTransform(pos, direction, speed);
+        }
+        else if (const auto* pDriver = aEntity.get<DriverComponent>())
+        {
+            // Driver path: place the entity directly and tick its animation. This is
+            // the path player-record puppets live on - the engine never gave them a
+            // controller to hijack.
+            const float frameDelta = (aInterpolation.LastRenderTick > 0.f)
+                                         ? std::max(tick - aInterpolation.LastRenderTick, 0.f)
+                                         : 16.f;
+            DriveEntity(*pDriver, aEntityComponent, position, direction, speed, frameDelta);
         }
     }
 

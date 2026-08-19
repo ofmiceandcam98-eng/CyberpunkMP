@@ -6,7 +6,7 @@ namespace States
 {
 struct Jogging : Base
 {
-    Jogging(MultiMovementController& aParent)
+    Jogging(ILocomotionHost& aParent)
         : Base(aParent)
     {
     }

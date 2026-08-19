@@ -63,6 +63,9 @@ void Settings::Load()
         }
     }
 
+    if (launchParameters.Get("-puppet-driver-all"))
+        settings.puppetDriverAll = true;
+
     if (const auto record = launchParameters.Get("-puppet-record-female"); record)
     {
         if (record->size > 0)
