@@ -3605,6 +3605,21 @@ ipcMain.handle('prerelease:list', async () => {
         active: r.tag_name === activeTag
       }))
 
+    // A test build can be retired from GitHub while still INSTALLED on this machine -
+    // superseded builds get deleted so there is only ever one to pick. Without this
+    // row, the installed build simply vanished from the list, taking its Uninstall
+    // button with it: the game kept running the old test DLL with no visible way out.
+    if (activeTag && !prereleases.some((r) => r.tag === activeTag)) {
+      prereleases.unshift({
+        tag: activeTag,
+        name: `${activeTag} (retired - superseded by a newer test build)`,
+        publishedAt: null,
+        hasDll: false,
+        notesUrl: null,
+        active: true
+      })
+    }
+
     return { ok: true, prereleases, activeTag }
   } catch (err) {
     return { ok: false, error: err.message }

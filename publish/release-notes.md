@@ -4,6 +4,10 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.74
+
+- **A retired test build can't strand you anymore.** Dev panel: when the test build you have installed gets superseded and removed from GitHub, it now stays in your list as "(retired)" with its Uninstall button intact — before, it silently vanished while your game kept running it, with no visible way back to the shipped mod.
+
 ## What changed — v0.3.73
 
 - **The game boots straight to the main menu.** Launch now passes the game's own skip flag, so the "press any key" screen is gone. For the startup logo videos, the Mods panel offers **Fast Launch** as a one-click optional install — together they take you from double-click to MULTIPLAYER with zero interruptions.
