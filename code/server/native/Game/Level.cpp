@@ -628,6 +628,8 @@ void Level::HandleMoveEntityRequest(PacketEvent<client::MoveEntityRequest>& aMes
     component.Position = {pos.get_x(), pos.get_y(), pos.get_z()};
     component.Velocity = aMessage.get_speed();
     component.Tick = aMessage.get_tick();
+    component.Locomotion = aMessage.get_locomotion();
+    component.UpperBody = aMessage.get_upper_body();
 
     // Carried forward, because the component is replaced wholesale below rather than
     // edited. Interest management sends only every Nth update to distant players, and a

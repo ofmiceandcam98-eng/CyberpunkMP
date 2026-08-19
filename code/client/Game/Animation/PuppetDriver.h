@@ -24,7 +24,8 @@ struct PuppetDriver final : States::ILocomotionHost
     void Detach();
 
     // One frame: advance the locomotion state machine and push its parameters.
-    void Tick(float aDeltaSeconds, float aSpeed);
+    // aLocomotion is the sender's gamePSMLocomotionStates value from the wire.
+    void Tick(float aDeltaSeconds, float aSpeed, uint32_t aLocomotion = 0);
 
     float GetAnimLength(Red::CName aName) const override;
     float GetCurrentSpeed() const override { return m_speed; }

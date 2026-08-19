@@ -8,6 +8,12 @@ struct InterpolationComponent
         glm::vec3 Rotation{};
         float Velocity{0.f};
         uint64_t Tick{0};
+
+        // The mover's PlayerStateMachine states (gamePSMLocomotionStates /
+        // gamePSMUpperBodyStates), carried per-sample so the pose travels with the
+        // position it belongs to rather than flickering to the newest packet.
+        uint32_t Locomotion{0};
+        uint32_t UpperBody{0};
     };
 
     List<Timepoint> TimePoints{};

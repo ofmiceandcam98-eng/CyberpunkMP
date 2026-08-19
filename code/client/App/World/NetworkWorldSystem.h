@@ -3,6 +3,8 @@
 #include "Core/Hooking/HookingAgent.hpp"
 #include "RED4ext/Scripting/Natives/Generated/Vector4.hpp"
 #include "RED4ext/Scripting/Natives/Generated/Quaternion.hpp"
+#include "RED4ext/Scripting/Natives/Generated/game/IBlackboard.hpp"
+#include "RED4ext/Scripting/Natives/Generated/game/bb/ScriptID_Int32.hpp"
 #include "Network/Client.h"
 #include "Red/TypeInfo/Macros/Definition.hpp"
 #include "AppearanceSystem.h"
@@ -118,7 +120,23 @@ protected:
 
     void UpdatePlayerLocation() const;
 
+    // Reads the local player's PlayerStateMachine blackboard: what V is DOING
+    // (sprinting, crouching, jumping, aiming), straight from the same state machine
+    // the game's own animation runs on. Zeros on any failure - the movement stream
+    // must never stall because a blackboard was not ready yet.
+    void ReadPlayerState(const Red::Handle<Red::GameObject>& acPlayer,
+                         uint32_t& aLocomotion, uint32_t& aUpperBody) const;
+
 private:
+    // PSM blackboard access, acquired once per player entity and invalidated when the
+    // entity changes (new save, respawn). Mutable: UpdatePlayerLocation is const and
+    // only reports - this cache is bookkeeping, not state of the world.
+    bool AcquirePsmBlackboard(const Red::Handle<Red::GameObject>& acPlayer) const;
+    mutable Red::Handle<Red::game::IBlackboard> m_psmBlackboard;
+    mutable Red::EntityID m_psmOwner{};
+    mutable Red::gamebbScriptID_Int32 m_psmLocomotionId{};
+    mutable Red::gamebbScriptID_Int32 m_psmUpperBodyId{};
+    mutable Red::CBaseFunction* m_pPsmGetInt{nullptr};
     bool m_ready{false};
     bool m_joinRequested{false};
 

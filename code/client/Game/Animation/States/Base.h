@@ -1,5 +1,7 @@
 #pragma once
 
+#include <RED4ext/Scripting/Natives/Generated/game/PSMLocomotionStates.hpp>
+
 struct AnimationData;
 
 namespace States
@@ -23,6 +25,25 @@ struct Base
     static inline float kWalkSpeed = 1.2f;
     static inline float kJogSpeed = 4.f;
     static inline float kSprintSpeed = 6.5f;
+
+    // The sender's own PlayerStateMachine locomotion value rides on every movement
+    // update now. Measured speed is honest about DISTANCE but lies about the band: a
+    // sprinting player sampled at 30Hz measures 5-6 m/s and lands in the jog band, so
+    // remote sprinters jogged forever. The sender's game already decided what they are
+    // doing - trust it for the band, keep the measured value for blend weights.
+    static float BandSpeed(float aMeasured, uint32_t aLocomotion) noexcept
+    {
+        using Red::game::PSMLocomotionStates;
+        const auto state = static_cast<PSMLocomotionStates>(aLocomotion);
+
+        // Only someone actually covering ground gets promoted - Sprint held against a
+        // wall measures ~0 and must not run in place.
+        if (aMeasured >= kWalkSpeed &&
+            (state == PSMLocomotionStates::Sprint || state == PSMLocomotionStates::CrouchSprint))
+            return std::max(aMeasured, kSprintSpeed);
+
+        return aMeasured;
+    }
 
     struct Update
     {

@@ -13,6 +13,7 @@
 #include "App/Components/AttachedComponent.h"
 #include "App/Components/SpawningComponent.h"
 #include "App/Components/InterpolationComponent.h"
+#include "App/Components/DriverComponent.h"
 
 
 // Puts a network vehicle fully under remote control: no local player input, no local
@@ -422,6 +423,18 @@ bool VehicleSystem::HandleVehicleExitMessage(const PacketEvent<server::NotifyVeh
             pInterpolation->TimePoints.clear();
             pInterpolation->HasPrevious = false;
             pInterpolation->LastRenderTick = 0.f;
+        }
+
+        // Driver-puppet stand-down. The engine spends the next several frames tearing
+        // this puppet out of the vehicle and rebuilding its components; the driver
+        // writing placed transforms and re-binding into that rebuild is the prime
+        // suspect for every crash logged 0-15s after an exit tonight. Two seconds
+        // matches the server's own post-exit grace.
+        if (auto* pDriver = characterEntity.get_mut<DriverComponent>())
+        {
+            pDriver->SuppressUntil = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            spdlog::info("[VehicleSystem] driver puppet {:x} standing down for 2s over component rebuild",
+                         aMessage.get_character_id());
         }
     }
 

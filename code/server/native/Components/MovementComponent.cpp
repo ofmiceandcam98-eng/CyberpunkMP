@@ -98,6 +98,8 @@ void ReplicateMovementComponent(flecs::entity aEntity, const MovementComponent& 
     message.set_position(pos);
     message.set_tick(aComponent.Tick);
     message.set_speed(aComponent.Velocity);
+    message.set_locomotion(aComponent.Locomotion);
+    message.set_upper_body(aComponent.UpperBody);
 
     const auto owner = aEntity.parent();
     const auto& from = aComponent.Position;

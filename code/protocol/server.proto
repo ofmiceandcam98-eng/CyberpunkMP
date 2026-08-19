@@ -103,6 +103,12 @@ message NotifyEntityMove {
     uint64 tick = 4;
     float speed = 5;
     common.Vector3 full_rotation = 6;
+
+    // Relayed verbatim from MoveEntityRequest: the mover's PlayerStateMachine
+    // locomotion and upper-body states, so receivers animate what the sender is
+    // actually doing rather than inferring it from measured speed alone.
+    uint32 locomotion = 7;
+    uint32 upper_body = 8;
 }
 
 message ChatMessage {

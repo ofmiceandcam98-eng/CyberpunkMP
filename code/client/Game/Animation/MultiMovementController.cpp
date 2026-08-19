@@ -25,7 +25,7 @@ void MultiMovementController::Tick(float delta)
 {
     States::Base::Update update;
     update.Delta = delta;
-    update.Speed = m_speed;
+    update.Speed = States::Base::BandSpeed(m_speed, m_locomotion);
 
     while (auto transition = m_pState->Process(update))
     {
@@ -169,11 +169,12 @@ void MultiMovementController::GetAnimationParameters(AnimationData& animationDat
     m_pState->GetAnimationData(animationData);
 }
 
-void MultiMovementController::SetTransform(const Red::Vector4& aPosition, float aAngle, float speed)
+void MultiMovementController::SetTransform(const Red::Vector4& aPosition, float aAngle, float speed, uint32_t aLocomotion)
 {
     m_position = aPosition;
     m_angle = aAngle;
     m_speed = speed;
+    m_locomotion = aLocomotion;
 }
 
 float MultiMovementController::GetAnimLength(Red::CName aName) const

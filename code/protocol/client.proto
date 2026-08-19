@@ -62,6 +62,15 @@ message MoveEntityRequest {
     // grant; the server drops anything stale, silently - that race is expected, not an
     // attack. Entities that never change hands (player puppets) stay at zero.
     uint32 epoch = 7;
+
+    // What the sender's own game says they are DOING, not just where they are.
+    // gamePSMLocomotionStates (Default=0 Crouch=1 Sprint=2 Jump=5 Slide=10
+    // CrouchSprint=12 ...) and gamePSMUpperBodyStates (Aim=6). Measured speed lags
+    // and quantizes; these are read straight off the PlayerStateMachine blackboard,
+    // so remote puppets can be told to sprint/crouch/aim the way the sender actually
+    // is. Zero (Default) when unavailable - e.g. seated in a vehicle.
+    uint32 locomotion = 8;
+    uint32 upper_body = 9;
 }
 
 message EnterVehicleRequest {

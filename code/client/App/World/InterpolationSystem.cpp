@@ -44,8 +44,17 @@ static Core::RawFunc<1828854026UL, void (*)(Red::IPlacedComponent*, const Red::W
 
 // Place a driver-puppet and advance its animation for this frame.
 static void DriveEntity(const DriverComponent& aDriver, const EntityComponent& aEntityComponent,
-                        const glm::vec3& aPosition, float aYaw, float aSpeed, float aFrameDeltaMs)
+                        const glm::vec3& aPosition, float aYaw, float aSpeed, uint32_t aLocomotion,
+                        float aFrameDeltaMs)
 {
+    // Vehicle-exit grace. The engine rebuilds the puppet's components over several
+    // frames after an unmount, and this path writing transforms plus re-binding into
+    // that rebuild is the prime suspect for every 2026-08-19 exit crash. Stand down
+    // completely until the deadline passes; the puppet holds still for the moment,
+    // which beats a dead game.
+    if (aDriver.SuppressUntil > std::chrono::steady_clock::now())
+        return;
+
     const auto pSystem = Red::GetGameSystem<NetworkWorldSystem>();
     const auto entityHandle = pSystem->GetEntity(aEntityComponent.Id);
 
@@ -89,7 +98,7 @@ static void DriveEntity(const DriverComponent& aDriver, const EntityComponent& a
         // Mounts rebuild components; the driver re-binds itself (rate-limited) instead
         // of dying the way the engine-attached controller did.
         aDriver.Driver->EnsureAttached(entityHandle.GetPtr(), aEntityComponent.Id.hash);
-        aDriver.Driver->Tick(aFrameDeltaMs * 0.001f, aSpeed);
+        aDriver.Driver->Tick(aFrameDeltaMs * 0.001f, aSpeed, aLocomotion);
     }
 }
 
@@ -157,13 +166,14 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
             const float frameDelta = (aInterpolation.LastRenderTick > 0.f)
                                          ? std::max(tick - aInterpolation.LastRenderTick, 0.f)
                                          : 16.f;
-            DriveEntity(*pDriver, aEntityComponent, guessed, first.Rotation.z, first.Velocity, frameDelta);
+            DriveEntity(*pDriver, aEntityComponent, guessed, first.Rotation.z, first.Velocity,
+                        first.Locomotion, frameDelta);
             aInterpolation.LastRenderTick = tick;
         }
         else if (aEntityComponent.Controller)
         {
             const auto pos = Red::Vector4{guessed.x, guessed.y, guessed.z, 0.f};
-            aEntityComponent.Controller->SetTransform(pos, first.Rotation.z, first.Velocity);
+            aEntityComponent.Controller->SetTransform(pos, first.Rotation.z, first.Velocity, first.Locomotion);
         }
         return;
     }
@@ -239,13 +249,15 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
             const float frameDelta = (aInterpolation.LastRenderTick > 0.f)
                                          ? std::max(tick - aInterpolation.LastRenderTick, 0.f)
                                          : 16.f;
-            DriveEntity(*pDriver, aEntityComponent, position, direction, speed, frameDelta);
+            // The band state comes from the sample AHEAD - it is where the mover is
+            // heading, and it is the fresher of the two.
+            DriveEntity(*pDriver, aEntityComponent, position, direction, speed, second.Locomotion, frameDelta);
         }
         else if (aEntityComponent.Controller)
         {
             // Legacy path: the engine-attached controller (NPC-record puppets).
             const auto pos = Red::Vector4{position.x, position.y, position.z, 0.f};
-            aEntityComponent.Controller->SetTransform(pos, direction, speed);
+            aEntityComponent.Controller->SetTransform(pos, direction, speed, second.Locomotion);
         }
     }
 
@@ -347,7 +359,9 @@ void InterpolationSystem::HandleNotifyEntityMove(const PacketEvent<server::Notif
         return;
     }
 
-    pInterpolation->TimePoints.push_back(InterpolationComponent::Timepoint{position, rotation, aMessage.get_speed(), aMessage.get_tick()});
+    pInterpolation->TimePoints.push_back(InterpolationComponent::Timepoint{
+        position, rotation, aMessage.get_speed(), aMessage.get_tick(),
+        aMessage.get_locomotion(), aMessage.get_upper_body()});
 }
 
 static Core::RawFunc<4018412273UL, float (*)(Red::move::Component*, MultiMovementController*)> AttachController;

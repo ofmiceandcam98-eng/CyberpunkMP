@@ -49,14 +49,14 @@ void PuppetDriver::Detach()
     m_pState.reset();
 }
 
-void PuppetDriver::Tick(float aDeltaSeconds, float aSpeed)
+void PuppetDriver::Tick(float aDeltaSeconds, float aSpeed, uint32_t aLocomotion)
 {
     if (!m_pState || m_animationDriver.component.Expired())
         return;
 
     m_speed = aSpeed;
 
-    States::Base::Update update{aDeltaSeconds, aSpeed};
+    States::Base::Update update{aDeltaSeconds, States::Base::BandSpeed(aSpeed, aLocomotion)};
     while (auto transition = m_pState->Process(update))
     {
         m_pState = std::move(transition->State); // NOLINT(bugprone-unchecked-optional-access)

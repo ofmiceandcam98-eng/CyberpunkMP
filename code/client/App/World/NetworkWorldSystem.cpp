@@ -12,6 +12,9 @@
 #include <RED4ext/Scripting/Natives/Generated/vehicle/MoveSystem.hpp>
 #include <RED4ext/Scripting/Natives/Generated/game/TimeSystem.hpp>
 #include <RED4ext/Scripting/Natives/Generated/world/WeatherScriptInterface.hpp>
+#include <RED4ext/Scripting/Natives/Generated/game/BlackboardSystem.hpp>
+#include <RED4ext/Scripting/Natives/Generated/game/bb/AllScriptDefinitions.hpp>
+#include <RED4ext/Scripting/Natives/Generated/game/bb/ScriptDefinition.hpp>
 
 #include "App/Components/EntityComponent.h"
 #include "App/Components/SpawningComponent.h"
@@ -843,6 +846,74 @@ static Core::RawFunc<
     bool (*)(Red::game::mounting::MountingFacility *, const Red::ent::Entity &, const Red::game::mounting::MountingSlotId &, Red::game::mounting::MountingInfo &)>
     GetMountingInfo;
 
+bool NetworkWorldSystem::AcquirePsmBlackboard(const Red::Handle<Red::GameObject>& acPlayer) const
+{
+    // PlayerStateMachineDef is a SCRIPTED class - none of its members exist in the
+    // generated headers, so both the definition object and its field ids are reached
+    // through RTTI reflection. CProperty::GetValue handles the script value holder.
+    Red::Handle<Red::gamebbAllScriptDefinitions> allDefs;
+    if (!Red::CallGlobal("GetAllBlackboardDefs", allDefs) || !allDefs)
+        return false;
+
+    auto* pDefProp = allDefs->GetType()->GetProperty("PlayerStateMachine");
+    if (!pDefProp)
+        return false;
+
+    const auto psmDef = pDefProp->GetValue<Red::Handle<Red::gamebbScriptDefinition>>(allDefs.instance);
+    if (!psmDef)
+        return false;
+
+    auto* pDefClass = psmDef->GetType();
+    auto* pLocProp = pDefClass->GetProperty("Locomotion");
+    auto* pUpProp = pDefClass->GetProperty("UpperBody");
+    if (!pLocProp || !pUpProp)
+        return false;
+
+    m_psmLocomotionId = pLocProp->GetValue<Red::gamebbScriptID_Int32>(psmDef.instance);
+    m_psmUpperBodyId = pUpProp->GetValue<Red::gamebbScriptID_Int32>(psmDef.instance);
+
+    auto* pBbSystem = Red::GetGameSystem<Red::game::BlackboardSystem>();
+    if (!pBbSystem)
+        return false;
+
+    // PSM is a LOCAL-INSTANCED blackboard, keyed by the player entity - plain Get()
+    // is for global boards and answers the wrong thing here.
+    if (!Red::CallVirtual(pBbSystem, "GetLocalInstanced", m_psmBlackboard, acPlayer->id, psmDef)
+        || !m_psmBlackboard)
+        return false;
+
+    m_pPsmGetInt = Red::Detail::GetFunction(m_psmBlackboard->GetType(), "GetInt");
+    m_psmOwner = acPlayer->id;
+
+    if (m_pPsmGetInt)
+        spdlog::info("[PSM] PlayerStateMachine blackboard acquired for player {:x}", acPlayer->id.hash);
+
+    return m_pPsmGetInt != nullptr;
+}
+
+void NetworkWorldSystem::ReadPlayerState(const Red::Handle<Red::GameObject>& acPlayer,
+                                         uint32_t& aLocomotion, uint32_t& aUpperBody) const
+{
+    aLocomotion = 0;
+    aUpperBody = 0;
+
+    // Re-acquire when the player entity changed (new save, respawn). Failure is
+    // ordinary early in a session - try again next tick, send Default meanwhile.
+    if (!m_psmBlackboard || m_psmOwner.hash != acPlayer->id.hash)
+    {
+        if (!AcquirePsmBlackboard(acPlayer))
+            return;
+    }
+
+    int32_t locomotion = 0;
+    int32_t upperBody = 0;
+    Red::Detail::CallFunctionWithArgs(m_pPsmGetInt, m_psmBlackboard, locomotion, m_psmLocomotionId);
+    Red::Detail::CallFunctionWithArgs(m_pPsmGetInt, m_psmBlackboard, upperBody, m_psmUpperBodyId);
+
+    aLocomotion = static_cast<uint32_t>(locomotion);
+    aUpperBody = static_cast<uint32_t>(upperBody);
+}
+
 void NetworkWorldSystem::UpdatePlayerLocation() const
 {
     const auto system = Red::GetGameSystem<Game::PlayerSystem>();
@@ -965,6 +1036,15 @@ void NetworkWorldSystem::UpdatePlayerLocation() const
         request.set_id(*GetRemotePlayerId());
         request.set_speed(speed);
         request.set_tick(GetTick());
+
+        // What V is DOING, not just where V is. Read only on the on-foot path: seated
+        // in a vehicle the PSM just holds its last on-foot value, and the vehicle
+        // stream already says everything a passenger needs said.
+        uint32_t locomotion = 0;
+        uint32_t upperBody = 0;
+        ReadPlayerState(player, locomotion, upperBody);
+        request.set_locomotion(locomotion);
+        request.set_upper_body(upperBody);
 
         const auto pNetworkService = Core::Container::Get<NetworkService>();
         pNetworkService->Send(request);
@@ -1151,6 +1231,12 @@ void NetworkWorldSystem::OnDisconnected(Client::EDisconnectReason aReason)
     // id behind - and the reconnect streamed it at the new session, which the server
     // rejected packet by packet as an invalid entity: a player nobody could see move.
     m_remotePlayerId = std::nullopt;
+
+    // Do not hold a strong blackboard handle across sessions; the next session
+    // re-acquires against whatever player entity it actually has.
+    m_psmBlackboard = {};
+    m_psmOwner = {};
+    m_pPsmGetInt = nullptr;
 
     RED4ext::StackArgs_t args;
     auto reason = (uint32_t)aReason;
