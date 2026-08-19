@@ -48,8 +48,28 @@ static void DriveEntity(const DriverComponent& aDriver, const EntityComponent& a
 {
     const auto pSystem = Red::GetGameSystem<NetworkWorldSystem>();
     const auto entityHandle = pSystem->GetEntity(aEntityComponent.Id);
-    if (!entityHandle || !entityHandle->placedComponent)
+
+    // Every early-out logs ONCE per puppet: a frozen puppet must name its gate.
+    if (!entityHandle)
+    {
+        if (aDriver.Driver && !aDriver.Driver->GateLogged)
+        {
+            aDriver.Driver->GateLogged = true;
+            spdlog::warn("[Driver] puppet {:x} has no engine entity - cannot move it", aEntityComponent.Id.hash);
+        }
         return;
+    }
+
+    if (!entityHandle->placedComponent)
+    {
+        if (aDriver.Driver && !aDriver.Driver->GateLogged)
+        {
+            aDriver.Driver->GateLogged = true;
+            spdlog::warn("[Driver] puppet {:x} has no placedComponent - transform writes have nowhere to go",
+                         aEntityComponent.Id.hash);
+        }
+        return;
+    }
 
     Red::WorldTransform transform{};
     transform.Position = Red::WorldPosition(Red::Vector4{aPosition.x, aPosition.y, aPosition.z, 0.f});
@@ -59,6 +79,13 @@ static void DriveEntity(const DriverComponent& aDriver, const EntityComponent& a
 
     if (aDriver.Driver)
     {
+        if (!aDriver.Driver->FirstWriteLogged)
+        {
+            aDriver.Driver->FirstWriteLogged = true;
+            spdlog::info("[Driver] puppet {:x} first transform write -> ({:.1f}, {:.1f}, {:.1f})",
+                         aEntityComponent.Id.hash, aPosition.x, aPosition.y, aPosition.z);
+        }
+
         // Mounts rebuild components; the driver re-binds itself (rate-limited) instead
         // of dying the way the engine-attached controller did.
         aDriver.Driver->EnsureAttached(entityHandle.GetPtr(), aEntityComponent.Id.hash);
@@ -89,10 +116,17 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
     if (!aInterpolation.HasPrevious)
         return;
 
-    const auto pEntityStubSystem = Red::GetGameSystem<Red::game::IEntityStubSystem>();
-    const auto* pStub = pEntityStubSystem->FindStub(aEntityComponent.Id);
-    if (!pStub)
-        return;
+    // The stub gate predates driver puppets and only means anything on the legacy
+    // path - player-record entities may never get a stub at all, and this silently
+    // freezing them was indistinguishable from every other freeze. Driver puppets
+    // skip it; their own gates log.
+    if (!aEntity.has<DriverComponent>())
+    {
+        const auto pEntityStubSystem = Red::GetGameSystem<Red::game::IEntityStubSystem>();
+        const auto* pStub = pEntityStubSystem->FindStub(aEntityComponent.Id);
+        if (!pStub)
+            return;
+    }
 
     if (aEntity.has<AttachedComponent>())
         return;

@@ -51,15 +51,14 @@ struct Settings
     // Candidates worth trying: Character.Player_Puppet_Base (what the real player is
     // built from), Character.MaMuppet (the mannequin, no targeting).
     //
-    // Round 2 for Player_Puppet_Base: round 1 proved identity (real faces and bodies)
-    // and proved the OLD movement path can never drive player records - they never
-    // enter the NPC idle-controller pipeline it hooks. This build carries the
-    // PuppetDriver: mod-owned movement (placed-transform writes) and animation
-    // (feature writes), attached at promotion, self-healing across mounts. Player
-    // records route to it automatically; the mannequins stay on the proven legacy
-    // path as the escape hatch (-puppet-record Character.MaMuppet).
-    String puppetRecordMale = "Character.Player_Puppet_Base";
-    String puppetRecordFemale = "Character.Player_Puppet_Base";
+    // The mannequins are the PLAYABLE baseline: they move, they sync, every world
+    // feature runs on them. Player_Puppet_Base (real faces) went through two live
+    // rounds - round 1 proved identity but froze (no controller), round 2 attached
+    // the new PuppetDriver but the transform writes still did not visibly move them.
+    // The real-rig work continues OFF the test channel (-puppet-record flag) until it
+    // demonstrably walks; player sessions stay on what works.
+    String puppetRecordMale = "Character.MaMuppet";
+    String puppetRecordFemale = "Character.WaMuppet";
 
     // Route EVERY puppet through the mod-owned PuppetDriver (movement by placed
     // transform, animation by feature writes) instead of only player-record puppets.

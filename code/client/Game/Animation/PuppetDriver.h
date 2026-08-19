@@ -29,6 +29,11 @@ struct PuppetDriver final : States::ILocomotionHost
     float GetAnimLength(Red::CName aName) const override;
     float GetCurrentSpeed() const override { return m_speed; }
 
+    // One-shot diagnostics for the movement path - which gate blocked, or proof the
+    // first transform write happened. Public: written by the interpolation pass.
+    bool FirstWriteLogged{false};
+    bool GateLogged{false};
+
 private:
     AnimationDriver m_animationDriver;
     UniquePtr<States::Base> m_pState;
