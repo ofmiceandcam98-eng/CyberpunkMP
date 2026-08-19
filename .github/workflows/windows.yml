@@ -35,13 +35,17 @@ jobs:
           git submodule sync --recursive
           git submodule update --init --force --recursive --depth=1
 
+      # The v2 namespace deliberately orphans every older cache: restore-keys pulls the
+      # nearest PREVIOUS cache on a key miss, which resurrected a package dir built by
+      # xmake 2.9.6 against pre-pin dependency resolves - and header-only packages then
+      # failed to install instantly, with the real cause invisible from the log.
       - name: 'Cache xmake dependencies'
         uses: actions/cache@v4
         with:
           path: ~/AppData/Local/.xmake/packages
-          key: ${{ runner.os }}-xmake-packages-${{ hashFiles('**/xmake.lua') }}
+          key: ${{ runner.os }}-xmake-packages-v2-${{ hashFiles('**/xmake.lua') }}
           restore-keys: |
-            ${{ runner.os }}-xmake-packages-
+            ${{ runner.os }}-xmake-packages-v2-
 
       # Install pnpm for better disk/cache performance
       - name: Install pnpm
@@ -53,16 +57,19 @@ jobs:
       - name: Setup pnpm
         run: pnpm config set virtual-store-dir-max-length=50
 
-      # Install xmake
+      # Install xmake - the SAME version every developer machine pins (CONTRIBUTING
+      # documents the toolchain pins as load-bearing). CI ran 2.9.6 while the project
+      # moved to 3.1.0, and current package recipes assume the newer xmake.
       - name: 'Setup xmake'
         uses: xmake-io/github-action-setup-xmake@v1
         with:
-          xmake-version: 2.9.6 # Sync with cache key too
+          xmake-version: 3.1.0 # Sync with cache key too
           actions-cache-folder: '.xmake-cache' # This doesn't cache dependencies, only xmake itself
-          actions-cache-key: ${{ runner.os }}-xmake-cache-2.9.6
+          actions-cache-key: ${{ runner.os }}-xmake-cache-3.1.0
 
+      # SDK pin matches the developer toolchain (10.0.22621), not the retired 19041.
       - name: 'Configure xmake and install dependencies'
-        run: xmake config --arch=${{ matrix.arch }} --mode=${{ matrix.mode }} --vs_sdkver=10.0.19041.0 --yes
+        run: xmake config --arch=${{ matrix.arch }} --mode=${{ matrix.mode }} --vs_sdkver=10.0.22621.0 --yes
 
       # Build the game
       - name: 'Build with xmake'
