@@ -26,6 +26,21 @@ REMOTE=$(git rev-parse @{u})
 
 [ "$LOCAL" = "$REMOTE" ] && exit 0   # nothing new
 
+# Never rebuild under a live session. A deploy is a full native compile on the same
+# 4-core box that is serving the tick loop, followed by a container restart that kicks
+# everyone - which players experienced as the game "getting worse" in windows that
+# correlated with pushes, not code. The status endpoint is queried through the
+# tailscale sidecar because it shares the server's network namespace (the host only
+# publishes the UDP game port). If the count cannot be read, deploy anyway: a server
+# whose status endpoint is down needs the update more than it needs the courtesy.
+SIDECAR="${SIDECAR:-cyberpunkmp-tailscale}"
+PLAYERS=$(docker exec "$SIDECAR" wget -qO- -T 5 http://localhost:11778/api/v1/status/ 2>/dev/null \
+          | grep -o '"Players": *[0-9]*' | grep -o '[0-9]*$')
+if [ -n "$PLAYERS" ] && [ "$PLAYERS" -gt 0 ]; then
+    echo "$(date -Is) deferring $LOCAL -> $REMOTE: $PLAYERS player(s) online" >> "$LOG"
+    exit 0   # retry on the next cron tick; the fetch already happened, pull comes later
+fi
+
 echo "$(date -Is) updating $LOCAL -> $REMOTE" >> "$LOG"
 git pull --quiet || { echo "$(date -Is) pull failed" >> "$LOG"; exit 1; }
 
