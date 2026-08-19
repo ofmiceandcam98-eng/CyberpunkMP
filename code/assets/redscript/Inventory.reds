@@ -85,7 +85,22 @@ public class MpInventory {
 
     network.EndInventoryCapture(Cast<Int64>(money));
 
-    FTLog(s"[MpInventory] captured \(counted) stack(s) and \(money) eddies for the server");
+    // Counted separately and only for the log.
+    //
+    // Cyberware is not a separate system - it is ordinary items carrying the 'Cyberware'
+    // tag, which is how the game itself finds it (player.script reads it with
+    // GetItemListByTag). So GetItemList above already returns it and it is already being
+    // stored. Reporting the number proves that rather than assuming it, because "is
+    // cyberware included" is exactly the sort of thing that reads as obviously-yes and
+    // turns out to be no.
+    //
+    // Worth being precise about what this does and does not buy: the chrome is STORED and
+    // will be given back, but given back into the inventory, not re-installed into its
+    // slots. Installing is the equipment system's job and is a separate piece of work.
+    let chrome: array<wref<gameItemData>>;
+    transaction.GetItemListByTag(player, n"Cyberware", chrome);
+
+    FTLog(s"[MpInventory] captured \(counted) stack(s), \(ArraySize(chrome)) of them cyberware, and \(money) eddies");
     return true;
   }
 
