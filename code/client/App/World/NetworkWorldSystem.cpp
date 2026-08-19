@@ -126,18 +126,21 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
         return false;
     }
 
-    // Register BEFORE the entity finishes assembling. The animation-thread hook
-    // identifies our puppets through this registry instead of reading the entity's
-    // tag array off-thread, which was racing against the main thread's setup.
-    App::PuppetRegistry::Add(id.hash);
-
-    auto spawned = make_alive(aServerId);
-
     // Player-record puppets never enter the NPC idle-controller pipeline the legacy
     // path hooks - they are driven by the mod-owned PuppetDriver instead. The flag
     // routes EVERYTHING through the driver for A/B testing the old path's retirement.
     const bool usesDriver = Settings::Get().puppetDriverAll ||
                             record.rfind("Character.Player_Puppet", 0) == 0;
+
+    // Register BEFORE the entity finishes assembling. The animation-thread hook
+    // identifies our puppets through this registry instead of reading the entity's
+    // tag array off-thread, which was racing against the main thread's setup. Driver
+    // puppets go in BOTH tables - the second silences the hook for them entirely.
+    App::PuppetRegistry::Add(id.hash);
+    if (usesDriver)
+        App::PuppetRegistry::AddDriver(id.hash);
+
+    auto spawned = make_alive(aServerId);
 
     spawned.emplace<SpawningComponent>(id, nullptr, usesDriver);
 
@@ -169,12 +172,14 @@ void NetworkWorldSystem::DeSpawn(uint64_t aServerId) const
     if (auto* pEntity = entity.get<EntityComponent>())
     {
         App::PuppetRegistry::Remove(pEntity->Id.hash);
+        App::PuppetRegistry::RemoveDriver(pEntity->Id.hash);
         const auto handle = Red::GetGameSystem<NetworkWorldSystem>();
         Red::Detail::CallFunctionWithArgs(m_pDeletePuppet, handle, pEntity->Id);
     }
     else if (auto* pEntity = entity.get<SpawningComponent>())
     {
         App::PuppetRegistry::Remove(pEntity->Id.hash);
+        App::PuppetRegistry::RemoveDriver(pEntity->Id.hash);
         const auto handle = Red::GetGameSystem<NetworkWorldSystem>();
         Red::Detail::CallFunctionWithArgs(m_pDeletePuppet, handle, pEntity->Id);
     }
@@ -1109,6 +1114,7 @@ void NetworkWorldSystem::OnDisconnected(Client::EDisconnectReason aReason)
         });
 
     App::PuppetRegistry::Clear();
+    App::PuppetRegistry::ClearDrivers();
 
     if (m_updatePlayerLocation)
         m_updatePlayerLocation.destruct();

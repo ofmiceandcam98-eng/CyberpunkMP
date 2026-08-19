@@ -118,18 +118,18 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
         const glm::vec3 heading{-std::sin(first.Rotation.z), std::cos(first.Rotation.z), 0.f};
         const glm::vec3 guessed = first.Position + heading * (first.Velocity * ahead * 0.001f);
 
-        if (aEntityComponent.Controller)
-        {
-            const auto pos = Red::Vector4{guessed.x, guessed.y, guessed.z, 0.f};
-            aEntityComponent.Controller->SetTransform(pos, first.Rotation.z, first.Velocity);
-        }
-        else if (const auto* pDriver = aEntity.get<DriverComponent>())
+        if (const auto* pDriver = aEntity.get<DriverComponent>())
         {
             const float frameDelta = (aInterpolation.LastRenderTick > 0.f)
                                          ? std::max(tick - aInterpolation.LastRenderTick, 0.f)
                                          : 16.f;
             DriveEntity(*pDriver, aEntityComponent, guessed, first.Rotation.z, first.Velocity, frameDelta);
             aInterpolation.LastRenderTick = tick;
+        }
+        else if (aEntityComponent.Controller)
+        {
+            const auto pos = Red::Vector4{guessed.x, guessed.y, guessed.z, 0.f};
+            aEntityComponent.Controller->SetTransform(pos, first.Rotation.z, first.Velocity);
         }
         return;
     }
@@ -198,21 +198,20 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
         const auto deltaAngle{DeltaAngle(first.Rotation.z, second.Rotation.z, true) * ratio};
         const auto direction = Mod(first.Rotation.z + deltaAngle, 2.f * static_cast<float>(Pi));
 
-        if (aEntityComponent.Controller)
+        if (const auto* pDriver = aEntity.get<DriverComponent>())
         {
-            // Legacy path: the engine-attached controller (NPC-record puppets).
-            const auto pos = Red::Vector4{position.x, position.y, position.z, 0.f};
-            aEntityComponent.Controller->SetTransform(pos, direction, speed);
-        }
-        else if (const auto* pDriver = aEntity.get<DriverComponent>())
-        {
-            // Driver path: place the entity directly and tick its animation. This is
-            // the path player-record puppets live on - the engine never gave them a
-            // controller to hijack.
+            // Driver path FIRST - it outranks any controller a hook race may have
+            // attached before the suppressor registered this puppet as driver-owned.
             const float frameDelta = (aInterpolation.LastRenderTick > 0.f)
                                          ? std::max(tick - aInterpolation.LastRenderTick, 0.f)
                                          : 16.f;
             DriveEntity(*pDriver, aEntityComponent, position, direction, speed, frameDelta);
+        }
+        else if (aEntityComponent.Controller)
+        {
+            // Legacy path: the engine-attached controller (NPC-record puppets).
+            const auto pos = Red::Vector4{position.x, position.y, position.z, 0.f};
+            aEntityComponent.Controller->SetTransform(pos, direction, speed);
         }
     }
 
@@ -332,6 +331,14 @@ void HookIdleController_SetAnimation(Game::Controller* apController, AnimationDa
         // PuppetRegistry only touches the entity's 64-bit id.
         if (App::PuppetRegistry::Contains(pOwner->id.hash))
         {
+            // Driver puppets are moved and animated by the PuppetDriver from the main
+            // thread. This hook attaching its legacy controller to them OUTRANKED the
+            // driver (interpolation preferred a non-null Controller) and froze every
+            // driver puppet solid - the 2026-08-19 live failure. Total silence for
+            // them: no attach, and no vanilla idle writes either.
+            if (App::PuppetRegistry::IsDriver(pOwner->id.hash))
+                return;
+
             if (apController->m_type == MultiMovementController::kMulti)
                 return;
 

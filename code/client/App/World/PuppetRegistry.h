@@ -133,4 +133,102 @@ inline void Clear()
 
     GetHighWater().store(0, std::memory_order_release);
 }
+
+// ---------------------------------------------------------------------------
+// The DRIVER subset: puppets moved and animated by the mod-owned PuppetDriver.
+//
+// The idle-controller hook must do NOTHING for these - not attach the legacy
+// controller (which would outrank the driver and freeze the puppet: the exact live
+// failure of 2026-08-19), not forward to the vanilla idle writes. Same lock-free
+// shape as the main table because it is read from the same animation threads.
+// ---------------------------------------------------------------------------
+
+inline std::array<std::atomic<uint64_t>, kCapacity>& GetDriverSlots()
+{
+    static std::array<std::atomic<uint64_t>, kCapacity> s_slots{};
+    return s_slots;
+}
+
+inline std::atomic<size_t>& GetDriverHighWater()
+{
+    static std::atomic<size_t> s_highWater{0};
+    return s_highWater;
+}
+
+inline void AddDriver(uint64_t aEntityIdHash)
+{
+    if (aEntityIdHash == 0)
+        return;
+
+    std::lock_guard _(GetWriteMutex());
+
+    auto& slots = GetDriverSlots();
+
+    for (auto& slot : slots)
+    {
+        if (slot.load(std::memory_order_relaxed) == aEntityIdHash)
+            return;
+    }
+
+    for (size_t i = 0; i < kCapacity; ++i)
+    {
+        if (slots[i].load(std::memory_order_relaxed) == 0)
+        {
+            slots[i].store(aEntityIdHash, std::memory_order_release);
+
+            auto& highWater = GetDriverHighWater();
+            if (highWater.load(std::memory_order_relaxed) < i + 1)
+                highWater.store(i + 1, std::memory_order_release);
+
+            return;
+        }
+    }
+}
+
+inline void RemoveDriver(uint64_t aEntityIdHash)
+{
+    if (aEntityIdHash == 0)
+        return;
+
+    std::lock_guard _(GetWriteMutex());
+
+    for (auto& slot : GetDriverSlots())
+    {
+        if (slot.load(std::memory_order_relaxed) == aEntityIdHash)
+        {
+            slot.store(0, std::memory_order_release);
+            return;
+        }
+    }
+}
+
+inline bool IsDriver(uint64_t aEntityIdHash)
+{
+    if (aEntityIdHash == 0)
+        return false;
+
+    const size_t used = GetDriverHighWater().load(std::memory_order_acquire);
+    if (used == 0)
+        return false;
+
+    const auto& slots = GetDriverSlots();
+
+    for (size_t i = 0; i < used; ++i)
+    {
+        if (slots[i].load(std::memory_order_acquire) == aEntityIdHash)
+            return true;
+    }
+
+    return false;
+}
+
+inline void ClearDrivers()
+{
+    std::lock_guard _(GetWriteMutex());
+
+    for (auto& slot : GetDriverSlots())
+        slot.store(0, std::memory_order_release);
+
+    GetDriverHighWater().store(0, std::memory_order_release);
+}
 } // namespace App::PuppetRegistry
