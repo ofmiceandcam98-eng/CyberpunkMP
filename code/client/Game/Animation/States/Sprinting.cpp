@@ -1,6 +1,7 @@
 #include "Sprinting.h"
 
 #include "Idling.h"
+#include "Jogging.h"
 #include "Walking.h"
 
 #include "Game/Animation/AnimationData.h"
@@ -16,22 +17,34 @@ void Sprinting::Enter() noexcept
 
 void Sprinting::GetAnimationData(AnimationData& aData) const
 {
+    // See Walking::GetAnimationData - a missing clip must degrade to the idle glide,
+    // not stall the motion pipeline into a frozen puppet.
+    if (m_duration <= 0.f)
+    {
+        Base::GetAnimationData(aData);
+        return;
+    }
+
     aData.action = MTA_Move;
     aData.style = LS_Sprint;
     aData.time = m_timer;
+    aData.speed = m_parent.m_speed;
 }
 
 std::optional<Base::Transition> Sprinting::Process(const Update& acEvent) noexcept
 {
-    if (acEvent.Speed < kRunSpeed)
+    if (acEvent.Speed < kSprintSpeed)
     {
+        if (acEvent.Speed >= kJogSpeed)
+            return Transit<Jogging>();
         if (acEvent.Speed >= kWalkSpeed)
             return Transit<Walking>();
         return Transit<Idling>();
     }
 
     m_timer += acEvent.Delta;
-    m_timer = std::fmodf(m_timer, m_duration);
+    // See Jogging::Process - a missing clip must not fmodf by zero.
+    m_timer = m_duration > 0.f ? std::fmodf(m_timer, m_duration) : 0.f;
 
     return std::nullopt;
 }

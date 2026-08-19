@@ -299,9 +299,9 @@ void HookIdleController_SetAnimation(Game::Controller* apController, AnimationDa
             // vehicle mount, in exactly the window where mounts tear our controller off
             // and queue this re-attach. Attaching through the freed pointer was a
             // use-after-free with no log line: the observing client died seconds after
-            // a remote car materialized with its driver. Everything is re-resolved from
-            // the id once we are ON the main thread, where the entity cannot be rebuilt
-            // out from under us.
+            // a remote car materialized with its driver, twice, on the faster machine
+            // only. Everything is re-resolved from the id once we are ON the main
+            // thread, where the entity cannot be rebuilt out from under us.
             ThreadService::RunInMainThread([id = pOwner->id]
             {
                 const auto pSystem = Red::GetGameSystem<NetworkWorldSystem>();

@@ -519,6 +519,12 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
         .set<MovementComponent>({pos, rot, {}})
         .set<AppearanceComponent>({equipment, appearance});
 
+    // The one line that says a person actually arrived in the world. Vehicle spawns log
+    // similar-sounding lines and have been misread as player spawns during diagnosis;
+    // this one names the human.
+    spdlog::info("Puppet {:x} spawned for {} (connection {:x})",
+                 pComponent->Puppet.id(), pComponent->Username, aMessage.ConnectionId);
+
     // Somebody with no character is told, once, on arrival.
     //
     // The server is the only side that knows whether they have one, and a player who is
@@ -742,7 +748,9 @@ void Level::HandleEnterVehicleRequest(PacketEvent<client::EnterVehicleRequest>& 
         // later change of hands goes through TransferAuthority.
         vehicle = GetWorld()->entity().child_of(player).set<MovementComponent>({pos, rot, {}}).set<VehicleComponent>({aMessage.get_vehicle_id()}).set<AuthorityComponent>({});
 
-        spdlog::info("Player {:x} spawned and entered vehicle {:x}", aMessage.get_id(), vehicle.id());
+        // Named "Vehicle ... spawned", not "Player ... spawned" - this line kept being
+        // misread as a player spawn in log forensics.
+        spdlog::info("Vehicle {:x} spawned by character {:x} (driver seat)", vehicle.id(), aMessage.get_id());
     }
 
     // One person per seat.
