@@ -183,6 +183,34 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
     // else: an existing character's Name and NameChosen came over with the copy,
     // untouched - editing your face is not an identity change.
 
+    // Possessions, taken from the client and kept by the server.
+    //
+    // Only overwritten when the client actually sent some. An older client, or one saving
+    // before it has read the player's inventory, sends none - and treating that as "they
+    // own nothing" would wipe a character's belongings on their next ripperdoc visit. Same
+    // reasoning as copying the record before editing it: absence is not a value.
+    if (!aMessage.get_inventory().empty() || aMessage.get_money() > 0)
+    {
+        character.Inventory.clear();
+        character.Inventory.reserve(aMessage.get_inventory().size());
+
+        for (const auto& stack : aMessage.get_inventory())
+        {
+            // A zero id is not an item, and a zero quantity is not a holding. Both mean
+            // something upstream failed to read properly, and storing them would hand the
+            // player back junk on their next spawn.
+            if (stack.get_id() == 0 || stack.get_quantity() == 0)
+                continue;
+
+            character.Inventory.push_back({stack.get_id(), stack.get_quantity()});
+        }
+
+        character.Money = aMessage.get_money();
+
+        spdlog::info("{} stored {} item stack(s) and {} eddies", pPlayer->Username,
+                     character.Inventory.size(), character.Money);
+    }
+
     store.SaveCharacter(pPlayer->DiscordId, pPlayer->Username, character);
 
     spdlog::info("{} saved character '{}' from the creator ({} bytes)", pPlayer->Username,

@@ -32,6 +32,11 @@ message SpawnCharacterRequest {
 // Sent when the character creator closes, NOT on every spawn - the spawn message carries
 // an appearance too, but that one describes whoever the loaded save happens to contain.
 // This one is a deliberate "this is me", and it is the only one the server stores.
+message ItemStack {
+    uint64 id = 1;
+    uint32 quantity = 2;
+}
+
 message SaveCharacterRequest {
     // The game's own CharacterCustomizationState, serialised. The server stores it
     // opaquely and hands the same bytes back, so a game patch changing the format needs
@@ -44,7 +49,20 @@ message SaveCharacterRequest {
     // Kept out of the blob because the server needs it without parsing: it decides which
     // puppet record other clients spawn for this player.
     bool is_male = 3;
+
+    // What the character is carrying, so possessions belong to the server rather than to
+    // whatever save the player happened to load.
+    //
+    // Raw TweakDBIDs, like the equipment list above, for the same reason: the server has
+    // no need to know what an item IS in order to remember that you have it, and a server
+    // that understood item records would need updating every game patch.
+    repeated ItemStack inventory = 4;
+
+    // Eddies. A balance is a number - modelling it as a stack of one item is how you get
+    // somebody duplicating money by counting wrong.
+    int64 money = 5;
 }
+
 
 message MoveEntityRequest {
     bool unreliable = 1000; // This is just a tag to indicate that this message is unreliable

@@ -12,12 +12,34 @@ public native class NetworkWorldSystem extends IGameSystem {
     // "redscript will work it out". Without this line the call fails with
     // UNRESOLVED_METHOD and takes every other script in the mod down with it.
     public native func MarkNewCharacter() -> Void;
+
+    // Handing the player's possessions to the server. Declared on both sides, like every
+    // native here - a missing declaration fails with UNRESOLVED_METHOD and takes every
+    // other script in the mod down with it.
+    public native func BeginInventoryCapture() -> Void;
+    public native func AddInventoryItem(id: Uint64, quantity: Uint32) -> Void;
+    public native func EndInventoryCapture(money: Int64) -> Void;
+
+    // TDBID exposes ToNumber and no inverse - the conversion is one-way in script, so the
+    // rebuild happens in C++ where a TweakDBID is just its number.
+    public native func TdbidFromNumber(value: Uint64) -> TweakDBID;
     public native func ConsumeJoinRequest() -> Bool;
     public native func GetEntityIdByServerId(serverId: Uint64) -> EntityID;
     public native func GetAppearanceSystem() -> ref<AppearanceSystem>;
     public native func GetChatSystem() -> ref<ChatSystem>;
     public native func GetInterpolationSystem() -> ref<InterpolationSystem>;
     public native func GetVehicleSystem() -> ref<VehicleSystem>;
+
+    // Called from native immediately before a character save is sent.
+    //
+    // The reading has to happen in script (the item API lives there) and the sending has
+    // to happen in native (the socket lives there), so native asks script to fill the
+    // buffer and then sends it. Doing it at save time rather than on a timer means what
+    // is stored is what the player had at the moment the server was told about them,
+    // rather than whatever they had up to a minute ago.
+    public func CaptureInventory() -> Void {
+        MpInventory.Capture(this);
+    }
 
     public func OnConnected() -> Void {
         // let evt: ref<ConnectedToServer>;

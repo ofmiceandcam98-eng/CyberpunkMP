@@ -456,6 +456,43 @@ void NetworkWorldSystem::MarkNewCharacter()
     m_newCharacterPending = true;
 }
 
+void NetworkWorldSystem::BeginInventoryCapture()
+{
+    m_capturedInventory.clear();
+    m_capturedMoney = 0;
+    m_hasCapturedPossessions = false;
+}
+
+void NetworkWorldSystem::AddInventoryItem(uint64_t aId, uint32_t aQuantity)
+{
+    // A zero id is not an item and a zero count is not a holding. Both mean the read
+    // failed upstream, and storing them would hand the player junk back on their next
+    // spawn - which is worse than the item simply being missed.
+    if (aId == 0 || aQuantity == 0)
+        return;
+
+    client::ItemStack stack;
+    stack.set_id(aId);
+    stack.set_quantity(aQuantity);
+
+    m_capturedInventory.push_back(stack);
+}
+
+Red::TweakDBID NetworkWorldSystem::TdbidFromNumber(uint64_t aValue) const
+{
+    Red::TweakDBID id;
+    id.value = aValue;
+    return id;
+}
+
+void NetworkWorldSystem::EndInventoryCapture(int64_t aMoney)
+{
+    m_capturedMoney = aMoney;
+    m_hasCapturedPossessions = true;
+
+    spdlog::info("[Inventory] captured {} stack(s) and {} eddies", m_capturedInventory.size(), aMoney);
+}
+
 void NetworkWorldSystem::RequestRespawn()
 {
     const auto& service = Core::Container::Get<NetworkService>();
@@ -608,6 +645,29 @@ void NetworkWorldSystem::PollAppearanceChanges()
     request.set_ccstate(m_pendingAppearance);
     request.set_is_male(m_pendingIsMale);
 
+    // Ask the script side to read the inventory first.
+    //
+    // Native cannot read it - the item API is script-only - and script cannot send it, so
+    // the capture is requested here, synchronously, and lands in the buffers below before
+    // this request is built.
+    Red::CallVirtual(Red::GetGameSystem<NetworkWorldSystem>(), "CaptureInventory");
+
+    // Possessions ride along with the appearance save.
+    //
+    // The same message, rather than one of their own, because they are saved at the same
+    // moments and for the same reason: this is the point at which the server is told what
+    // this character IS. A separate message would be a second thing to keep in step, and
+    // the two could then disagree about which character they described.
+    //
+    // Sent only when a capture actually ran. An empty list is ambiguous - it reads as
+    // "owns nothing" and as "nobody looked" - and the server treats absence as "leave what
+    // is stored alone" rather than emptying somebody's pockets.
+    if (m_hasCapturedPossessions)
+    {
+        request.set_inventory(m_capturedInventory);
+        request.set_money(m_capturedMoney);
+    }
+
     // No name. An appearance save is not an identity change - this used to send the
     // Discord name on every ripperdoc visit, and the server took any non-empty name as a
     // rename: editing your hair as 'Silverhand92' walked you out named after your account,
@@ -661,6 +721,29 @@ void NetworkWorldSystem::SaveCharacterAppearance()
     client::SaveCharacterRequest request;
     request.set_ccstate(writer.bytes);
     request.set_is_male(stateHandle->instance->isBodyGenderMale);
+
+    // Ask the script side to read the inventory first.
+    //
+    // Native cannot read it - the item API is script-only - and script cannot send it, so
+    // the capture is requested here, synchronously, and lands in the buffers below before
+    // this request is built.
+    Red::CallVirtual(Red::GetGameSystem<NetworkWorldSystem>(), "CaptureInventory");
+
+    // Possessions ride along with the appearance save.
+    //
+    // The same message, rather than one of their own, because they are saved at the same
+    // moments and for the same reason: this is the point at which the server is told what
+    // this character IS. A separate message would be a second thing to keep in step, and
+    // the two could then disagree about which character they described.
+    //
+    // Sent only when a capture actually ran. An empty list is ambiguous - it reads as
+    // "owns nothing" and as "nobody looked" - and the server treats absence as "leave what
+    // is stored alone" rather than emptying somebody's pockets.
+    if (m_hasCapturedPossessions)
+    {
+        request.set_inventory(m_capturedInventory);
+        request.set_money(m_capturedMoney);
+    }
 
     // No name here either - same reason as PollAppearanceChanges. This path also serves
     // the first capture of a brand-new character (capture_only), and that case needs no

@@ -89,6 +89,40 @@ struct CharacterRecord
     // without anything having to remember to reset it.
     bool SpawnedBefore{false};
 
+    /**
+     * What the character owns, held by the server rather than by the player's save.
+     *
+     * Identity was already server-owned - name, face, body, progression - but possessions
+     * were not, and that is the half that decides whether a character is really the
+     * server's. Everything a player carried came off their own disk: their guns, their
+     * eddies, their cyberware. Two people with the same character name were walking around
+     * with whatever their singleplayer file happened to contain, and nothing the server
+     * knew could contradict it.
+     *
+     * Stored as raw TweakDBIDs and counts. The server does not interpret them, for the
+     * same reason it does not interpret the appearance blob: a server that understood item
+     * records would need updating every game patch, and it has no need to know what a
+     * thing IS in order to remember that you have three of it.
+     */
+    struct ItemStack
+    {
+        // The item's TweakDBID. A number rather than a name deliberately - names are a
+        // client-side convenience and the debug helper that prints them returns empty
+        // strings on 2.31, which is how equipment sync spent a week looking fine and
+        // shipping nothing.
+        uint64_t Id{0};
+        uint32_t Quantity{1};
+
+        NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(ItemStack, Id, Quantity)
+    };
+
+    std::vector<ItemStack> Inventory;
+
+    // Eddies. Separate from Inventory because the game models money as an item and this
+    // does not - a balance is a number, and treating it as a stack of one item invites
+    // somebody to duplicate it by counting wrong.
+    int64_t Money{0};
+
     // This character's own permanent identifier.
     //
     // Everything so far has identified a character as "the one belonging to this Discord
@@ -108,7 +142,7 @@ struct CharacterRecord
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(CharacterRecord, Slot, Name, Appearance, IsMale,
                                                 Level, AttributePoints, PerkPoints, Initialised,
                                                 NameChosen, SpawnedBefore, CharacterId,
-                                                CreatedAt, UpdatedAt)
+                                                Inventory, Money, CreatedAt, UpdatedAt)
 };
 
 /**

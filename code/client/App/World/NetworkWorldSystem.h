@@ -68,6 +68,28 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // and a player who just rebuilt themselves look identical. Only the client knows which
     // menu entry was pressed, so the client is what says so.
     void MarkNewCharacter();
+
+    // Capturing what the player is carrying, so the SERVER owns it rather than their save.
+    //
+    // Three calls rather than one, because redscript is what can read an inventory - the
+    // item API is script-side and documented there - while only C++ can put it on the
+    // wire. Passing an array across that boundary means marshalling a struct array through
+    // RTTI; passing two numbers at a time does not. The cost is three calls instead of
+    // one, which is nothing next to getting the marshalling subtly wrong.
+    //
+    // Begin clears whatever a previous capture left. A capture that half-completed and
+    // then failed must not merge into the next one and hand somebody an inventory that is
+    // partly their own and partly a stale copy.
+    void BeginInventoryCapture();
+    void AddInventoryItem(uint64_t aId, uint32_t aQuantity);
+    void EndInventoryCapture(int64_t aMoney);
+
+    // Number back to TweakDBID, because redscript cannot.
+    //
+    // TDBID exposes ToNumber and no inverse - the conversion is one-way in script. A
+    // TweakDBID IS its number though, so C++ reconstructs it for nothing, and this keeps
+    // the item API calls in redscript where the compiler checks them.
+    Red::TweakDBID TdbidFromNumber(uint64_t aValue) const;
     bool ConsumeJoinRequest();
 
     // Called from redscript when the local player is downed - see Death.reds.
@@ -106,6 +128,11 @@ protected:
 
     // Set while a freshly created character is waiting to be sent to the server.
     bool m_newCharacterPending{false};
+
+    // What the last capture read. Held until a character save sends it.
+    Vector<client::ItemStack> m_capturedInventory;
+    int64_t m_capturedMoney{0};
+    bool m_hasCapturedPossessions{false};
     void HandleTeleport(const PacketEvent<server::NotifyTeleport>& aMessage);
 
     // The server's metronome: shared clock and sky. Applied on arrival, then re-asserted
@@ -196,6 +223,10 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(Disconnect);
     RTTI_METHOD(RequestJoin);
     RTTI_METHOD(MarkNewCharacter);
+    RTTI_METHOD(BeginInventoryCapture);
+    RTTI_METHOD(AddInventoryItem);
+    RTTI_METHOD(EndInventoryCapture);
+    RTTI_METHOD(TdbidFromNumber);
     RTTI_METHOD(ConsumeJoinRequest);
     RTTI_METHOD(RequestRespawn);
     RTTI_METHOD(SaveCharacterAppearance);

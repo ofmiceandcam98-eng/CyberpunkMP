@@ -14,10 +14,30 @@ message AuthenticationResponse {
     Settings settings = 3;
 }
 
+message ItemStack {
+    uint64 id = 1;
+    uint32 quantity = 2;
+}
+
 message SpawnCharacterResponse{
     uint64 id = 1;
     uint64 cookie = 2;
+
+    // What this character owns, restored from the server's record.
+    //
+    // Sent with the spawn rather than as a later message so there is no window where the
+    // player is standing in the world holding whatever their local save gave them. The
+    // client clears what the save provided and applies this instead.
+    repeated ItemStack inventory = 3;
+    int64 money = 4;
+
+    // False when the server has never stored possessions for this character - a character
+    // made before this existed, or one whose first save has not happened yet. The client
+    // must then leave the save's contents alone rather than emptying somebody's pockets on
+    // the strength of an empty record.
+    bool has_possessions = 5;
 }
+
 
 message NotifyCharacterLoad {
     uint64 id = 1;

@@ -558,6 +558,48 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
         spdlog::info("{} has no character yet - capturing the one they arrived as", pComponent->Username);
     }
 
+    // Hand back what this character owns.
+    //
+    // Sent with the spawn rather than afterwards, so there is no window in which somebody
+    // is standing in the world holding whatever their local save gave them. Their save
+    // decides nothing about their possessions any more; this does.
+    //
+    // has_possessions is the important flag. An empty inventory is ambiguous - it means
+    // either "this character owns nothing" or "the server has never been told what they
+    // own", and the two demand opposite behaviour. Applying an empty record to a character
+    // created before possessions were stored would empty their pockets on their next
+    // login, which is a far worse failure than a character keeping a save's contents for
+    // one more session.
+    if (const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(pComponent->DiscordId))
+    {
+        const bool known = !pCharacter->Inventory.empty() || pCharacter->Money > 0;
+
+        if (known)
+        {
+            // Built as a vector and set in one go - the generator here is netpack, not
+            // protobuf, so there is no add_inventory() to append with.
+            Vector<server::ItemStack> stacks;
+            stacks.reserve(pCharacter->Inventory.size());
+
+            for (const auto& stack : pCharacter->Inventory)
+            {
+                server::ItemStack entry;
+                entry.set_id(stack.Id);
+                entry.set_quantity(stack.Quantity);
+                stacks.push_back(entry);
+            }
+
+            response.set_inventory(stacks);
+            response.set_money(pCharacter->Money);
+        }
+
+        response.set_has_possessions(known);
+
+        spdlog::info("{} spawns with {} stored item stack(s) and {} eddies{}",
+                     pComponent->Username, pCharacter->Inventory.size(), pCharacter->Money,
+                     known ? "" : " - nothing stored yet, their save keeps what it has");
+    }
+
     response.set_id(pComponent->Puppet);
     GServer->Send(aMessage.ConnectionId, response);
 
