@@ -1948,17 +1948,31 @@ async function launchGame () {
     const template = await ensureTemplateSave()
 
     if (template.installed) {
-      // Only until they have a world of their own. See hasOwnWorldSince - forcing this
-      // every launch is what made everybody spawn as the character the template was built
-      // from, and it overrode the character they had just created through NEW CHARACTER.
-      const own = await hasOwnWorldSince(template.fresh ? Date.now() : templateInstalledAt())
-
-      if (own) {
-        console.log('[template] player has their own world - leaving their saves alone')
-      } else {
-        await stampTemplateNewest()
-        console.log('[template] no character yet - multiplayer will start from the template')
-      }
+      // Every launch now, deliberately - and this is a reversal.
+      //
+      // It used to be conditional (see hasOwnWorldSince), because forcing the template
+      // made everybody spawn as the character it was built from and overrode characters
+      // people had just created. That was the right fix at the time and the reason for it
+      // has since gone: the server now owns appearance, name, body, position, inventory
+      // and cyberware, and overwrites every one of them on arrival. The template cannot
+      // leak an identity any more, because nothing it contains about who you are survives
+      // contact with the server.
+      //
+      // What it buys is that everybody boots into the SAME world. Before this, the save
+      // used to reach multiplayer was whatever that person last played - so two players
+      // stood in one session with different quest states, different open doors, different
+      // vehicles, and no way to tell which differences were bugs. The template makes the
+      // starting world a constant instead of a variable.
+      //
+      // Their own saves are untouched - this changes which one is newest, nothing else.
+      // Singleplayer is exactly as they left it.
+      //
+      // Still template-derived, and worth being honest about: quest progress, perk and
+      // skill allocation, street cred, owned vehicles and apartments. The server holds
+      // level and points and applies those on top, but not where they were spent. That is
+      // the next thing to move, not something this pretends to have solved.
+      await stampTemplateNewest()
+      console.log('[template] multiplayer starts from the shared template - the server owns the character')
     } else {
       console.warn('[template] not available:', template.reason || 'unknown')
     }

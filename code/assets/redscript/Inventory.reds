@@ -140,7 +140,57 @@ public class MpInventory {
       }
     }
 
+    // Chrome goes back IN, not just back in the bag.
+    //
+    // Giving the item leaves it sitting in the inventory unequipped, which is not what
+    // anybody means by "my cyberware came back" - you would arrive with a boot full of
+    // implants and none of them doing anything.
+    //
+    // Done by re-reading the inventory rather than by remembering ItemIDs from the loop
+    // above: GiveItemByTDBID does not hand back the ItemID it created, and an ItemID is
+    // not reconstructible from a TweakDBID (they carry a seed). Asking the game what is
+    // actually in there afterwards is both simpler and true by construction.
+    //
+    // Cyberware only, deliberately. Equipping everything restored would also re-equip
+    // weapons and clothing, and clothing is already driven by the appearance path - two
+    // systems dressing the same character is how you get a fight over what someone is
+    // wearing.
+    MpInventory.EquipCyberware(player, transaction);
+
     FTLog(s"[MpInventory] restored \(restored) stack(s) and \(money) eddies from the server");
+  }
+
+  /**
+   * Puts every held piece of cyberware back into its slot.
+   *
+   * The equipment system decides which slot each piece belongs in - EquipRequest carries
+   * an optional slotIndex and leaving it unset means "wherever this goes". That is what we
+   * want: the server stores what you own, and the game decides where it fits, so a game
+   * patch moving slots around costs nothing here.
+   */
+  public static func EquipCyberware(player: ref<GameObject>, transaction: ref<TransactionSystem>) -> Void {
+    let chrome: array<wref<gameItemData>>;
+    transaction.GetItemListByTag(player, n"Cyberware", chrome);
+
+    let equipment = EquipmentSystem.GetInstance(player);
+    if !IsDefined(equipment) {
+      FTLogError(s"[MpInventory] no equipment system - cyberware stays in the inventory");
+      return;
+    }
+
+    let slotted = 0;
+    for item in chrome {
+      if IsDefined(item) {
+        let request = new EquipRequest();
+        request.itemID = item.GetID();
+        request.owner = player;
+
+        equipment.QueueRequest(request);
+        slotted += 1;
+      }
+    }
+
+    FTLog(s"[MpInventory] queued \(slotted) piece(s) of cyberware for installation");
   }
 }
 
