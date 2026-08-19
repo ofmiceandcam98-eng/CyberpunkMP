@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
 
 #include <App/Components/AttachedComponent.h>
 #include <App/Threading/ThreadService.h>
@@ -129,12 +130,43 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
     // path - player-record entities may never get a stub at all, and this silently
     // freezing them was indistinguishable from every other freeze. Driver puppets
     // skip it; their own gates log.
+    //
+    // It now SAYS when it freezes something, which it never did before.
+    //
+    // On 19 Aug two players stood next to each other on foot and neither could see the
+    // other move, with 30 packets a second arriving, full appearance applied and the
+    // interpolation controller attached. This return was the obvious suspect: the only
+    // path producing exactly that and leaving no trace.
+    //
+    // It was not the cause. With the return removed, a puppet ran twelve seconds of
+    // interpolation and the warning below never fired once - so this gate was not being
+    // reached. The return is therefore back exactly as it was, and the warning stays,
+    // because a gate that freezes a puppet in silence is what made this cost an evening.
+    //
+    // Logged once per entity. This runs every frame for every remote player, so an
+    // unconditional line would be thousands a minute and would bury what it reveals.
     if (!aEntity.has<DriverComponent>())
     {
         const auto pEntityStubSystem = Red::GetGameSystem<Red::game::IEntityStubSystem>();
         const auto* pStub = pEntityStubSystem->FindStub(aEntityComponent.Id);
+
         if (!pStub)
+        {
+            static std::unordered_set<uint32_t> reported;
+            if (reported.insert(aEntityComponent.Id.hash).second)
+            {
+                spdlog::warn("[Interpolation] no entity stub for puppet {:x} - FREEZING here",
+                             aEntityComponent.Id.hash);
+            }
+
+            // Behaviour restored to stock. Removing this return was a guess that the
+            // measurement did not support: on 19 Aug a puppet ran twelve seconds of
+            // interpolation with the return removed and the warning above never fired
+            // once, which means this gate was not what froze it. The warning stays,
+            // because the gate being silent is what made it a suspect for a whole
+            // evening in the first place.
             return;
+        }
     }
 
     if (aEntity.has<AttachedComponent>())

@@ -12,12 +12,69 @@
 
 #include "PlayerManager.h"
 
+/**
+ * A dummy that walks, so remote movement can be tested by one person.
+ *
+ * /dummy used to spawn a fake player that never moved. That was right for the bug it was
+ * built for - a spawn crash - and useless for the one being chased now, because a puppet
+ * standing still is exactly what a broken puppet looks like. Two people had to be online
+ * to tell the difference, and on 19 Aug the second person went home mid-session.
+ *
+ * Owner is kept so the dummy can borrow that player's Tick. The client interpolates
+ * against ticks in ITS OWN timebase - it buffers samples and plays them back behind its
+ * local clock - so a tick invented by the server would either sit permanently in the
+ * future and never play, or permanently in the past and be discarded. Copying the tick
+ * from the player who summoned it puts every sample exactly where a real player's would
+ * be.
+ */
+struct DummyWalkComponent
+{
+    glm::vec3 Origin{};
+    flecs::entity_t Owner{0};
+    float Angle{0.f};
+    float Radius{5.f};
+};
+
 ChatSystem::ChatSystem(gsl::not_null<World*> apWorld)
     : m_pWorld(apWorld)
 {
     GServer->RegisterHandler<&ChatSystem::HandleChatMessageRequest>(this);
     GServer->RegisterHandler<&ChatSystem::HandleRespawnRequest>(this);
     GServer->RegisterHandler<&ChatSystem::HandleSaveCharacterRequest>(this);
+
+    // Walks every dummy in a slow circle. Registered here rather than beside the command
+    // so it exists exactly once, whatever anyone types.
+    m_pWorld->system<DummyWalkComponent, MovementComponent>("Dummy walk")
+        .each(
+            [](flecs::entity aEntity, DummyWalkComponent& aWalk, MovementComponent& aMovement)
+            {
+                const auto owner = aEntity.world().entity(aWalk.Owner);
+                const auto* pOwner = owner.is_alive() ? owner.get<MovementComponent>() : nullptr;
+
+                // The summoner has gone. Leaving it walking against a frozen tick would
+                // put every sample in the past and look exactly like the freeze this is
+                // meant to expose.
+                if (!pOwner)
+                    return;
+
+                aWalk.Angle += aEntity.world().delta_time() * 0.7f;
+
+                aMovement.Position = aWalk.Origin + glm::vec3{std::cos(aWalk.Angle) * aWalk.Radius,
+                                                             std::sin(aWalk.Angle) * aWalk.Radius,
+                                                             0.f};
+
+                // Facing along the circle rather than at its centre, so a puppet that is
+                // moving but not turning is distinguishable from one doing neither.
+                aMovement.Rotation = {0.f, 0.f, aWalk.Angle + 1.5708f};
+                aMovement.Velocity = 2.f;
+                aMovement.Tick = pOwner->Tick;
+                ++aMovement.Sequence;
+
+                // set<> would replace the component and lose Sequence's history; modified<>
+                // fires the same OnSet observer that replicates a real player's movement,
+                // so the dummy takes exactly the path being tested.
+                aEntity.modified<MovementComponent>();
+            });
 }
 
 void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharacterRequest>& aMessage)
@@ -1539,6 +1596,30 @@ void ChatSystem::HandleChatMessageRequest(const PacketEvent<client::ChatMessageR
     // NotifyCharacterLoad for any entity with a MovementComponent, so a fabricated
     // one drives exactly the same client path - letting a single player reproduce
     // the crash on demand with a debugger attached.
+    // Remove every dummy. Deliberately not "the last one" - they are a test tool, they
+    // accumulate while you are chasing something, and the only thing anyone ever wants is
+    // for all of them to be gone.
+    if (line == "/dummy clear" || line == "/dummy remove")
+    {
+        int removed = 0;
+
+        // Collected first, deleted after. Destroying entities inside the iteration
+        // invalidates it, which is the sort of thing that works until the day somebody
+        // spawns three.
+        Vector<flecs::entity> doomed;
+        m_pWorld->each([&doomed](flecs::entity aEntity, const DummyWalkComponent&) { doomed.push_back(aEntity); });
+
+        for (auto entity : doomed)
+        {
+            m_pWorld->get_mut<Level>()->Remove(entity);
+            ++removed;
+        }
+
+        spdlog::info("[dummy] {} removed by {}", removed, pPlayer->Username);
+        Tell(*pPlayer, fmt::format("Removed {} dumm{}.", removed, removed == 1 ? "y" : "ies"));
+        return;
+    }
+
     if (line == "/dummy")
     {
         auto* pOwnPuppet = pPlayer->Puppet ? pPlayer->Puppet.get<MovementComponent>() : nullptr;
@@ -1558,12 +1639,14 @@ void ChatSystem::HandleChatMessageRequest(const PacketEvent<client::ChatMessageR
         // (the game streams in and builds the puppet's mesh) or TIMING (mid-session spawns
         // differ from connect-time ones for some other reason).
         //
-        // 200m is outside streaming range: the entity exists, but the game never builds
-        // its visual representation.
-        //   - survives  -> the crash is in mesh/appearance construction, and we look there
-        //   - crashes   -> proximity is irrelevant and the difference is timing
+        // Five metres, in front of you, where you can actually watch it.
+        //
+        // This was 200m for an experiment about the spawn crash: the question then was
+        // whether a puppet the game never builds a mesh for still crashes the client, and
+        // being invisible was the point. That crash was fixed on 12 Aug and the distance
+        // outlived its reason - leaving a test command whose subject nobody could see.
         auto position = pOwnPuppet->Position;
-        position.x += 200.f;
+        position.x += 5.f;
 
         // Deliberately NOT child_of(entity). Level::Add takes the entity's parent as its
         // owner and skips that player when broadcasting the spawn - you are not told about
@@ -1573,17 +1656,36 @@ void ChatSystem::HandleChatMessageRequest(const PacketEvent<client::ChatMessageR
         //
         // With no parent, owner is invalid, matches no player, and everyone is notified -
         // which is what a real remote player looks like to the person seeing it.
+        // Dressed like a real player, not a bare mannequin.
+        //
+        // The empty version walks perfectly, which proves the interpolation pipeline is
+        // sound and makes the difference between it and a real player the whole question.
+        // Appearance is the largest one: a real remote arrives with ~6.5KB of ccstate and
+        // eight equipment items, all applied by ApplyAppearance before the first movement
+        // is drawn. This borrows the summoner's own, so the dummy goes through exactly
+        // that path.
+        //
+        // If a dressed dummy freezes and a naked one walks, the fault is in what applying
+        // an appearance does to the puppet - and that is reproducible by one person in
+        // thirty seconds, instead of needing two people online.
+        const auto* pOwnAppearance = pPlayer->Puppet.get<AppearanceComponent>();
+
         auto dummy = m_pWorld->entity()
             .set<MovementComponent>({position, pOwnPuppet->Rotation, 0.f, pOwnPuppet->Tick})
             .set<CharacterComponent>({true})
-            .set<AppearanceComponent>({{}, {}});
+            .set<AppearanceComponent>(pOwnAppearance ? *pOwnAppearance : AppearanceComponent{{}, {}})
+            .set<DummyWalkComponent>({position, pPlayer->Puppet, 0.f, 5.f});
+
+        spdlog::info("[dummy] dressed with {} bytes of ccstate and {} equipment item(s)",
+                     pOwnAppearance ? pOwnAppearance->ccstate.size() : 0,
+                     pOwnAppearance ? pOwnAppearance->equipment.size() : 0);
 
         spdlog::info("[dummy] spawning fake remote player {:x} at ({:.1f}, {:.1f}, {:.1f}) for {}",
                      static_cast<uint64_t>(dummy), position.x, position.y, position.z, pPlayer->Username);
 
         m_pWorld->get_mut<Level>()->Add(dummy);
 
-        Broadcast("SERVER", "Spawned a dummy player next to you.");
+        Broadcast("SERVER", "Spawned a dummy 5m away. It walks in a circle - if it stands still, remote movement is broken.");
         return;
     }
 
