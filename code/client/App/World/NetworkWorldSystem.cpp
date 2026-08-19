@@ -402,7 +402,9 @@ void NetworkWorldSystem::ApplyWorldState()
     if (auto* pTimeSystem = Red::GetGameSystem<Red::game::TimeSystem>())
         Red::CallVirtual(pTimeSystem, "SetGameTimeBySeconds", seconds);
 
-    // 0 = the server has no opinion; the local sky keeps its natural cycle.
+    // 0 = natural cycle. Forcing weather is STICKY engine-side, so going back to 0
+    // after a forced state must actively release the sky - just not re-asserting left
+    // /weather reset doing nothing, forever rain.
     if (m_worldState->WeatherId != 0)
     {
         Red::ScriptGameInstance game;
@@ -419,6 +421,22 @@ void NetworkWorldSystem::ApplyWorldState()
 
             if (!ok)
                 spdlog::warn("[WorldState] SetWeather refused state {:x}", m_worldState->WeatherId);
+            else
+                m_weatherForced = true;
+        }
+    }
+    else if (m_weatherForced)
+    {
+        Red::ScriptGameInstance game;
+        Red::Handle<Red::world::WeatherScriptInterface> weatherSystem;
+
+        if (Red::CallStatic("ScriptGameInstance", "GetWeatherSystem", weatherSystem, game) && weatherSystem)
+        {
+            bool ok = false;
+            Red::CallVirtual(weatherSystem, "ResetWeather", ok, true, m_worldState->TransitionSeconds);
+
+            spdlog::info("[WorldState] weather released back to the natural cycle ({})", ok);
+            m_weatherForced = false;
         }
     }
 }

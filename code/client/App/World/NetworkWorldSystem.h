@@ -155,6 +155,9 @@ private:
     };
     std::optional<WorldState> m_worldState;
     std::chrono::steady_clock::time_point m_lastWorldStateApply{};
+    // Whether WE forced the sky. Forcing is sticky engine-side, so weather 0 from the
+    // server must actively RELEASE it once - not just stop re-asserting.
+    bool m_weatherForced{false};
 
     Red::CBaseFunction* m_pCreatePuppet;
     Red::CBaseFunction* m_pDeletePuppet;
