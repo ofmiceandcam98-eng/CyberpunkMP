@@ -1153,9 +1153,25 @@
     if (!serverState) {
       blockers.push('Still checking the server')
     } else if (!serverState.online) {
-      blockers.push(user?.isAdmin
-        ? 'The server is offline — you can launch anyway, but nobody else can'
-        : 'The server is offline — ask in the Discord when it will be back')
+      // Unreachable is not the same as offline, and for a new player it is almost never
+      // offline. The server address is on a private tailnet, so somebody who has not
+      // joined it yet cannot reach a perfectly healthy server - and telling them it is
+      // down sends them to the Discord to ask about an outage that is not happening,
+      // instead of to the one button that would let them in.
+      //
+      // tailscaleState is already fetched for the indicator above; this just asks it the
+      // question the player actually needs answered, in the order they have to fix things.
+      if (user?.isAdmin) {
+        blockers.push('The server is offline — you can launch anyway, but nobody else can')
+      } else if (tailscaleState && !tailscaleState.installed) {
+        blockers.push('Install Tailscale — the link is at the bottom of this window. The server is on a private network.')
+      } else if (tailscaleState && !tailscaleState.connected) {
+        blockers.push('Tailscale is installed but not signed in — open it from the system tray')
+      } else if (tailscaleState && tailscaleState.connected) {
+        blockers.push("You are not on the server's network yet — press “Join the server's network” above and accept the invite")
+      } else {
+        blockers.push('Cannot reach the server — press Verify files for a step-by-step check')
+      }
     }
 
     $('playReason').textContent = blockers.length > 0 ? blockers.join('  ·  ') : ''
