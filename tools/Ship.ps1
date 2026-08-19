@@ -652,6 +652,34 @@ if (-not $Mod) {
     }
 }
 
+# The bundle a NEW player installs and the DLL an EXISTING player updates to must be
+# the same bytes. They diverged once: FullInstall carried a months-old mod while the
+# update path stayed current, so every fresh install was refused by the server with a
+# protocol mismatch - while everyone already installed connected fine, which made it
+# invisible until real new players arrived. Checked here on EVERY ship, whichever
+# branch staged the files.
+$dllUpload  = $uploads | Where-Object { (Split-Path $_ -Leaf) -eq "CyberpunkMP.dll" } | Select-Object -First 1
+$fullUpload = $uploads | Where-Object { (Split-Path $_ -Leaf) -eq "FullInstall.zip" } | Select-Object -First 1
+if ($dllUpload -and $fullUpload) {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zipCheck = [System.IO.Compression.ZipFile]::OpenRead($fullUpload)
+    try {
+        $entry = $zipCheck.Entries | Where-Object { $_.FullName -replace '\\', '/' -eq "mod/CyberpunkMP.dll" } | Select-Object -First 1
+        if (-not $entry) { Die "FullInstall.zip contains no mod/CyberpunkMP.dll - a new player would install no mod at all" }
+
+        $tmpDll = Join-Path $env:TEMP "fullinstall_dll_check.dll"
+        [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $tmpDll, $true)
+        $bundleHash  = (Get-FileHash $tmpDll   -Algorithm SHA256).Hash
+        $releaseHash = (Get-FileHash $dllUpload -Algorithm SHA256).Hash
+        Remove-Item $tmpDll -Force
+
+        if ($bundleHash -ne $releaseHash) {
+            Die "FullInstall.zip carries a DIFFERENT mod than the release's CyberpunkMP.dll - new players would be refused with a protocol mismatch. Rebuild FullInstall from the current payload before shipping."
+        }
+        Ok "FullInstall's mod matches the release DLL"
+    } finally { $zipCheck.Dispose() }
+}
+
 if ($Launcher) {
     # Take the version from package.json rather than repeating it here. electron-builder
     # stamps the installer filename with it, so a hardcoded number breaks this copy the
