@@ -17,3 +17,7 @@ build/
 bin/
 obj/
 distrib
+
+# Launcher-facing data, not server code: invite rotations and release notes must
+# never rebuild (and restart) the game server.
+publish/
