@@ -757,7 +757,32 @@ server.listen(PORT, '0.0.0.0', () => {
   const publicHost = OVERRIDE_PUBLIC_HOST || tailscale || '127.0.0.1'
   const publicPort = OVERRIDE_PUBLIC_PORT || PORT
   console.log(`  Key console   http://127.0.0.1:${PORT}/   (this machine only)`)
-  console.log(`  For others    http://${publicHost}:${publicPort}/v1/   (over Tailscale)`) 
+  console.log(`  For others    http://${publicHost}:${publicPort}/v1/   (over Tailscale)`)
+
+  // Say so when nobody else can actually reach this.
+  //
+  // Falling back to a loopback address is silent and looks like success: the service
+  // starts, answers locally, and hands out an address that works only for whoever is
+  // already on the host.
+  //
+  // Behind a userspace-mode Tailscale sidecar this is the GUARANTEED outcome, not an
+  // unlucky one. Detection above scans interfaces for a 100.64/10 address, and userspace
+  // mode creates no tun device to carry one - inbound traffic reaches sockets in the
+  // namespace, but nothing in the namespace can see the address it arrived on.
+  //
+  // Compose cannot enforce this. It interpolates every service's environment before
+  // applying profiles, so making the variable required there breaks deployments that
+  // never run this service. The check belongs here, where it can tell the difference
+  // between a developer running it on their own machine and a deployment that is
+  // quietly reachable by nobody.
+  if (publicHost === '127.0.0.1' || publicHost === 'localhost') {
+    console.log('')
+    console.log('  WARNING: no reachable address - this is advertising loopback.')
+    console.log('           Nobody on the tailnet can post to it, and posts made')
+    console.log('           elsewhere while it is unreachable are not queued - they')
+    console.log('           are simply never made.')
+    console.log('           Set NCO_COORD_HOST to this deployment\'s tailnet address.')
+  } 
   console.log(`  Participants  ${active.length} of ${MAX_PARTICIPANTS}`)
   console.log(`  Publishing    ${PUBLISHING ? 'publish/ + GitHub release' : 'off (--no-publish)'}`)
   console.log('')
