@@ -17,6 +17,14 @@ void Sprinting::Enter() noexcept
 
 void Sprinting::GetAnimationData(AnimationData& aData) const
 {
+    // See Walking::GetAnimationData - a missing clip must degrade to the idle glide,
+    // not stall the motion pipeline into a frozen puppet.
+    if (m_duration <= 0.f)
+    {
+        Base::GetAnimationData(aData);
+        return;
+    }
+
     aData.action = MTA_Move;
     aData.style = LS_Sprint;
     aData.time = m_timer;

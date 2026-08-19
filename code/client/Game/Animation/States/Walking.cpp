@@ -17,6 +17,18 @@ void Walking::Enter() noexcept
 
 void Walking::GetAnimationData(AnimationData& aData) const
 {
+    // No walk clip on this template (the male puppet ships almost no locomotion
+    // anims). Demanding a clip that does not exist does not just fail to animate -
+    // it stalls the motion pipeline and the puppet FREEZES in place, which read as
+    // "we can't see each other move" in live testing. Degrade to the pre-state
+    // behaviour instead: idle pose, position still slides. Templates that have the
+    // clip (the female puppet) animate properly.
+    if (m_duration <= 0.f)
+    {
+        Base::GetAnimationData(aData);
+        return;
+    }
+
     aData.action = MTA_Move;
     aData.style = LS_Walk;
     aData.time = m_timer;
