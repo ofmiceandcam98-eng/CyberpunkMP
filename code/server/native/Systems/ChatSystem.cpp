@@ -8,6 +8,7 @@
 #include "Components/CharacterComponent.h"
 #include "Game/Level.h"
 #include "Game/WorldClock.h"
+#include "Systems/NpcSystem.h"
 
 #include "PlayerManager.h"
 
@@ -1047,6 +1048,57 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         return true;
     }
 
+    // ---------------------------------------------------------------- /npc ----
+    //
+    // Declares a character into the shared world where the admin is standing. The
+    // record is any Character.* TweakDB record the game ships; the rest of the line
+    // names them. Server-declared, so every client - now and after every restart -
+    // renders the same person on the same spot.
+    if (command == "/npc")
+    {
+        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
+            return deny(EPermissionLevel::kAdmin);
+
+        auto* pNpcs = m_pWorld->get_mut<NpcSystem>();
+        if (!pNpcs)
+            return true;
+
+        if (target.empty())
+        {
+            Tell(acSender, "Usage: /npc <Character.record> [name] - or /npc clear");
+            Tell(acSender, fmt::format("{} NPC(s) currently declared.", pNpcs->Count()));
+            return true;
+        }
+
+        if (target == "clear")
+        {
+            const auto removed = pNpcs->Clear();
+            spdlog::info("{} cleared {} NPC(s)", acSender.Username, removed);
+            Tell(acSender, fmt::format("Removed {} NPC(s) for everyone.", removed));
+            return true;
+        }
+
+        const auto* pMovement = acSender.Puppet ? acSender.Puppet.get<MovementComponent>() : nullptr;
+        if (!pMovement)
+        {
+            Tell(acSender, "Spawn into the world first, then stand where the NPC should be.");
+            return true;
+        }
+
+        std::string record = target;
+        if (record.rfind("Character.", 0) != 0)
+            record = "Character." + record;
+
+        const std::string name = rest.empty() ? "NPC" : rest;
+
+        pNpcs->Spawn(record, name, pMovement->Position, pMovement->Rotation.z);
+        pNpcs->Save();
+
+        spdlog::info("{} declared NPC '{}' ({})", acSender.Username, name, record);
+        Tell(acSender, fmt::format("'{}' now exists here for everyone, forever. /npc clear removes all.", name));
+        return true;
+    }
+
     // --------------------------------------------------------------- /jail ----
     //
     // The cell is wherever the staff member is standing. No configuration, no coordinates
@@ -1395,6 +1447,7 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             Tell(acSender, "       /setstart - where brand-new characters arrive");
             Tell(acSender, "       /time HH:MM - set the shared world clock (/time real = mirror reality)");
             Tell(acSender, "       /weather <state> - set the shared sky (sunny, rain, fog...)");
+            Tell(acSender, "       /npc <record> [name] - declare a persistent NPC here (/npc clear)");
         }
 
         return true;

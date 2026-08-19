@@ -35,7 +35,7 @@ NetworkWorldSystem::NetworkWorldSystem()
     set_entity_range(10'000'000, 20'000'000);
 }
 
-bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition, const Red::Quaternion& aRotation, const Red::DynArray<Red::TweakDBID>& aEquipment, const Vector<uint8_t> aCcstate, const std::string& acUsername)
+bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition, const Red::Quaternion& aRotation, const Red::DynArray<Red::TweakDBID>& aEquipment, const Vector<uint8_t> aCcstate, const std::string& acUsername, const std::string& acRecord)
 {
     // Not ready is a WHEN problem, not a whether problem. The server front-loads
     // everyone already online the moment we join, which can beat the world attach -
@@ -44,7 +44,7 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
     if (!m_ready)
     {
         spdlog::info("[Spawn] remote id {} arrived before the world was ready - queued", aServerId);
-        m_pendingSpawns.push_back({aServerId, aPosition, aRotation, aEquipment, aCcstate, acUsername});
+        m_pendingSpawns.push_back({aServerId, aPosition, aRotation, aEquipment, aCcstate, acUsername, acRecord});
         return true;
     }
 
@@ -92,14 +92,18 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
             CharacterCustomizationState_Serialize(stateHandle.instance, &reader);
             isBodyGenderMale = stateHandle.instance->isBodyGenderMale;
         }
-        else
+        else if (acRecord.empty())
         {
             spdlog::warn("[Spawn] remote player sent no ccstate - spawning with default appearance");
         }
 
     }
 
-    const auto& record = isBodyGenderMale ? Settings::Get().puppetRecordMale : Settings::Get().puppetRecordFemale;
+    // A server-declared NPC names its exact record; players get the configured puppet
+    // record for their body gender.
+    const std::string record = !acRecord.empty()
+        ? acRecord
+        : std::string((isBodyGenderMale ? Settings::Get().puppetRecordMale : Settings::Get().puppetRecordFemale).c_str());
 
     if (!Red::Detail::CallFunctionWithArgs(m_pCreatePuppet, handle, id, aPosition, aRotation, isBodyGenderMale,
                                            Red::CString(record.c_str())))
@@ -133,7 +137,7 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
     // path hooks - they are driven by the mod-owned PuppetDriver instead. The flag
     // routes EVERYTHING through the driver for A/B testing the old path's retirement.
     const bool usesDriver = Settings::Get().puppetDriverAll ||
-                            std::string_view(record.c_str()).rfind("Character.Player_Puppet", 0) == 0;
+                            record.rfind("Character.Player_Puppet", 0) == 0;
 
     spawned.emplace<SpawningComponent>(id, nullptr, usesDriver);
 
@@ -281,7 +285,7 @@ void NetworkWorldSystem::OnWorldAttached(RED4ext::world::RuntimeScene* aScene)
         spdlog::info("[Spawn] world ready - replaying {} queued spawn(s)", pending.size());
 
         for (const auto& spawn : pending)
-            Spawn(spawn.ServerId, spawn.Position, spawn.Rotation, spawn.Equipment, spawn.Ccstate, spawn.Username);
+            Spawn(spawn.ServerId, spawn.Position, spawn.Rotation, spawn.Equipment, spawn.Ccstate, spawn.Username, spawn.Record);
     }
 
     // NO automatic connecting.
@@ -716,7 +720,8 @@ void NetworkWorldSystem::HandleCharacterLoad(const PacketEvent<server::NotifyCha
 
     auto ccstate = aMessage.get_ccstate();
 
-    Spawn(aMessage.get_id(), position, rotation, equipment, ccstate, aMessage.get_username().c_str());
+    Spawn(aMessage.get_id(), position, rotation, equipment, ccstate, aMessage.get_username().c_str(),
+          aMessage.get_puppet_record().c_str());
 }
 
 void NetworkWorldSystem::HandleEntityUnload(const PacketEvent<server::NotifyEntityUnload>& aMessage)

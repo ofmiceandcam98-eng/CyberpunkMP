@@ -9,6 +9,7 @@
 #include <Components/CharacterComponent.h>
 #include <Components/VehicleComponent.h>
 #include <Components/AuthorityComponent.h>
+#include <Components/NpcComponent.h>
 
 #include "GameServer.h"
 #include "World.h"
@@ -925,6 +926,14 @@ server::NotifyCharacterLoad Level::Serialize(flecs::entity aEntity) noexcept
     {
         message.set_equipment(pAppearanceComponent->equipment);
         message.set_ccstate(pAppearanceComponent->ccstate);
+    }
+
+    // A server-declared NPC: the record says WHO to build (a specific person, not a
+    // player mannequin), and the name is whatever the admin called them.
+    if (auto* pNpcComponent = aEntity.get<NpcComponent>())
+    {
+        message.set_puppet_record(pNpcComponent->Record.c_str());
+        message.set_username(pNpcComponent->Name.c_str());
     }
 
     // The name lives on the PLAYER, not the puppet - the puppet is a child entity with no

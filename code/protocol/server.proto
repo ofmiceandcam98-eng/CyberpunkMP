@@ -35,6 +35,11 @@ message NotifyCharacterLoad {
     // showed up as "Panam". The server is the only thing that knows the real name, since
     // it is the half that talked to Discord.
     string username = 7;
+
+    // Present only for SERVER-DECLARED characters (NPCs an admin placed): the exact
+    // TweakDB record to build them from - a specific person, not a player mannequin.
+    // Absent for players, whose record is derived from their appearance data.
+    string puppet_record = 8;
 }
 
 message NotifyVehicleLoad {
