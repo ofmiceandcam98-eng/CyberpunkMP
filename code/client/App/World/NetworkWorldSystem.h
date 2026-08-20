@@ -95,6 +95,15 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // at the same moment and describe the same character, and a second message would be a
     // second thing to keep in step.
     void AddProficiency(uint32_t aType, int32_t aLevel);
+    void AddAttribute(uint32_t aType, int32_t aValue);
+    void AddPerk(uint32_t aType, int32_t aLevel);
+
+    // Restoring attributes. Perks are stored but not yet handed back - see the note in
+    // Inventory.reds; buying them back has prerequisites and spends points, and getting
+    // that wrong rebuilds somebody's character wrongly rather than failing cleanly.
+    uint32_t GetRestoreAttributeCount() const;
+    uint32_t GetRestoreAttributeType(uint32_t aIndex) const;
+    int32_t GetRestoreAttributeValue(uint32_t aIndex) const;
 
     // A way for redscript to say something into a log we can actually read.
     //
@@ -156,6 +165,9 @@ protected:
     // What the last capture read. Held until a character save sends it.
     Vector<client::ItemStack> m_capturedInventory;
     Vector<client::Proficiency> m_capturedProficiencies;
+    Vector<client::Attribute> m_capturedAttributes;
+    Vector<client::Perk> m_capturedPerks;
+    Vector<server::Attribute> m_restoreAttributes;
 
     // What the server sent on spawn, held until script has applied it.
     Vector<server::ItemStack> m_restoreInventory;
@@ -267,6 +279,11 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(EndInventoryCapture);
     RTTI_METHOD(TdbidFromNumber);
     RTTI_METHOD(AddProficiency);
+    RTTI_METHOD(AddAttribute);
+    RTTI_METHOD(AddPerk);
+    RTTI_METHOD(GetRestoreAttributeCount);
+    RTTI_METHOD(GetRestoreAttributeType);
+    RTTI_METHOD(GetRestoreAttributeValue);
     RTTI_METHOD(ScriptLog);
     RTTI_METHOD(GetRestoreCount);
     RTTI_METHOD(GetRestoreId);

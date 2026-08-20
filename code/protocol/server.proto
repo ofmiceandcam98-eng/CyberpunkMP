@@ -14,6 +14,16 @@ message AuthenticationResponse {
     Settings settings = 3;
 }
 
+message Attribute {
+    uint32 type = 1;
+    int32 value = 2;
+}
+
+message Perk {
+    uint32 type = 1;
+    int32 level = 2;
+}
+
 message Proficiency {
     uint32 type = 1;
     int32 level = 2;
@@ -43,6 +53,9 @@ message SpawnCharacterResponse{
     bool has_possessions = 5;
 
     repeated Proficiency proficiencies = 6;
+
+    repeated Attribute attributes = 7;
+    repeated Perk perks = 8;
 }
 
 

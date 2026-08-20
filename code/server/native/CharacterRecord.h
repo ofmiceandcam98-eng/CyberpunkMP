@@ -141,6 +141,35 @@ struct CharacterRecord
 
     std::vector<Proficiency> Proficiencies;
 
+    /**
+     * The five attributes, and every perk bought.
+     *
+     * Kept separate from Proficiencies rather than folded in, even though all three are
+     * "a number against a game enum". They are three different enums - gamedataStatType,
+     * gamedataNewPerkType, gamedataProficiencyType - and a single list keyed by an
+     * untagged number would let a perk id be read back as an attribute the first time
+     * anyone reordered one of them. The cost of three lists is three lists; the cost of
+     * getting that wrong is somebody's character quietly rebuilt.
+     */
+    struct Attribute
+    {
+        uint32_t Type{0};
+        int32_t Value{0};
+
+        NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(Attribute, Type, Value)
+    };
+
+    struct Perk
+    {
+        uint32_t Type{0};
+        int32_t Level{0};
+
+        NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(Perk, Type, Level)
+    };
+
+    std::vector<Attribute> Attributes;
+    std::vector<Perk> Perks;
+
     // Eddies. Separate from Inventory because the game models money as an item and this
     // does not - a balance is a number, and treating it as a stack of one item invites
     // somebody to duplicate it by counting wrong.
@@ -166,7 +195,7 @@ struct CharacterRecord
                                                 Level, AttributePoints, PerkPoints, Initialised,
                                                 NameChosen, SpawnedBefore, CharacterId,
                                                 Inventory, Money, Proficiencies,
-                                                CreatedAt, UpdatedAt)
+                                                Attributes, Perks, CreatedAt, UpdatedAt)
 };
 
 /**

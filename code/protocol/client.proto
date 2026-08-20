@@ -32,6 +32,16 @@ message SpawnCharacterRequest {
 // Sent when the character creator closes, NOT on every spawn - the spawn message carries
 // an appearance too, but that one describes whoever the loaded save happens to contain.
 // This one is a deliberate "this is me", and it is the only one the server stores.
+message Attribute {
+    uint32 type = 1;
+    int32 value = 2;
+}
+
+message Perk {
+    uint32 type = 1;
+    int32 level = 2;
+}
+
 message Proficiency {
     uint32 type = 1;
     int32 level = 2;
@@ -69,6 +79,10 @@ message SaveCharacterRequest {
 
     // Skills, street cred and level - all gamedataProficiencyType entries.
     repeated Proficiency proficiencies = 6;
+
+    // The five attributes, and every perk bought.
+    repeated Attribute attributes = 8;
+    repeated Perk perks = 9;
 
     // True when the save happened by itself - the ninety-second timer, or leaving.
     //

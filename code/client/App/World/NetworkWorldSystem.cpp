@@ -550,8 +550,47 @@ void NetworkWorldSystem::AddProficiency(uint32_t aType, int32_t aLevel)
     m_capturedProficiencies.push_back(prof);
 }
 
+void NetworkWorldSystem::AddAttribute(uint32_t aType, int32_t aValue)
+{
+    if (aValue <= 0)
+        return;
+
+    client::Attribute a;
+    a.set_type(aType);
+    a.set_value(aValue);
+    m_capturedAttributes.push_back(a);
+}
+
+void NetworkWorldSystem::AddPerk(uint32_t aType, int32_t aLevel)
+{
+    if (aLevel <= 0)
+        return;
+
+    client::Perk k;
+    k.set_type(aType);
+    k.set_level(aLevel);
+    m_capturedPerks.push_back(k);
+}
+
+uint32_t NetworkWorldSystem::GetRestoreAttributeCount() const
+{
+    return static_cast<uint32_t>(m_restoreAttributes.size());
+}
+
+uint32_t NetworkWorldSystem::GetRestoreAttributeType(uint32_t aIndex) const
+{
+    return aIndex < m_restoreAttributes.size() ? m_restoreAttributes[aIndex].get_type() : 0;
+}
+
+int32_t NetworkWorldSystem::GetRestoreAttributeValue(uint32_t aIndex) const
+{
+    return aIndex < m_restoreAttributes.size() ? m_restoreAttributes[aIndex].get_value() : 0;
+}
+
 void NetworkWorldSystem::BeginInventoryCapture()
 {
+    m_capturedAttributes.clear();
+    m_capturedPerks.clear();
     m_capturedProficiencies.clear();
     m_capturedInventory.clear();
     m_capturedMoney = 0;
@@ -762,6 +801,8 @@ void NetworkWorldSystem::PollAppearanceChanges()
         request.set_inventory(m_capturedInventory);
         request.set_money(m_capturedMoney);
         request.set_proficiencies(m_capturedProficiencies);
+        request.set_attributes(m_capturedAttributes);
+        request.set_perks(m_capturedPerks);
 
         // Announced, unlike the timer. This fires when somebody has just finished changing
         // their face at a ripperdoc - they did something deliberate and a confirmation
@@ -846,6 +887,8 @@ void NetworkWorldSystem::SaveCharacterAppearance(bool aAutomatic)
         request.set_inventory(m_capturedInventory);
         request.set_money(m_capturedMoney);
         request.set_proficiencies(m_capturedProficiencies);
+        request.set_attributes(m_capturedAttributes);
+        request.set_perks(m_capturedPerks);
         request.set_automatic(aAutomatic);
     }
 
@@ -995,6 +1038,7 @@ void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::
     {
         m_restoreInventory = aMessage.get_inventory();
         m_restoreMoney = aMessage.get_money();
+        m_restoreAttributes = aMessage.get_attributes();
 
         spdlog::info("[Inventory] server sent {} stack(s) and {} eddies - will apply once the player exists",
                      m_restoreInventory.size(), m_restoreMoney);

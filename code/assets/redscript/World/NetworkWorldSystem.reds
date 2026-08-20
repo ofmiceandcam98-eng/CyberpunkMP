@@ -24,6 +24,11 @@ public native class NetworkWorldSystem extends IGameSystem {
     // rebuild happens in C++ where a TweakDBID is just its number.
     public native func TdbidFromNumber(value: Uint64) -> TweakDBID;
     public native func AddProficiency(profType: Uint32, level: Int32) -> Void;
+    public native func AddAttribute(statType: Uint32, value: Int32) -> Void;
+    public native func AddPerk(perkType: Uint32, level: Int32) -> Void;
+    public native func GetRestoreAttributeCount() -> Uint32;
+    public native func GetRestoreAttributeType(index: Uint32) -> Uint32;
+    public native func GetRestoreAttributeValue(index: Uint32) -> Int32;
     public native func GetRestoreCount() -> Uint32;
     public native func GetRestoreId(index: Uint32) -> Uint64;
     public native func GetRestoreQuantity(index: Uint32) -> Uint32;

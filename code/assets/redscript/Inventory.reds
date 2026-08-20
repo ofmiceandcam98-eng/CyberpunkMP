@@ -107,6 +107,36 @@ public class MpInventory {
       network.ScriptLog("capture: no development data - skills not captured");
     }
 
+    // Attributes: the five that everything else is built on.
+    //
+    // Walked as an explicit list rather than by enum index. gamedataStatType holds
+    // hundreds of entries - every stat in the game - and only these five are attributes;
+    // sweeping the whole enum would store armour and carry-capacity as if a player had
+    // chosen them.
+    if IsDefined(development) {
+      let attrs = [gamedataStatType.Strength, gamedataStatType.Reflexes,
+                   gamedataStatType.TechnicalAbility, gamedataStatType.Intelligence,
+                   gamedataStatType.Cool];
+
+      for attr in attrs {
+        let value = development.GetAttributeValue(attr);
+        network.AddAttribute(Cast<Uint32>(EnumInt(attr)), Cast<Int32>(value));
+      }
+
+      // Perks. Stored now, handed back later - see Restore.
+      let perkType = 0;
+
+      while perkType < EnumInt(gamedataNewPerkType.Count) {
+        let level = development.IsNewPerkBought(IntEnum<gamedataNewPerkType>(perkType));
+
+        if level > 0 {
+          network.AddPerk(Cast<Uint32>(perkType), level);
+        }
+
+        perkType += 1;
+      }
+    }
+
     network.EndInventoryCapture(Cast<Int64>(money));
 
     // Counted separately and only for the log.
@@ -234,9 +264,48 @@ public class MpInventory {
       }
     }
 
+    MpInventory.RestoreAttributes(network, player);
     MpInventory.EquipCyberware(network, player, transaction);
 
     network.ScriptLog(s"restore DONE: \(restored) stack(s) given, money \(held) -> \(stored)");
+  }
+
+  /**
+   * Puts the five attributes back to what the server holds.
+   *
+   * SetAttribute rather than BuyAttribute: this is restoring a build that was already
+   * paid for, not spending points again. Buying would fail the moment the player had no
+   * points left, which is exactly the case for anybody who had finished spending them.
+   *
+   * PERKS ARE DELIBERATELY NOT RESTORED HERE, only stored. Handing them back means
+   * UnlockNewPerk and BuyNewPerk in dependency order while points allow - and getting
+   * that order wrong does not fail cleanly, it rebuilds somebody's character wrongly and
+   * then saves that as the truth. Storing them costs nothing and loses nothing; the
+   * restore side is worth doing carefully, on its own, with a character nobody minds
+   * breaking.
+   */
+  public static func RestoreAttributes(network: ref<NetworkWorldSystem>, player: ref<GameObject>) -> Void {
+    let count = network.GetRestoreAttributeCount();
+
+    if count == 0u {
+      return;
+    }
+
+    let index: Uint32 = 0u;
+    let applied = 0;
+
+    while index < count {
+      let request = new SetAttribute();
+      request.Set(player, Cast<Float>(network.GetRestoreAttributeValue(index)),
+                  IntEnum<gamedataStatType>(Cast<Int32>(network.GetRestoreAttributeType(index))));
+
+      PlayerDevelopmentSystem.GetInstance(player).QueueRequest(request);
+
+      applied += 1;
+      index += 1u;
+    }
+
+    network.ScriptLog(s"restore: \(applied) attribute(s) set from the server");
   }
 
   /** How many of this TweakDBID the player already holds, from the snapshot above. */

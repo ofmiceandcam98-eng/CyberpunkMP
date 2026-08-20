@@ -246,6 +246,29 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
                      character.Proficiencies.size());
     }
 
+    // Attributes and perks, same absence rule as everything else: only replaced when the
+    // client actually sent some. Resetting somebody's build to zero because a read failed
+    // is not a recoverable mistake.
+    if (!aMessage.get_attributes().empty())
+    {
+        character.Attributes.clear();
+        for (const auto& a : aMessage.get_attributes())
+            character.Attributes.push_back({a.get_type(), a.get_value()});
+    }
+
+    if (!aMessage.get_perks().empty())
+    {
+        character.Perks.clear();
+        for (const auto& k : aMessage.get_perks())
+            character.Perks.push_back({k.get_type(), k.get_level()});
+    }
+
+    if (!character.Attributes.empty() || !character.Perks.empty())
+    {
+        spdlog::info("{} stored {} attribute(s) and {} perk(s)", pPlayer->Username,
+                     character.Attributes.size(), character.Perks.size());
+    }
+
     store.SaveCharacter(pPlayer->DiscordId, pPlayer->Username, character);
 
     spdlog::info("{} saved character '{}' from the creator ({} bytes)", pPlayer->Username,
@@ -1675,8 +1698,15 @@ void ChatSystem::HandleChatMessageRequest(const PacketEvent<client::ChatMessageR
         // themselves to the whole server. A player mid-roleplay does not need to read
         // "Spawned a dummy stamped with the SERVER clock" - that sentence is addressed to
         // whoever is chasing a bug, and to nobody else.
-        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
-            return deny(EPermissionLevel::kAdmin);
+        //
+        // Checked against pPlayer rather than acSender: this handler works from the
+        // PlayerComponent it looked up, and does not have the sender reference the command
+        // dispatcher further down uses.
+        if (!pPlayer->HasAtLeast(EPermissionLevel::kAdmin))
+        {
+            Tell(*pPlayer, "That is an admin command.");
+            return;
+        }
 
         auto* pOwnPuppet = pPlayer->Puppet ? pPlayer->Puppet.get<MovementComponent>() : nullptr;
         if (!pOwnPuppet)
@@ -1712,8 +1742,15 @@ void ChatSystem::HandleChatMessageRequest(const PacketEvent<client::ChatMessageR
         // themselves to the whole server. A player mid-roleplay does not need to read
         // "Spawned a dummy stamped with the SERVER clock" - that sentence is addressed to
         // whoever is chasing a bug, and to nobody else.
-        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
-            return deny(EPermissionLevel::kAdmin);
+        //
+        // Checked against pPlayer rather than acSender: this handler works from the
+        // PlayerComponent it looked up, and does not have the sender reference the command
+        // dispatcher further down uses.
+        if (!pPlayer->HasAtLeast(EPermissionLevel::kAdmin))
+        {
+            Tell(*pPlayer, "That is an admin command.");
+            return;
+        }
 
         int removed = 0;
 
@@ -1742,8 +1779,15 @@ void ChatSystem::HandleChatMessageRequest(const PacketEvent<client::ChatMessageR
         // themselves to the whole server. A player mid-roleplay does not need to read
         // "Spawned a dummy stamped with the SERVER clock" - that sentence is addressed to
         // whoever is chasing a bug, and to nobody else.
-        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
-            return deny(EPermissionLevel::kAdmin);
+        //
+        // Checked against pPlayer rather than acSender: this handler works from the
+        // PlayerComponent it looked up, and does not have the sender reference the command
+        // dispatcher further down uses.
+        if (!pPlayer->HasAtLeast(EPermissionLevel::kAdmin))
+        {
+            Tell(*pPlayer, "That is an admin command.");
+            return;
+        }
 
         auto* pOwnPuppet = pPlayer->Puppet ? pPlayer->Puppet.get<MovementComponent>() : nullptr;
         if (!pOwnPuppet)

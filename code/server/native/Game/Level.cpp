@@ -611,6 +611,38 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
             response.set_proficiencies(profs);
         }
 
+        if (!pCharacter->Attributes.empty())
+        {
+            Vector<server::Attribute> attrs;
+            attrs.reserve(pCharacter->Attributes.size());
+
+            for (const auto& a : pCharacter->Attributes)
+            {
+                server::Attribute entry;
+                entry.set_type(a.Type);
+                entry.set_value(a.Value);
+                attrs.push_back(entry);
+            }
+
+            response.set_attributes(attrs);
+        }
+
+        if (!pCharacter->Perks.empty())
+        {
+            Vector<server::Perk> perks;
+            perks.reserve(pCharacter->Perks.size());
+
+            for (const auto& k : pCharacter->Perks)
+            {
+                server::Perk entry;
+                entry.set_type(k.Type);
+                entry.set_level(k.Level);
+                perks.push_back(entry);
+            }
+
+            response.set_perks(perks);
+        }
+
         spdlog::info("{} spawns with {} stored item stack(s) and {} eddies{}",
                      pComponent->Username, pCharacter->Inventory.size(), pCharacter->Money,
                      known ? "" : " - nothing stored yet, their save keeps what it has");
