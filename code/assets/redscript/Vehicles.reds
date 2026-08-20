@@ -23,37 +23,36 @@ import CyberpunkMP.World.NetworkWorldSystem
  */
 public class MpVehicles {
 
-  /** Every unlocked vehicle, handed to native one name at a time. */
+  /**
+   * Deliberately does nothing.
+   *
+   * This used to report every unlocked vehicle to the server, back when the garage WAS
+   * the ownership record. It is not any more: the server owns vehicle instances, and a
+   * player's phone contents are derived from them.
+   *
+   * Reporting the garage now would be worse than pointless - it would be the client
+   * telling the server which cars it has, which is precisely the claim ownership exists to
+   * stop anyone making. Left as an empty function rather than deleted so the call site
+   * stays honest about what happens: nothing, on purpose.
+   */
   public static func Capture(network: ref<NetworkWorldSystem>) -> Void {
-    let vehicleSystem = GameInstance.GetVehicleSystem(GetGameInstance());
-
-    if !IsDefined(vehicleSystem) {
-      return;
-    }
-
-    let owned: array<PlayerVehicle>;
-    vehicleSystem.GetPlayerUnlockedVehicles(owned);
-
-    let counted = 0;
-    for vehicle in owned {
-      if vehicle.isUnlocked {
-        network.AddVehicle(NameToString(vehicle.name));
-        counted += 1;
-      }
-    }
-
-    network.ScriptLog(s"capture: \(counted) vehicle(s)");
   }
 
   /**
-   * Re-unlocks everything the server says this character owns.
+   * Puts the models this player owns into their phone.
    *
-   * Idempotent by nature - EnablePlayerVehicle either unlocks it or finds it already
-   * unlocked - so unlike items and money this needs no difference calculation.
+   * This is the whole interface now. Cyberpunk already has a vehicle summon - the phone,
+   * the animation, the arrival, the spawn positioning - and players already know it, so
+   * ownership decides what appears there and the game does the summoning. A custom call
+   * command was built first and was a worse version of something the game ships with.
    *
-   * Nothing is ever disabled. A vehicle the server has not heard of is left alone rather
-   * than taken away: the stored list is what somebody has earned, not an exhaustive
-   * statement of what they are allowed to have.
+   * Idempotent - EnablePlayerVehicle either unlocks a model or finds it already unlocked -
+   * so unlike items and money this needs no difference calculation.
+   *
+   * Nothing is ever disabled. A model the server did not mention is left alone rather than
+   * taken away: the list says what this account has earned, not an exhaustive statement of
+   * what it may have. Taking cars off somebody because a lookup failed is not a
+   * recoverable mistake.
    */
   public static func Restore(network: ref<NetworkWorldSystem>) -> Void {
     let count = network.GetRestoreVehicleCount();

@@ -643,15 +643,39 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
             response.set_perks(perks);
         }
 
-        if (!pCharacter->Vehicles.empty())
+        // What appears in this player's phone.
+        //
+        // Derived from the vehicles they OWN, not from what their client reported having
+        // unlocked. The client's own garage is a consequence of ownership here, never a
+        // source of it - otherwise "which cars do I have" would be answered by the machine
+        // most motivated to lie about it.
+        //
+        // Models rather than instances, because the phone menu is a list of models and
+        // cannot be anything else. Owning three Quadras puts one Quadra in the menu; which
+        // particular one arrives is the server's business, and /garage is where the
+        // difference between them is visible.
         {
-            Vector<String> owned;
-            owned.reserve(pCharacter->Vehicles.size());
+            Vector<String> models;
 
-            for (const auto& v : pCharacter->Vehicles)
-                owned.push_back(String(v.c_str()));
+            for (const auto& vehicle : GServer->GetVehicles().OwnedBy(pComponent->DiscordId))
+            {
+                if (vehicle.ModelName.empty())
+                    continue;
 
-            response.set_vehicles(owned);
+                const auto already = std::any_of(models.begin(), models.end(),
+                                                 [&vehicle](const String& acName)
+                                                 { return acName == vehicle.ModelName.c_str(); });
+
+                if (!already)
+                    models.push_back(String(vehicle.ModelName.c_str()));
+            }
+
+            if (!models.empty())
+            {
+                response.set_vehicles(models);
+                spdlog::info("{} owns {} vehicle model(s) - unlocking them in their phone",
+                             pComponent->Username, models.size());
+            }
         }
 
         spdlog::info("{} spawns with {} stored item stack(s) and {} eddies{}",

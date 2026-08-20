@@ -263,12 +263,13 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
             character.Perks.push_back({k.get_type(), k.get_level()});
     }
 
-    if (!aMessage.get_vehicles().empty())
-    {
-        character.Vehicles.clear();
-        for (const auto& v : aMessage.get_vehicles())
-            character.Vehicles.push_back(v.c_str());
-    }
+    // The client's vehicle list is deliberately IGNORED.
+    //
+    // It was stored here until ownership became a server record. Now the phone's contents
+    // are derived from what the player owns, so accepting their report would let a client
+    // grant itself cars by claiming to have them unlocked - which is exactly the thing the
+    // ownership system exists to prevent. The field stays on the wire for older clients
+    // and is read by nothing.
 
     if (!character.Attributes.empty() || !character.Perks.empty())
     {
@@ -1118,68 +1119,26 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
                                        vehicle.LockedBy.empty() ? "" : "  (sale pending)"));
         }
 
-        Tell(acSender, "Use /call <id> to bring one to you.");
+        Tell(acSender, "Call them from your phone as normal - this list is the paperwork.");
         return true;
     }
 
     // ------------------------------------------------------------- /call ----
     //
-    // Bring one of YOUR vehicles to you.
+    // Deliberately gone. The game's own phone menu is the interface.
     //
-    // Takes a vehicle id, not a model. The difference is the whole point of the ownership
-    // system: "spawn me a Quadra" is something anybody can ask for, while "bring me
-    // vehicle 4f2b" is a claim the server checks against its own records. A client that
-    // names somebody else's vehicle is refused rather than served.
+    // A custom call command was built first and was the wrong shape: Cyberpunk already has
+    // a vehicle summon - the phone, the animation, the arrival, the spawn positioning -
+    // and players already know it. Replacing that with a chat command means writing a
+    // worse version of something that ships with the game.
+    //
+    // So ownership decides what appears in the phone, and the phone does the summoning.
+    // The server pushes EnablePlayerVehicle for every model this account owns at least one
+    // of; anything they own nothing of is not in their menu at all.
     if (command == "/call")
     {
-        const auto space = acLine.find(' ');
-        std::string wanted = (space == std::string::npos) ? std::string{} : acLine.substr(space + 1);
-
-        while (!wanted.empty() && wanted.front() == ' ')
-            wanted.erase(wanted.begin());
-
-        if (wanted.empty())
-        {
-            Tell(acSender, "Usage: /call <id>   - the id from /garage");
-            return true;
-        }
-
-        // Matched on the short id people actually read off /garage, but only among THEIR
-        // OWN vehicles. Searching all vehicles and then checking the owner would let
-        // somebody discover another player's ids by watching which prefixes are refused.
-        const auto owned = GServer->GetVehicles().OwnedBy(acSender.DiscordId);
-        const VehicleRecord* pMatch = nullptr;
-
-        for (const auto& vehicle : owned)
-        {
-            if (vehicle.Id.rfind(wanted, 0) == 0 || vehicle.Plate == wanted)
-            {
-                pMatch = &vehicle;
-                break;
-            }
-        }
-
-        if (!pMatch)
-        {
-            Tell(acSender, fmt::format("You do not own a vehicle matching '{}'.", wanted));
-            return true;
-        }
-
-        if (!pMatch->LockedBy.empty())
-        {
-            Tell(acSender, "That vehicle is part of a pending sale.");
-            return true;
-        }
-
-        // Deliberately not spawning yet.
-        //
-        // The spawn path takes a position and a record and hands the car to whoever asked;
-        // wiring this to it before there is duplicate prevention would let one player fill
-        // the street with copies of the same owned car. Stage 5 of the plan is exactly
-        // that check, and it belongs before this line does anything.
-        spdlog::info("{} called vehicle {} ({})", acSender.Username, pMatch->Id, pMatch->Plate);
-        Tell(acSender, fmt::format("Vehicle {} ({}) is yours - calling is not wired to the spawner yet.",
-                                   pMatch->Plate, pMatch->ModelName));
+        Tell(acSender, "Use your phone - your vehicles are in the vehicle menu, like normal.");
+        Tell(acSender, "/garage shows the paperwork: which specific car is which, and its plate.");
         return true;
     }
 
