@@ -24,6 +24,11 @@ message Perk {
     int32 level = 2;
 }
 
+message WorldFact {
+    string name = 1;
+    int32 value = 2;
+}
+
 message Proficiency {
     uint32 type = 1;
     int32 level = 2;
@@ -56,6 +61,16 @@ message SpawnCharacterResponse{
 
     repeated Attribute attributes = 7;
     repeated Perk perks = 8;
+
+    // Quest facts the server wants set on this client.
+    //
+    // Most locked doors in Night City are gated on a quest fact - the device code checks
+    // one before deciding whether it opens. Setting them is how a server says "this place
+    // is open here", without touching quest state or pretending a quest was completed.
+    //
+    // Sent with the spawn so the world is already the server's version by the time
+    // somebody is standing in it.
+    repeated WorldFact facts = 9;
 }
 
 

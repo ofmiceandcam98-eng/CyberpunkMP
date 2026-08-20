@@ -1086,6 +1086,75 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         return true;
     }
 
+    // -------------------------------------------------------------- /fact ----
+    //
+    // Open a door for everyone, and remember it.
+    //
+    // Which fact unlocks which building is not documented anywhere and is not guessable -
+    // it is found by trying one, walking to the door, and seeing whether it opens. So this
+    // sets a fact live on everybody AND writes it to config/worldfacts.json, which means
+    // finding one is the same action as keeping it. Getting that wrong - making people
+    // test in one place and record in another - is how a list of ninety buildings never
+    // gets written down.
+    if (command == "/fact")
+    {
+        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
+            return deny(EPermissionLevel::kAdmin);
+
+        const auto nameStart = acLine.find(' ');
+        std::string rest = (nameStart == std::string::npos) ? std::string{} : acLine.substr(nameStart + 1);
+
+        while (!rest.empty() && rest.front() == ' ')
+            rest.erase(rest.begin());
+
+        if (rest.empty() || rest == "list")
+        {
+            const auto& facts = GServer->GetWorldFacts().All();
+
+            if (facts.empty())
+            {
+                Tell(acSender, "No world facts set. Usage: /fact <name> [value]   (value defaults to 1)");
+                Tell(acSender, "         /fact remove <name>");
+                return true;
+            }
+
+            Tell(acSender, fmt::format("{} world fact(s):", facts.size()));
+            for (const auto& fact : facts)
+                Tell(acSender, fmt::format("  {} = {}", fact.Name, fact.Value));
+
+            return true;
+        }
+
+        if (rest.rfind("remove ", 0) == 0)
+        {
+            const auto name = rest.substr(7);
+
+            if (GServer->GetWorldFacts().Remove(name))
+                Tell(acSender, fmt::format("Removed '{}'. It stays set on anyone already here until they reconnect.", name));
+            else
+                Tell(acSender, fmt::format("No fact called '{}'.", name));
+
+            return true;
+        }
+
+        // "<name> <value>", or just "<name>" for the usual case of turning something on.
+        std::string name = rest;
+        int32_t value = 1;
+
+        if (const auto space = rest.find(' '); space != std::string::npos)
+        {
+            name = rest.substr(0, space);
+            try { value = std::stoi(rest.substr(space + 1)); } catch (...) { value = 1; }
+        }
+
+        GServer->GetWorldFacts().Set(name, value);
+
+        spdlog::info("{} set world fact '{}' = {}", acSender.Username, name, value);
+        Tell(acSender, fmt::format("Set '{}' = {} and saved it. Reconnect to apply it to everyone already here.", name, value));
+
+        return true;
+    }
+
     // ---------------------------------------------------------- /setstart ----
     //
     // Where a brand-new character arrives. Separate from /setspawn on purpose - see

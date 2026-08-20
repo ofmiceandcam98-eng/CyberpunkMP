@@ -648,6 +648,31 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
                      known ? "" : " - nothing stored yet, their save keeps what it has");
     }
 
+    // The server's version of which doors are open.
+    //
+    // Sent to everybody, not just to characters with stored possessions - an unlocked
+    // building is a property of the world rather than of a character, and a new player
+    // should walk into the same city as everyone else.
+    {
+        const auto& facts = GServer->GetWorldFacts().All();
+
+        if (!facts.empty())
+        {
+            Vector<server::WorldFact> wire;
+            wire.reserve(facts.size());
+
+            for (const auto& fact : facts)
+            {
+                server::WorldFact entry;
+                entry.set_name(fact.Name.c_str());
+                entry.set_value(fact.Value);
+                wire.push_back(entry);
+            }
+
+            response.set_facts(wire);
+        }
+    }
+
     response.set_id(pComponent->Puppet);
     GServer->Send(aMessage.ConnectionId, response);
 

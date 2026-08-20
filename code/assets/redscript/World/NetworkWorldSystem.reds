@@ -26,6 +26,9 @@ public native class NetworkWorldSystem extends IGameSystem {
     public native func AddProficiency(profType: Uint32, level: Int32) -> Void;
     public native func AddAttribute(statType: Uint32, value: Int32) -> Void;
     public native func AddPerk(perkType: Uint32, level: Int32) -> Void;
+    public native func GetFactCount() -> Uint32;
+    public native func GetFactName(index: Uint32) -> String;
+    public native func GetFactValue(index: Uint32) -> Int32;
     public native func GetRestoreAttributeCount() -> Uint32;
     public native func GetRestoreAttributeType(index: Uint32) -> Uint32;
     public native func GetRestoreAttributeValue(index: Uint32) -> Int32;
@@ -57,6 +60,41 @@ public native class NetworkWorldSystem extends IGameSystem {
     // marshalled wrongly.
     public func RestorePossessions() -> Void {
         MpInventory.Restore(this);
+        this.ApplyWorldFacts();
+    }
+
+    /**
+     * Sets the quest facts the server sent - which doors are open here.
+     *
+     * A fact is how Night City decides whether a door opens: the device asks the quest
+     * system for one value. Setting them is the server saying "this place is open", and
+     * it does not touch quest state, mark anything complete, or pretend a story happened.
+     *
+     * Applied with the possessions rather than at connect, for the same reason - the world
+     * has to exist before anything can be told about it.
+     */
+    public func ApplyWorldFacts() -> Void {
+        let count = this.GetFactCount();
+
+        if count == 0u {
+            return;
+        }
+
+        let quests = GameInstance.GetQuestsSystem(GetGameInstance());
+
+        if !IsDefined(quests) {
+            this.ScriptLog("facts: no quest system - nothing unlocked");
+            return;
+        }
+
+        let index: Uint32 = 0u;
+
+        while index < count {
+            quests.SetFactStr(this.GetFactName(index), this.GetFactValue(index));
+            index += 1u;
+        }
+
+        this.ScriptLog(s"facts: applied \(count) world fact(s)");
     }
 
     public func CaptureInventory() -> Void {

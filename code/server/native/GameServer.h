@@ -5,6 +5,7 @@
 #include "Config.h"
 #include "BanList.h"
 #include "PlayerStore.h"
+#include "Systems/WorldFacts.h"
 #include "Game/World.h"
 
 template <typename T>
@@ -175,6 +176,10 @@ public:
     BanList& GetBanList() noexcept { return m_bans; }
     PlayerStore& GetPlayerStore() noexcept { return m_players; }
 
+    // Quest facts pushed to every client on spawn - see WorldFacts.h. This is how a
+    // building gets opened for everyone without touching quest state.
+    WorldFactStore& GetWorldFacts() noexcept { return m_worldFacts; }
+
 private:
 
     Path m_path;
@@ -187,6 +192,7 @@ private:
     std::chrono::steady_clock::time_point m_lastReverify;
     BanList m_bans;
     PlayerStore m_players;
+    WorldFactStore m_worldFacts;
     std::chrono::steady_clock::time_point m_lastPlayerSave;
     std::chrono::steady_clock::time_point m_lastJailCheck;
 

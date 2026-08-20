@@ -101,6 +101,12 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // Restoring attributes. Perks are stored but not yet handed back - see the note in
     // Inventory.reds; buying them back has prerequisites and spends points, and getting
     // that wrong rebuilds somebody's character wrongly rather than failing cleanly.
+    // World facts - which doors the server says are open. Read out one at a time like
+    // everything else on this boundary.
+    uint32_t GetFactCount() const;
+    Red::CString GetFactName(uint32_t aIndex) const;
+    int32_t GetFactValue(uint32_t aIndex) const;
+
     uint32_t GetRestoreAttributeCount() const;
     uint32_t GetRestoreAttributeType(uint32_t aIndex) const;
     int32_t GetRestoreAttributeValue(uint32_t aIndex) const;
@@ -168,6 +174,7 @@ protected:
     Vector<client::Attribute> m_capturedAttributes;
     Vector<client::Perk> m_capturedPerks;
     Vector<server::Attribute> m_restoreAttributes;
+    Vector<server::WorldFact> m_worldFacts;
 
     // What the server sent on spawn, held until script has applied it.
     Vector<server::ItemStack> m_restoreInventory;
@@ -281,6 +288,9 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(AddProficiency);
     RTTI_METHOD(AddAttribute);
     RTTI_METHOD(AddPerk);
+    RTTI_METHOD(GetFactCount);
+    RTTI_METHOD(GetFactName);
+    RTTI_METHOD(GetFactValue);
     RTTI_METHOD(GetRestoreAttributeCount);
     RTTI_METHOD(GetRestoreAttributeType);
     RTTI_METHOD(GetRestoreAttributeValue);

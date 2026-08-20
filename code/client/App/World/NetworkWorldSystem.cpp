@@ -572,6 +572,22 @@ void NetworkWorldSystem::AddPerk(uint32_t aType, int32_t aLevel)
     m_capturedPerks.push_back(k);
 }
 
+uint32_t NetworkWorldSystem::GetFactCount() const
+{
+    return static_cast<uint32_t>(m_worldFacts.size());
+}
+
+Red::CString NetworkWorldSystem::GetFactName(uint32_t aIndex) const
+{
+    return aIndex < m_worldFacts.size() ? Red::CString(m_worldFacts[aIndex].get_name().c_str())
+                                        : Red::CString("");
+}
+
+int32_t NetworkWorldSystem::GetFactValue(uint32_t aIndex) const
+{
+    return aIndex < m_worldFacts.size() ? m_worldFacts[aIndex].get_value() : 0;
+}
+
 uint32_t NetworkWorldSystem::GetRestoreAttributeCount() const
 {
     return static_cast<uint32_t>(m_restoreAttributes.size());
@@ -1028,6 +1044,16 @@ void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::
     }
 
     SetRemotePlayerId(aMessage.get_id());
+
+    // Which doors the server says are open.
+    //
+    // Applied for everybody, not only characters with stored possessions - an unlocked
+    // building belongs to the world, not to a character, and a new player should walk
+    // into the same city as everyone else.
+    m_worldFacts = aMessage.get_facts();
+
+    if (!m_worldFacts.empty())
+        spdlog::info("[World] server sent {} fact(s) to apply", m_worldFacts.size());
 
     // Put back what this character owns.
     //
