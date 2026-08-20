@@ -588,6 +588,40 @@ int32_t NetworkWorldSystem::GetFactValue(uint32_t aIndex) const
     return aIndex < m_worldFacts.size() ? m_worldFacts[aIndex].get_value() : 0;
 }
 
+void NetworkWorldSystem::AddVehicle(const Red::CString& acName)
+{
+    if (acName.Length() == 0)
+        return;
+
+    m_capturedVehicles.push_back(String(acName.c_str()));
+}
+
+uint32_t NetworkWorldSystem::GetRestoreVehicleCount() const
+{
+    return static_cast<uint32_t>(m_restoreVehicles.size());
+}
+
+Red::CString NetworkWorldSystem::GetRestoreVehicle(uint32_t aIndex) const
+{
+    return aIndex < m_restoreVehicles.size() ? Red::CString(m_restoreVehicles[aIndex].c_str())
+                                             : Red::CString("");
+}
+
+uint32_t NetworkWorldSystem::GetRestorePerkCount() const
+{
+    return static_cast<uint32_t>(m_restorePerks.size());
+}
+
+uint32_t NetworkWorldSystem::GetRestorePerkType(uint32_t aIndex) const
+{
+    return aIndex < m_restorePerks.size() ? m_restorePerks[aIndex].get_type() : 0;
+}
+
+int32_t NetworkWorldSystem::GetRestorePerkLevel(uint32_t aIndex) const
+{
+    return aIndex < m_restorePerks.size() ? m_restorePerks[aIndex].get_level() : 0;
+}
+
 uint32_t NetworkWorldSystem::GetRestoreAttributeCount() const
 {
     return static_cast<uint32_t>(m_restoreAttributes.size());
@@ -605,6 +639,7 @@ int32_t NetworkWorldSystem::GetRestoreAttributeValue(uint32_t aIndex) const
 
 void NetworkWorldSystem::BeginInventoryCapture()
 {
+    m_capturedVehicles.clear();
     m_capturedAttributes.clear();
     m_capturedPerks.clear();
     m_capturedProficiencies.clear();
@@ -819,6 +854,7 @@ void NetworkWorldSystem::PollAppearanceChanges()
         request.set_proficiencies(m_capturedProficiencies);
         request.set_attributes(m_capturedAttributes);
         request.set_perks(m_capturedPerks);
+        request.set_vehicles(m_capturedVehicles);
 
         // Announced, unlike the timer. This fires when somebody has just finished changing
         // their face at a ripperdoc - they did something deliberate and a confirmation
@@ -905,6 +941,7 @@ void NetworkWorldSystem::SaveCharacterAppearance(bool aAutomatic)
         request.set_proficiencies(m_capturedProficiencies);
         request.set_attributes(m_capturedAttributes);
         request.set_perks(m_capturedPerks);
+        request.set_vehicles(m_capturedVehicles);
         request.set_automatic(aAutomatic);
     }
 
@@ -1065,6 +1102,8 @@ void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::
         m_restoreInventory = aMessage.get_inventory();
         m_restoreMoney = aMessage.get_money();
         m_restoreAttributes = aMessage.get_attributes();
+        m_restorePerks = aMessage.get_perks();
+        m_restoreVehicles = aMessage.get_vehicles();
 
         spdlog::info("[Inventory] server sent {} stack(s) and {} eddies - will apply once the player exists",
                      m_restoreInventory.size(), m_restoreMoney);

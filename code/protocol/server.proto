@@ -61,6 +61,7 @@ message SpawnCharacterResponse{
 
     repeated Attribute attributes = 7;
     repeated Perk perks = 8;
+    repeated string vehicles = 10;
 
     // Quest facts the server wants set on this client.
     //

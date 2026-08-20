@@ -137,6 +137,8 @@ public class MpInventory {
       }
     }
 
+    MpVehicles.Capture(network);
+
     network.EndInventoryCapture(Cast<Int64>(money));
 
     // Counted separately and only for the log.
@@ -265,6 +267,8 @@ public class MpInventory {
     }
 
     MpInventory.RestoreAttributes(network, player);
+    MpInventory.RestorePerks(network, player);
+    MpVehicles.Restore(network);
     MpInventory.EquipCyberware(network, player, transaction);
 
     network.ScriptLog(s"restore DONE: \(restored) stack(s) given, money \(held) -> \(stored)");
@@ -306,6 +310,65 @@ public class MpInventory {
     }
 
     network.ScriptLog(s"restore: \(applied) attribute(s) set from the server");
+  }
+
+  /**
+   * Buys back every perk the server holds.
+   *
+   * Attributes go first, deliberately - see the call order in Restore. A perk usually
+   * requires an attribute level to be available at all, so buying perks before the
+   * attributes are back means every gated one is refused. Restoring in the order the
+   * player originally built in is the only order that works.
+   *
+   * UnlockNewPerk then BuyNewPerk, once per level. Unlock makes it available regardless of
+   * whether the prerequisite tree is satisfied yet; Buy is what actually applies it, and a
+   * multi-level perk needs buying once per level rather than being set to a level.
+   *
+   * Requests are queued, not executed - the development system processes them in order, so
+   * this cannot check whether each one succeeded. That is the honest limit here: it asks
+   * for the build back and does not verify it arrived. Worth watching the first few times
+   * with a character nobody minds losing.
+   */
+  public static func RestorePerks(network: ref<NetworkWorldSystem>, player: ref<GameObject>) -> Void {
+    let count = network.GetRestorePerkCount();
+
+    if count == 0u {
+      return;
+    }
+
+    let development = PlayerDevelopmentSystem.GetInstance(player);
+
+    if !IsDefined(development) {
+      network.ScriptLog("restore: no development system - perks not restored");
+      return;
+    }
+
+    let index: Uint32 = 0u;
+    let asked = 0;
+
+    while index < count {
+      let perkType = IntEnum<gamedataNewPerkType>(Cast<Int32>(network.GetRestorePerkType(index)));
+      let wanted = network.GetRestorePerkLevel(index);
+
+      let unlock = new UnlockNewPerk();
+      unlock.Set(player, perkType);
+      development.QueueRequest(unlock);
+
+      // Once per level. There is no "set to level N" request - the game models a perk as
+      // something bought repeatedly, so restoring level three means asking three times.
+      let level = 0;
+      while level < wanted {
+        let buy = new BuyNewPerk();
+        buy.Set(player, perkType);
+        development.QueueRequest(buy);
+        level += 1;
+      }
+
+      asked += 1;
+      index += 1u;
+    }
+
+    network.ScriptLog(s"restore: asked for \(asked) perk(s) back");
   }
 
   /** How many of this TweakDBID the player already holds, from the snapshot above. */

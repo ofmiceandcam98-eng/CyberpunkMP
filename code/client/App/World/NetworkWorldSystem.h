@@ -107,6 +107,15 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     Red::CString GetFactName(uint32_t aIndex) const;
     int32_t GetFactValue(uint32_t aIndex) const;
 
+    void AddVehicle(const Red::CString& acName);
+
+    uint32_t GetRestoreVehicleCount() const;
+    Red::CString GetRestoreVehicle(uint32_t aIndex) const;
+
+    uint32_t GetRestorePerkCount() const;
+    uint32_t GetRestorePerkType(uint32_t aIndex) const;
+    int32_t GetRestorePerkLevel(uint32_t aIndex) const;
+
     uint32_t GetRestoreAttributeCount() const;
     uint32_t GetRestoreAttributeType(uint32_t aIndex) const;
     int32_t GetRestoreAttributeValue(uint32_t aIndex) const;
@@ -175,6 +184,9 @@ protected:
     Vector<client::Perk> m_capturedPerks;
     Vector<server::Attribute> m_restoreAttributes;
     Vector<server::WorldFact> m_worldFacts;
+    Vector<server::Perk> m_restorePerks;
+    Vector<String> m_capturedVehicles;
+    Vector<String> m_restoreVehicles;
 
     // What the server sent on spawn, held until script has applied it.
     Vector<server::ItemStack> m_restoreInventory;
@@ -291,6 +303,12 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(GetFactCount);
     RTTI_METHOD(GetFactName);
     RTTI_METHOD(GetFactValue);
+    RTTI_METHOD(AddVehicle);
+    RTTI_METHOD(GetRestoreVehicleCount);
+    RTTI_METHOD(GetRestoreVehicle);
+    RTTI_METHOD(GetRestorePerkCount);
+    RTTI_METHOD(GetRestorePerkType);
+    RTTI_METHOD(GetRestorePerkLevel);
     RTTI_METHOD(GetRestoreAttributeCount);
     RTTI_METHOD(GetRestoreAttributeType);
     RTTI_METHOD(GetRestoreAttributeValue);

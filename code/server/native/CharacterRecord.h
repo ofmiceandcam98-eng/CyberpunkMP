@@ -170,6 +170,20 @@ struct CharacterRecord
     std::vector<Attribute> Attributes;
     std::vector<Perk> Perks;
 
+    /**
+     * Vehicles this character owns, by the game's own vehicle name.
+     *
+     * Names rather than TweakDBIDs, unusually - everything else here stores raw ids on the
+     * principle that the server should not need to understand game data. Vehicles are the
+     * exception because EnablePlayerVehicle takes a STRING, and a TweakDBID cannot be
+     * turned back into its string on 2.31: the debug name table release builds ship is
+     * empty, which is the same trap that made remote players spawn naked for a week.
+     *
+     * So the one thing that can survive the round trip is the name, and that is what is
+     * kept.
+     */
+    std::vector<std::string> Vehicles;
+
     // Eddies. Separate from Inventory because the game models money as an item and this
     // does not - a balance is a number, and treating it as a stack of one item invites
     // somebody to duplicate it by counting wrong.
@@ -195,7 +209,8 @@ struct CharacterRecord
                                                 Level, AttributePoints, PerkPoints, Initialised,
                                                 NameChosen, SpawnedBefore, CharacterId,
                                                 Inventory, Money, Proficiencies,
-                                                Attributes, Perks, CreatedAt, UpdatedAt)
+                                                Attributes, Perks, Vehicles,
+                                                CreatedAt, UpdatedAt)
 };
 
 /**

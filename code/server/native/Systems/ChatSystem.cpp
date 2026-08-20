@@ -263,6 +263,13 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
             character.Perks.push_back({k.get_type(), k.get_level()});
     }
 
+    if (!aMessage.get_vehicles().empty())
+    {
+        character.Vehicles.clear();
+        for (const auto& v : aMessage.get_vehicles())
+            character.Vehicles.push_back(v.c_str());
+    }
+
     if (!character.Attributes.empty() || !character.Perks.empty())
     {
         spdlog::info("{} stored {} attribute(s) and {} perk(s)", pPlayer->Username,

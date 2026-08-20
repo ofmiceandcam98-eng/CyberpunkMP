@@ -84,6 +84,11 @@ message SaveCharacterRequest {
     repeated Attribute attributes = 8;
     repeated Perk perks = 9;
 
+    // Owned vehicles, by the game's own vehicle name rather than a TweakDBID - see the
+    // note in CharacterRecord. EnablePlayerVehicle takes a string, and an id cannot be
+    // turned back into one on 2.31.
+    repeated string vehicles = 10;
+
     // True when the save happened by itself - the ninety-second timer, or leaving.
     //
     // The server confirms a save in chat, which is right when somebody asked for one and

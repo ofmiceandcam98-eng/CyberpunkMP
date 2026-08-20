@@ -643,6 +643,17 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
             response.set_perks(perks);
         }
 
+        if (!pCharacter->Vehicles.empty())
+        {
+            Vector<String> owned;
+            owned.reserve(pCharacter->Vehicles.size());
+
+            for (const auto& v : pCharacter->Vehicles)
+                owned.push_back(String(v.c_str()));
+
+            response.set_vehicles(owned);
+        }
+
         spdlog::info("{} spawns with {} stored item stack(s) and {} eddies{}",
                      pComponent->Username, pCharacter->Inventory.size(), pCharacter->Money,
                      known ? "" : " - nothing stored yet, their save keeps what it has");
