@@ -45,13 +45,13 @@ public class MpInventory {
 
     let transaction = GameInstance.GetTransactionSystem(game);
     if !IsDefined(transaction) {
-      FTLogError(s"[MpInventory] no transaction system - not sending an empty inventory");
+      network.ScriptLog("capture: no transaction system - sending nothing");
       return false;
     }
 
     let items: array<wref<gameItemData>>;
     if !transaction.GetItemList(player, items) {
-      FTLogError(s"[MpInventory] could not read the inventory - sending nothing rather than nothing-owned");
+      network.ScriptLog("capture: could not read the inventory");
       return false;
     }
 
@@ -104,7 +104,7 @@ public class MpInventory {
         profType += 1;
       }
     } else {
-      FTLogError(s"[MpInventory] no development data - skills and street cred not captured");
+      network.ScriptLog("capture: no development data - skills not captured");
     }
 
     network.EndInventoryCapture(Cast<Int64>(money));
@@ -124,7 +124,7 @@ public class MpInventory {
     let chrome: array<wref<gameItemData>>;
     transaction.GetItemListByTag(player, n"Cyberware", chrome);
 
-    FTLog(s"[MpInventory] captured \(counted) stack(s), \(ArraySize(chrome)) of them cyberware, and \(money) eddies");
+    network.ScriptLog(s"capture DONE: \(counted) stack(s), \(ArraySize(chrome)) cyberware, \(money) eddies");
     return true;
   }
 
@@ -144,13 +144,42 @@ public class MpInventory {
     let game = GetGameInstance();
     let player = GetPlayer(game);
 
-    if !IsDefined(player) || !IsDefined(network) {
+    // Both of these used to return in silence, which is how a restore that never ran
+    // looked identical to one that had nothing to do.
+    if !IsDefined(player) {
+      network.ScriptLog("restore: no player");
+      return;
+    }
+
+    if !IsDefined(network) {
+      FTLogError(s"[MpInventory] restore asked for with no network system");
       return;
     }
 
     let transaction = GameInstance.GetTransactionSystem(game);
     if !IsDefined(transaction) {
+      network.ScriptLog("restore: no transaction system");
       return;
+    }
+
+    // What the player already holds, read ONCE and indexed by TweakDBID.
+    //
+    // GetItemQuantity takes an ItemID and there is no way to build one from a TweakDBID,
+    // so the only way to answer "how many of this do they have" is to enumerate what is
+    // there and look it up. Read once rather than per stack: 124 stacks against 124 held
+    // items is fifteen thousand comparisons either way, but one enumeration instead of
+    // 124 of them.
+    let heldIds: array<Uint64>;
+    let heldCounts: array<Int32>;
+
+    let existing: array<wref<gameItemData>>;
+    transaction.GetItemList(player, existing);
+
+    for item in existing {
+      if IsDefined(item) {
+        ArrayPush(heldIds, TDBID.ToNumber(ItemID.GetTDBID(item.GetID())));
+        ArrayPush(heldCounts, transaction.GetItemQuantity(player, item.GetID()));
+      }
     }
 
     let count = network.GetRestoreCount();
@@ -163,8 +192,24 @@ public class MpInventory {
       let quantity = network.GetRestoreQuantity(index);
 
       if TDBID.IsValid(tdbid) && quantity > 0u {
-        transaction.GiveItemByTDBID(player, tdbid, Cast<Int32>(quantity));
-        restored += 1;
+        // Give the DIFFERENCE, never the total.
+        //
+        // Adding the stored amount to whatever is already held duplicates everything the
+        // player still has - which is exactly what happened on 19 Aug: connecting from
+        // inside the world (where the puppet already exists, so this actually ran) handed
+        // back all 124 stacks on top of the 124 already there, and doubled the lot.
+        //
+        // Making it a difference also makes it idempotent, which matters more than the
+        // duplication: this can now run twice, or run after a partial restore, and the
+        // result is the same. The server's number is the answer rather than an increment.
+        let want = Cast<Int32>(quantity);
+        let have = MpInventory.HeldCount(heldIds, heldCounts, network.GetRestoreId(index));
+        let owed = want - have;
+
+        if owed > 0 {
+          transaction.GiveItemByTDBID(player, tdbid, owed);
+          restored += 1;
+        }
       }
 
       index += 1u;
@@ -189,9 +234,24 @@ public class MpInventory {
       }
     }
 
-    MpInventory.EquipCyberware(player, transaction);
+    MpInventory.EquipCyberware(network, player, transaction);
 
-    FTLog(s"[MpInventory] restored \(restored) stack(s), money \(held) -> \(stored) from the server");
+    network.ScriptLog(s"restore DONE: \(restored) stack(s) given, money \(held) -> \(stored)");
+  }
+
+  /** How many of this TweakDBID the player already holds, from the snapshot above. */
+  public static func HeldCount(ids: array<Uint64>, counts: array<Int32>, wanted: Uint64) -> Int32 {
+    let i = 0;
+
+    while i < ArraySize(ids) {
+      if Equals(ids[i], wanted) {
+        return counts[i];
+      }
+
+      i += 1;
+    }
+
+    return 0;
   }
 
   /**
@@ -202,13 +262,13 @@ public class MpInventory {
    * want: the server stores what you own, and the game decides where it fits, so a game
    * patch moving slots around costs nothing here.
    */
-  public static func EquipCyberware(player: ref<GameObject>, transaction: ref<TransactionSystem>) -> Void {
+  public static func EquipCyberware(network: ref<NetworkWorldSystem>, player: ref<GameObject>, transaction: ref<TransactionSystem>) -> Void {
     let chrome: array<wref<gameItemData>>;
     transaction.GetItemListByTag(player, n"Cyberware", chrome);
 
     let equipment = EquipmentSystem.GetInstance(player);
     if !IsDefined(equipment) {
-      FTLogError(s"[MpInventory] no equipment system - cyberware stays in the inventory");
+      network.ScriptLog("cyberware: no equipment system");
       return;
     }
 
@@ -224,7 +284,7 @@ public class MpInventory {
       }
     }
 
-    FTLog(s"[MpInventory] queued \(slotted) piece(s) of cyberware for installation");
+    network.ScriptLog(s"cyberware: queued \(slotted) piece(s) for installation");
   }
 }
 

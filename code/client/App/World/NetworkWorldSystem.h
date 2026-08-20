@@ -96,6 +96,14 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // second thing to keep in step.
     void AddProficiency(uint32_t aType, int32_t aLevel);
 
+    // A way for redscript to say something into a log we can actually read.
+    //
+    // FTLog goes somewhere none of the mod's logs collect - not CyberpunkMP.log, not the
+    // RED4ext log, not redscript's own. Every script-side message written tonight went
+    // into the void, so "the restore did not run" and "I cannot see the restore run" were
+    // indistinguishable, and an evening went on the difference.
+    void ScriptLog(const Red::CString& acText) const;
+
     // Applying what the server sent back. Mirrors the capture side: native holds the data
     // that came off the wire, script does the work, and only scalars cross between them.
     uint32_t GetRestoreCount() const;
@@ -150,6 +158,15 @@ protected:
     // What the server sent on spawn, held until script has applied it.
     Vector<server::ItemStack> m_restoreInventory;
     int64_t m_restoreMoney{0};
+
+    // Set when the server has sent possessions and script has not applied them yet.
+    //
+    // The spawn response arrives before the player's puppet is built, so calling straight
+    // into script there finds no player and returns - silently, in the first version.
+    // Update retries until there is somebody to give things to.
+    bool m_restorePending{false};
+    uint32_t m_restoreTicks{0};
+    uint32_t m_restoreReadyAt{0};
     int64_t m_capturedMoney{0};
     bool m_hasCapturedPossessions{false};
     void HandleTeleport(const PacketEvent<server::NotifyTeleport>& aMessage);
@@ -247,6 +264,7 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(EndInventoryCapture);
     RTTI_METHOD(TdbidFromNumber);
     RTTI_METHOD(AddProficiency);
+    RTTI_METHOD(ScriptLog);
     RTTI_METHOD(GetRestoreCount);
     RTTI_METHOD(GetRestoreId);
     RTTI_METHOD(GetRestoreQuantity);

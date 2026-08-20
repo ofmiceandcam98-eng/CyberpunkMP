@@ -247,6 +247,60 @@ void NetworkWorldSystem::Update(uint64_t aTick)
 {
     GTick = aTick;
 
+    // Apply the server's possessions as soon as there is somebody to give them to.
+    //
+    // Retried from the update loop rather than fired once on the spawn response, because
+    // that response beats the player's own puppet into existence. A single attempt there
+    // found no player and returned, and the only symptom was possessions never arriving.
+    if (m_restorePending)
+    {
+        const auto system = Red::GetGameSystem<Game::PlayerSystem>();
+        Red::Handle<Red::GameObject> player;
+
+        if (system)
+            system->GetLocalPlayerControlledGameObject(player);
+
+        // Says what it is waiting for, once a second, instead of retrying in silence.
+        //
+        // The previous version returned quietly on every tick when the player was not
+        // there yet - so a retry that never succeeded was indistinguishable from one that
+        // was never armed. That is the fourth time tonight a silent path has cost an hour.
+        if (++m_restoreTicks % 60 == 0)
+        {
+            spdlog::info("[Inventory] still waiting to restore - player system {}, player {}",
+                         system ? "ready" : "MISSING", player ? "ready" : "not yet");
+        }
+
+        // A player handle is not the same as a world that will accept a script call.
+        //
+        // The first version fired the moment the handle existed - the same millisecond as
+        // the spawn response - and the call returned success while the script never ran.
+        // No bail message either, because RestorePossessions was never entered. The proof
+        // it is timing rather than mechanism: the identical CallVirtual to CaptureInventory
+        // works fine eighteen seconds later, from a network handler.
+        //
+        // So the handle starts a countdown rather than firing. Three seconds at 60 ticks,
+        // which is far longer than needed and costs nothing - the alternative is a restore
+        // that silently does not happen, and that has now cost two test rounds.
+        if (player)
+        {
+            if (m_restoreReadyAt == 0)
+            {
+                m_restoreReadyAt = m_restoreTicks;
+                spdlog::info("[Inventory] player exists - letting the world settle before applying");
+            }
+            else if (m_restoreTicks - m_restoreReadyAt >= 180)
+            {
+                m_restorePending = false;
+
+                spdlog::info("[Inventory] applying possessions now");
+
+                if (!Red::CallVirtual(Red::GetGameSystem<NetworkWorldSystem>(), "RestorePossessions"))
+                    spdlog::error("[Inventory] RestorePossessions could not be called");
+            }
+        }
+    }
+
     const auto delta = std::min(aTick - m_lastTick, 1000ull);
     m_lastTick = aTick;
 
@@ -474,6 +528,11 @@ uint32_t NetworkWorldSystem::GetRestoreQuantity(uint32_t aIndex) const
 int32_t NetworkWorldSystem::GetRestoreMoney() const
 {
     return static_cast<int32_t>(m_restoreMoney);
+}
+
+void NetworkWorldSystem::ScriptLog(const Red::CString& acText) const
+{
+    spdlog::info("[script] {}", acText.c_str());
 }
 
 void NetworkWorldSystem::AddProficiency(uint32_t aType, int32_t aLevel)
@@ -930,10 +989,12 @@ void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::
         m_restoreInventory = aMessage.get_inventory();
         m_restoreMoney = aMessage.get_money();
 
-        spdlog::info("[Inventory] server sent {} stack(s) and {} eddies - applying",
+        spdlog::info("[Inventory] server sent {} stack(s) and {} eddies - will apply once the player exists",
                      m_restoreInventory.size(), m_restoreMoney);
 
-        Red::CallVirtual(Red::GetGameSystem<NetworkWorldSystem>(), "RestorePossessions");
+        // Not applied here. This handler runs before the local player's puppet is built,
+        // so script would find no player and return. Update retries until there is one.
+        m_restorePending = true;
     }
     else
     {

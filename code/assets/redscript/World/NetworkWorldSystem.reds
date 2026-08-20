@@ -28,6 +28,9 @@ public native class NetworkWorldSystem extends IGameSystem {
     public native func GetRestoreId(index: Uint32) -> Uint64;
     public native func GetRestoreQuantity(index: Uint32) -> Uint32;
     public native func GetRestoreMoney() -> Int32;
+
+    // FTLog goes somewhere we cannot read. This lands in CyberpunkMP.log.
+    public native func ScriptLog(text: String) -> Void;
     public native func ConsumeJoinRequest() -> Bool;
     public native func GetEntityIdByServerId(serverId: Uint64) -> EntityID;
     public native func GetAppearanceSystem() -> ref<AppearanceSystem>;
