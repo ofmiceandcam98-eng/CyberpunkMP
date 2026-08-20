@@ -24,6 +24,23 @@ message Perk {
     int32 level = 2;
 }
 
+/**
+ * The server correcting a player's balance.
+ *
+ * Needed because money moves in BOTH directions and the client is the one holding it. The
+ * server can decide a purchase happened, but if it only edits its own record the client
+ * still has the eddies in game - and the next ninety-second autosave reports that figure
+ * back, overwriting the deduction. The money would be spent and then unspent, silently,
+ * every single time.
+ *
+ * So a balance change is pushed, the client applies the difference, and the next capture
+ * reports a figure that already agrees.
+ */
+message NotifyMoney {
+    int32 balance = 1;
+    string reason = 2;
+}
+
 message WorldFact {
     string name = 1;
     int32 value = 2;
@@ -294,5 +311,6 @@ message Protocol {
         NotifyAuthorityRevoked notify_authority_revoked = 17;
         NotifyWorldState notify_world_state = 18;
         NotifyInteraction notify_interaction = 19;
+        NotifyMoney notify_money = 20;
     }
 }

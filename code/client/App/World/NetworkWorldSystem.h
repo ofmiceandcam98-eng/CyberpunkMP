@@ -109,6 +109,9 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
 
     void AddVehicle(const Red::CString& acName);
 
+    // The balance the server last told us to have, for the script side to apply.
+    int32_t GetTargetMoney() const { return m_targetMoney; }
+
     uint32_t GetRestoreVehicleCount() const;
     Red::CString GetRestoreVehicle(uint32_t aIndex) const;
 
@@ -174,6 +177,9 @@ protected:
     void HandleOpenCharacterCreator(const PacketEvent<server::OpenCharacterCreator>& aMessage);
     void HandleRequestCharacterName(const PacketEvent<server::RequestCharacterName>& aMessage);
 
+    // The server correcting our balance - a purchase, a sale, an admin adjustment.
+    void HandleNotifyMoney(const PacketEvent<server::NotifyMoney>& aMessage);
+
     // Set while a freshly created character is waiting to be sent to the server.
     bool m_newCharacterPending{false};
 
@@ -187,6 +193,7 @@ protected:
     Vector<server::Perk> m_restorePerks;
     Vector<String> m_capturedVehicles;
     Vector<String> m_restoreVehicles;
+    int32_t m_targetMoney{0};
 
     // What the server sent on spawn, held until script has applied it.
     Vector<server::ItemStack> m_restoreInventory;
@@ -304,6 +311,7 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(GetFactName);
     RTTI_METHOD(GetFactValue);
     RTTI_METHOD(AddVehicle);
+    RTTI_METHOD(GetTargetMoney);
     RTTI_METHOD(GetRestoreVehicleCount);
     RTTI_METHOD(GetRestoreVehicle);
     RTTI_METHOD(GetRestorePerkCount);

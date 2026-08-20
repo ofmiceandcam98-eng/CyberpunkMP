@@ -71,6 +71,35 @@ struct ChatSystem
     // character was made before the prompt existed.
     void AskForCharacterName(const PlayerComponent& acPlayer, const CharacterRecord& acCharacter);
 
+    /**
+     * A vehicle sale waiting on the buyer.
+     *
+     * Held in memory rather than on disk deliberately. An offer is a conversation, not
+     * property: if the server restarts mid-offer, the right outcome is that nothing
+     * happened, and the vehicle's lock is cleared on load for exactly that reason. A
+     * persisted offer would resume against players who are no longer here and prices
+     * neither of them remembers agreeing to.
+     */
+    struct PendingSale
+    {
+        std::string Token;      // also the vehicle's lock - see VehicleStore::Lock
+        std::string VehicleId;
+        std::string SellerId;
+        std::string BuyerId;
+        int64_t Price{0};
+        int64_t OfferedAt{0};
+    };
+
+    // Runs the transfer: funds checked, money moved both ways, ownership changed, both
+    // clients corrected. Separate from the command so the same path serves an expiry or a
+    // disconnect later without the logic being duplicated.
+    void CompleteSale(const PendingSale& acSale, const PlayerComponent& acBuyer);
+
+    // Tells one player what the server thinks their balance is, so their game agrees.
+    void PushMoney(const PlayerComponent& acPlayer, int32_t aBalance, const std::string& acReason);
+
+    std::vector<PendingSale> m_pendingSales;
+
     // Only players whose puppet is within aRange of acOrigin.
     //
     // The sender is always included regardless of distance. Not seeing your own message

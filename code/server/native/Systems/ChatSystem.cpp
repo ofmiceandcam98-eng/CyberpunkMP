@@ -311,6 +311,123 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
  * on spawn for anybody whose character predates the prompt existing. Both want identical
  * behaviour, and the second one is the only route that ever reaches an existing player.
  */
+void ChatSystem::PushMoney(const PlayerComponent& acPlayer, int32_t aBalance, const std::string& acReason)
+{
+    server::NotifyMoney notify;
+    notify.set_balance(aBalance);
+    notify.set_reason(acReason.c_str());
+
+    GServer->Send(acPlayer.Connection, notify);
+}
+
+/**
+ * Executes a vehicle sale.
+ *
+ * Ordered so that nothing is half-done. Funds are checked before anything moves, money
+ * moves before ownership, and ownership moves last - because a failed transfer after a
+ * successful debit leaves somebody poorer with nothing to show, which is the one outcome
+ * players will never accept.
+ *
+ * Balances are read from the SERVER's records, never from what either client claims. The
+ * whole reason money became server-owned tonight is so that a purchase cannot be talked
+ * into existence by the machine that benefits from it.
+ */
+void ChatSystem::CompleteSale(const PendingSale& acSale, const PlayerComponent& acBuyer)
+{
+    auto& store = GServer->GetPlayerStore();
+    auto& vehicles = GServer->GetVehicles();
+
+    const auto* pVehicle = vehicles.Find(acSale.VehicleId);
+
+    if (!pVehicle)
+    {
+        Tell(acBuyer, "That vehicle no longer exists.");
+        return;
+    }
+
+    // Re-checked at execution rather than trusted from when the offer was made. Between
+    // offering and accepting the car may have changed hands by some other route, and the
+    // seller must still own the thing they are selling at the moment it is sold.
+    if (pVehicle->OwnerId != acSale.SellerId)
+    {
+        vehicles.Unlock(acSale.VehicleId, acSale.Token);
+        Tell(acBuyer, "The seller no longer owns that vehicle.");
+        return;
+    }
+
+    const auto* pBuyerCharacter = store.FindCharacter(acSale.BuyerId);
+    const auto* pSellerCharacter = store.FindCharacter(acSale.SellerId);
+
+    if (!pBuyerCharacter || !pSellerCharacter)
+    {
+        vehicles.Unlock(acSale.VehicleId, acSale.Token);
+        Tell(acBuyer, "That sale cannot complete - one of you has no character record.");
+        return;
+    }
+
+    if (pBuyerCharacter->Money < acSale.Price)
+    {
+        vehicles.Unlock(acSale.VehicleId, acSale.Token);
+        Tell(acBuyer, fmt::format("You need {} eddies and have {}.", acSale.Price,
+                                  pBuyerCharacter->Money));
+        return;
+    }
+
+    // Money first, both sides, then ownership. Each store write is its own save, so a
+    // crash between them leaves the buyer paid-and-carless rather than the reverse - the
+    // recoverable direction, and the one an admin can fix with /givecar.
+    CharacterRecord buyer = *pBuyerCharacter;
+    CharacterRecord seller = *pSellerCharacter;
+
+    buyer.Money -= acSale.Price;
+    seller.Money += acSale.Price;
+
+    store.SaveCharacter(acSale.BuyerId, acBuyer.Username, buyer);
+    store.SaveCharacter(acSale.SellerId, seller.Name, seller);
+
+    if (!vehicles.Transfer(acSale.VehicleId, acSale.BuyerId, acSale.Token))
+    {
+        // Put the money back. A transfer that fails here is a bug rather than a refusal -
+        // the lock is ours and ownership was checked - but leaving somebody charged for a
+        // car they did not receive is not something to risk on that reasoning.
+        buyer.Money += acSale.Price;
+        seller.Money -= acSale.Price;
+        store.SaveCharacter(acSale.BuyerId, acBuyer.Username, buyer);
+        store.SaveCharacter(acSale.SellerId, seller.Name, seller);
+
+        Tell(acBuyer, "That sale could not complete. You have not been charged.");
+        spdlog::error("Vehicle {} transfer failed after debit - refunded", acSale.VehicleId);
+        return;
+    }
+
+    // Both games corrected, so neither client's next autosave reports the old figure and
+    // undoes the transaction.
+    PushMoney(acBuyer, static_cast<int32_t>(buyer.Money), "vehicle purchase");
+    Tell(acBuyer, fmt::format("Bought {} (plate {}) for {} eddies. It is in your phone next time you connect.",
+                              pVehicle->ModelName, pVehicle->Plate, acSale.Price));
+
+    // The seller may not be online - a sale can complete while they are away, and their
+    // record has already been updated either way. Only the live correction is skipped;
+    // they will read the new balance from their own record when they next connect.
+    //
+    // PlayerManager has no lookup by Discord id, so the world is walked. Two players is a
+    // walk of two, and inventing an index for a lookup that happens once per sale would be
+    // one more thing to keep in step.
+    m_pWorld->each(
+        [this, &acSale, &seller, &acBuyer, pVehicle](flecs::entity, const PlayerComponent& acOther)
+        {
+            if (acOther.DiscordId != acSale.SellerId)
+                return;
+
+            PushMoney(acOther, static_cast<int32_t>(seller.Money), "vehicle sale");
+            Tell(acOther, fmt::format("{} bought your {} for {} eddies.", acBuyer.Username,
+                                      pVehicle->ModelName, acSale.Price));
+        });
+
+    spdlog::info("Vehicle {} sold: {} -> {} for {}", acSale.VehicleId, acSale.SellerId,
+                 acSale.BuyerId, acSale.Price);
+}
+
 void ChatSystem::AskForCharacterName(const PlayerComponent& acPlayer, const CharacterRecord& acCharacter)
 {
     server::RequestCharacterName ask;
@@ -1091,6 +1208,143 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         // than the character, it is the key everything on the server is filed under, and
         // nothing an admin does in chat needs it - /tp and the rest already accept the
         // character id, which is safe to paste anywhere.
+        return true;
+    }
+
+    // ---------------------------------------------------------- /sellcar ----
+    //
+    // Offer one of your vehicles to somebody, for money.
+    //
+    // Two-sided on purpose. A one-sided transfer - "give my car to that player" - cannot
+    // charge for itself and cannot be refused, which makes it a gift rather than a sale
+    // and makes it a way to force property onto somebody. The offer sits pending until the
+    // other person answers.
+    if (command == "/sellcar")
+    {
+        std::istringstream parts(acLine);
+        std::string ignored, wanted, buyerName, priceText;
+        parts >> ignored >> wanted >> buyerName >> priceText;
+
+        if (wanted.empty() || buyerName.empty() || priceText.empty())
+        {
+            Tell(acSender, "Usage: /sellcar <id> <player> <price>");
+            return true;
+        }
+
+        int64_t price = 0;
+        try { price = std::stoll(priceText); } catch (...) { price = -1; }
+
+        if (price < 0)
+        {
+            Tell(acSender, "That is not a price.");
+            return true;
+        }
+
+        const auto buyer = findPlayer(buyerName);
+        if (!buyer)
+        {
+            Tell(acSender, fmt::format("No player called '{}' is online.", buyerName));
+            return true;
+        }
+
+        const auto* pBuyer = buyer.get<PlayerComponent>();
+
+        if (pBuyer->DiscordId == acSender.DiscordId)
+        {
+            Tell(acSender, "You cannot sell a car to yourself.");
+            return true;
+        }
+
+        // Searched among the SELLER's own vehicles only, so a refusal cannot be used to
+        // learn what somebody else owns.
+        const VehicleRecord* pMatch = nullptr;
+        for (const auto& vehicle : GServer->GetVehicles().OwnedBy(acSender.DiscordId))
+        {
+            if (vehicle.Id.rfind(wanted, 0) == 0 || vehicle.Plate == wanted)
+            {
+                pMatch = &vehicle;
+                break;
+            }
+        }
+
+        if (!pMatch)
+        {
+            Tell(acSender, fmt::format("You do not own a vehicle matching '{}'.", wanted));
+            return true;
+        }
+
+        if (!pMatch->LockedBy.empty())
+        {
+            Tell(acSender, "That vehicle is already part of a pending sale.");
+            return true;
+        }
+
+        // The lock is taken NOW, before the buyer is told anything. Between offering and
+        // accepting, the seller must not be able to offer the same car to somebody else -
+        // otherwise two people can accept and the second transfer silently wins.
+        const auto token = GenerateCharacterId();
+
+        if (!GServer->GetVehicles().Lock(pMatch->Id, token))
+        {
+            Tell(acSender, "That vehicle could not be reserved for a sale.");
+            return true;
+        }
+
+        m_pendingSales.push_back({token, pMatch->Id, acSender.DiscordId, pBuyer->DiscordId, price,
+                                  std::time(nullptr)});
+
+        Tell(acSender, fmt::format("Offered {} (plate {}) to {} for {} eddies. They have two minutes.",
+                                   pMatch->ModelName, pMatch->Plate, pBuyer->Username, price));
+
+        Tell(*pBuyer, fmt::format("{} is offering you a {} (plate {}) for {} eddies.",
+                                  acSender.Username, pMatch->ModelName, pMatch->Plate, price));
+        Tell(*pBuyer, "Type /buycar to accept, or /declinecar to refuse.");
+
+        spdlog::info("{} offered vehicle {} to {} for {}", acSender.Username, pMatch->Id,
+                     pBuyer->Username, price);
+        return true;
+    }
+
+    // ----------------------------------------------------------- /buycar ----
+    if (command == "/buycar")
+    {
+        auto pending = std::find_if(m_pendingSales.begin(), m_pendingSales.end(),
+                                    [&acSender](const PendingSale& acSale)
+                                    { return acSale.BuyerId == acSender.DiscordId; });
+
+        if (pending == m_pendingSales.end())
+        {
+            Tell(acSender, "Nobody is offering you a vehicle.");
+            return true;
+        }
+
+        CompleteSale(*pending, acSender);
+        m_pendingSales.erase(pending);
+        return true;
+    }
+
+    // ------------------------------------------------------- /declinecar ----
+    //
+    // Either side can call it off - the buyer refusing, or the seller changing their mind.
+    if (command == "/declinecar")
+    {
+        auto pending = std::find_if(m_pendingSales.begin(), m_pendingSales.end(),
+                                    [&acSender](const PendingSale& acSale)
+                                    {
+                                        return acSale.BuyerId == acSender.DiscordId ||
+                                               acSale.SellerId == acSender.DiscordId;
+                                    });
+
+        if (pending == m_pendingSales.end())
+        {
+            Tell(acSender, "You have no pending vehicle sale.");
+            return true;
+        }
+
+        GServer->GetVehicles().Unlock(pending->VehicleId, pending->Token);
+        Tell(acSender, "Sale cancelled.");
+
+        m_pendingSales.erase(pending);
         return true;
     }
 

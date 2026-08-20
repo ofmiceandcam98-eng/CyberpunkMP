@@ -30,6 +30,7 @@ public native class NetworkWorldSystem extends IGameSystem {
     public native func GetFactName(index: Uint32) -> String;
     public native func GetFactValue(index: Uint32) -> Int32;
     public native func AddVehicle(name: String) -> Void;
+    public native func GetTargetMoney() -> Int32;
     public native func GetRestoreVehicleCount() -> Uint32;
     public native func GetRestoreVehicle(index: Uint32) -> String;
     public native func GetRestorePerkCount() -> Uint32;
@@ -64,6 +65,39 @@ public native class NetworkWorldSystem extends IGameSystem {
     // Reading them out one at a time rather than receiving an array, for the same reason
     // the capture pushes them one at a time: the boundary carries scalars, which cannot be
     // marshalled wrongly.
+    /**
+     * Applies a balance the server has decided on - a purchase, a sale, an adjustment.
+     *
+     * The difference, never the total, for the same reason the restore path does it that
+     * way: money is an item the player already holds some of, and giving them the target
+     * amount on top of what they have doubles it.
+     *
+     * Called from native when a NotifyMoney arrives.
+     */
+    public func ApplyServerMoney() -> Void {
+        let player = GetPlayer(GetGameInstance());
+        let transaction = GameInstance.GetTransactionSystem(GetGameInstance());
+
+        if !IsDefined(player) || !IsDefined(transaction) {
+            this.ScriptLog("money: cannot apply - no player or transaction system");
+            return;
+        }
+
+        let target = this.GetTargetMoney();
+        let held = transaction.GetItemQuantity(player, MarketSystem.Money());
+        let owed = target - held;
+
+        if owed > 0 {
+            transaction.GiveItem(player, MarketSystem.Money(), owed);
+        } else {
+            if owed < 0 {
+                transaction.RemoveItem(player, MarketSystem.Money(), -owed);
+            }
+        }
+
+        this.ScriptLog(s"money: \(held) -> \(target) on the server's instruction");
+    }
+
     public func RestorePossessions() -> Void {
         MpInventory.Restore(this);
         this.ApplyWorldFacts();

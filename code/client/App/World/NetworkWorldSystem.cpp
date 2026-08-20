@@ -1072,6 +1072,18 @@ void NetworkWorldSystem::HandleRequestCharacterName(const PacketEvent<server::Re
     Red::CallVirtual(this, "RequestCharacterName", Red::CString(aMessage.get_current().c_str()));
 }
 
+void NetworkWorldSystem::HandleNotifyMoney(const PacketEvent<server::NotifyMoney>& aMessage)
+{
+    m_targetMoney = aMessage.get_balance();
+
+    spdlog::info("[Money] server says the balance is now {} ({})", m_targetMoney,
+                 aMessage.get_reason().empty() ? "no reason given" : aMessage.get_reason().c_str());
+
+    // Applied by script, which is where the transaction system lives. Same split as
+    // everything else: native holds what came off the wire, script does the work.
+    Red::CallVirtual(Red::GetGameSystem<NetworkWorldSystem>(), "ApplyServerMoney");
+}
+
 void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::SpawnCharacterResponse>& aMessage)
 {
     if (!aMessage.has_id())
@@ -1429,6 +1441,7 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleTeleport>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleSpawnCharacterResponse>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleOpenCharacterCreator>(this);
+    pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleNotifyMoney>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleRequestCharacterName>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleWorldState>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleInteraction>(this);
