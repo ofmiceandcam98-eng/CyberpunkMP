@@ -89,21 +89,25 @@ Vector<uint64_t> AppearanceSystem::GetPlayerItems(Red::Handle<Red::GameObject> p
     Red::CallVirtual(this, "GetPlayerItems", items);
 
     for (auto item : items)
-    {
-        spdlog::info("Getting: {:#x}", item);
         equipment.push_back(item);
-    }
+
+    // One line for the lot, rather than one per item. This runs on every equipment read,
+    // and eight lines of raw ids per read pushed the things worth reading off the screen.
+    spdlog::info("[Appearance] read {} equipment item(s) from the local player", equipment.size());
 
     return equipment;
 }
 
 void AppearanceSystem::AddEntity(const Red::EntityID entityID, const Red::DynArray<Red::TweakDBID>& items, const Vector<uint8_t> ccstate)
 {
-    spdlog::info("Logging Entity Appearance: {}", entityID.hash);
-
-    // TEMPORARY [PROBE] lines - see the matching block in NetworkWorldSystem::Spawn.
-    spdlog::info("[PROBE 2] AddEntity: writing equipment map ({} items)", items.size);
-    spdlog::info("[PROBE 3] AddEntity: writing ccstate map ({} bytes)", ccstate.size());
+    // Kept, trimmed to one line.
+    //
+    // These were three PROBE lines placed to find the spawn crash of 12 August, which was
+    // fixed that day. The hunt is over; the fact is not - what a remote player arrives
+    // carrying is the first thing worth knowing when they look wrong, and it has earned
+    // its place several times since.
+    spdlog::info("[Appearance] entity {:x}: {} equipment item(s), {} bytes of ccstate",
+                 entityID.hash, items.size, ccstate.size());
 
     {
         std::lock_guard lock(m_mapLock);
@@ -117,7 +121,6 @@ void AppearanceSystem::AddEntity(const Red::EntityID entityID, const Red::DynArr
                  entityID.hash, ccstate.size(), HashBytes(ccstate.data(), ccstate.size()),
                  items.size, HashEquipment(items));
 
-    spdlog::info("[PROBE 4] AddEntity: both map writes done");
 }
 
 void AppearanceSystem::SetEntityName(Red::EntityID entityID, const std::string& acName)
@@ -234,10 +237,9 @@ void AddItems(Red::Handle<Red::game::Object> & object, Red::DynArray<Red::TweakD
 
 bool AppearanceSystem::ApplyAppearance(Red::Handle<Red::game::Object> object)
 {
-    // TEMPORARY [PROBE 21]. Tells us whether the Entity/Attached script callback fired at
-    // all for a puppet that crashed - the surviving spawn reaches this ~40ms after Spawn()
-    // returns, the crashing one never logs anything after [PROBE 10].
-    spdlog::info("[PROBE 21] ApplyAppearance entered");
+    // Was placed to prove the appearance callback fired at all for a puppet that then
+    // crashed. That crash is fixed and this line has no reader now - the lines that
+    // follow it say everything it did, and more usefully.
 
     if (!object.instance)
     {

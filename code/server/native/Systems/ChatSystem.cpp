@@ -1669,6 +1669,15 @@ void ChatSystem::HandleChatMessageRequest(const PacketEvent<client::ChatMessageR
     // Same dummy, stamped with the server's clock instead of yours. See DummyWalkComponent.
     if (line == "/dummy servertick")
     {
+        // Admin only, and answered privately.
+        //
+        // These are debugging tools that happened to be reachable by anybody, announcing
+        // themselves to the whole server. A player mid-roleplay does not need to read
+        // "Spawned a dummy stamped with the SERVER clock" - that sentence is addressed to
+        // whoever is chasing a bug, and to nobody else.
+        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
+            return deny(EPermissionLevel::kAdmin);
+
         auto* pOwnPuppet = pPlayer->Puppet ? pPlayer->Puppet.get<MovementComponent>() : nullptr;
         if (!pOwnPuppet)
         {
@@ -1697,6 +1706,15 @@ void ChatSystem::HandleChatMessageRequest(const PacketEvent<client::ChatMessageR
 
     if (line == "/dummy clear" || line == "/dummy remove")
     {
+        // Admin only, and answered privately.
+        //
+        // These are debugging tools that happened to be reachable by anybody, announcing
+        // themselves to the whole server. A player mid-roleplay does not need to read
+        // "Spawned a dummy stamped with the SERVER clock" - that sentence is addressed to
+        // whoever is chasing a bug, and to nobody else.
+        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
+            return deny(EPermissionLevel::kAdmin);
+
         int removed = 0;
 
         // Collected first, deleted after. Destroying entities inside the iteration
@@ -1718,11 +1736,20 @@ void ChatSystem::HandleChatMessageRequest(const PacketEvent<client::ChatMessageR
 
     if (line == "/dummy")
     {
+        // Admin only, and answered privately.
+        //
+        // These are debugging tools that happened to be reachable by anybody, announcing
+        // themselves to the whole server. A player mid-roleplay does not need to read
+        // "Spawned a dummy stamped with the SERVER clock" - that sentence is addressed to
+        // whoever is chasing a bug, and to nobody else.
+        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
+            return deny(EPermissionLevel::kAdmin);
+
         auto* pOwnPuppet = pPlayer->Puppet ? pPlayer->Puppet.get<MovementComponent>() : nullptr;
         if (!pOwnPuppet)
         {
             spdlog::warn("[dummy] sender has no puppet yet - spawn into the world first");
-            Broadcast("SERVER", "Spawn into the world first, then try /dummy again.");
+            Tell(*pPlayer, "Spawn into the world first, then try /dummy again.");
             return;
         }
 
@@ -1781,7 +1808,7 @@ void ChatSystem::HandleChatMessageRequest(const PacketEvent<client::ChatMessageR
 
         m_pWorld->get_mut<Level>()->Add(dummy);
 
-        Broadcast("SERVER", "Spawned a dummy 5m away. It walks in a circle - if it stands still, remote movement is broken.");
+        Tell(*pPlayer, "Spawned a dummy 5m away. It walks in a circle - if it stands still, remote movement is broken.");
         return;
     }
 
