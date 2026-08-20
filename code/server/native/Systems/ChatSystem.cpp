@@ -311,6 +311,52 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
  * on spawn for anybody whose character predates the prompt existing. Both want identical
  * behaviour, and the second one is the only route that ever reaches an existing player.
  */
+/**
+ * Tells one player's game to mark a quest done.
+ *
+ * Takes the entity rather than the component because the caller has already resolved the
+ * player and the connection is the only thing needed - and looking the player up twice is
+ * how the two lookups end up disagreeing about who the target was.
+ */
+/**
+ * What to call whoever holds a number.
+ *
+ * The name a player chose at creation, always, when they have one - that is who they are on
+ * this server, and a phone showing somebody's Discord handle to their contacts leaks an
+ * account name they never offered.
+ *
+ * The Discord name is the BACKUP and nothing else: only reached by a character with no
+ * chosen name, which is a character mid-creation. The number itself is the last resort, so
+ * a row never renders as a blank or as "Unknown" - a contact with no name at all reads like
+ * a bug in the phone rather than a person who has not named themselves yet.
+ */
+static std::string DisplayNameFor(const std::string& acDiscordId, const CharacterRecord* apCharacter,
+                                  const std::string& acFallback)
+{
+    if (apCharacter && !apCharacter->Name.empty())
+        return apCharacter->Name;
+
+    if (const auto* pRecord = GServer->GetPlayerStore().Find(acDiscordId))
+    {
+        if (!pRecord->Username.empty())
+            return pRecord->Username;
+    }
+
+    return acFallback;
+}
+
+void ChatSystem::SendQuestSkip(flecs::entity aSubject, const std::string& acQuest)
+{
+    const auto* pPlayer = aSubject.get<PlayerComponent>();
+    if (!pPlayer)
+        return;
+
+    server::NotifyQuestSkip notify;
+    notify.set_quest(acQuest.c_str());
+
+    GServer->Send(pPlayer->Connection, notify);
+}
+
 void ChatSystem::PushMoney(const PlayerComponent& acPlayer, int32_t aBalance, const std::string& acReason)
 {
     server::NotifyMoney notify;
@@ -1441,6 +1487,381 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
     // finding one is the same action as keeping it. Getting that wrong - making people
     // test in one place and record in another - is how a list of ninety buildings never
     // gets written down.
+    // --------------------------------------------------------------- /quest ---
+    //
+    // Every subcommand is admin-and-up, gated ONCE here rather than per branch. A gate
+    // repeated four times is a gate somebody forgets to repeat a fifth time.
+    if (command == "/quest")
+    {
+        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
+            return deny(EPermissionLevel::kAdmin);
+
+        const auto restStart = acLine.find(' ');
+        std::string rest = (restStart == std::string::npos) ? std::string{} : acLine.substr(restStart + 1);
+
+        while (!rest.empty() && rest.front() == ' ')
+            rest.erase(rest.begin());
+
+        const auto usage = [&]()
+        {
+            Tell(acSender, "Usage: /quest allow <player> <quest>   - let them see it");
+            Tell(acSender, "       /quest deny  <player> <quest>   - take it back");
+            Tell(acSender, "       /quest skip  <player> <quest>   - mark it done for them");
+            Tell(acSender, "       /quest list  <player>           - what they are allowed");
+        };
+
+        if (rest.empty())
+        {
+            usage();
+            return true;
+        }
+
+        // "<verb> <player> [quest]"
+        std::string verb = rest;
+        std::string remainder;
+
+        if (const auto space = rest.find(' '); space != std::string::npos)
+        {
+            verb = rest.substr(0, space);
+            remainder = rest.substr(space + 1);
+        }
+
+        std::string who = remainder;
+        std::string quest;
+
+        if (const auto space = remainder.find(' '); space != std::string::npos)
+        {
+            who = remainder.substr(0, space);
+            quest = remainder.substr(space + 1);
+        }
+
+        if (who.empty())
+        {
+            usage();
+            return true;
+        }
+
+        const auto subject = findPlayer(who);
+        if (!subject)
+        {
+            Tell(acSender, fmt::format("No player called '{}' is online.", who));
+            return true;
+        }
+
+        const auto* pSubjectPlayer = subject.get<PlayerComponent>();
+        if (!pSubjectPlayer)
+        {
+            Tell(acSender, "That player has no record right now.");
+            return true;
+        }
+
+        const auto subjectId = pSubjectPlayer->DiscordId;
+
+        if (verb == "list")
+        {
+            const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(subjectId);
+
+            if (!pCharacter || pCharacter->AllowedQuests.empty())
+            {
+                Tell(acSender, fmt::format("{} is allowed no quests.", who));
+                return true;
+            }
+
+            Tell(acSender, fmt::format("{} is allowed {} quest(s):", who, pCharacter->AllowedQuests.size()));
+            for (const auto& allowed : pCharacter->AllowedQuests)
+                Tell(acSender, fmt::format("  {}", allowed));
+
+            return true;
+        }
+
+        if (quest.empty())
+        {
+            usage();
+            return true;
+        }
+
+        if (verb == "allow")
+        {
+            if (!GServer->GetPlayerStore().AllowQuest(subjectId, quest))
+            {
+                Tell(acSender, fmt::format("{} is already allowed '{}'.", who, quest));
+                return true;
+            }
+
+            spdlog::info("{} allowed quest '{}' for {}", acSender.Username, quest, who);
+            Tell(acSender, fmt::format("Allowed '{}' for {}. They see it on their next reconnect.",
+                                       quest, who));
+            return true;
+        }
+
+        if (verb == "deny")
+        {
+            if (!GServer->GetPlayerStore().DenyQuest(subjectId, quest))
+            {
+                Tell(acSender, fmt::format("{} was not allowed '{}' anyway.", who, quest));
+                return true;
+            }
+
+            spdlog::info("{} denied quest '{}' for {}", acSender.Username, quest, who);
+            Tell(acSender, fmt::format("Denied '{}' for {}.", quest, who));
+            return true;
+        }
+
+        if (verb == "skip")
+        {
+            // Skipping is a CLIENT action - only the game can move a journal entry - so the
+            // server records the instruction and the client carries it out. Told to the
+            // subject's client directly rather than broadcast: a quest moving on is not
+            // everybody's business.
+            //
+            // Deliberately noisy about the risk. Marking a quest done moves world state
+            // forward, and some of that state is doors - which is the objection Cam raised
+            // himself before asking for this. Better said every time than remembered once.
+            SendQuestSkip(subject, quest);
+
+            spdlog::info("{} skipped quest '{}' for {}", acSender.Username, quest, who);
+            Tell(acSender, fmt::format("Told {}'s game to skip '{}'.", who, quest));
+            Tell(acSender, "Note: skipping advances world state, which can unlock or lock doors.");
+            return true;
+        }
+
+        usage();
+        return true;
+    }
+
+    // -------------------------------------------------------------- /number ---
+    if (command == "/number")
+    {
+        const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(acSender.DiscordId);
+
+        if (!pCharacter)
+        {
+            Tell(acSender, "You have no character yet.");
+            return true;
+        }
+
+        if (pCharacter->PhoneNumber.empty())
+        {
+            // Says so rather than inventing one on the spot. A number handed out by a read
+            // command would not be saved, and the player would give out a number that stops
+            // being theirs the moment they reconnect.
+            Tell(acSender, "You have no number yet - it is assigned on your next save.");
+            return true;
+        }
+
+        Tell(acSender, fmt::format("Your number is {}. Give it out and people can add you with "
+                                   "/addcontact {}", pCharacter->PhoneNumber, pCharacter->PhoneNumber));
+        return true;
+    }
+
+    // ---------------------------------------------------------- /addcontact ---
+    if (command == "/addcontact")
+    {
+        if (target.empty())
+        {
+            Tell(acSender, "Usage: /addcontact 555-014-372   (ask them for their number)");
+            return true;
+        }
+
+        if (!IsPhoneNumberShaped(target))
+        {
+            // Separated from "nobody has that number" deliberately. The two failures read
+            // identically to a player and have completely different fixes.
+            Tell(acSender, fmt::format("'{}' is not a number. They look like 555-014-372.", target));
+            return true;
+        }
+
+        std::string ownerId;
+        const auto* pOwner = GServer->GetPlayerStore().FindCharacterByPhoneNumber(target, &ownerId);
+
+        if (!pOwner)
+        {
+            Tell(acSender, fmt::format("Nobody has the number {}.", target));
+            return true;
+        }
+
+        if (ownerId == acSender.DiscordId)
+        {
+            Tell(acSender, "That is your own number.");
+            return true;
+        }
+
+        if (!GServer->GetPlayerStore().AddContact(acSender.DiscordId, target))
+        {
+            Tell(acSender, fmt::format("{} is already in your contacts.", target));
+            return true;
+        }
+
+        // Only the person who added them is told. Nobody else's phone gains an entry, and
+        // the owner is not notified either - looking somebody up is not an event that should
+        // announce itself to them.
+        Tell(acSender, fmt::format("Added {} - {}.", DisplayNameFor(ownerId, pOwner, target), target));
+        return true;
+    }
+
+    // ----------------------------------------------------------------- /pay ---
+    //
+    // Sends eddies to a phone number. The phone app will call this same path - the transfer
+    // is deliberately not written inside a UI handler, because the rule that a sender loses
+    // exactly what a recipient gains has to hold no matter which surface asked.
+    if (command == "/pay")
+    {
+        const auto restStart = acLine.find(' ');
+        std::string rest = (restStart == std::string::npos) ? std::string{} : acLine.substr(restStart + 1);
+
+        while (!rest.empty() && rest.front() == ' ')
+            rest.erase(rest.begin());
+
+        std::string number = rest;
+        std::string amountText;
+
+        if (const auto space = rest.find(' '); space != std::string::npos)
+        {
+            number = rest.substr(0, space);
+            amountText = rest.substr(space + 1);
+        }
+
+        if (number.empty() || amountText.empty())
+        {
+            Tell(acSender, "Usage: /pay 555-014-372 <amount>");
+            return true;
+        }
+
+        if (!IsPhoneNumberShaped(number))
+        {
+            Tell(acSender, fmt::format("'{}' is not a number. They look like 555-014-372.", number));
+            return true;
+        }
+
+        // Parsed strictly. A silent 0 from a failed parse would report a successful transfer
+        // of nothing, which is worse than refusing outright.
+        int64_t amount = 0;
+
+        try
+        {
+            size_t consumed = 0;
+            amount = std::stoll(amountText, &consumed);
+
+            if (consumed != amountText.size())
+                throw std::invalid_argument("trailing characters");
+        }
+        catch (...)
+        {
+            Tell(acSender, fmt::format("'{}' is not an amount.", amountText));
+            return true;
+        }
+
+        if (amount <= 0)
+        {
+            // Zero is pointless; negative would be "pay me", which is theft with extra steps.
+            Tell(acSender, "Amount must be more than zero.");
+            return true;
+        }
+
+        auto& store = GServer->GetPlayerStore();
+
+        std::string recipientId;
+        const auto* pRecipient = store.FindCharacterByPhoneNumber(number, &recipientId);
+
+        if (!pRecipient)
+        {
+            Tell(acSender, fmt::format("Nobody has the number {}.", number));
+            return true;
+        }
+
+        if (recipientId == acSender.DiscordId)
+        {
+            Tell(acSender, "That is your own number.");
+            return true;
+        }
+
+        const auto* pSenderCharacter = store.FindCharacter(acSender.DiscordId);
+
+        if (!pSenderCharacter)
+        {
+            Tell(acSender, "You have no character record.");
+            return true;
+        }
+
+        // Read from the SERVER's record, never from anything the client claimed. This is the
+        // entire reason money became server-owned: a transfer must not be talked into
+        // existence by the machine that benefits from it.
+        if (pSenderCharacter->Money < amount)
+        {
+            Tell(acSender, fmt::format("You have {} eddies and tried to send {}.",
+                                       pSenderCharacter->Money, amount));
+            return true;
+        }
+
+        // Both records are written before either client is told anything. The saved balances
+        // are the truth; the pushes below only bring the games into line with it, so a client
+        // that never receives its push is out of date rather than wrong.
+        CharacterRecord sender = *pSenderCharacter;
+        CharacterRecord recipient = *pRecipient;
+
+        sender.Money -= amount;
+        recipient.Money += amount;
+
+        store.SaveCharacter(acSender.DiscordId, acSender.Username, sender);
+        store.SaveCharacter(recipientId, pRecipient->Name, recipient);
+
+        // The sender is always online - they just typed this - so their game is corrected
+        // immediately, or their next autosave would report the old balance and undo the debit.
+        PushMoney(acSender, static_cast<int32_t>(sender.Money), "sent");
+
+        // The recipient may not be. An offline recipient needs no push: their record already
+        // holds the money and restore applies it when they next spawn.
+        const auto recipientEntity = findPlayer(recipientId);
+
+        if (recipientEntity)
+        {
+            if (const auto* pRecipientPlayer = recipientEntity.get<PlayerComponent>())
+            {
+                PushMoney(*pRecipientPlayer, static_cast<int32_t>(recipient.Money), "received");
+                Tell(*pRecipientPlayer,
+                     fmt::format("{} sent you {} eddies.",
+                                 DisplayNameFor(acSender.DiscordId, pSenderCharacter, acSender.Username),
+                                 amount));
+            }
+        }
+
+        spdlog::info("{} paid {} eddies to {} ({})", acSender.Username, amount, number, recipientId);
+
+        Tell(acSender, fmt::format("Sent {} eddies to {}. You have {} left.", amount,
+                                   DisplayNameFor(recipientId, pRecipient, number), sender.Money));
+        return true;
+    }
+
+    // ------------------------------------------------------------ /contacts ---
+    if (command == "/contacts")
+    {
+        const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(acSender.DiscordId);
+
+        if (!pCharacter || pCharacter->Contacts.empty())
+        {
+            Tell(acSender, "No contacts yet. Ask someone for their number and /addcontact it.");
+            return true;
+        }
+
+        Tell(acSender, fmt::format("{} contact(s):", pCharacter->Contacts.size()));
+
+        for (const auto& number : pCharacter->Contacts)
+        {
+            const auto* pOwner = GServer->GetPlayerStore().FindCharacterByPhoneNumber(number);
+
+            // A number whose owner has retired still shows, with the truth next to it.
+            // Silently dropping it would look like the contact was never added.
+            std::string ownerId;
+            const auto* pResolved = GServer->GetPlayerStore().FindCharacterByPhoneNumber(number, &ownerId);
+
+            Tell(acSender, fmt::format("  {}  {}", number,
+                                       pResolved ? DisplayNameFor(ownerId, pResolved, number)
+                                                 : "(no longer in service)"));
+        }
+
+        return true;
+    }
+
     if (command == "/fact")
     {
         if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))

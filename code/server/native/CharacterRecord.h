@@ -202,6 +202,42 @@ struct CharacterRecord
     // of it.
     std::string CharacterId;
 
+    /**
+     * This character's phone number - how other players reach them.
+     *
+     * Belongs to the CHARACTER, not the account, so somebody who retires a character does
+     * not keep the number that people have saved under a name that no longer exists.
+     *
+     * Assigned once and never regenerated. A number that changes is not a number: every
+     * contact list holding the old one silently points at nobody, and the failure shows up
+     * as messages that quietly go nowhere rather than as an error.
+     */
+    std::string PhoneNumber;
+
+    /**
+     * Numbers this character has added, and nothing more.
+     *
+     * Per character on purpose. A contact somebody adds is theirs alone - nobody else's
+     * phone gains an entry because one player looked someone up, which is what makes a
+     * number worth handing out in the first place.
+     *
+     * Stores the NUMBER rather than a character id, because the number is what a player
+     * types and what they will still have if the person behind it is not online. Resolving
+     * a number to whoever currently holds it is the server's job at the moment of use.
+     */
+    std::vector<std::string> Contacts;
+
+    /**
+     * Quests this character is permitted to see, granted one at a time by an admin.
+     *
+     * Empty is the normal state and means "no quests", which is the default the server
+     * wants - so a character created while nobody is looking is quiet rather than dropped
+     * into Act 2. Nothing here turns a quest ON by itself; it lifts the suppression for one
+     * person and one quest, which is what makes a story beat something an admin hands out
+     * rather than something the game inflicts.
+     */
+    std::vector<std::string> AllowedQuests;
+
     int64_t CreatedAt{0};
     int64_t UpdatedAt{0};
 
@@ -210,6 +246,7 @@ struct CharacterRecord
                                                 NameChosen, SpawnedBefore, CharacterId,
                                                 Inventory, Money, Proficiencies,
                                                 Attributes, Perks, Vehicles,
+                                                PhoneNumber, Contacts, AllowedQuests,
                                                 CreatedAt, UpdatedAt)
 };
 
@@ -221,6 +258,57 @@ struct CharacterRecord
  * makes the id a reversible restatement of who owns it, which defeats being able to pass
  * it around.
  */
+/**
+ * A phone number, nine digits: 555-014-372.
+ *
+ * The 555 prefix is deliberate. It is the block real telephone networks reserve for fiction
+ * precisely so a number said out loud cannot ring a real person - and players say these
+ * numbers to each other in chat, on stream, and in screenshots.
+ *
+ * The remaining six digits are a million numbers, and the point of that is NOT collisions -
+ * the caller checks for those and would catch them at any length. It is guessability. With
+ * four digits somebody could work through every number on the server in an afternoon and
+ * text strangers who never gave it to them, which quietly turns a phone book into a
+ * broadcast channel. A million makes that pointless, and a number is only private while
+ * finding one by accident is hard.
+ */
+inline std::string GeneratePhoneNumber()
+{
+    static std::mt19937 engine{std::random_device{}()};
+    static std::uniform_int_distribution<int> digits{0, 999999};
+
+    const int value = digits(engine);
+
+    char number[16] = {};
+    std::snprintf(number, sizeof(number), "555-%03d-%03d", value / 1000, value % 1000);
+
+    return number;
+}
+
+/**
+ * Is this something a player could have typed as a number?
+ *
+ * Checked before any lookup so a malformed argument is answered with "that is not a number"
+ * rather than a silent miss that reads identically to "nobody has that number".
+ */
+inline bool IsPhoneNumberShaped(const std::string& acValue)
+{
+    // 555-014-372: nine digits, dashes after the third and sixth.
+    if (acValue.size() != 11 || acValue[3] != '-' || acValue[7] != '-')
+        return false;
+
+    for (size_t i = 0; i < acValue.size(); ++i)
+    {
+        if (i == 3 || i == 7)
+            continue;
+
+        if (acValue[i] < '0' || acValue[i] > '9')
+            return false;
+    }
+
+    return true;
+}
+
 inline std::string GenerateCharacterId()
 {
     static std::mt19937_64 engine{std::random_device{}()};

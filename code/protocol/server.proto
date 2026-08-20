@@ -41,6 +41,21 @@ message NotifyMoney {
     string reason = 2;
 }
 
+/**
+ * Move one player's journal entry to done.
+ *
+ * Sent to a single client rather than broadcast: only the game that owns a journal can
+ * change it, and one player skipping a quest is not an event the rest of the server needs
+ * narrated at them.
+ *
+ * Carries the quest by NAME, uninterpreted by the server - the same principle as items and
+ * appearance. A server that understood quest identifiers would need updating every patch,
+ * and it has no need to know what a quest IS in order to relay an admin's instruction.
+ */
+message NotifyQuestSkip {
+    string quest = 1;
+}
+
 message WorldFact {
     string name = 1;
     int32 value = 2;
@@ -312,5 +327,6 @@ message Protocol {
         NotifyWorldState notify_world_state = 18;
         NotifyInteraction notify_interaction = 19;
         NotifyMoney notify_money = 20;
+        NotifyQuestSkip notify_quest_skip = 21;
     }
 }

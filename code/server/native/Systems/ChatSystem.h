@@ -98,6 +98,9 @@ struct ChatSystem
     // Tells one player what the server thinks their balance is, so their game agrees.
     void PushMoney(const PlayerComponent& acPlayer, int32_t aBalance, const std::string& acReason);
 
+    // Only the client owning a journal can change it, so /quest skip relays rather than acts.
+    void SendQuestSkip(flecs::entity aSubject, const std::string& acQuest);
+
     std::vector<PendingSale> m_pendingSales;
 
     // Only players whose puppet is within aRange of acOrigin.
