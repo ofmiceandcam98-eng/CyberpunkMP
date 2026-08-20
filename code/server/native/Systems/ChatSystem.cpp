@@ -236,14 +236,49 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
     // not a recoverable mistake.
     if (!aMessage.get_proficiencies().empty())
     {
+        /**
+         * A new character starts at 15, whatever the template happens to be.
+         *
+         * The world template is a real save, and its level is an accident of which save was
+         * usable - the current one is level 34 because that is where the unmodded,
+         * post-Dogtown save happened to be. Letting that decide everyone's starting power
+         * means the day we swap the template for world-state reasons, every new player
+         * silently starts somewhere else.
+         *
+         * Level and street cred are both proficiencies, so one clamp covers both. Skills
+         * come along for the ride, which is right: a level 15 character with level 20 skills
+         * is not a level 15 character.
+         *
+         * FIRST CAPTURE ONLY. After that the player owns their progression and nothing here
+         * touches it - clamping every capture would delete somebody's levelling the moment
+         * they passed 15, which is the kind of silent theft that ends a server.
+         */
+        const bool firstCapture = !character.Initialised && !character.SpawnedBefore;
+        constexpr int32_t kStartingLevel = 15;
+
         character.Proficiencies.clear();
         character.Proficiencies.reserve(aMessage.get_proficiencies().size());
 
-        for (const auto& prof : aMessage.get_proficiencies())
-            character.Proficiencies.push_back({prof.get_type(), prof.get_level()});
+        int clamped = 0;
 
-        spdlog::info("{} stored {} proficiency level(s)", pPlayer->Username,
-                     character.Proficiencies.size());
+        for (const auto& prof : aMessage.get_proficiencies())
+        {
+            auto level = prof.get_level();
+
+            if (firstCapture && level > kStartingLevel)
+            {
+                level = kStartingLevel;
+                ++clamped;
+            }
+
+            character.Proficiencies.push_back({prof.get_type(), level});
+        }
+
+        spdlog::info("{} stored {} proficiency level(s){}", pPlayer->Username,
+                     character.Proficiencies.size(),
+                     clamped ? fmt::format(" - new character, {} clamped to {}", clamped,
+                                           kStartingLevel)
+                             : "");
     }
 
     // Attributes and perks, same absence rule as everything else: only replaced when the

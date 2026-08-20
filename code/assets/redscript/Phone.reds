@@ -41,115 +41,53 @@ public class MpPhone {
   }
 
   /**
-   * The one vanilla contact worth keeping.
+   * Is this a contact the server keeps?
    *
-   * Delamain stays because the server drives vehicle calls through it - removing it would
-   * take away the interface players already know in exchange for nothing.
+   * Reads the name off the row's own contact handle. An earlier version asked the journal
+   * for every contact and matched hashes, which needed a JournalRequestStateFilter value
+   * that five guesses failed to find - and none of that was necessary, because the row
+   * being filtered already carries the contact it represents.
+   *
+   * Matched by name rather than by a hardcoded hash. A pasted hash is opaque, unverifiable
+   * by eye, and goes silently wrong when a patch moves the entry - and its failure mode is
+   * hiding the WHOLE phone. A name that stops matching leaves everything visible instead,
+   * which somebody notices in a second.
    */
-  public static func IsKept(journal: wref<JournalManager>, hash: Int32) -> Bool {
-    if !IsDefined(journal) {
-      // No journal is not a reason to hide somebody's whole phone. Failing open leaves the
-      // game exactly as it is without the mod, which is the right direction to fail in.
+  public static func IsKept(journal: wref<JournalManager>, info: SocialPanelContactInfo) -> Bool {
+    let contact = info.Contact;
+
+    // Failing open, deliberately. A row we cannot identify stays visible: showing one
+    // contact too many is a blemish, hiding somebody's whole phone is a bug report.
+    if !IsDefined(contact) || !IsDefined(journal) {
       return true;
     }
 
-    return hash == MpPhone.KeptHash(journal);
-  }
-
-  /**
-   * Delamain's entry hash, found by walking the contact list.
-   *
-   * By name rather than by a hardcoded hash. A hash copied out of a log is opaque, silently
-   * wrong after a patch moves the entry, and impossible to check by eye - whereas a name
-   * that stops matching leaves every contact visible, which is a fault somebody notices
-   * immediately rather than one that hides the whole phone.
-   *
-   * Returns 0 when not found, which no real entry hashes to, so the caller keeps everything.
-   */
-  public static func KeptHash(journal: wref<JournalManager>) -> Int32 {
-    // GetContacts takes a request context, not a bare array - the journal's getters are all
-    // shaped this way. A default context asks for everything, which is what we want: the
-    // point is to find Delamain wherever it is, not to reproduce the phone's own filtering.
-    let request: JournalRequestContext;
-    let contacts: array<wref<JournalEntry>>;
-    journal.GetContacts(request, contacts);
-
-    let index = 0;
-
-    while index < ArraySize(contacts) {
-      let contact = contacts[index] as JournalContact;
-
-      if IsDefined(contact) {
-        let name = StrLower(contact.GetLocalizedName(journal));
-
-        if StrContains(name, "delamain") {
-          return journal.GetEntryHash(contact);
-        }
-      }
-
-      index += 1;
-    }
-
-    return 0;
-  }
-
-  /**
-   * Says what the journal actually returned.
-   *
-   * Written instead of a fifth guess at JournalRequestStateFilter's values. A default
-   * request context compiles, but whether it asks for EVERY contact or a narrow subset is
-   * not something the compiler can answer - and if it returns nothing, KeptHash returns 0,
-   * every contact stays visible, and the result is indistinguishable from a filter that
-   * simply does not work.
-   *
-   * One log line settles it with data. Guessing enum names had a hit rate of zero across
-   * five attempts; measuring has a hit rate of one.
-   */
-  public static func Report(network: ref<NetworkWorldSystem>, journal: wref<JournalManager>) -> Void {
-    let request: JournalRequestContext;
-    let contacts: array<wref<JournalEntry>>;
-    journal.GetContacts(request, contacts);
-
-    network.ScriptLog(s"[Phone] journal returned \(ArraySize(contacts)) contact(s), delamain hash \(MpPhone.KeptHash(journal))");
-
-    let index = 0;
-
-    while index < ArraySize(contacts) {
-      let contact = contacts[index] as JournalContact;
-
-      if IsDefined(contact) {
-        network.ScriptLog(s"[Phone]   \(contact.GetLocalizedName(journal)) hash \(journal.GetEntryHash(contact))");
-      }
-
-      index += 1;
-    }
+    return StrContains(StrLower(contact.GetLocalizedName(journal)), "delamain");
   }
 }
 
 /**
- * Where the contact list is built.
+ * The contacts list on the phone overlay.
  *
- * Confirmed by the compiler rather than assumed - the RTTI dump gave the name and the
- * parameters but not the modifiers, and a @wrapMethod with the wrong ones does not fail
- * politely. It aborts every script in the game, and the mod then loads doing nothing at all.
+ * Wraps AddContactItem - the PER-ITEM call - rather than RefreshContactsList, which takes
+ * the whole array by script_ref.
  *
- * Reports before it filters. The filtering needs to know what the journal hands back, and
- * that is the one thing five rounds of guessing could not establish.
+ * The array version crashed the game on opening the phone. Handing wrappedMethod a LOCAL
+ * array for a script_ref parameter means the callee may hold a reference to storage that
+ * dies with this function; the caller then reads freed memory. Skipping an item never
+ * transfers ownership of anything, so there is nothing to outlive the call.
+ *
+ * Not returning early on the whole list matters too: the game still builds every row and
+ * still owns them. We decline to add the ones the server hides.
  */
-@wrapMethod(MessengerGameController)
-private final func PopulateData() -> Void {
-  wrappedMethod();
-
+@wrapMethod(SocialPanelContactsList)
+public final func AddContactItem(info: SocialPanelContactInfo, index: Int32) -> Void {
   if !MpPhone.Active() {
+    wrappedMethod(info, index);
     return;
   }
 
-  let network = GameInstance.GetNetworkWorldSystem();
-
-  // The controller holds a journalManager of its own, but it is private and unreachable
-  // from a wrapper. Asking GameInstance gets the same system without depending on another
-  // class's internals - which would break on any patch that renames the field.
-  if IsDefined(network) {
-    MpPhone.Report(network, GameInstance.GetJournalManager(GetGameInstance()));
+  if MpPhone.IsKept(GameInstance.GetJournalManager(GetGameInstance()), info) {
+    wrappedMethod(info, index);
   }
 }
