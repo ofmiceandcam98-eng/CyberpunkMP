@@ -247,6 +247,7 @@ private:
     flecs::system m_updatePlayerLocation;
     flecs::system m_updateSpawningEntities;
     flecs::system m_updateAppearance;
+    flecs::system m_updatePossessions;
     Red::Handle<InterpolationSystem> m_interpolationSystem;
     Red::Handle<AppearanceSystem> m_appearanceSystem;
     Red::Handle<ChatSystem> m_chatSystem;

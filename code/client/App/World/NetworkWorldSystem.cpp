@@ -1349,6 +1349,24 @@ void NetworkWorldSystem::Connect()
 
 void NetworkWorldSystem::Disconnect()
 {
+    // Save on the way out, before the socket closes.
+    //
+    // The ninety-second timer is a backstop, not a guarantee: somebody who buys a gun and
+    // leaves twenty seconds later would have bought nothing, and would be handed the older
+    // inventory on their next join - which reads exactly like the server eating their
+    // money. Nobody should have to know a command exists to keep what they earned.
+    //
+    // Before Close(), obviously - there is no sending anything afterwards. This only
+    // covers a deliberate disconnect; a crash or a pulled cable still falls back to the
+    // timer, which is why the timer exists as well as this.
+    const auto& service = Core::Container::Get<NetworkService>();
+
+    if (service && service->IsConnected() && !m_restorePending)
+    {
+        spdlog::info("[Inventory] saving on disconnect");
+        SaveCharacterAppearance();
+    }
+
     Core::Container::Get<NetworkService>()->Close();
 }
 
@@ -1374,6 +1392,37 @@ void NetworkWorldSystem::OnConnected()
         .run([this](flecs::iter& it)
         {
             PollAppearanceChanges();
+        });
+
+    // Save what the character owns on a timer, so nobody has to remember a command.
+    //
+    // Possessions changed constantly - every purchase, every pickup, every sale - and
+    // until now the only things that stored them were /character save and a ripperdoc
+    // visit. A player who bought a gun and logged off had bought nothing, and would be
+    // handed the older inventory back on their next join, which reads as the server
+    // eating their money.
+    //
+    // Ninety seconds is a compromise, not a computed figure: a full capture walks the
+    // whole inventory and sends it, so once a second would be waste, and once every ten
+    // minutes loses a real session's shopping to a crash.
+    m_updatePossessions = system("Possessions autosave")
+        .interval(90.f)
+        .run([this](flecs::iter& it)
+        {
+            const auto& service = Core::Container::Get<NetworkService>();
+            if (!service || !service->IsConnected())
+                return;
+
+            // Never while a restore is outstanding.
+            //
+            // A capture running before the server's items have landed reads the pre-restore
+            // inventory and stores THAT, overwriting the server's copy with a stale one -
+            // and it would do it every ninety seconds, quietly, with a healthy-looking
+            // number in the log. This is the same race the first-spawn save had to avoid.
+            if (m_restorePending)
+                return;
+
+            SaveCharacterAppearance();
         });
 
     m_updateSpawningEntities = system<SpawningComponent>("Spawning entity process")
