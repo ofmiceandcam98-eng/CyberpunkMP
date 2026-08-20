@@ -119,7 +119,9 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
 
     // Stores the player's current appearance as their multiplayer character. A manual
     // override; PollAppearanceChanges is what saves in normal use.
-    void SaveCharacterAppearance();
+    // aAutomatic marks a save nobody asked for - the timer or leaving - so the server
+    // knows not to announce it in chat.
+    void SaveCharacterAppearance(bool aAutomatic = false);
 
     // Watches for the player finishing a mirror or creator session, and saves it for them.
     void PollAppearanceChanges();

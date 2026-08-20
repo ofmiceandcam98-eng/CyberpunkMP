@@ -33,6 +33,10 @@ struct DummyWalkComponent
     flecs::entity_t Owner{0};
     float Angle{0.f};
     float Radius{5.f};
+
+    // True for a dummy that stamps its movement with the SERVER's clock rather than the
+    // summoner's - see the tick assignment in the walk system.
+    bool ServerTick{false};
 };
 
 ChatSystem::ChatSystem(gsl::not_null<World*> apWorld)
@@ -67,7 +71,22 @@ ChatSystem::ChatSystem(gsl::not_null<World*> apWorld)
                 // moving but not turning is distinguishable from one doing neither.
                 aMovement.Rotation = {0.f, 0.f, aWalk.Angle + 1.5708f};
                 aMovement.Velocity = 2.f;
-                aMovement.Tick = pOwner->Tick;
+                // Whose clock stamps this dummy's samples.
+                //
+                // Borrowing the summoner's tick is what makes an ordinary dummy walk: its
+                // samples land just ahead of that client's render time, because they came
+                // from that client's own clock. A REAL remote player stamps with their own
+                // SynchronizedClock instead, and that is the one difference between the
+                // two that has never been ruled out as the cause of the freeze.
+                //
+                // ServerTick reproduces the real case: the server's own clock, which is a
+                // different timebase from the viewer's. If a dummy stamped this way
+                // freezes while an ordinary one walks, the clock is the freeze - proven by
+                // one person, without waiting for a second player to be free.
+                aMovement.Tick = aWalk.ServerTick
+                                     ? static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                           std::chrono::steady_clock::now().time_since_epoch()).count())
+                                     : pOwner->Tick;
                 ++aMovement.Sequence;
 
                 // set<> would replace the component and lose Sequence's history; modified<>
@@ -232,8 +251,12 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
     spdlog::info("{} saved character '{}' from the creator ({} bytes)", pPlayer->Username,
                  character.Name, blob.size());
 
-    Tell(*pPlayer, fmt::format("Character saved as '{}'. You will look like this every time you join.",
-                               character.Name));
+    // Confirmed only when they asked. An automatic save is not news.
+    if (!aMessage.get_automatic())
+    {
+        Tell(*pPlayer, fmt::format("Character saved as '{}'. You will look like this every time you join.",
+                                   character.Name));
+    }
 
     // Nobody should have to know a command exists to be called something.
     //
@@ -1643,6 +1666,35 @@ void ChatSystem::HandleChatMessageRequest(const PacketEvent<client::ChatMessageR
     // Remove every dummy. Deliberately not "the last one" - they are a test tool, they
     // accumulate while you are chasing something, and the only thing anyone ever wants is
     // for all of them to be gone.
+    // Same dummy, stamped with the server's clock instead of yours. See DummyWalkComponent.
+    if (line == "/dummy servertick")
+    {
+        auto* pOwnPuppet = pPlayer->Puppet ? pPlayer->Puppet.get<MovementComponent>() : nullptr;
+        if (!pOwnPuppet)
+        {
+            Tell(*pPlayer, "Spawn into the world first.");
+            return;
+        }
+
+        auto position = pOwnPuppet->Position;
+        position.x += 5.f;
+
+        const auto* pOwnAppearance = pPlayer->Puppet.get<AppearanceComponent>();
+
+        auto dummy = m_pWorld->entity()
+            .set<MovementComponent>({position, pOwnPuppet->Rotation, 0.f, pOwnPuppet->Tick})
+            .set<CharacterComponent>({true})
+            .set<AppearanceComponent>(pOwnAppearance ? *pOwnAppearance : AppearanceComponent{{}, {}})
+            .set<DummyWalkComponent>({position, pPlayer->Puppet, 0.f, 5.f, true});
+
+        m_pWorld->get_mut<Level>()->Add(dummy);
+
+        spdlog::info("[dummy] spawned a SERVER-CLOCK dummy for {} - if this one freezes, the clock is the freeze",
+                     pPlayer->Username);
+        Tell(*pPlayer, "Spawned a dummy stamped with the SERVER clock. If it stands still while /dummy walks, the clock is the bug.");
+        return;
+    }
+
     if (line == "/dummy clear" || line == "/dummy remove")
     {
         int removed = 0;

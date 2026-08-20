@@ -762,6 +762,12 @@ void NetworkWorldSystem::PollAppearanceChanges()
         request.set_inventory(m_capturedInventory);
         request.set_money(m_capturedMoney);
         request.set_proficiencies(m_capturedProficiencies);
+
+        // Announced, unlike the timer. This fires when somebody has just finished changing
+        // their face at a ripperdoc - they did something deliberate and a confirmation
+        // that it stuck is worth having. The ninety-second timer is the opposite: nobody
+        // asked, and saying so every ninety seconds buries real chat.
+        request.set_automatic(false);
     }
 
     // No name. An appearance save is not an identity change - this used to send the
@@ -784,7 +790,7 @@ void NetworkWorldSystem::PollAppearanceChanges()
  * Kept as a manual override - PollAppearanceChanges is what actually saves in normal use.
  * Useful when something has gone wrong and somebody needs to force it.
  */
-void NetworkWorldSystem::SaveCharacterAppearance()
+void NetworkWorldSystem::SaveCharacterAppearance(bool aAutomatic)
 {
     const auto& service = Core::Container::Get<NetworkService>();
     if (!service || !service->IsConnected())
@@ -840,6 +846,7 @@ void NetworkWorldSystem::SaveCharacterAppearance()
         request.set_inventory(m_capturedInventory);
         request.set_money(m_capturedMoney);
         request.set_proficiencies(m_capturedProficiencies);
+        request.set_automatic(aAutomatic);
     }
 
     // No name here either - same reason as PollAppearanceChanges. This path also serves
@@ -1364,7 +1371,7 @@ void NetworkWorldSystem::Disconnect()
     if (service && service->IsConnected() && !m_restorePending)
     {
         spdlog::info("[Inventory] saving on disconnect");
-        SaveCharacterAppearance();
+        SaveCharacterAppearance(true);
     }
 
     Core::Container::Get<NetworkService>()->Close();
@@ -1422,7 +1429,7 @@ void NetworkWorldSystem::OnConnected()
             if (m_restorePending)
                 return;
 
-            SaveCharacterAppearance();
+            SaveCharacterAppearance(true);
         });
 
     m_updateSpawningEntities = system<SpawningComponent>("Spawning entity process")

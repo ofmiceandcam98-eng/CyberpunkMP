@@ -69,6 +69,14 @@ message SaveCharacterRequest {
 
     // Skills, street cred and level - all gamedataProficiencyType entries.
     repeated Proficiency proficiencies = 6;
+
+    // True when the save happened by itself - the ninety-second timer, or leaving.
+    //
+    // The server confirms a save in chat, which is right when somebody asked for one and
+    // is noise when nobody did. Without this the confirmation appeared every ninety
+    // seconds forever, burying actual chat under a message about something the player did
+    // not do and cannot stop.
+    bool automatic = 7;
 }
 
 

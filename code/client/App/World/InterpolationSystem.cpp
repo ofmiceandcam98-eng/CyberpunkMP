@@ -359,8 +359,61 @@ void InterpolationSystem::HandleNotifyEntityMove(const PacketEvent<server::Notif
     else
         rotation = {0.f, 0.f, aMessage.get_rotation()};
 
+    // Movement for an id we have no puppet for.
+    //
+    // The sixth silent return of the evening, and the last one on this path that could
+    // produce a frozen puppet while every log looks healthy: packets arrive at 30/s, the
+    // link is perfect, and every single one is dropped here because the id in the movement
+    // message does not match the id the puppet was spawned under.
+    //
+    // Logged once per unknown id rather than 30 times a second, with the ids listed, so a
+    // mismatch is legible rather than a wall.
     if (!entity)
+    {
+        static std::unordered_set<uint64_t> reportedUnknown;
+
+        if (reportedUnknown.insert(aMessage.get_id()).second)
+        {
+            spdlog::warn("[Interpolation] movement for id {} but no puppet is registered under it "
+                         "- this is a frozen remote player",
+                         aMessage.get_id());
+        }
+
         return;
+    }
+
+    // Is the sender's clock the same clock we interpolate against?
+    //
+    // This is the one difference between a real remote player and the test dummy that has
+    // never been eliminated. The dummy borrows the LOCAL player's tick, so its samples
+    // always land just ahead of render time - and it walks perfectly. A real player stamps
+    // packets with THEIR OWN SynchronizedClock.
+    //
+    // Both clocks track the server's, so in theory they agree within half a ping. If they
+    // do not - if one client's clock never synchronised, or drifted - every sample from
+    // that player is either permanently in the future (never played, puppet frozen at its
+    // spawn point) or permanently in the past (popped instantly, buffer always empty,
+    // puppet frozen at the last sample). Both look exactly like "remote players do not
+    // move", which is what has been chased all evening.
+    //
+    // Logged once per entity, with the numbers rather than a verdict, because a guess
+    // about which side is wrong is what has cost this the most time.
+    {
+        static std::unordered_set<uint64_t> reportedClocks;
+
+        if (reportedClocks.insert(aMessage.get_id()).second)
+        {
+            const auto ours = NetworkWorldSystem::GetTick();
+            const auto theirs = aMessage.get_tick();
+            const auto delta = static_cast<int64_t>(theirs) - static_cast<int64_t>(ours);
+
+            spdlog::info("[Clock] remote {} first sample: their tick {}, our tick {}, delta {}ms "
+                         "({})",
+                         aMessage.get_id(), theirs, ours, delta,
+                         std::abs(delta) < 1000 ? "same clock - fine"
+                                                : "DIFFERENT CLOCKS - this is the freeze");
+        }
+    }
 
     auto* pInterpolation = entity.get_mut<InterpolationComponent>();
 
