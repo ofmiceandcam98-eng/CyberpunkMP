@@ -456,6 +456,26 @@ void NetworkWorldSystem::MarkNewCharacter()
     m_newCharacterPending = true;
 }
 
+uint32_t NetworkWorldSystem::GetRestoreCount() const
+{
+    return static_cast<uint32_t>(m_restoreInventory.size());
+}
+
+uint64_t NetworkWorldSystem::GetRestoreId(uint32_t aIndex) const
+{
+    return aIndex < m_restoreInventory.size() ? m_restoreInventory[aIndex].get_id() : 0;
+}
+
+uint32_t NetworkWorldSystem::GetRestoreQuantity(uint32_t aIndex) const
+{
+    return aIndex < m_restoreInventory.size() ? m_restoreInventory[aIndex].get_quantity() : 0;
+}
+
+int32_t NetworkWorldSystem::GetRestoreMoney() const
+{
+    return static_cast<int32_t>(m_restoreMoney);
+}
+
 void NetworkWorldSystem::AddProficiency(uint32_t aType, int32_t aLevel)
 {
     // Level 0 is the game's default for a proficiency nobody has touched. Storing it is
@@ -899,6 +919,40 @@ void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::
     }
 
     SetRemotePlayerId(aMessage.get_id());
+
+    // Put back what this character owns.
+    //
+    // has_possessions rather than a non-empty list: empty means both "owns nothing" and
+    // "the server has never been told", and applying the second would empty somebody's
+    // pockets. The server decides which it is; this only obeys.
+    if (aMessage.get_has_possessions())
+    {
+        m_restoreInventory = aMessage.get_inventory();
+        m_restoreMoney = aMessage.get_money();
+
+        spdlog::info("[Inventory] server sent {} stack(s) and {} eddies - applying",
+                     m_restoreInventory.size(), m_restoreMoney);
+
+        Red::CallVirtual(Red::GetGameSystem<NetworkWorldSystem>(), "RestorePossessions");
+    }
+    else
+    {
+        // Nothing stored yet, so record what they arrived with, immediately.
+        //
+        // This is the ONLY spawn on which an automatic save is safe, and the reason is
+        // ordering. GiveItemByTDBID and EquipRequest are queued, not immediate - a capture
+        // running just after a restore reads the inventory BEFORE the server's items have
+        // landed, and would then store that as the character. The server's own copy would
+        // be overwritten with whatever the local save happened to contain, every single
+        // spawn, while the log read "stored 124 item stacks" and looked perfectly healthy.
+        //
+        // So: a character the server already knows is restored and never captured here.
+        // One the server has never seen is captured once, which is exactly the character
+        // that would otherwise be lost if they never visited a ripperdoc.
+        spdlog::info("[Inventory] nothing stored for this character - recording what they arrived with");
+
+        SaveCharacterAppearance();
+    }
 
     // A character made through NEW CHARACTER is sent up the moment we are in the world.
     //

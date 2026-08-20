@@ -24,6 +24,10 @@ public native class NetworkWorldSystem extends IGameSystem {
     // rebuild happens in C++ where a TweakDBID is just its number.
     public native func TdbidFromNumber(value: Uint64) -> TweakDBID;
     public native func AddProficiency(profType: Uint32, level: Int32) -> Void;
+    public native func GetRestoreCount() -> Uint32;
+    public native func GetRestoreId(index: Uint32) -> Uint64;
+    public native func GetRestoreQuantity(index: Uint32) -> Uint32;
+    public native func GetRestoreMoney() -> Int32;
     public native func ConsumeJoinRequest() -> Bool;
     public native func GetEntityIdByServerId(serverId: Uint64) -> EntityID;
     public native func GetAppearanceSystem() -> ref<AppearanceSystem>;
@@ -38,6 +42,15 @@ public native class NetworkWorldSystem extends IGameSystem {
     // buffer and then sends it. Doing it at save time rather than on a timer means what
     // is stored is what the player had at the moment the server was told about them,
     // rather than whatever they had up to a minute ago.
+    // Called from native when the server's spawn response carries possessions.
+    //
+    // Reading them out one at a time rather than receiving an array, for the same reason
+    // the capture pushes them one at a time: the boundary carries scalars, which cannot be
+    // marshalled wrongly.
+    public func RestorePossessions() -> Void {
+        MpInventory.Restore(this);
+    }
+
     public func CaptureInventory() -> Void {
         MpInventory.Capture(this);
     }

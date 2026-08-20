@@ -140,7 +140,7 @@ public class MpInventory {
    * gear with no undo, and until the capture side has been watched for a while, the
    * failure mode of giving too much is far kinder than the failure mode of deleting.
    */
-  public static func Restore(network: ref<NetworkWorldSystem>, items: array<MpItemStack>, money: Int64) -> Void {
+  public static func Restore(network: ref<NetworkWorldSystem>) -> Void {
     let game = GetGameInstance();
     let player = GetPlayer(game);
 
@@ -153,35 +153,45 @@ public class MpInventory {
       return;
     }
 
+    let count = network.GetRestoreCount();
     let restored = 0;
-    for stack in items {
-      // Rebuilt in native: TDBID has ToNumber and no inverse.
-      let tdbid = network.TdbidFromNumber(stack.id);
+    let index: Uint32 = 0u;
 
-      if TDBID.IsValid(tdbid) {
-        transaction.GiveItemByTDBID(player, tdbid, Cast<Int32>(stack.quantity));
+    while index < count {
+      // Rebuilt in native: TDBID has ToNumber and no inverse.
+      let tdbid = network.TdbidFromNumber(network.GetRestoreId(index));
+      let quantity = network.GetRestoreQuantity(index);
+
+      if TDBID.IsValid(tdbid) && quantity > 0u {
+        transaction.GiveItemByTDBID(player, tdbid, Cast<Int32>(quantity));
         restored += 1;
+      }
+
+      index += 1u;
+    }
+
+    // Money, which the first version of this logged and never actually granted - the
+    // figure appeared in the log and nothing reached the player, which reads exactly like
+    // it worked.
+    //
+    // Granted as the difference, not the total. Money is an item the player already holds
+    // some of, so giving the stored amount on top of what they have doubles it every
+    // single spawn.
+    let stored = network.GetRestoreMoney();
+    let held = transaction.GetItemQuantity(player, MarketSystem.Money());
+    let owed = stored - held;
+
+    if owed > 0 {
+      transaction.GiveItem(player, MarketSystem.Money(), owed);
+    } else {
+      if owed < 0 {
+        transaction.RemoveItem(player, MarketSystem.Money(), -owed);
       }
     }
 
-    // Chrome goes back IN, not just back in the bag.
-    //
-    // Giving the item leaves it sitting in the inventory unequipped, which is not what
-    // anybody means by "my cyberware came back" - you would arrive with a boot full of
-    // implants and none of them doing anything.
-    //
-    // Done by re-reading the inventory rather than by remembering ItemIDs from the loop
-    // above: GiveItemByTDBID does not hand back the ItemID it created, and an ItemID is
-    // not reconstructible from a TweakDBID (they carry a seed). Asking the game what is
-    // actually in there afterwards is both simpler and true by construction.
-    //
-    // Cyberware only, deliberately. Equipping everything restored would also re-equip
-    // weapons and clothing, and clothing is already driven by the appearance path - two
-    // systems dressing the same character is how you get a fight over what someone is
-    // wearing.
     MpInventory.EquipCyberware(player, transaction);
 
-    FTLog(s"[MpInventory] restored \(restored) stack(s) and \(money) eddies from the server");
+    FTLog(s"[MpInventory] restored \(restored) stack(s), money \(held) -> \(stored) from the server");
   }
 
   /**

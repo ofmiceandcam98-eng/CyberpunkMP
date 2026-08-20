@@ -95,6 +95,15 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // at the same moment and describe the same character, and a second message would be a
     // second thing to keep in step.
     void AddProficiency(uint32_t aType, int32_t aLevel);
+
+    // Applying what the server sent back. Mirrors the capture side: native holds the data
+    // that came off the wire, script does the work, and only scalars cross between them.
+    uint32_t GetRestoreCount() const;
+    uint64_t GetRestoreId(uint32_t aIndex) const;
+    uint32_t GetRestoreQuantity(uint32_t aIndex) const;
+    // Int32 rather than Int64: redscript has no cast between them, and eddies do not
+    // come close to two billion. The record and the wire keep the wider type.
+    int32_t GetRestoreMoney() const;
     bool ConsumeJoinRequest();
 
     // Called from redscript when the local player is downed - see Death.reds.
@@ -137,6 +146,10 @@ protected:
     // What the last capture read. Held until a character save sends it.
     Vector<client::ItemStack> m_capturedInventory;
     Vector<client::Proficiency> m_capturedProficiencies;
+
+    // What the server sent on spawn, held until script has applied it.
+    Vector<server::ItemStack> m_restoreInventory;
+    int64_t m_restoreMoney{0};
     int64_t m_capturedMoney{0};
     bool m_hasCapturedPossessions{false};
     void HandleTeleport(const PacketEvent<server::NotifyTeleport>& aMessage);
@@ -234,6 +247,10 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(EndInventoryCapture);
     RTTI_METHOD(TdbidFromNumber);
     RTTI_METHOD(AddProficiency);
+    RTTI_METHOD(GetRestoreCount);
+    RTTI_METHOD(GetRestoreId);
+    RTTI_METHOD(GetRestoreQuantity);
+    RTTI_METHOD(GetRestoreMoney);
     RTTI_METHOD(ConsumeJoinRequest);
     RTTI_METHOD(RequestRespawn);
     RTTI_METHOD(SaveCharacterAppearance);
