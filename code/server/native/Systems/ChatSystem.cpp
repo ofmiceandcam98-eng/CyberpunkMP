@@ -1093,6 +1093,131 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         return true;
     }
 
+    // ----------------------------------------------------------- /garage ----
+    //
+    // What this account owns. Only ever this account - the list comes from the caller's
+    // own Discord id rather than anything they can name, so there is no request shape that
+    // shows somebody else's cars.
+    if (command == "/garage")
+    {
+        const auto owned = GServer->GetVehicles().OwnedBy(acSender.DiscordId);
+
+        if (owned.empty())
+        {
+            Tell(acSender, "You do not own any vehicles yet.");
+            return true;
+        }
+
+        Tell(acSender, fmt::format("You own {} vehicle(s):", owned.size()));
+
+        for (const auto& vehicle : owned)
+        {
+            Tell(acSender, fmt::format("  [{}]  {}  plate {}{}", vehicle.Id.substr(0, 6),
+                                       vehicle.ModelName.empty() ? "unknown model" : vehicle.ModelName,
+                                       vehicle.Plate,
+                                       vehicle.LockedBy.empty() ? "" : "  (sale pending)"));
+        }
+
+        Tell(acSender, "Use /call <id> to bring one to you.");
+        return true;
+    }
+
+    // ------------------------------------------------------------- /call ----
+    //
+    // Bring one of YOUR vehicles to you.
+    //
+    // Takes a vehicle id, not a model. The difference is the whole point of the ownership
+    // system: "spawn me a Quadra" is something anybody can ask for, while "bring me
+    // vehicle 4f2b" is a claim the server checks against its own records. A client that
+    // names somebody else's vehicle is refused rather than served.
+    if (command == "/call")
+    {
+        const auto space = acLine.find(' ');
+        std::string wanted = (space == std::string::npos) ? std::string{} : acLine.substr(space + 1);
+
+        while (!wanted.empty() && wanted.front() == ' ')
+            wanted.erase(wanted.begin());
+
+        if (wanted.empty())
+        {
+            Tell(acSender, "Usage: /call <id>   - the id from /garage");
+            return true;
+        }
+
+        // Matched on the short id people actually read off /garage, but only among THEIR
+        // OWN vehicles. Searching all vehicles and then checking the owner would let
+        // somebody discover another player's ids by watching which prefixes are refused.
+        const auto owned = GServer->GetVehicles().OwnedBy(acSender.DiscordId);
+        const VehicleRecord* pMatch = nullptr;
+
+        for (const auto& vehicle : owned)
+        {
+            if (vehicle.Id.rfind(wanted, 0) == 0 || vehicle.Plate == wanted)
+            {
+                pMatch = &vehicle;
+                break;
+            }
+        }
+
+        if (!pMatch)
+        {
+            Tell(acSender, fmt::format("You do not own a vehicle matching '{}'.", wanted));
+            return true;
+        }
+
+        if (!pMatch->LockedBy.empty())
+        {
+            Tell(acSender, "That vehicle is part of a pending sale.");
+            return true;
+        }
+
+        // Deliberately not spawning yet.
+        //
+        // The spawn path takes a position and a record and hands the car to whoever asked;
+        // wiring this to it before there is duplicate prevention would let one player fill
+        // the street with copies of the same owned car. Stage 5 of the plan is exactly
+        // that check, and it belongs before this line does anything.
+        spdlog::info("{} called vehicle {} ({})", acSender.Username, pMatch->Id, pMatch->Plate);
+        Tell(acSender, fmt::format("Vehicle {} ({}) is yours - calling is not wired to the spawner yet.",
+                                   pMatch->Plate, pMatch->ModelName));
+        return true;
+    }
+
+    // ---------------------------------------------------------- /givecar ----
+    //
+    // Admin: create an owned vehicle. Stands in for a dealership until there is one.
+    if (command == "/givecar")
+    {
+        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
+            return deny(EPermissionLevel::kAdmin);
+
+        const auto space = acLine.find(' ');
+        std::string record = (space == std::string::npos) ? std::string{} : acLine.substr(space + 1);
+
+        while (!record.empty() && record.front() == ' ')
+            record.erase(record.begin());
+
+        if (record.empty())
+        {
+            Tell(acSender, "Usage: /givecar <Vehicle.record>   e.g. Vehicle.v_standard2_archer_hella");
+            return true;
+        }
+
+        const auto id = GServer->GetVehicles().Create(acSender.DiscordId, std::hash<std::string>{}(record),
+                                                      record, 0);
+
+        if (id.empty())
+        {
+            Tell(acSender, "Could not create that vehicle.");
+            return true;
+        }
+
+        const auto* pCreated = GServer->GetVehicles().Find(id);
+        Tell(acSender, fmt::format("Created {} - plate {}. It is yours, and stays yours.", record,
+                                   pCreated ? pCreated->Plate : "?"));
+        return true;
+    }
+
     // -------------------------------------------------------------- /fact ----
     //
     // Open a door for everyone, and remember it.

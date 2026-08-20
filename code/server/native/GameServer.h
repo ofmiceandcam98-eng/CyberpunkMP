@@ -6,6 +6,7 @@
 #include "BanList.h"
 #include "PlayerStore.h"
 #include "Systems/WorldFacts.h"
+#include "Systems/VehicleStore.h"
 #include "Game/World.h"
 
 template <typename T>
@@ -180,6 +181,10 @@ public:
     // building gets opened for everyone without touching quest state.
     WorldFactStore& GetWorldFacts() noexcept { return m_worldFacts; }
 
+    // Owned vehicles - persistent property, distinct from the game's model-level
+    // garage. See VehicleRecord.h for why both exist.
+    VehicleStore& GetVehicles() noexcept { return m_vehicles; }
+
 private:
 
     Path m_path;
@@ -193,6 +198,7 @@ private:
     BanList m_bans;
     PlayerStore m_players;
     WorldFactStore m_worldFacts;
+    VehicleStore m_vehicles;
     std::chrono::steady_clock::time_point m_lastPlayerSave;
     std::chrono::steady_clock::time_point m_lastJailCheck;
 
