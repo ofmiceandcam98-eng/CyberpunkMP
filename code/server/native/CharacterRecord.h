@@ -118,6 +118,29 @@ struct CharacterRecord
 
     std::vector<ItemStack> Inventory;
 
+    /**
+     * Skill levels, street cred and character level.
+     *
+     * All three are the same thing to the game - entries in gamedataProficiencyType - so
+     * one list covers what would otherwise be three separate features. Stored as the
+     * enum's own numeric value and a level, uninterpreted, for the same reason as items:
+     * the server has no need to know what Athletics IS in order to remember that you have
+     * eight of it, and a server that did would need updating every patch.
+     *
+     * Level and AttributePoints above overlap with this and are kept: they are what the
+     * spawn path already applies, and rewriting that at the same time as introducing this
+     * would make a failure in either impossible to attribute to one of them.
+     */
+    struct Proficiency
+    {
+        uint32_t Type{0};
+        int32_t Level{0};
+
+        NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(Proficiency, Type, Level)
+    };
+
+    std::vector<Proficiency> Proficiencies;
+
     // Eddies. Separate from Inventory because the game models money as an item and this
     // does not - a balance is a number, and treating it as a stack of one item invites
     // somebody to duplicate it by counting wrong.
@@ -142,7 +165,8 @@ struct CharacterRecord
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(CharacterRecord, Slot, Name, Appearance, IsMale,
                                                 Level, AttributePoints, PerkPoints, Initialised,
                                                 NameChosen, SpawnedBefore, CharacterId,
-                                                Inventory, Money, CreatedAt, UpdatedAt)
+                                                Inventory, Money, Proficiencies,
+                                                CreatedAt, UpdatedAt)
 };
 
 /**

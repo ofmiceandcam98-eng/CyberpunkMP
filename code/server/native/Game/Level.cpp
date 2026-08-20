@@ -595,6 +595,22 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
 
         response.set_has_possessions(known);
 
+        if (!pCharacter->Proficiencies.empty())
+        {
+            Vector<server::Proficiency> profs;
+            profs.reserve(pCharacter->Proficiencies.size());
+
+            for (const auto& prof : pCharacter->Proficiencies)
+            {
+                server::Proficiency entry;
+                entry.set_type(prof.Type);
+                entry.set_level(prof.Level);
+                profs.push_back(entry);
+            }
+
+            response.set_proficiencies(profs);
+        }
+
         spdlog::info("{} spawns with {} stored item stack(s) and {} eddies{}",
                      pComponent->Username, pCharacter->Inventory.size(), pCharacter->Money,
                      known ? "" : " - nothing stored yet, their save keeps what it has");

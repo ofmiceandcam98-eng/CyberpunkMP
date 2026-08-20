@@ -456,8 +456,24 @@ void NetworkWorldSystem::MarkNewCharacter()
     m_newCharacterPending = true;
 }
 
+void NetworkWorldSystem::AddProficiency(uint32_t aType, int32_t aLevel)
+{
+    // Level 0 is the game's default for a proficiency nobody has touched. Storing it is
+    // harmless but noisy, and restoring it is a no-op, so it is dropped here rather than
+    // carried through the record and the wire for nothing.
+    if (aLevel <= 0)
+        return;
+
+    client::Proficiency prof;
+    prof.set_type(aType);
+    prof.set_level(aLevel);
+
+    m_capturedProficiencies.push_back(prof);
+}
+
 void NetworkWorldSystem::BeginInventoryCapture()
 {
+    m_capturedProficiencies.clear();
     m_capturedInventory.clear();
     m_capturedMoney = 0;
     m_hasCapturedPossessions = false;
@@ -666,6 +682,7 @@ void NetworkWorldSystem::PollAppearanceChanges()
     {
         request.set_inventory(m_capturedInventory);
         request.set_money(m_capturedMoney);
+        request.set_proficiencies(m_capturedProficiencies);
     }
 
     // No name. An appearance save is not an identity change - this used to send the
@@ -743,6 +760,7 @@ void NetworkWorldSystem::SaveCharacterAppearance()
     {
         request.set_inventory(m_capturedInventory);
         request.set_money(m_capturedMoney);
+        request.set_proficiencies(m_capturedProficiencies);
     }
 
     // No name here either - same reason as PollAppearanceChanges. This path also serves

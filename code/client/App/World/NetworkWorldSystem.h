@@ -90,6 +90,11 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // TweakDBID IS its number though, so C++ reconstructs it for nothing, and this keeps
     // the item API calls in redscript where the compiler checks them.
     Red::TweakDBID TdbidFromNumber(uint64_t aValue) const;
+
+    // Skills, street cred and level ride the same capture as possessions - they are saved
+    // at the same moment and describe the same character, and a second message would be a
+    // second thing to keep in step.
+    void AddProficiency(uint32_t aType, int32_t aLevel);
     bool ConsumeJoinRequest();
 
     // Called from redscript when the local player is downed - see Death.reds.
@@ -131,6 +136,7 @@ protected:
 
     // What the last capture read. Held until a character save sends it.
     Vector<client::ItemStack> m_capturedInventory;
+    Vector<client::Proficiency> m_capturedProficiencies;
     int64_t m_capturedMoney{0};
     bool m_hasCapturedPossessions{false};
     void HandleTeleport(const PacketEvent<server::NotifyTeleport>& aMessage);
@@ -227,6 +233,7 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(AddInventoryItem);
     RTTI_METHOD(EndInventoryCapture);
     RTTI_METHOD(TdbidFromNumber);
+    RTTI_METHOD(AddProficiency);
     RTTI_METHOD(ConsumeJoinRequest);
     RTTI_METHOD(RequestRespawn);
     RTTI_METHOD(SaveCharacterAppearance);

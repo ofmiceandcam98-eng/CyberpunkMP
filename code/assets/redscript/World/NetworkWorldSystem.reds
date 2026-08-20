@@ -23,6 +23,7 @@ public native class NetworkWorldSystem extends IGameSystem {
     // TDBID exposes ToNumber and no inverse - the conversion is one-way in script, so the
     // rebuild happens in C++ where a TweakDBID is just its number.
     public native func TdbidFromNumber(value: Uint64) -> TweakDBID;
+    public native func AddProficiency(profType: Uint32, level: Int32) -> Void;
     public native func ConsumeJoinRequest() -> Bool;
     public native func GetEntityIdByServerId(serverId: Uint64) -> EntityID;
     public native func GetAppearanceSystem() -> ref<AppearanceSystem>;

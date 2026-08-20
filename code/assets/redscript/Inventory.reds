@@ -83,6 +83,30 @@ public class MpInventory {
       }
     }
 
+    // Skills, street cred and level.
+    //
+    // All three are gamedataProficiencyType entries, so one loop covers what would
+    // otherwise be three separate features. Walked by index up to Count rather than by a
+    // hand-written list, so a proficiency added in a game patch is picked up without
+    // anybody remembering to add it here.
+    let development = PlayerDevelopmentSystem.GetData(player);
+
+    if IsDefined(development) {
+      let profType = 0;
+
+      while profType < EnumInt(gamedataProficiencyType.Count) {
+        let level = development.GetProficiencyLevel(IntEnum<gamedataProficiencyType>(profType));
+
+        if level > 0 {
+          network.AddProficiency(Cast<Uint32>(profType), level);
+        }
+
+        profType += 1;
+      }
+    } else {
+      FTLogError(s"[MpInventory] no development data - skills and street cred not captured");
+    }
+
     network.EndInventoryCapture(Cast<Int64>(money));
 
     // Counted separately and only for the log.

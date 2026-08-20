@@ -14,6 +14,11 @@ message AuthenticationResponse {
     Settings settings = 3;
 }
 
+message Proficiency {
+    uint32 type = 1;
+    int32 level = 2;
+}
+
 message ItemStack {
     uint64 id = 1;
     uint32 quantity = 2;
@@ -36,6 +41,8 @@ message SpawnCharacterResponse{
     // must then leave the save's contents alone rather than emptying somebody's pockets on
     // the strength of an empty record.
     bool has_possessions = 5;
+
+    repeated Proficiency proficiencies = 6;
 }
 
 

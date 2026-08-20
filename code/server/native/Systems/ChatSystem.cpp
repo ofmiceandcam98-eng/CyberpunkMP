@@ -211,6 +211,22 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
                      character.Inventory.size(), character.Money);
     }
 
+    // Skills, street cred and level. Same rule as possessions: only replaced when the
+    // client actually sent some, because an empty list means both "no progression" and
+    // "nobody looked", and resetting somebody's skills to zero because a read failed is
+    // not a recoverable mistake.
+    if (!aMessage.get_proficiencies().empty())
+    {
+        character.Proficiencies.clear();
+        character.Proficiencies.reserve(aMessage.get_proficiencies().size());
+
+        for (const auto& prof : aMessage.get_proficiencies())
+            character.Proficiencies.push_back({prof.get_type(), prof.get_level()});
+
+        spdlog::info("{} stored {} proficiency level(s)", pPlayer->Username,
+                     character.Proficiencies.size());
+    }
+
     store.SaveCharacter(pPlayer->DiscordId, pPlayer->Username, character);
 
     spdlog::info("{} saved character '{}' from the creator ({} bytes)", pPlayer->Username,
