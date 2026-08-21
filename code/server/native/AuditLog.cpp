@@ -44,35 +44,43 @@ std::string GenerateInstanceId()
 
 void AuditLog::Open(const std::filesystem::path& acPath)
 {
-    std::lock_guard lock(m_mutex);
-
-    if (const char* pNamed = std::getenv("NCO_INSTANCE_ID"); pNamed && *pNamed)
-        m_instanceId = pNamed;
-    else
-        m_instanceId = GenerateInstanceId();
-
-    std::error_code ec;
-    std::filesystem::create_directories(acPath.parent_path(), ec);
-
-    // Append, never truncate. The ledger outlives the process; a restart that wiped it
-    // would destroy exactly the history someone restarted the server to investigate.
-    m_stream.open(acPath, std::ios::out | std::ios::app);
-
-    if (!m_stream.is_open())
     {
-        // Not fatal. A server that refuses to start because it cannot write a ledger is a
-        // worse outcome than one that runs without one - but this must be loud, because
-        // the failure is otherwise silent until somebody goes looking for evidence that
-        // was never being written.
-        spdlog::error("Audit log could not be opened at {} - authoritative changes will NOT be recorded",
-                      acPath.string());
-        return;
+        std::lock_guard lock(m_mutex);
+
+        if (const char* pNamed = std::getenv("NCO_INSTANCE_ID"); pNamed && *pNamed)
+            m_instanceId = pNamed;
+        else
+            m_instanceId = GenerateInstanceId();
+
+        std::error_code ec;
+        std::filesystem::create_directories(acPath.parent_path(), ec);
+
+        // Append, never truncate. The ledger outlives the process; a restart that wiped it
+        // would destroy exactly the history someone restarted the server to investigate.
+        m_stream.open(acPath, std::ios::out | std::ios::app);
+
+        if (!m_stream.is_open())
+        {
+            // Not fatal. A server that refuses to start because it cannot write a ledger is a
+            // worse outcome than one that runs without one - but this must be loud, because
+            // the failure is otherwise silent until somebody goes looking for evidence that
+            // was never being written.
+            spdlog::error("Audit log could not be opened at {} - authoritative changes will NOT be recorded",
+                          acPath.string());
+            return;
+        }
+
+        m_open = true;
+
+        spdlog::info("Audit log open at {} (instance '{}')", acPath.string(), m_instanceId);
     }
 
-    m_open = true;
-
-    spdlog::info("Audit log open at {} (instance '{}')", acPath.string(), m_instanceId);
-
+    // OUTSIDE the lock, because Record takes the same mutex itself. Holding it across
+    // this call double-locked a non-recursive mutex on one thread - a self-deadlock
+    // that hung every LINUX boot at exactly this point: the container printed the line
+    // above and never reached Host(), so the test server sat "Up" for hours with its
+    // port never bound. Windows happened to let the same code slide, which is how it
+    // shipped.
     Record("server.start", {}, {}, {{"pid", static_cast<int64_t>(
 #ifdef _WIN32
         ::GetCurrentProcessId()
