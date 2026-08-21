@@ -15,7 +15,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } from 'electron'
 import electronUpdater from 'electron-updater'
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, copyFileSync, unlinkSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, copyFileSync, unlinkSync, realpathSync, appendFileSync } from 'node:fs'
 import fsp from 'node:fs/promises'
 import AdmZip from 'adm-zip'
 import crypto from 'node:crypto'
@@ -199,6 +199,211 @@ let lastServerStatus = null
 
 function settingsPath () {
   return path.join(app.getPath('userData'), 'settings.json')
+}
+
+// The launcher's own action trail. Six identical "not launched from the launcher"
+// sessions from one player who swears he presses JACK IN - and nothing anywhere
+// recorded what his launcher actually did. This file does: every launch verdict,
+// the exact spawn result, the exit code. It ships to the server with the client
+// logs, so the next failed attempt is read, not re-argued. Credential VALUES are
+// never written - presence only. Lives in userData, which the footprint rule
+// already purges on uninstall.
+function launcherLog (aLine) {
+  try {
+    const file = path.join(app.getPath('userData'), 'launcher-trail.log')
+    // A trail, not an archive: start over past ~200KB. What mattered has shipped.
+    try { if (statSync(file).size > 200_000) rmSync(file, { force: true }) } catch { /* absent - fine */ }
+    appendFileSync(file, `[${new Date().toISOString()}] ${aLine}\n`)
+  } catch { /* the trail must never break the thing it watches */ }
+}
+
+// ================================ THE FOOTPRINT RULE ================================
+// HARD RULE (crew decree, 2026-08-21): uninstalling leaves NOTHING. No files, no
+// folders, no registry entries - not in AppData Roaming or Local, not on the Desktop,
+// not anywhere. A machine after uninstall takes a fresh build as if the launcher had
+// never been there.
+//
+// The enforcement is this manifest: every location the launcher can write OUTSIDE its
+// own install folder is listed here, and the uninstall purge and the Deep clean scan
+// walk this list - only this list. Writing to a new location without adding it here
+// is a bug by definition: if it is not in the manifest, uninstall cannot remove it,
+// and the next "fresh install fails" screenshot traces back to that omission.
+//
+// Three data-folder names exist because the app has answered to three names over its
+// life: Electron's runtime name ("Night City Online", from package.json productName),
+// the installer's product name ("Night City Online Launcher", from the build block),
+// and the package name ("nightcity-launcher"). Old installs left data under each, so
+// each is hunted.
+function launcherFootprint () {
+  const roaming = app.getPath('appData')
+  const local = process.env.LOCALAPPDATA || path.join(app.getPath('home'), 'AppData', 'Local')
+  const desktop = app.getPath('desktop')
+  const startMenu = path.join(roaming, 'Microsoft', 'Windows', 'Start Menu', 'Programs')
+
+  const names = ['Night City Online', 'Night City Online Launcher', 'nightcity-launcher']
+
+  return {
+    // Settings, sign-in tokens, the Nexus key, window caches - one per historical name.
+    dataDirs: names.map((n) => path.join(roaming, n)),
+    // electron-updater's download cache, same name variants.
+    updaterDirs: names.map((n) => path.join(local, `${n}-updater`)),
+    // Where the Setup installs, per name. The RUNNING copy's folder is excluded by
+    // the callers - the NSIS uninstaller removes that one itself.
+    installDirs: names.map((n) => path.join(local, 'Programs', n)),
+    // Made by the installer AND by the Settings "Desktop shortcut" button.
+    shortcuts: [
+      path.join(desktop, 'Night City Online Launcher.lnk'),
+      path.join(startMenu, 'Night City Online Launcher.lnk')
+    ],
+    // Crash-log copies handleGameCrash puts on the Desktop for handing over.
+    desktopDir: desktop,
+    desktopLogPattern: /^NightCityOnline-CRASH-.*\.log$/i
+  }
+}
+
+// The launcher's uninstall registry entries live under HKCU (perMachine is false in
+// the build config, so nothing of ours is ever under HKLM). Returns every entry whose
+// display name is ours; orphaned means the uninstaller it points at no longer exists -
+// the ghost row in Windows "Apps" that survives a hand-deleted folder.
+function findUninstallRegistryEntries () {
+  const entries = []
+  try {
+    const { execSync } = require('node:child_process')
+    const out = execSync(
+      'reg query "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall" /s',
+      { windowsHide: true, maxBuffer: 8 * 1024 * 1024 }).toString()
+
+    let key = null
+    let name = null
+    let cmd = null
+    const flush = () => {
+      if (key && name && /night city online/i.test(name)) {
+        // Orphaned ONLY when the UninstallString names an ABSOLUTE exe that is
+        // provably gone. Everything else - unquoted paths with spaces we cannot
+        // parse, MsiExec-style relative commands, unexpanded %vars%, no string at
+        // all - is assumed healthy: deleting a live product's Apps row is the ghost
+        // problem in the other direction, and "not sure" must never delete.
+        let exe = null
+        if (cmd) {
+          const m = cmd.match(/"([^"]+\.exe)"/i) || cmd.match(/^(\S+\.exe)/i)
+          if (m && path.isAbsolute(m[1])) exe = m[1]
+        }
+        entries.push({ key, displayName: name, orphaned: Boolean(exe) && !existsSync(exe) })
+      }
+    }
+    for (const line of out.split(/\r?\n/)) {
+      if (/^HKEY_/i.test(line)) { flush(); key = line.trim(); name = null; cmd = null; continue }
+      let m = line.match(/^\s+DisplayName\s+REG_SZ\s+(.+)$/i)
+      if (m) { name = m[1].trim(); continue }
+      m = line.match(/^\s+UninstallString\s+REG_(?:EXPAND_)?SZ\s+(.+)$/i)
+      if (m) cmd = m[1].trim()
+    }
+    flush()
+  } catch { /* reg unavailable - nothing to report */ }
+  return entries
+}
+
+function isGameRunning () {
+  return new Promise((resolve) => {
+    const check = spawn('tasklist', ['/FI', 'IMAGENAME eq Cyberpunk2077.exe', '/NH'], { windowsHide: true })
+    let out = ''
+    check.stdout.on('data', (c) => { out += c.toString() })
+    check.on('close', () => resolve(out.includes('Cyberpunk2077.exe')))
+    check.on('error', () => resolve(false))
+  })
+}
+
+// Everything of ours found on the machine right now, EXCEPT what the running copy
+// needs to keep running. aIncludeLive widens the sweep for the uninstall purge: the
+// live data folder and working shortcuts go too (the NSIS uninstaller re-sweeps after
+// this process exits, catching whatever Electron recreates on the way out).
+// Windows path identity: case-insensitive, and 8.3 aliases / junctions / whatever
+// casing the exe was launched with all name the same folder. A string compare that
+// misses ANY of those classes the running install as residue and shreds it mid-run -
+// canonicalize first, compare folded.
+function samePath (a, b) {
+  const canon = (p) => {
+    try { return realpathSync.native(p).toLowerCase() } catch { return path.resolve(p).toLowerCase() }
+  }
+  return canon(a) === canon(b)
+}
+
+function collectResidue (aIncludeLive) {
+  const fp = launcherFootprint()
+  const ownDir = path.dirname(process.execPath)
+  const liveData = app.getPath('userData')
+
+  const dirs = []
+  for (const d of [...fp.dataDirs, ...fp.updaterDirs]) {
+    if (!existsSync(d)) continue
+    if (!aIncludeLive && samePath(d, liveData)) continue
+    dirs.push(d)
+  }
+  for (const d of fp.installDirs) {
+    // NEVER the folder this process runs from - deleting it out from under a live
+    // exe fails halfway and manufactures exactly the residue this hunts.
+    if (existsSync(d) && !samePath(d, ownDir)) dirs.push(d)
+  }
+
+  const files = []
+  for (const s of fp.shortcuts) {
+    if (!existsSync(s)) continue
+    if (aIncludeLive) { files.push(s); continue }
+    // For Deep clean, a shortcut is residue only when it points at a dead exe.
+    try {
+      const { target } = shell.readShortcutLink(s)
+      if (target && !existsSync(target)) files.push(s)
+    } catch { /* unreadable link - leave it alone */ }
+  }
+  try {
+    for (const f of readdirSync(fp.desktopDir)) {
+      if (fp.desktopLogPattern.test(f)) files.push(path.join(fp.desktopDir, f))
+    }
+  } catch { /* desktop unreadable - skip */ }
+
+  // Orphaned registry rows are residue always; the LIVE entry belongs to the NSIS
+  // uninstaller, which removes it itself.
+  const regKeys = findUninstallRegistryEntries()
+    .filter((e) => e.orphaned)
+    .map((e) => e.key)
+
+  return { dirs, files, regKeys }
+}
+
+// Removes what collectResidue found. Locked or protected items are reported, not
+// fatal - a half-clean with an honest list beats an exception with nothing done.
+function purgeResidue (aResidue) {
+  const failed = []
+  const { execFileSync } = require('node:child_process')
+
+  for (const d of aResidue.dirs) {
+    try { rmSync(d, { recursive: true, force: true }) } catch (err) { failed.push(`${d} (${err.code || err.message})`) }
+  }
+  for (const f of aResidue.files) {
+    try { rmSync(f, { force: true }) } catch (err) { failed.push(`${f} (${err.code || err.message})`) }
+  }
+
+  // Registry LAST, and re-scanned: purging another copy's folder just deleted ITS
+  // uninstaller, so its Apps row became a ghost within this very run - sweep it now
+  // rather than leaving it for a second Deep clean. execFileSync, not a cmd string:
+  // any user process can create a key whose NAME carries quotes.
+  const orphanedNow = findUninstallRegistryEntries().filter((e) => e.orphaned).map((e) => e.key)
+  for (const k of new Set([...aResidue.regKeys, ...orphanedNow])) {
+    try { execFileSync('reg', ['delete', k, '/f'], { windowsHide: true }) } catch { failed.push(k) }
+  }
+  return failed
+}
+
+// The one folder the uninstall flow deletes OUTSIDE our own footprint is the mod's,
+// and it comes from a settings override a person once typed. Validate the shape, not
+// just the marker file: a botched manual install can leave CyberpunkMP.dll at the
+// GAME ROOT, and a picker pointed there would pass the dll check - then "remove the
+// mod" recursively deletes all of Cyberpunk 2077. A real mod folder sits under
+// red4ext\plugins and does not contain the game exe.
+function isSafeModDir (aModDir) {
+  if (!aModDir) return false
+  if (existsSync(path.join(aModDir, 'bin', 'x64', 'Cyberpunk2077.exe'))) return false
+  return /[\\/]red4ext[\\/]plugins[\\/][^\\/]+$/i.test(path.resolve(aModDir))
 }
 
 function loadSettings () {
@@ -1033,7 +1238,9 @@ async function shipClientLogs (reason) {
       .sort((a, b) => b.mtime - a.mtime)
       .slice(0, 3)
 
-    if (!candidates.length) return
+    // No early return on an empty list any more: the launcher's own trail below must
+    // ship even when the game never produced a log - a REFUSED launch is exactly the
+    // session where the trail is the only witness.
 
     const published = await fetchPublishedServer()
     if (!published?.host) return
@@ -1041,6 +1248,17 @@ async function shipClientLogs (reason) {
     const player = currentUser?.handle || os.userInfo().username || 'unknown'
     const base = `http://${published.host}:${published.port || 11778}/api/v1/logs/`
     let sent = 0
+
+    // The launcher's own trail rides along, un-deduped - its whole value is the
+    // freshest few lines, and it is why a "JACK IN does nothing" report can be read
+    // instead of re-argued.
+    try {
+      const trail = readFileSync(path.join(app.getPath('userData'), 'launcher-trail.log'), 'utf8')
+      if (trail.length && trail.length < 3_500_000) {
+        await axios.post(`${base}?player=${encodeURIComponent(player)}&file=launcher-trail.log`, trail,
+                         { headers: { 'Content-Type': 'text/plain' }, timeout: 20000 })
+      }
+    } catch { /* no trail yet - nothing to say */ }
 
     for (const log of candidates) {
       const body = readFileSync(log.full, 'utf8')
@@ -1247,6 +1465,14 @@ async function uninstallMod () {
 
   if (choice.response !== 0) return { removed: false }
 
+  // Same shape-check the uninstall flow uses: a settings override pointed at the
+  // game root (with a stray dll making it look valid) must never become
+  // "recursively delete Cyberpunk 2077".
+  if (!isSafeModDir(modDir)) {
+    throw new Error(`The mod folder looks wrong (${modDir}) - not deleting it. ` +
+                    'Remove red4ext\\plugins\\zzzCyberpunkMP by hand.')
+  }
+
   rmSync(modDir, { recursive: true, force: true })
   saveSettings({ installedStamp: null, installedVersion: null })
 
@@ -1269,7 +1495,7 @@ async function resetLauncherData () {
       'You will need to sign in with Discord again next time.\n\n' +
       'Your game and the mod are untouched.\n\n' +
       'To revoke the launcher\'s access entirely, also remove it under ' +
-      'Discord â†’ Settings â†’ Authorized Apps.'
+      'Discord > Settings > Authorized Apps.'
   })
 
   if (choice.response !== 0) return { reset: false }
@@ -2117,6 +2343,9 @@ async function launchGame () {
   args.push(`--port=${server.port}`)
 
   console.log(`[launch] server ${server.host}:${server.port} (from ${server.source})`)
+  launcherLog(`launching: server ${server.host}:${server.port} (${server.source}), ` +
+              `${args.length} args, token ${accessToken ? 'present' : 'MISSING'}, ` +
+              `name ${currentUser?.handle || 'MISSING'}`)
 
   // detached + unref lets the game outlive the launcher. Without it, closing
   // the launcher would take the game down with it, and the launcher would sit
@@ -2127,6 +2356,29 @@ async function launchGame () {
   const exe = gameExecutable()
   if (!exe || !existsSync(exe)) {
     throw new Error('Could not find Cyberpunk 2077. Use "Locate game" to point at it.')
+  }
+
+  // A Steam copy launched while Steam itself is NOT running does not keep our
+  // arguments: the game boots Steam and relaunches itself bare, so the mod reads no
+  // --ip and dials 127.0.0.1 forever (phonix, five identical sessions, 2026-08-21 -
+  // every log says "not launched from the launcher" even when it was). Refusing with
+  // the reason beats launching into a guaranteed dead end.
+  if (/steamapps/i.test(exe)) {
+    const steamUp = await new Promise((resolve) => {
+      const check = spawn('tasklist', ['/FI', 'IMAGENAME eq steam.exe', '/NH'], { windowsHide: true })
+      let out = ''
+      check.stdout.on('data', (c) => { out += c.toString() })
+      check.on('close', () => resolve(/steam\.exe/i.test(out)))
+      check.on('error', () => resolve(true)) // cannot tell - do not block on a guess
+    })
+
+    if (!steamUp) {
+      throw new Error('Steam is not running. Start Steam, wait for it to sign in, then JACK IN - ' +
+                      'a Steam copy launched without Steam restarts itself and loses the ' +
+                      'multiplayer connection settings.')
+    }
+
+    launcherLog('steam guard: steam.exe running - proceeding')
   }
 
   // Last thing before starting: make sure only one copy of the mod will load.
@@ -2168,6 +2420,8 @@ async function launchGame () {
   // someone needs their log. Nobody should have to go hunting through Program Files for
   // a file whose name they do not know.
   const onExit = (code) => {
+    launcherLog(`game exited with code ${code}`)
+
     // 0 is a normal quit. 0xC0000005 (-1073741819) is an access violation - the crash
     // this project has spent days on. Anything else non-zero is also worth capturing.
     if (code === 0 || code === null) return
@@ -2189,6 +2443,7 @@ async function launchGame () {
     // failing - so retry through cmd's `start`, which routes via ShellExecute.
     if (err.code === 'EACCES' || err.code === 'EPERM' || err.code === 'UNKNOWN') {
       console.warn(`[launch] direct start refused (${err.code}) - retrying through the shell, which can raise a UAC prompt`)
+      launcherLog(`spawn refused (${err.code}) - retrying through the shell`)
 
       // One pre-quoted command line under windowsVerbatimArguments, because cmd has
       // its own quoting rules and Node's default escaping garbles them. The empty ""
@@ -3397,22 +3652,23 @@ ipcMain.handle('launcher:uninstall', async () => {
     if (found) uninstaller = path.join(dir, found)
   } catch { /* unreadable dir - treat as portable below */ }
 
-  if (!uninstaller) {
-    return {
-      ok: false,
-      error: 'No uninstaller here - this looks like the portable build. Just delete the .exe. ' +
-             '(Installed via the Setup? Use Windows Settings > Apps > Night City Online.)'
-    }
-  }
+  const modDir = findModDir()
 
   const { response } = await dialog.showMessageBox(mainWindow, {
     type: 'warning',
-    title: 'Uninstall Night City Online Launcher',
-    message: 'Remove the launcher from this PC?',
-    detail: 'This removes the launcher and everything it saved here - your sign-in, settings ' +
-            'and keys. The mod stays installed in your game folder, and Cyberpunk 2077 is not ' +
-            'touched. Use "Remove mod" first if you want that gone too.',
-    buttons: ['Uninstall', 'Cancel'],
+    title: 'Uninstall Night City Online',
+    message: 'Remove Night City Online from this PC - all of it?',
+    detail:
+      'THE RULE: after this, nothing of ours remains. Removed:\n\n' +
+      '- the launcher program and its Windows "Apps" entry\n' +
+      '- saved sign-in, settings and keys (all data folders, old versions included)\n' +
+      '- updater caches, shortcuts, crash-log copies on the Desktop\n' +
+      '- dead registry entries left by older installs\n' +
+      (modDir ? `- the multiplayer mod:  ${modDir}\n` : '') +
+      '\nCyberpunk 2077 itself, your saves, and the framework mods (RED4ext, ' +
+      'redscript, Codeware...) are not touched. A fresh build installs cleanly ' +
+      'afterwards.',
+    buttons: ['Uninstall everything', 'Cancel'],
     defaultId: 1,
     cancelId: 1,
     noLink: true
@@ -3420,10 +3676,86 @@ ipcMain.handle('launcher:uninstall', async () => {
 
   if (response !== 0) return { ok: false }
 
+  // The mod goes first, while the settings that locate it still exist.
+  let note = ''
+  try {
+    if (modDir) {
+      if (!isSafeModDir(modDir)) {
+        note = `The mod folder looks wrong (${modDir}) - left alone. Delete red4ext\\plugins\\zzzCyberpunkMP by hand. `
+      } else if (await isGameRunning()) {
+        note = 'Cyberpunk is running, so the mod was left in place - close the game and use Remove mod. '
+      } else {
+        try { rmSync(modDir, { recursive: true, force: true }) } catch (err) { note = `The mod folder resisted deletion (${err.code || err.message}). ` }
+      }
+    }
+
+    const failed = purgeResidue(collectResidue(true))
+    if (failed.length) note += `Could not remove: ${failed.join(', ')}. `
+  } catch (err) {
+    // Whatever already got removed stays removed; the person hears what stopped it
+    // rather than the IPC rejecting with the work half-done.
+    note += `Cleanup stopped early: ${err.message}. `
+  }
+
+  if (!uninstaller) {
+    // Portable copy: no NSIS uninstaller to hand over to, and everything else is
+    // already gone. The exe someone double-clicks is the one thing a running program
+    // cannot delete about itself.
+    return {
+      ok: true,
+      message: note + 'All launcher data is wiped. This portable .exe is the last piece - close it and delete the file.'
+    }
+  }
+
   spawn(uninstaller, [], { detached: true, stdio: 'ignore' }).unref()
   app.quit()
 
   return { ok: true }
+})
+
+// Settings > Deep clean: the same manifest sweep the uninstaller runs, minus what a
+// working install needs (its own data folder, its own registry row, live shortcuts).
+// Everything it finds is by definition wreckage from OLD installs - the exact debris
+// behind "fresh install fails": stale data folders under previous names, ghost rows
+// in Windows Apps pointing at deleted uninstallers, crash logs piling on the Desktop.
+ipcMain.handle('repair:run', async () => {
+  try {
+    const residue = collectResidue(false)
+    const count = residue.dirs.length + residue.files.length + residue.regKeys.length
+
+    if (count === 0) {
+      return { ok: true, message: 'No residue - this machine is clean.' }
+    }
+
+    const listing = [
+      ...residue.dirs.map((d) => `folder:  ${d}`),
+      ...residue.files.map((f) => `file:  ${f}`),
+      ...residue.regKeys.map((k) => `registry:  ${k}`)
+    ]
+
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      title: 'Deep clean',
+      message: `Found ${count} leftover(s) from old installs`,
+      detail:
+        listing.slice(0, 14).join('\n') +
+        (listing.length > 14 ? `\n...and ${listing.length - 14} more` : '') +
+        '\n\nNothing here is used by the copy you are running right now.',
+      buttons: ['Clean everything', 'Keep'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true
+    })
+
+    if (response !== 0) return { ok: false, message: 'Left as found.' }
+
+    const failed = purgeResidue(residue)
+    return failed.length
+      ? { ok: false, message: `Cleaned ${count - failed.length} of ${count} - locked: ${failed.join(', ')}` }
+      : { ok: true, message: `Cleaned ${count} leftover(s). This machine takes a fresh install cleanly.` }
+  } catch (err) {
+    return { ok: false, message: err.message }
+  }
 })
 
 // Re-runnable from Settings, because the first-run question is asked exactly once and
@@ -3978,9 +4310,16 @@ ipcMain.handle('discord:openInvite', () => {
 })
 
 ipcMain.handle('game:launch', async () => {
+  launcherLog('JACK IN pressed')
   try {
-    return { ok: true, ...(await launchGame()) }
+    const result = await launchGame()
+    launcherLog(`launch pipeline finished: ${JSON.stringify({ ...result, executable: undefined })} exe=${result.executable || '?'}`)
+    return { ok: true, ...result }
   } catch (err) {
+    launcherLog(`launch REFUSED: ${err.message}`)
+    // A refused launch is exactly when the trail matters - ship it now rather than
+    // waiting for a game session that is not going to happen.
+    shipClientLogs('launch refused')
     // Unlocked on every failure, without needing to know which check refused.
     //
     // launchGame sets `launching` early - the checks before the spawn include network

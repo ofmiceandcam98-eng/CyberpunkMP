@@ -650,6 +650,19 @@
             </div>
             <button class="action ghost" id="reinstallMod">Reinstall</button>
           </div>
+
+          <div class="tool">
+            <div>
+              <div class="tool-name">Deep clean</div>
+              <div class="tool-desc">
+                Hunts leftovers from old installs - stale data folders, dead Windows
+                "Apps" entries, orphaned shortcuts, crash logs on the Desktop - and
+                removes them after showing you the list. The uninstaller runs this
+                same sweep, so uninstalling leaves nothing behind.
+              </div>
+            </div>
+            <button class="action ghost" id="deepClean">Scan</button>
+          </div>
         </section>
 
         <!-- DEV TOOLS
@@ -1790,6 +1803,14 @@
     // Report every problem at once. Fixing one at a time, re-running, and finding
     // another is a miserable way to learn what is wrong.
     setStatus(result.problems.join('  |  '), 'error')
+  })
+
+  $('deepClean').addEventListener('click', async () => {
+    const btn = $('deepClean')
+    btn.disabled = true
+    const result = await window.launcher.deepClean()
+    btn.disabled = false
+    setStatus(result.message || 'Done', result.ok ? 'ok' : 'error')
   })
 
   $('uninstallMod').addEventListener('click', async () => {

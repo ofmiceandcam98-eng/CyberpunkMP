@@ -38,7 +38,7 @@ NetworkWorldSystem::NetworkWorldSystem()
     set_entity_range(10'000'000, 20'000'000);
 }
 
-bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition, const Red::Quaternion& aRotation, const Red::DynArray<Red::TweakDBID>& aEquipment, const Vector<uint8_t> aCcstate, const std::string& acUsername, const std::string& acRecord)
+bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition, const Red::Quaternion& aRotation, const Red::DynArray<Red::TweakDBID>& aEquipment, const Vector<uint8_t> aCcstate, bool aIsMale, const std::string& acUsername, const std::string& acRecord)
 {
     // Not ready is a WHEN problem, not a whether problem. The server front-loads
     // everyone already online the moment we join, which can beat the world attach -
@@ -47,7 +47,7 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
     if (!m_ready)
     {
         spdlog::info("[Spawn] remote id {} arrived before the world was ready - queued", aServerId);
-        m_pendingSpawns.push_back({aServerId, aPosition, aRotation, aEquipment, aCcstate, acUsername, acRecord});
+        m_pendingSpawns.push_back({aServerId, aPosition, aRotation, aEquipment, aCcstate, aIsMale, acUsername, acRecord});
         return true;
     }
 
@@ -73,33 +73,16 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
         return false;
     }
 
-    // Default to male if we have no appearance data. An empty buffer leaves the
-    // customization state uninitialized, and reading it would be undefined.
-    bool isBodyGenderMale = true;
+    // Body gender is SERVER-GRANTED, carried on the spawn message next to the name.
+    // It used to be re-derived here by parsing the appearance blob, with a silent
+    // fall-back to male - and a parse hiccup spawned a female character as the male
+    // mannequin (live, 2026-08-21). The blob still travels for the appearance system;
+    // it just no longer gets a vote on which body to build.
+    const bool isBodyGenderMale = aIsMale;
 
-    // The customization state is scoped deliberately, so its handle is released here
-    // rather than surviving to the end of Spawn().
+    if (aCcstate.empty() && acRecord.empty())
     {
-        Red::Handle<game::ui::CharacterCustomizationState> stateHandle;
-        CreateHandle_CharacterCustomizationState(&stateHandle);
-
-        if (!stateHandle.instance)
-        {
-            spdlog::error("[Spawn] CreateHandle_CharacterCustomizationState returned a null instance - aborting");
-            return false;
-        }
-
-        if (!aCcstate.empty())
-        {
-            auto reader = CMPReader(aCcstate);
-            CharacterCustomizationState_Serialize(stateHandle.instance, &reader);
-            isBodyGenderMale = stateHandle.instance->isBodyGenderMale;
-        }
-        else if (acRecord.empty())
-        {
-            spdlog::warn("[Spawn] remote player sent no ccstate - spawning with default appearance");
-        }
-
+        spdlog::warn("[Spawn] remote player sent no ccstate - spawning with default appearance");
     }
 
     // A server-declared NPC names its exact record; players get the configured puppet
@@ -347,7 +330,7 @@ void NetworkWorldSystem::OnWorldAttached(RED4ext::world::RuntimeScene* aScene)
         spdlog::info("[Spawn] world ready - replaying {} queued spawn(s)", pending.size());
 
         for (const auto& spawn : pending)
-            Spawn(spawn.ServerId, spawn.Position, spawn.Rotation, spawn.Equipment, spawn.Ccstate, spawn.Username, spawn.Record);
+            Spawn(spawn.ServerId, spawn.Position, spawn.Rotation, spawn.Equipment, spawn.Ccstate, spawn.IsMale, spawn.Username, spawn.Record);
     }
 
     // NO automatic connecting.
@@ -998,9 +981,31 @@ void NetworkWorldSystem::OnBeforeWorldDetach(RED4ext::world::RuntimeScene* aScen
     {
         return;
     }
+
+    // Stand everything down BEFORE the engine starts destroying entities. A quit (or a
+    // death-reload, or a server switch) tears the world apart while remote puppets are
+    // still live - and until now our animation hook, interpolation pass and vehicle
+    // bookkeeping kept driving them straight into that teardown. zeldfep's 2026-08-21
+    // 01:30 crash-on-quit ends exactly one line into the detach with no stage named,
+    // which is why every stage announces itself here: the next teardown death names
+    // its killer instead of ending the log mid-sentence.
+    spdlog::info("[Detach] stand-down: silencing the animation hook");
+    App::PuppetRegistry::Clear();
+    App::PuppetRegistry::ClearDrivers();
+
+    spdlog::info("[Detach] stand-down: stopping interpolation");
+    m_interpolationSystem->OnDisconnected();
+
+    spdlog::info("[Detach] stand-down: dropping vehicle state");
+    m_vehicleSystem->OnDisconnected();
+
+    spdlog::info("[Detach] engine detach");
     IGameSystem::OnBeforeWorldDetach(aScene);
 
+    spdlog::info("[Detach] appearance detach");
     m_appearanceSystem->OnBeforeWorldDetach(aScene);
+
+    spdlog::info("[Detach] done - the engine owns the teardown from here");
 }
 
 void NetworkWorldSystem::HandleCharacterLoad(const PacketEvent<server::NotifyCharacterLoad>& aMessage)
@@ -1029,8 +1034,8 @@ void NetworkWorldSystem::HandleCharacterLoad(const PacketEvent<server::NotifyCha
 
     auto ccstate = aMessage.get_ccstate();
 
-    Spawn(aMessage.get_id(), position, rotation, equipment, ccstate, aMessage.get_username().c_str(),
-          aMessage.get_puppet_record().c_str());
+    Spawn(aMessage.get_id(), position, rotation, equipment, ccstate, aMessage.get_is_male(),
+          aMessage.get_username().c_str(), aMessage.get_puppet_record().c_str());
 }
 
 void NetworkWorldSystem::HandleEntityUnload(const PacketEvent<server::NotifyEntityUnload>& aMessage)

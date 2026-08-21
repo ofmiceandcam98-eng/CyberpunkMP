@@ -21,7 +21,7 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
 
     NetworkWorldSystem();
 
-    bool Spawn(uint64_t aServerId, const Red::Vector4& aPosition, const Red::Quaternion& aRotation, const Red::DynArray<Red::TweakDBID>& aEquipment, const Vector<uint8_t> aCcstate, const std::string& acUsername = {}, const std::string& acRecord = {});
+    bool Spawn(uint64_t aServerId, const Red::Vector4& aPosition, const Red::Quaternion& aRotation, const Red::DynArray<Red::TweakDBID>& aEquipment, const Vector<uint8_t> aCcstate, bool aIsMale, const std::string& acUsername = {}, const std::string& acRecord = {});
     void DeSpawn(uint64_t aServerId) const;
 
     Red::Handle<Red::Entity> GetEntity(Red::EntityID aId) const;
@@ -257,6 +257,7 @@ private:
         Red::Quaternion Rotation;
         Red::DynArray<Red::TweakDBID> Equipment;
         Vector<uint8_t> Ccstate;
+        bool IsMale;
         std::string Username;
         std::string Record; // server-declared NPCs name their exact record
     };

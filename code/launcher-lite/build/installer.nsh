@@ -11,9 +11,22 @@
 ; Deliberately NOT touched: the game folder and the mod. Those belong to Cyberpunk,
 ; not the launcher - the Settings screen's "Remove mod" handles them explicitly first
 ; if someone wants everything gone.
+; THE FOOTPRINT RULE (crew decree, 2026-08-21): uninstall leaves NOTHING. This macro
+; is the manifest's mirror on the installer side - keep it in sync with
+; launcherFootprint() in main.js. All three historical data-folder names are swept
+; because Electron's runtime name, the build's product name, and the package name
+; have all been used, and old installs left data under each. This also catches
+; whatever Electron recreates (caches) between the launcher's own purge and process
+; exit - which is why the launcher purging first is not enough on its own.
 !macro customUnInstall
   ${ifNot} ${isUpdated}
+    RMDir /r "$APPDATA\Night City Online"
+    RMDir /r "$APPDATA\Night City Online Launcher"
     RMDir /r "$APPDATA\nightcity-launcher"
+    RMDir /r "$LOCALAPPDATA\Night City Online-updater"
+    RMDir /r "$LOCALAPPDATA\Night City Online Launcher-updater"
     RMDir /r "$LOCALAPPDATA\nightcity-launcher-updater"
+    Delete "$DESKTOP\Night City Online Launcher.lnk"
+    Delete "$APPDATA\Microsoft\Windows\Start Menu\Programs\Night City Online Launcher.lnk"
   ${endIf}
 !macroend

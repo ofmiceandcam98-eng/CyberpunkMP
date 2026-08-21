@@ -106,6 +106,7 @@ contextBridge.exposeInMainWorld('launcher', {
   // Where the launcher lives, and how to remove it. Both confirm in the main process.
   openInstallDir: () => ipcRenderer.invoke('launcher:openInstallDir'),
   uninstallLauncher: () => ipcRenderer.invoke('launcher:uninstall'),
+  deepClean: () => ipcRenderer.invoke('repair:run'),
 
   // The launcher updating itself: progress reports in, restart request out.
   onLauncherUpdate: (callback) => {
