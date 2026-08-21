@@ -4,6 +4,10 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.83
+
+- **The launcher keeps a trail of its own actions** - JACK IN pressed, every launch check's verdict, what was passed to the game (credentials never written, presence only), and the game's exit code - and ships it to the server with the client logs, including when a launch is refused. "The button does nothing" is now a thing we read, not a thing we debate.
+
 ## What changed — v0.3.82
 
 - **JACK IN refuses to launch a Steam copy while Steam is closed.** A Steam game started without Steam restarts itself and silently drops the multiplayer connection settings - the game runs, but it dials your own PC instead of the server, forever. Five identical sessions from one player tonight. Now the launcher says "Start Steam first" instead of letting it happen.
