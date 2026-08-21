@@ -63,7 +63,13 @@ const DISCORD_INVITE = 'https://discord.gg/M9NSWsndC7'
 //
 // Put your own id here. Sign in once and the launcher shows it under your name.
 const ADMIN_DISCORD_IDS = [
-  '566025915839283220'   // Cam
+  '566025915839283220',  // Cam
+  // zeldfep - the other half of the project. Added after the second live "where did
+  // my server buttons go": a transient role-lookup failure (expired OAuth token, or
+  // fetching roles.json mid-release-upload) silently demoted him to player, while
+  // Cam never noticed because this floor already carried him. Both owners belong on
+  // the floor; the role map governs everyone else.
+  '226974251045879808'
 ]
 
 const SERVER_EXE = 'Server.Loader.exe'
@@ -1526,10 +1532,10 @@ function createWindow () {
     //
     // A minimum size stops anyone shrinking it back into that state.
     width: 1180,
-    height: 760,
+    height: 800,
     minWidth: 1024,
-    minHeight: 700,
-    backgroundColor: '#0f1115',
+    minHeight: 740,
+    backgroundColor: '#0a0b0d',
     autoHideMenuBar: true,
     webPreferences: {
       // contextIsolation keeps the page's JavaScript in a separate world from
@@ -1867,6 +1873,7 @@ async function hydrateUserFromToken () {
       if (currentUser && level && level !== 'player') {
         currentUser.isAdmin = isAdmin()
         console.log(`[roles] ${currentUser.handle} resolved to ${level}`)
+        fitWindowToRole()
 
         // Tell the page, or the controls never actually appear. The profile the
         // renderer got at sign-in was built before this answer arrived, with isAdmin
@@ -2556,8 +2563,25 @@ async function resolveUserLevel () {
 
   if (map.owner && map.owner === currentUser.id) return 'owner'
 
+  // "The lookup FAILED" and "Discord answered: no roles" are different verdicts, and
+  // only the second may demote anyone. A dead network, an expired OAuth token, or
+  // roles.json fetched in the middle of a release upload used to all collapse to
+  // 'player' - the launcher's own admin losing his server buttons to a hiccup, twice,
+  // live. On failure the last DEFINITIVE answer for this account stands instead.
+  const cachedFor = loadSettings().roleLevelCache
+  const cached = (cachedFor && cachedFor.id === currentUser.id) ? cachedFor.level : null
+  const fallback = (why) => {
+    if (cached) {
+      launcherLog(`role lookup failed (${why}) - standing on cached level '${cached}'`)
+      return cached
+    }
+    return 'player'
+  }
+
+  if (!map.roles || !map.roles.length) return fallback('role map unavailable')
+
   const token = loadToken()
-  if (!token || !map.roles || !map.roles.length) return 'player'
+  if (!token) return fallback('no OAuth token on hand')
 
   let memberRoles = []
   try {
@@ -2566,9 +2590,14 @@ async function resolveUserLevel () {
       { headers: { Authorization: `Bearer ${token}` }, timeout: 8000,
         validateStatus: (status) => status === 200 || status === 404 })
 
-    if (member.status === 200 && Array.isArray(member.data?.roles)) memberRoles = member.data.roles
-  } catch {
-    return 'player'
+    if (member.status === 404) {
+      // Definitive: not a member of the guild. No cache rescue.
+      saveSettings({ roleLevelCache: { id: currentUser.id, level: 'player' } })
+      return 'player'
+    }
+    if (Array.isArray(member.data?.roles)) memberRoles = member.data.roles
+  } catch (err) {
+    return fallback(err.response?.status ? `Discord answered ${err.response.status}` : err.message)
   }
 
   let best = 'player'
@@ -2576,6 +2605,9 @@ async function resolveUserLevel () {
     if (!memberRoles.includes(role.id)) continue
     if ((LEVELS[role.level] || 0) > (LEVELS[best] || 0)) best = role.level
   }
+
+  // A definitive answer, from Discord's own mouth - remember it for the next hiccup.
+  saveSettings({ roleLevelCache: { id: currentUser.id, level: best } })
 
   return best
 }
@@ -2588,6 +2620,28 @@ let cachedLevel = 'player'
 async function refreshUserLevel () {
   cachedLevel = await resolveUserLevel()
   return cachedLevel
+}
+
+// The admin stack (server lifecycle row, admin link, credentials, coordination
+// controls) is a full card taller than what players see - a window sized for players
+// cuts it off, and the owner was hand-stretching every session ("windows rezing still
+// happening"). Grow to fit the role once it resolves, clamped to the screen, and
+// never fight a size the person chose themselves: only a window still at the height
+// WE last set gets adjusted.
+let lastAutoHeight = 0
+
+function fitWindowToRole () {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  try {
+    const { screen } = require('electron')
+    const work = screen.getDisplayMatching(mainWindow.getBounds()).workAreaSize
+    const wanted = Math.min(isAdmin() ? 940 : 800, work.height - 24)
+    const [w, h] = mainWindow.getSize()
+    if (wanted > h && (lastAutoHeight === 0 || h === lastAutoHeight)) {
+      mainWindow.setSize(w, wanted)
+      lastAutoHeight = wanted
+    }
+  } catch { /* a sizing nicety must never break sign-in */ }
 }
 
 function isAdmin () {
