@@ -17,7 +17,10 @@ param(
     # The whole mod payload - DLL, redscript and Rpc together. Updating only the DLL was a
     # trap: fixes that live in redscript silently never reached anyone, so two people could
     # be on "the same build" and behave differently.
-    [string]$Url = "https://github.com/ofmiceandcam98-eng/CyberpunkMP/releases/download/test-2026.08.12-probes/ModPayload.zip",
+    # releases/latest, not a pinned tag: the default sat pointed at a dead test tag from
+    # August 12th, so anyone still using this legacy tool was "updating" to a build older
+    # than the one they had.
+    [string]$Url = "https://github.com/ofmiceandcam98-eng/CyberpunkMP/releases/latest/download/ModPayload.zip",
     # Start the game once the update is done. This is how Play.bat uses it, so that
     # updating is something that happens TO you rather than a chore you remember.
     [switch]$Launch,
