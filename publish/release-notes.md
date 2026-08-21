@@ -4,6 +4,19 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.95
+
+**Voice chat groundwork.** Nothing transmits yet — this is the part that has to be right before anything else works, and it's all in **Settings → Voice**.
+
+- **Find your microphone and speakers.** Press Find devices and it lists what Windows actually has — every mic, headset and audio interface, by the name your sound settings use. Separate choices for your microphone and where you hear other players, so voice can go to a headset while the game stays on speakers.
+- **Devices that are secretly your own system audio are marked.** Windows lists things like Stereo Mix as if they were microphones; pick one and everyone hears your game and Discord instead of you. They're flagged rather than hidden, in case you actually want one.
+- **Set your push-to-talk key by pressing it.** Any key, or a mouse side button. No files to edit. Escape cancels, and left click is refused because binding voice to it makes the game unplayable.
+- **Hold to talk, toggle, or open-when-I-speak**, plus microphone and voice chat volume. Volume goes to 200% because a quiet mic on a proper audio interface is normal and you shouldn't have to go change your hardware gain.
+
+These are handed to the game when you press JACK IN, so **change them before launching** — adjusting a slider mid-session won't do anything until next time.
+
+Under the hood this uses Windows' own audio system rather than special-casing brands, so a Focusrite, an Apollo, a USB headset and a laptop mic all work the same way — including hardware nobody's bought yet.
+
 ## What changed — v0.3.94
 
 - **Fixes v0.3.93, which would not start.** That build opened with "A JavaScript error occurred in the main process — Cannot find package '7zip-bin'" and went no further. The archive-extraction libraries added in v0.3.91 were listed correctly but never actually installed before the build was packaged, so the launcher shipped importing code that wasn't inside it. If you're stuck on that error, this release is the fix — the updater still works, so reopening should pull it.
