@@ -94,6 +94,9 @@ contextBridge.exposeInMainWorld('launcher', {
 
   nexusSsoLogin: () => ipcRenderer.invoke('nexus:ssoLogin'),
   nexusSignIn: (key) => ipcRenderer.invoke('nexus:signIn', key),
+  getVoiceSettings: () => ipcRenderer.invoke('voice:get'),
+  saveVoiceSettings: (choice) => ipcRenderer.invoke('voice:save', choice),
+
   nexusStatus: () => ipcRenderer.invoke('nexus:status'),
   nexusSignOut: () => ipcRenderer.invoke('nexus:signOut'),
 

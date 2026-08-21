@@ -103,6 +103,22 @@
   /* The two identities travel together. Without this the header's space-between
      scatters brand / Discord / Nexus / gear evenly across the bar, which reads as four
      unrelated things rather than one account row. */
+  /* Device pickers. Full width because audio device names are long - "Microphone
+     (2- Focusrite USB Audio)" truncated to "Microphone (2- Foc..." tells nobody which
+     interface they picked, which is the one thing this control exists to answer. */
+  .voice-select {
+    width: 100%;
+    margin-top: .45rem;
+    padding: .4rem .5rem;
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    font-family: inherit;
+    font-size: .82rem;
+  }
+  .voice-select:disabled { color: var(--ink-dim); }
+
   .accounts { display: flex; align-items: center; gap: 1.5rem; }
 
   /* Nexus has no avatar to show - the API returns a name, not a picture - so the slot
@@ -699,12 +715,70 @@
       <div class="tabs" id="settingsTabs">
         <button data-tab="folders" class="active">Folders</button>
         <button data-tab="tools">Tools</button>
+        <button data-tab="voice">Voice</button>
         <button data-tab="dev" id="tabDev" style="display:none">Dev</button>
         <button data-tab="remove">Remove</button>
         <button data-tab="about">About</button>
       </div>
 
       <div class="modal-body">
+
+        <!-- VOICE
+             Phase 1 of the voice system: find the devices and let someone pick.
+             Nothing captures or transmits yet - this is the part that has to be right
+             first, because every voice problem after it starts with "which microphone".
+
+             Enumerated through the browser engine rather than native WASAPI. Chromium
+             already asks Windows for its audio endpoints and hands back the real device
+             names, which is the same list a native implementation would build - and it
+             works today rather than after a native audio layer lands. -->
+        <section class="panel" data-pane="voice">
+          <h3>Voice</h3>
+
+          <div class="tool">
+            <div style="min-width:0">
+              <div class="tool-name">Audio devices</div>
+              <div class="tool-desc" id="voiceHint">
+                Windows has to allow microphone access before it will tell us device names.
+                Press Find devices - if Windows asks, allow it.
+              </div>
+            </div>
+            <button class="action ghost" id="voiceScan">Find devices</button>
+          </div>
+
+          <div class="tool">
+            <div style="min-width:0">
+              <div class="tool-name">Microphone</div>
+              <div class="tool-desc">What other players hear you through.</div>
+              <select id="voiceInput" class="voice-select" disabled>
+                <option>Press Find devices</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="tool">
+            <div style="min-width:0">
+              <div class="tool-name">Voice output</div>
+              <div class="tool-desc">
+                Where you hear other players. Separate from game audio, so voice can go to a
+                headset while the game stays on speakers.
+              </div>
+              <select id="voiceOutput" class="voice-select" disabled>
+                <option>Press Find devices</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="tool">
+            <div style="min-width:0">
+              <div class="tool-name" id="voiceStatusTitle">Not set up yet</div>
+              <div class="tool-desc" id="voiceStatus">
+                Voice capture is not built yet - this page only chooses the devices it will
+                use. Your choice is saved.
+              </div>
+            </div>
+          </div>
+        </section>
 
         <!-- FOLDERS -->
         <section class="panel pane-active" data-pane="folders">
@@ -2462,6 +2536,129 @@
       await refreshNexus()
     }
   })
+
+  // ---------------------------------------------------------------------------
+  // VOICE - device discovery
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Names that mean "this is the computer's own output, fed back in".
+   *
+   * Windows exposes these as capture endpoints even though they carry rendered system
+   * audio, so they sit in the microphone list looking like microphones. Picked by
+   * accident, everyone else hears the game, Discord, Spotify and Windows sounds instead
+   * of a voice - the exact failure the voice brief calls out.
+   *
+   * Matched on name because that is the only signal the browser engine exposes; a native
+   * WASAPI layer could ask the endpoint what it is. Flagged rather than hidden: on some
+   * setups a loopback IS deliberately what somebody wants, and silently removing a device
+   * they were looking for is its own bug.
+   */
+  const LOOPBACK_HINTS = [
+    'stereo mix', 'wave out', 'what u hear', 'what you hear',
+    'loopback', 'sum', 'mixed output', 'rec. playback'
+  ]
+
+  function looksLikeLoopback (label) {
+    const l = (label || '').toLowerCase()
+    return LOOPBACK_HINTS.some((h) => l.includes(h))
+  }
+
+  function fillDeviceList (select, devices, savedId) {
+    select.innerHTML = ''
+
+    // "Windows default" first and selected unless something else was saved. Following the
+    // system default is what most people want and what survives plugging a headset in.
+    const def = document.createElement('option')
+    def.value = 'default'
+    def.textContent = 'Windows default'
+    select.appendChild(def)
+
+    for (const d of devices) {
+      const option = document.createElement('option')
+      option.value = d.deviceId
+
+      // An empty label means Windows withheld the name - permission was refused, or the
+      // scan ran before it was granted. Say that rather than showing a blank row.
+      const name = d.label || 'Unnamed device'
+      option.textContent = looksLikeLoopback(name) ? name + '  — SYSTEM AUDIO, not a mic' : name
+
+      select.appendChild(option)
+    }
+
+    select.disabled = false
+    if (savedId) select.value = savedId
+    if (!select.value) select.value = 'default'
+  }
+
+  async function scanVoiceDevices () {
+    const btn = $('voiceScan')
+    btn.disabled = true
+    btn.textContent = 'Searching...'
+
+    try {
+      // Permission FIRST. enumerateDevices returns entries either way, but the labels are
+      // blank until microphone access is granted - a list of nameless devices is worse
+      // than no list, because it looks like the scan worked.
+      let granted = false
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        stream.getTracks().forEach((t) => t.stop())   // released immediately; nothing is recorded
+        granted = true
+      } catch {
+        granted = false
+      }
+
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const inputs = devices.filter((d) => d.kind === 'audioinput')
+      const outputs = devices.filter((d) => d.kind === 'audiooutput')
+
+      const saved = await window.launcher.getVoiceSettings()
+
+      fillDeviceList($('voiceInput'), inputs, saved?.inputDevice)
+      fillDeviceList($('voiceOutput'), outputs, saved?.outputDevice)
+
+      const loopbacks = inputs.filter((d) => looksLikeLoopback(d.label)).length
+
+      if (!granted) {
+        $('voiceHint').textContent =
+          'Windows did not allow microphone access, so device names are hidden. '
+          + 'Allow the microphone for Night City Online in Windows privacy settings, then search again.'
+      } else {
+        $('voiceHint').textContent =
+          `Found ${inputs.length} microphone${inputs.length === 1 ? '' : 's'} and `
+          + `${outputs.length} output${outputs.length === 1 ? '' : 's'}.`
+          + (loopbacks > 0
+            ? ' One or more are system-audio loopbacks - marked in the list, and not what you want for voice.'
+            : '')
+      }
+    } catch (err) {
+      $('voiceHint').textContent = 'Could not read the audio devices: ' + err.message
+    } finally {
+      btn.disabled = false
+      btn.textContent = 'Find devices'
+    }
+  }
+
+  $('voiceScan').addEventListener('click', scanVoiceDevices)
+
+  // Saved on change rather than behind a Save button - a dropdown that needs confirming is
+  // a dropdown people forget to confirm.
+  for (const id of ['voiceInput', 'voiceOutput']) {
+    $(id).addEventListener('change', async () => {
+      await window.launcher.saveVoiceSettings({
+        inputDevice: $('voiceInput').value,
+        outputDevice: $('voiceOutput').value
+      })
+
+      const chosen = $(id).selectedOptions[0]?.textContent || ''
+
+      $('voiceStatus').textContent = looksLikeLoopback(chosen)
+        ? 'That device carries your computer\'s own audio. Other players would hear your game, '
+          + 'music and Discord instead of you. Pick a microphone unless you know you want this.'
+        : 'Saved. Voice capture is not built yet - this only chooses the devices it will use.'
+    })
+  }
 
   $('nexusGetKey').addEventListener('click', async () => {
     await window.launcher.openLink('nexusApi')

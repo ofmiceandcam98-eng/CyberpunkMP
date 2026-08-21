@@ -1692,6 +1692,25 @@ function createWindow () {
     shell.openExternal(url)
     return { action: 'deny' }
   })
+
+  /**
+   * Allow the microphone, and ONLY the microphone.
+   *
+   * Chromium denies every permission by default in a packaged app, and audio device NAMES
+   * are withheld until microphone access is granted - so without this the voice page can
+   * list devices but not say what any of them are, which is worse than listing nothing.
+   *
+   * An allow-list rather than a blanket yes. This window loads local files and the strict
+   * CSP already keeps it there, but a launcher that quietly said yes to geolocation, the
+   * camera or notifications because it needed a microphone would be helping itself to
+   * things nobody agreed to.
+   *
+   * Windows still gates it separately: if the microphone is off for desktop apps in
+   * privacy settings, this grant changes nothing and the page says so.
+   */
+  mainWindow.webContents.session.setPermissionRequestHandler((_wc, permission, callback) => {
+    callback(permission === 'media' || permission === 'audioCapture')
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -3404,6 +3423,32 @@ ipcMain.handle('nexus:signIn', async (_event, key) => {
     if (err.response?.status === 401) return { ok: false, error: 'Nexus rejected that key.' }
     return { ok: false, error: `Could not reach Nexus: ${err.message}` }
   }
+})
+
+/**
+ * Which audio devices voice will use. Client-side settings, saved like any other.
+ *
+ * Stored by device ID with the name kept alongside. The ID is what selects the device;
+ * the name is what lets us tell somebody WHICH device went missing when their interface
+ * is unplugged, instead of showing them an opaque hash.
+ *
+ * Nothing captures audio yet - this is the device half of the voice system, which is the
+ * part every later problem starts with.
+ */
+ipcMain.handle('voice:get', async () => {
+  const settings = loadSettings()
+  return {
+    inputDevice: settings.voiceInputDevice || 'default',
+    outputDevice: settings.voiceOutputDevice || 'default'
+  }
+})
+
+ipcMain.handle('voice:save', async (_event, choice) => {
+  saveSettings({
+    voiceInputDevice: choice?.inputDevice || 'default',
+    voiceOutputDevice: choice?.outputDevice || 'default'
+  })
+  return { ok: true }
 })
 
 ipcMain.handle('nexus:status', async () => {
