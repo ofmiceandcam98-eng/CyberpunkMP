@@ -3386,11 +3386,11 @@ ipcMain.handle('launcher:openInstallDir', async () => {
 ipcMain.handle('launcher:uninstall', async () => {
   const dir = path.dirname(process.execPath)
 
-  // Found by scanning, not by a hardcoded name. electron-builder names the file
-  // "Uninstall <productName>.exe" - ours is "Uninstall Night City Online.exe" - and
-  // this code looked for "...Online Launcher.exe", a file that never existed. Every
-  // INSTALLED copy was told it was the portable build and to "just delete the .exe",
-  // which is how a player ends up unable to uninstall at all.
+  // Found by scanning, not by a hardcoded name. Two productNames exist (package.json
+  // top-level says "Night City Online", the build block overrides with "...Launcher"),
+  // so a hardcoded filename is one rename away from declaring every install portable.
+  // The scan also keeps the answer honest for people RUNNING a portable copy while an
+  // installed copy sits in AppData - the live case behind the 2026-08-21 report.
   let uninstaller = null
   try {
     const found = readdirSync(dir).find((f) => /^uninstall.*\.exe$/i.test(f))
