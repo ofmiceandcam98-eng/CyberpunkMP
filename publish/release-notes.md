@@ -4,6 +4,17 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.81
+
+- **Remote players move.** This is the one. You could see another player's body at the spot they spawned and nothing after that, while they were walking around on their end — and every diagnostic said the connection was healthy, because it was. The client held render time in a 32-bit float. Ticks are milliseconds since the epoch, around 1,787,000,000,000, and a float that large can only count in steps of 131,072 — about two minutes. So the 100ms interpolation delay rounded away to nothing, every buffered movement sample compared as "already in the past", and the code that positions the puppet hit a guard and returned without moving anything, every frame, forever. The body stayed where it was last put: its spawn point. Ticks are now kept as whole numbers, and only the differences between them — a few milliseconds — are allowed to be fractional.
+
+  **Please test this with someone.** It is proven on paper and it compiles, but "the arithmetic is right" is not the same as "two people watched each other walk". If remote players still freeze, the log now names which of the three known causes it was.
+
+- **Time no longer stops or slows on the server.** Opening the pause menu froze the world for you while everyone else kept playing, so you came back seconds behind them. The weapon wheel and emote wheel did the same thing through a separate path that had been missed. All three are now inert while you are connected, and unchanged in singleplayer.
+- **Quitting saves your character.** Leaving through the pause menu — EXIT GAME or EXIT TO MAIN MENU, which is how people actually leave — never triggered a save, so you could lose up to ninety seconds of shopping and looting. It saves first now. Alt-F4 still cannot be caught; that is what the ninety-second timer is for.
+- **The launcher credits Tilted Phoques SRL**, who created CyberpunkMP, in the About panel with a link to the original project. The separators that showed as "Â·" are fixed too.
+- **The server keeps a ledger.** Money transfers and any character save whose balance disagrees with the server's are now recorded to `config/audit.log`. Nothing changes for players — this is the groundwork for making money properly server-owned, and the first thing that can actually show where the "my eddies went back to an old number" bug happens.
+
 ## What changed — v0.3.80
 
 - **"Uninstall launcher" works on installed copies.** It looked for an uninstaller filename that never existed, so every installed launcher was told it was "the portable build" and left with no way out. It now finds the real uninstaller (and points at Windows Settings > Apps as the fallback).
