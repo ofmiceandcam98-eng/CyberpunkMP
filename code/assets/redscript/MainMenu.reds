@@ -295,16 +295,18 @@ private func PopulateMenuItemList() -> Void {
     //
     // Only offered while a character exists to delete. Drawing it against an empty account
     // would be a button whose only possible outcome is a refusal.
-    let network = GameInstance.GetNetworkWorldSystem();
-
-    if IsDefined(network) && network.IsCharacterStatusKnown() && network.HasCharacter() {
-        this.AddMenuItem("[ TRASH ]  DELETE CHARACTER", n"OnMultiplayerDeleteCharacter");
-    }
-
-    // Built here so it exists from the first frame of the menu, then filled in as the
-    // server answers. It says "signing in..." until then rather than sitting empty.
-    this.MpBuildPanel();
-    this.MpUpdatePanel();
+    // Off with the selector. Both the trash can and the panel only make sense once the
+    // menu has asked the server who this account is, and it no longer does - drawn now,
+    // they would say "signing in..." forever against a connection nobody opened.
+    //
+    // The handler for OnMultiplayerDeleteCharacter is still present and still compiles, so
+    // re-adding this line is all it takes to bring the entry back.
+    //
+    // if IsDefined(network) && network.IsCharacterStatusKnown() && network.HasCharacter() {
+    //     this.AddMenuItem("[ TRASH ]  DELETE CHARACTER", n"OnMultiplayerDeleteCharacter");
+    // }
+    // this.MpBuildPanel();
+    // this.MpUpdatePanel();
 
     // PopulateMenuItemList refreshes at its end, before our item existed. Without
     // refreshing again the entry is in the data but never drawn, which looks exactly
@@ -333,34 +335,31 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
             return true;
         }
 
-        // ASK THE SERVER FIRST, then decide where this player goes.
+        // THE CHARACTER SELECTOR IS OFF FOR NOW - this is the original path.
         //
-        // This used to load a save immediately and connect once the world was up, which
-        // meant the server's answer to "what character does this account own" arrived
-        // AFTER the player was already standing in the world as it. There was no moment in
-        // which a selector could exist.
+        // Load the save, connect once the world is up. Straight in, no selector.
         //
-        // So connect here, from the menu, and wait. The socket survives the load into the
-        // world - only an explicit Disconnect closes it - and the spawn is held back until
-        // EnterWorld, so authenticating early does not put anybody anywhere.
+        // The selector below it is built and compiles: MpSelectorPoll asks the server what
+        // character this account owns before loading anything, MpBuildPanel draws it, and
+        // the trash can deletes it. What it has never had is a live session - and this is
+        // the main menu, the one screen where being wrong means nobody can play at all.
+        // It went out in v0.3.89 and rode along to v0.3.92 without ever being exercised,
+        // which is the actual mistake being undone here.
         //
-        // Connecting is skipped when we already are: re-entering the menu after a
-        // disconnect-and-return should not stack a second connection, and each Connect
-        // aborts the previous one.
-        if !network.IsConnected() {
-            FTLog(s"[CyberpunkMP] not connected yet - signing in before offering a character");
-            network.Connect();
-        }
+        // TO TURN IT BACK ON: replace the two lines below with
+        //
+        //     if !network.IsConnected() { network.Connect(); }
+        //     let poll = new MpSelectorPoll();
+        //     poll.controller = this;
+        //     poll.attempts = 0;
+        //     GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(poll, 0.25, false);
+        //
+        // Nothing else has to change: the native half (held spawn, EnterWorld, character
+        // status) stays wired and is harmless while unused, and the in-world controller
+        // already handles both routes.
+        network.RequestJoin();
 
-        // The wait is a poll rather than a callback because the answer arrives on the
-        // network thread into native state; there is no script event to hang off. A
-        // quarter second is well inside a human's tolerance for a menu press and well
-        // outside the round trip.
-        let poll = new MpSelectorPoll();
-        poll.controller = this;
-        poll.attempts = 0;
-
-        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(poll, 0.25, false);
+        this.GetSystemRequestsHandler().LoadLastCheckpoint(false);
         return true;
     }
 
