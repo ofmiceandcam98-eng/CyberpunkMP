@@ -15,7 +15,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } from 'electron'
 import electronUpdater from 'electron-updater'
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, copyFileSync, unlinkSync, realpathSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, copyFileSync, unlinkSync, realpathSync, appendFileSync } from 'node:fs'
 import fsp from 'node:fs/promises'
 import AdmZip from 'adm-zip'
 import crypto from 'node:crypto'
@@ -199,6 +199,22 @@ let lastServerStatus = null
 
 function settingsPath () {
   return path.join(app.getPath('userData'), 'settings.json')
+}
+
+// The launcher's own action trail. Six identical "not launched from the launcher"
+// sessions from one player who swears he presses JACK IN - and nothing anywhere
+// recorded what his launcher actually did. This file does: every launch verdict,
+// the exact spawn result, the exit code. It ships to the server with the client
+// logs, so the next failed attempt is read, not re-argued. Credential VALUES are
+// never written - presence only. Lives in userData, which the footprint rule
+// already purges on uninstall.
+function launcherLog (aLine) {
+  try {
+    const file = path.join(app.getPath('userData'), 'launcher-trail.log')
+    // A trail, not an archive: start over past ~200KB. What mattered has shipped.
+    try { if (statSync(file).size > 200_000) rmSync(file, { force: true }) } catch { /* absent - fine */ }
+    appendFileSync(file, `[${new Date().toISOString()}] ${aLine}\n`)
+  } catch { /* the trail must never break the thing it watches */ }
 }
 
 // ================================ THE FOOTPRINT RULE ================================
@@ -1222,7 +1238,9 @@ async function shipClientLogs (reason) {
       .sort((a, b) => b.mtime - a.mtime)
       .slice(0, 3)
 
-    if (!candidates.length) return
+    // No early return on an empty list any more: the launcher's own trail below must
+    // ship even when the game never produced a log - a REFUSED launch is exactly the
+    // session where the trail is the only witness.
 
     const published = await fetchPublishedServer()
     if (!published?.host) return
@@ -1230,6 +1248,17 @@ async function shipClientLogs (reason) {
     const player = currentUser?.handle || os.userInfo().username || 'unknown'
     const base = `http://${published.host}:${published.port || 11778}/api/v1/logs/`
     let sent = 0
+
+    // The launcher's own trail rides along, un-deduped - its whole value is the
+    // freshest few lines, and it is why a "JACK IN does nothing" report can be read
+    // instead of re-argued.
+    try {
+      const trail = readFileSync(path.join(app.getPath('userData'), 'launcher-trail.log'), 'utf8')
+      if (trail.length && trail.length < 3_500_000) {
+        await axios.post(`${base}?player=${encodeURIComponent(player)}&file=launcher-trail.log`, trail,
+                         { headers: { 'Content-Type': 'text/plain' }, timeout: 20000 })
+      }
+    } catch { /* no trail yet - nothing to say */ }
 
     for (const log of candidates) {
       const body = readFileSync(log.full, 'utf8')
@@ -2314,6 +2343,9 @@ async function launchGame () {
   args.push(`--port=${server.port}`)
 
   console.log(`[launch] server ${server.host}:${server.port} (from ${server.source})`)
+  launcherLog(`launching: server ${server.host}:${server.port} (${server.source}), ` +
+              `${args.length} args, token ${accessToken ? 'present' : 'MISSING'}, ` +
+              `name ${currentUser?.handle || 'MISSING'}`)
 
   // detached + unref lets the game outlive the launcher. Without it, closing
   // the launcher would take the game down with it, and the launcher would sit
@@ -2345,6 +2377,8 @@ async function launchGame () {
                       'a Steam copy launched without Steam restarts itself and loses the ' +
                       'multiplayer connection settings.')
     }
+
+    launcherLog('steam guard: steam.exe running - proceeding')
   }
 
   // Last thing before starting: make sure only one copy of the mod will load.
@@ -2386,6 +2420,8 @@ async function launchGame () {
   // someone needs their log. Nobody should have to go hunting through Program Files for
   // a file whose name they do not know.
   const onExit = (code) => {
+    launcherLog(`game exited with code ${code}`)
+
     // 0 is a normal quit. 0xC0000005 (-1073741819) is an access violation - the crash
     // this project has spent days on. Anything else non-zero is also worth capturing.
     if (code === 0 || code === null) return
@@ -2407,6 +2443,7 @@ async function launchGame () {
     // failing - so retry through cmd's `start`, which routes via ShellExecute.
     if (err.code === 'EACCES' || err.code === 'EPERM' || err.code === 'UNKNOWN') {
       console.warn(`[launch] direct start refused (${err.code}) - retrying through the shell, which can raise a UAC prompt`)
+      launcherLog(`spawn refused (${err.code}) - retrying through the shell`)
 
       // One pre-quoted command line under windowsVerbatimArguments, because cmd has
       // its own quoting rules and Node's default escaping garbles them. The empty ""
@@ -4273,9 +4310,16 @@ ipcMain.handle('discord:openInvite', () => {
 })
 
 ipcMain.handle('game:launch', async () => {
+  launcherLog('JACK IN pressed')
   try {
-    return { ok: true, ...(await launchGame()) }
+    const result = await launchGame()
+    launcherLog(`launch pipeline finished: ${JSON.stringify({ ...result, executable: undefined })} exe=${result.executable || '?'}`)
+    return { ok: true, ...result }
   } catch (err) {
+    launcherLog(`launch REFUSED: ${err.message}`)
+    // A refused launch is exactly when the trail matters - ship it now rather than
+    // waiting for a game session that is not going to happen.
+    shipClientLogs('launch refused')
     // Unlocked on every failure, without needing to know which check refused.
     //
     // launchGame sets `launching` early - the checks before the spawn include network
