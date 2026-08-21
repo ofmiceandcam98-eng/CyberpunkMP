@@ -105,7 +105,35 @@ static void DriveEntity(const DriverComponent& aDriver, const EntityComponent& a
 
 void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComponent, InterpolationComponent& aInterpolation, float aSimulationDelay, Red::vehicle::IMoveSystem* apMoveSystem)
 {
-    const float tick = NetworkWorldSystem::GetTick() - aSimulationDelay;
+    // Render time, in the integer domain the ticks actually live in.
+    //
+    // THIS LINE USED TO BE `const float tick = GetTick() - aSimulationDelay;` AND IT WAS
+    // THE FREEZE.
+    //
+    // GetTick() returns milliseconds since the epoch as a uint64 - about 1.787e12. A
+    // 32-bit float carries 24 bits of mantissa, so at that magnitude the gap between
+    // consecutive representable values is 131072, or roughly 131 SECONDS. Converting the
+    // tick to float threw away everything below that. Three consequences, all silent:
+    //
+    //   1. Subtracting a 100ms simulation delay did nothing whatsoever - the result was
+    //      bit-identical to the input, so the interpolation buffer had no delay at all.
+    //   2. In the drain loop below, a sample 30ms old and the current render time rounded
+    //      to the SAME float, so `sample.Tick <= tick` was true for the whole buffer and
+    //      it emptied every single frame.
+    //   3. With the buffer always empty, the extrapolation branch computed
+    //      `ahead = tick - first.Tick` as exactly 0.0, hit its own `ahead <= 0` guard,
+    //      and returned without applying anything. Every frame. Forever.
+    //
+    // The remote puppet therefore stayed wherever it was last placed - its spawn point -
+    // while 30 packets a second arrived, the clocks agreed to within 20ms, and the
+    // appearance applied correctly. Everything looked healthy because everything WAS
+    // healthy except this arithmetic. Verified against real ticks out of a session log:
+    // float(1787286555346) and float(1787286555346 - 100) are the same number.
+    //
+    // The rule from here on: absolute ticks stay integer, and only DIFFERENCES - which
+    // are small - are allowed to become float.
+    const int64_t renderTick =
+        static_cast<int64_t>(NetworkWorldSystem::GetTick()) - static_cast<int64_t>(aSimulationDelay);
 
     // Advance the segment. Everything that is now behind render time becomes the anchor
     // we interpolate FROM; the first sample still ahead of it is what we interpolate TO.
@@ -115,7 +143,7 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
     // fraction covered per frame grew as the target got closer, so every 100ms segment
     // was a small acceleration followed by a jump to the next one.
     while (!aInterpolation.TimePoints.empty() &&
-           static_cast<float>(aInterpolation.TimePoints.front().Tick) <= tick)
+           static_cast<int64_t>(aInterpolation.TimePoints.front().Tick) <= renderTick)
     {
         aInterpolation.PreviousFrame = aInterpolation.TimePoints.front();
         aInterpolation.HasPrevious = true;
@@ -182,7 +210,8 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
     {
         constexpr float kMaxExtrapolationMs = 250.f;
 
-        const float ahead = tick - static_cast<float>(first.Tick);
+        // A difference, so float is safe here - this is milliseconds, not epoch time.
+        const float ahead = static_cast<float>(renderTick - static_cast<int64_t>(first.Tick));
         if (ahead <= 0.f || ahead > kMaxExtrapolationMs)
             return;
 
@@ -195,12 +224,13 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
 
         if (const auto* pDriver = aEntity.get<DriverComponent>())
         {
-            const float frameDelta = (aInterpolation.LastRenderTick > 0.f)
-                                         ? std::max(tick - aInterpolation.LastRenderTick, 0.f)
+            const float frameDelta = (aInterpolation.LastRenderTick > 0)
+                                         ? static_cast<float>(std::max(
+                                               renderTick - aInterpolation.LastRenderTick, INT64_C(0)))
                                          : 16.f;
             DriveEntity(*pDriver, aEntityComponent, guessed, first.Rotation.z, first.Velocity,
                         first.Locomotion, frameDelta);
-            aInterpolation.LastRenderTick = tick;
+            aInterpolation.LastRenderTick = renderTick;
         }
         else if (aEntityComponent.Controller)
         {
@@ -213,11 +243,17 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
     const auto& second = aInterpolation.TimePoints.front();
 
     // Where render time sits between the two samples, 0..1.
+    // Both of these are differences between two ticks - tens of milliseconds - so they are
+    // safe in float. Subtracting in the integer domain FIRST is the whole point: taking
+    // float(second.Tick) - float(first.Tick) rounded both to the same value and produced a
+    // delta of zero, which pinned ratio at 0 and left every segment sitting on its first
+    // sample even when the buffer did have something to interpolate towards.
     auto ratio = 0.f;
-    const auto tickDelta = static_cast<float>(second.Tick) - static_cast<float>(first.Tick);
+    const auto tickDelta =
+        static_cast<float>(static_cast<int64_t>(second.Tick) - static_cast<int64_t>(first.Tick));
     if (tickDelta > 0.f)
     {
-        ratio = (tick - static_cast<float>(first.Tick)) / tickDelta;
+        ratio = static_cast<float>(renderTick - static_cast<int64_t>(first.Tick)) / tickDelta;
         ratio = std::clamp(ratio, 0.f, 1.f);
     }
 
@@ -260,8 +296,9 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
             // since the last network sample. PreviousFrame used to be rewritten every
             // frame so the two were the same number; now that it holds a real sample,
             // the frame delta has to be tracked on its own.
-            const float frameDelta = (aInterpolation.LastRenderTick > 0.f)
-                                         ? std::max(tick - aInterpolation.LastRenderTick, 0.f)
+            const float frameDelta = (aInterpolation.LastRenderTick > 0)
+                                         ? static_cast<float>(std::max(
+                                               renderTick - aInterpolation.LastRenderTick, INT64_C(0)))
                                          : 16.f;
 
             ForceMoveTo(vehicle, transform, frameDelta);
@@ -278,8 +315,9 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
         {
             // Driver path FIRST - it outranks any controller a hook race may have
             // attached before the suppressor registered this puppet as driver-owned.
-            const float frameDelta = (aInterpolation.LastRenderTick > 0.f)
-                                         ? std::max(tick - aInterpolation.LastRenderTick, 0.f)
+            const float frameDelta = (aInterpolation.LastRenderTick > 0)
+                                         ? static_cast<float>(std::max(
+                                               renderTick - aInterpolation.LastRenderTick, INT64_C(0)))
                                          : 16.f;
             // The band state comes from the sample AHEAD - it is where the mover is
             // heading, and it is the fresher of the two.
@@ -293,7 +331,7 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
         }
     }
 
-    aInterpolation.LastRenderTick = tick;
+    aInterpolation.LastRenderTick = renderTick;
 }
 
 void InterpolationSystem::OnWorldAttached(RED4ext::world::RuntimeScene* aScene)

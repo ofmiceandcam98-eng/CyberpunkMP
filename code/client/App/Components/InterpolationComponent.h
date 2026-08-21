@@ -32,5 +32,11 @@ struct InterpolationComponent
 
     // Render time as of the last frame. The vehicle path needs a frame delta, which used
     // to fall out of PreviousFrame back when that was rewritten every frame.
-    float LastRenderTick{0.f};
+    //
+    // int64, not float. Ticks are milliseconds since the epoch - around 1.787e12 - and a
+    // 32-bit float has 24 bits of mantissa, so consecutive representable values that far
+    // out are 131072 apart. Every tick within the same two-minute window collapsed onto
+    // one value, which made every comparison against render time meaningless. See the
+    // note in InterpolateEntity.
+    int64_t LastRenderTick{0};
 };
