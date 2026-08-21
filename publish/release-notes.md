@@ -4,6 +4,10 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.82
+
+- **JACK IN refuses to launch a Steam copy while Steam is closed.** A Steam game started without Steam restarts itself and silently drops the multiplayer connection settings - the game runs, but it dials your own PC instead of the server, forever. Five identical sessions from one player tonight. Now the launcher says "Start Steam first" instead of letting it happen.
+
 ## What changed — v0.3.81
 
 - **THE FOOTPRINT RULE: uninstall now removes everything.** The launcher program, its Windows "Apps" entry, every data folder it has ever used (settings, sign-in, keys - old versions' folders included), updater caches, shortcuts, Desktop crash-log copies, dead registry entries from older installs, and the multiplayer mod itself. A machine after uninstall takes a fresh build as if the launcher had never been there. This is now a hard rule in the code: every location the launcher writes is registered in one manifest that uninstall and Deep clean both sweep.
