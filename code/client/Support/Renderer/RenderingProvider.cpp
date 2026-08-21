@@ -60,7 +60,43 @@ void Support::RenderingProvider::OnInitialize()
 void Support::RenderingProvider::Present(int32_t* apDeviceIndex, uint8_t aSomeSync, UINT aSyncInterval)
 {
     const auto* pContext = Game::Rendering::Context::GetInstance();
-    auto* pSwapChain = pContext->devices[*apDeviceIndex - 1].pSwapChain;
+
+    if (!pContext || !apDeviceIndex)
+        return;
+
+    /**
+     * The index is validated because nothing else validates it.
+     *
+     * `devices` is a hand-derived offset into a struct we do not own, and its own
+     * declaration says "Count unknown, it is at least 0x20" - so the bound here is a guess
+     * about somebody else's memory. The index arrives straight from the game as
+     * `*apDeviceIndex - 1`, and a value of 0 would read devices[-1].
+     *
+     * That matters as soon as anything introduces a SECOND render surface. A holocall spins
+     * up gameuiHolocallCameraComponent, and a bad index there yields a garbage swapchain
+     * pointer - which does not crash politely. It corrupts GPU state and comes back seconds
+     * later as a TDR: picture frozen, audio stopped, the game killed by the driver reset.
+     *
+     * Skipping a frame we cannot make sense of costs nothing. Our overlay is not drawn that
+     * frame; the game's own present is untouched, because this is a before-hook.
+     */
+    const int32_t deviceIndex = *apDeviceIndex - 1;
+
+    if (deviceIndex < 0 || deviceIndex >= static_cast<int32_t>(std::size(pContext->devices)))
+    {
+        static int32_t s_lastRejected = INT32_MIN;
+        if (deviceIndex != s_lastRejected)
+        {
+            spdlog::warn("[Render] present with device index {} - out of range, skipping", deviceIndex);
+            s_lastRejected = deviceIndex;
+        }
+        return;
+    }
+
+    auto* pSwapChain = pContext->devices[deviceIndex].pSwapChain;
+
+    if (!pSwapChain)
+        return;
 
     if (!m_initialized)
     {

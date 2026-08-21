@@ -1,0 +1,12 @@
+218a92c world: a template with Dogtown already open
+2a11cb6 quests: silence the holocall and the tracked marker
+697b4ec characters: start at 15, and a phone that does not crash
+8d85114 phone: numbers, contacts and eddie transfers the server owns
+fba2bec vehicles: player-to-player sales, and money the client cannot argue with
+e9b67c3 vehicles: the phone is the interface, ownership decides what is in it
+ea3bb16 vehicles: owned property, not unlocked models
+1a4174e characters: perks restored, and owned vehicles are server-owned
+2ef73dc world: doors the server says are open
+1610ed5 characters: quests stay out of the way, attributes and perks are server-owned
+07a6856 tools: nightly backup of the character data
+728e002 cleanup: debug tools are admin-only, and the log says less

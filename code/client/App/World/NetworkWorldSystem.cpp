@@ -1,4 +1,5 @@
 #include "NetworkWorldSystem.h"
+#include "App/HangWatchdog.h"
 
 #include <App/Settings.h>
 
@@ -245,6 +246,7 @@ flecs::entity NetworkWorldSystem::FindEntity(Red::EntityID aId) const
 
 void NetworkWorldSystem::Update(uint64_t aTick)
 {
+    App::HangWatchdog::Heartbeat();
     GTick = aTick;
 
     // Apply the server's possessions as soon as there is somebody to give them to.
@@ -330,6 +332,7 @@ void NetworkWorldSystem::OnWorldAttached(RED4ext::world::RuntimeScene* aScene)
     // successful connection to read it made the diagnostic depend on the very thing that
     // might be failing. A launch that only reaches the main menu now still answers the
     // question.
+    App::HangWatchdog::Start();
     DumpCustomizationApi();
 
     m_chatSystem->OnWorldAttached(aScene);
@@ -794,6 +797,7 @@ void NetworkWorldSystem::PollAppearanceChanges()
         // what gets saved. Serialising here rather than on close matters: by the time the
         // instance is null there is nothing left to read.
         auto writer = CMPWriter();
+
         CharacterCustomizationState_Serialize(stateHandle->instance, &writer);
 
         // Implausibly small means half-built, not "a simple face".
