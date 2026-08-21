@@ -335,7 +335,13 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
     // Only when they have not chosen one. Somebody editing their face at a ripperdoc has
     // already answered this and being asked again every visit would be its own kind of
     // broken.
-    if (!character.NameChosen)
+    //
+    // And only on a DELIBERATE save. Saving became automatic (every ~90 seconds), and
+    // this ask rode along - so an unnamed player had the name box re-open mid-typing,
+    // over and over, for as long as they stayed unnamed: "it keeps refreshing the
+    // /name" (live, 2026-08-21). The box appears when they finish the creator and on
+    // spawn; the autosave loop stays silent.
+    if (!character.NameChosen && !aMessage.get_automatic())
         AskForCharacterName(*pPlayer, character);
 }
 
