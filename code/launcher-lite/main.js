@@ -3866,14 +3866,48 @@ ipcMain.handle('prerelease:restore', async () => {
     const dllPath = path.join(modDir, 'CyberpunkMP.dll')
     const backupPath = path.join(modDir, 'CyberpunkMP.dll.shipped')
 
+    // Restore fetches the CURRENT release DLL rather than trusting the backup.
+    //
+    // The backup is first-write-wins, so after weeks of test builds it holds whatever
+    // DLL was current when the FIRST one was installed - while the launcher has kept
+    // updating the mod's SCRIPTS to the latest release the whole time. Scripts declare
+    // native functions the DLL must define; restore an old DLL under new scripts and
+    // RED4ext refuses to start the game at all ("invalid native definitions" - the
+    // live failure of 2026-08-20, a test.5 DLL under v0.3.78 scripts). The latest
+    // release's DLL and the latest release's scripts are the only pair guaranteed to
+    // agree, so that is what restore means now. The backup remains the offline
+    // fallback: possibly stale, but strictly better than a test build known-dead.
+    try {
+      const release = await axios.get(
+        `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, { timeout: 8000 })
+      const asset = (release.data?.assets || []).find((a) => a.name === 'CyberpunkMP.dll')
+
+      if (asset) {
+        const download = await axios.get(asset.browser_download_url,
+          { responseType: 'arraybuffer', timeout: 120000, maxRedirects: 5 })
+        const bytes = Buffer.from(download.data)
+
+        const expected = String(asset.digest || '').replace(/^sha256:/, '').toLowerCase()
+        const intact = !expected ||
+          crypto.createHash('sha256').update(bytes).digest('hex') === expected
+
+        if (intact) {
+          writeFileSync(dllPath, bytes)
+          if (existsSync(backupPath)) unlinkSync(backupPath)
+          saveSettings({ testBuildTag: undefined })
+          return { ok: true, source: 'latest release' }
+        }
+      }
+    } catch { /* offline or API down - fall back to the local backup */ }
+
     if (!existsSync(backupPath))
-      return { ok: false, error: 'No shipped backup found - use Verify game files instead.' }
+      return { ok: false, error: 'Could not fetch the shipped mod and no local backup exists - use Reinstall mod files.' }
 
     copyFileSync(backupPath, dllPath)
     unlinkSync(backupPath)
     saveSettings({ testBuildTag: undefined })
 
-    return { ok: true }
+    return { ok: true, source: 'local backup (offline) - Reinstall mod files if the game will not start' }
   } catch (err) {
     return { ok: false, error: err.message }
   }
