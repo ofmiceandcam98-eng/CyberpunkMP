@@ -51,6 +51,15 @@ GameServer::GameServer()
         m_worldFacts.Load(serverPath / "config" / "worldfacts.json");
         m_vehicles.Load(serverPath / "config" / "vehicles.json");
 
+        // Opened last, so its first line records a server that has finished loading its
+        // state rather than one that may still fail on a malformed store.
+        //
+        // Under config/ with the rest, but note it is not the same KIND of thing: the
+        // stores above are authoritative state and are the standing problem for running a
+        // second instance, whereas this is a record nothing reads back. It moves to the
+        // database with them; it does not block on it.
+        m_audit.Open(serverPath / "config" / "audit.log");
+
         m_respawnPath = serverPath / "config" / "respawn.json";
         if (std::ifstream file(m_respawnPath); file.is_open())
         {

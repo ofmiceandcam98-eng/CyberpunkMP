@@ -5,6 +5,7 @@
 #include "Config.h"
 #include "BanList.h"
 #include "PlayerStore.h"
+#include "AuditLog.h"
 #include "Systems/WorldFacts.h"
 #include "Systems/VehicleStore.h"
 #include "Game/World.h"
@@ -206,6 +207,10 @@ public:
     // garage. See VehicleRecord.h for why both exist.
     VehicleStore& GetVehicles() noexcept { return m_vehicles; }
 
+    // The ledger of authoritative changes. See AuditLog.h for what belongs in it - state a
+    // player would be upset to lose or delighted to forge, never anything at frame rate.
+    AuditLog& GetAuditLog() noexcept { return m_audit; }
+
 private:
 
     Path m_path;
@@ -220,6 +225,7 @@ private:
     PlayerStore m_players;
     WorldFactStore m_worldFacts;
     VehicleStore m_vehicles;
+    AuditLog m_audit;
     std::chrono::steady_clock::time_point m_lastPlayerSave;
     std::chrono::steady_clock::time_point m_lastJailCheck;
 

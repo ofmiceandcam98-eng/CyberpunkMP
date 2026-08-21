@@ -224,10 +224,44 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
             character.Inventory.push_back({stack.get_id(), stack.get_quantity()});
         }
 
+        // The balance the SERVER last had for this character, before the client's claim
+        // replaces it. Absent for a first capture, where there is nothing to disagree with.
+        const int64_t storedMoney = pExisting ? pExisting->Money : 0;
+
         character.Money = aMessage.get_money();
 
         spdlog::info("{} stored {} item stack(s) and {} eddies", pPlayer->Username,
                      character.Inventory.size(), character.Money);
+
+        // A save that changes the balance is recorded, and one that DISAGREES with the
+        // stored balance is called out.
+        //
+        // This is the instrumentation for the 20000 -> 300 -> 20000 thrash. The server
+        // performs real transfers against its own record, and then this path overwrites
+        // the balance with whatever the client believed - so a capture already in flight
+        // when a transfer lands silently undoes it. Nothing recorded that until now; the
+        // symptom was only ever visible as a player saying their money was wrong.
+        //
+        // Recorded, not refused. Refusing the client's figure is the right answer and it
+        // is what phase 5 is for, but doing it here - before there is a ledger showing how
+        // often it actually happens, or a server-side balance to fall back to - would take
+        // money off players whose client is simply ahead of the server. Measure first.
+        if (pExisting && storedMoney != character.Money)
+        {
+            auto& audit = GServer->GetAuditLog();
+            audit.RecordMoney(pPlayer->DiscordId, pPlayer->DiscordId,
+                              aMessage.get_automatic() ? "save.automatic" : "save.manual",
+                              storedMoney, character.Money);
+
+            // Money appearing from nowhere is worth a human-readable warning as well. A
+            // legitimate save reports a balance the player earned or spent since the last
+            // one; a large unexplained jump is the shape cheating takes here.
+            if (character.Money > storedMoney)
+            {
+                spdlog::info("{} reported {} eddies, {} more than the server had",
+                             pPlayer->Username, character.Money, character.Money - storedMoney);
+            }
+        }
     }
 
     // Skills, street cred and level. Same rule as possessions: only replaced when the
@@ -1834,11 +1868,29 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         CharacterRecord sender = *pSenderCharacter;
         CharacterRecord recipient = *pRecipient;
 
+        // Read before the mutation, and out of the copies rather than the store pointers -
+        // SaveCharacter below writes through the store, after which the pointers no longer
+        // describe the state this transfer started from.
+        const int64_t senderBefore = sender.Money;
+        const int64_t recipientBefore = recipient.Money;
+
         sender.Money -= amount;
         recipient.Money += amount;
 
         store.SaveCharacter(acSender.DiscordId, acSender.Username, sender);
         store.SaveCharacter(recipientId, pRecipient->Name, recipient);
+
+        // Both sides of the transfer, in the ledger, before either client is told anything.
+        //
+        // Recorded as two lines rather than one so that a balance can be reconstructed per
+        // player by filtering on subject alone. If a later character save overwrites one of
+        // these balances - the race this transfer already works around by pushing
+        // immediately - the ledger is what shows it happened, which nothing could before.
+        auto& audit = GServer->GetAuditLog();
+        audit.RecordMoney(acSender.DiscordId, acSender.DiscordId, "transfer.sent",
+                          senderBefore, sender.Money);
+        audit.RecordMoney(acSender.DiscordId, recipientId, "transfer.received",
+                          recipientBefore, recipient.Money);
 
         // The sender is always online - they just typed this - so their game is corrected
         // immediately, or their next autosave would report the old balance and undo the debit.
