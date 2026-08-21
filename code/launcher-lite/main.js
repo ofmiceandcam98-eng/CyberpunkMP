@@ -105,38 +105,101 @@ function defaultServerDir () {
 const GAME_ARGS = ['-skipStartScreen']
 const FAST_LAUNCH_MOD_ID = 5186
 
+// Install one Nexus mod DIRECTLY into the game folder - the path this launcher owns
+// end to end (installModArchive extracts it and records every file it places).
+// Nexus permits fully-automated downloads only for PREMIUM API keys - their policy,
+// not a gap here, and working around it would breach their API terms. A free key
+// gets { needsWebsite: true } and the website's "Mod Manager Download" button, which
+// routes straight back through our nxm:// handler and lands in the same
+// launcher-owned path. Either road, same destination.
+async function installNexusMod (modId) {
+  const installed = loadInstalledMods()
+  if (installed && (installed[modId] || installed[String(modId)])) return { ok: true, already: true }
+
+  const apiKey = loadNexusKey()
+  if (!apiKey) return { needsWebsite: true, reason: 'no Nexus key saved' }
+
+  const headers = { apikey: apiKey, 'User-Agent': 'NightCityOnline-Launcher/1.0' }
+
+  const files = await axios.get(
+    `https://api.nexusmods.com/v1/games/cyberpunk2077/mods/${modId}/files.json?category=main`,
+    { headers, timeout: 15000 })
+  const fileId = files.data?.files?.[0]?.file_id
+  if (!fileId) return { needsWebsite: true, reason: 'no main file listed' }
+
+  let url = null
+  try {
+    const link = await axios.get(
+      `https://api.nexusmods.com/v1/games/cyberpunk2077/mods/${modId}/files/${fileId}/download_link.json`,
+      { headers, timeout: 15000 })
+    url = link.data?.[0]?.URI
+  } catch (err) {
+    // 403 is Nexus saying "free account" - direct links are premium-only.
+    if (err.response?.status === 403) return { needsWebsite: true, reason: 'free Nexus account' }
+    throw err
+  }
+  if (!url) return { needsWebsite: true, reason: 'no download link' }
+
+  const file = await axios.get(url, { responseType: 'arraybuffer', timeout: 300000 })
+  const result = await installModArchive(modId, Buffer.from(file.data))
+  return { ok: true, ...result }
+}
+
 async function ensureFastLaunch () {
   try {
-    const installed = loadInstalledMods()
-    if (installed && (installed[FAST_LAUNCH_MOD_ID] || installed[String(FAST_LAUNCH_MOD_ID)])) return
-
-    const apiKey = loadNexusKey()
-    if (!apiKey) return // quiet - the Mods panel still offers the one-click install
-
-    const headers = { apikey: apiKey, 'User-Agent': 'NightCityOnline-Launcher/1.0' }
-
-    const files = await axios.get(
-      `https://api.nexusmods.com/v1/games/cyberpunk2077/mods/${FAST_LAUNCH_MOD_ID}/files.json?category=main`,
-      { headers, timeout: 15000 })
-    const fileId = files.data?.files?.[0]?.file_id
-    if (!fileId) return
-
-    // Direct links work for premium keys; free accounts need the website's nxm
-    // handshake, which cannot be automated - they keep the Mods panel button.
-    const link = await axios.get(
-      `https://api.nexusmods.com/v1/games/cyberpunk2077/mods/${FAST_LAUNCH_MOD_ID}/files/${fileId}/download_link.json`,
-      { headers, timeout: 15000 })
-    const url = link.data?.[0]?.URI
-    if (!url) return
-
-    const file = await axios.get(url, { responseType: 'arraybuffer', timeout: 300000 })
-    await installModArchive(FAST_LAUNCH_MOD_ID, Buffer.from(file.data))
-    launcherLog('boot policy: Fast Launch auto-installed - intro videos are gone from the next boot')
+    const result = await installNexusMod(FAST_LAUNCH_MOD_ID)
+    if (result.ok && !result.already)
+      launcherLog('boot policy: Fast Launch auto-installed - intro videos are gone from the next boot')
+    else if (result.needsWebsite)
+      launcherLog(`boot policy: Fast Launch auto-install skipped (${result.reason})`)
   } catch (err) {
     // Never a blocker and never a nag; the policy converges when it can.
     launcherLog(`boot policy: Fast Launch auto-install skipped (${err.response?.status || err.message})`)
   }
 }
+
+// Settings > "Direct install from Nexus": every mod on the server's list that is
+// missing here, in one click - installed straight into the game folder on a premium
+// key, or handed one page at a time to the website's Mod Manager Download button
+// (which comes right back through our nxm:// handler) on a free one.
+ipcMain.handle('mods:installMissing', async () => {
+  try {
+    const mods = await fetchModList()
+    const level = await refreshUserLevel().catch(() => 'player')
+    const isStaff = (LEVELS[level] || 0) >= LEVELS.admin || isAdmin()
+
+    const done = []
+    const manual = []
+    const failed = []
+
+    for (const mod of mods) {
+      if (mod.devOnly && !isStaff) continue
+      try {
+        const result = await installNexusMod(mod.nexusModId)
+        if (result.ok && !result.already) done.push(mod.nexusModId)
+        else if (result.needsWebsite) manual.push(mod.nexusModId)
+      } catch (err) {
+        failed.push(`${mod.nexusModId} (${err.response?.status || err.message})`)
+      }
+    }
+
+    if (manual.length) {
+      // One page at a time - a browser volley of every missing mod is chaos. The nxm
+      // handler installs each as its button is pressed; running this again picks up
+      // where the person left off.
+      shell.openExternal(`https://www.nexusmods.com/cyberpunk2077/mods/${manual[0]}?tab=files`)
+    }
+
+    const parts = []
+    if (done.length) parts.push(`installed ${done.length} directly`)
+    if (manual.length) parts.push(`${manual.length} need one click on Nexus (page opened - press "Mod Manager Download", it lands here automatically)`)
+    if (failed.length) parts.push(`failed: ${failed.join(', ')}`)
+
+    return { ok: !failed.length, message: parts.length ? parts.join('; ') : 'Everything on the list is already installed.' }
+  } catch (err) {
+    return { ok: false, message: err.message }
+  }
+})
 
 // Where the game server is.
 //
@@ -3776,6 +3839,7 @@ ipcMain.handle('launcher:uninstall', async () => {
       '- updater caches, shortcuts, crash-log copies on the Desktop\n' +
       '- dead registry entries left by older installs\n' +
       (modDir ? `- the multiplayer mod:  ${modDir}\n` : '') +
+      '- every Nexus mod this launcher installed (the frameworks stay)\n' +
       '\nCyberpunk 2077 itself, your saves, and the framework mods (RED4ext, ' +
       'redscript, Codeware...) are not touched. A fresh build installs cleanly ' +
       'afterwards.',
@@ -3799,6 +3863,25 @@ ipcMain.handle('launcher:uninstall', async () => {
         try { rmSync(modDir, { recursive: true, force: true }) } catch (err) { note = `The mod folder resisted deletion (${err.code || err.message}). ` }
       }
     }
+
+    // Every Nexus mod this launcher installed is on record, file by file - THE RULE
+    // covers what we put on the machine wherever we put it, so those files go too.
+    // The prerequisite frameworks stay: FullInstall placed them for the game's
+    // benefit and other, non-NCO mods may depend on them.
+    try {
+      const gameDir = findGameDir()
+      const record = loadInstalledMods()
+      if (gameDir && record) {
+        const root = path.resolve(gameDir).toLowerCase()
+        for (const entry of Object.values(record)) {
+          for (const rel of entry.files || []) {
+            const target = path.resolve(path.join(gameDir, rel))
+            if (!target.toLowerCase().startsWith(root)) continue
+            try { rmSync(target, { force: true }) } catch { /* locked - the purge report below covers honesty */ }
+          }
+        }
+      }
+    } catch { /* record unreadable - nothing to sweep */ }
 
     const failed = purgeResidue(collectResidue(true))
     if (failed.length) note += `Could not remove: ${failed.join(', ')}. `
@@ -4280,8 +4363,30 @@ ipcMain.handle('prerelease:install', async (_event, tag) => {
       `https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${encodeURIComponent(tag)}`,
       { timeout: 8000 })
 
-    const asset = (release.data?.assets || []).find((a) => a.name === 'CyberpunkMP.dll')
-    if (!asset) return { ok: false, error: 'That pre-release has no CyberpunkMP.dll attached.' }
+    const assets = release.data?.assets || []
+
+    // The WHOLE payload when the build has one, not just the DLL.
+    //
+    // Test builds used to swap CyberpunkMP.dll and nothing else, which works only while
+    // the change under test is pure C++ - "remote players MOVE" was, so it was fine. It
+    // silently delivers NOTHING when the change lives in redscript, and half this mod
+    // does: menus, the seat transition, appearance re-application, the time and pause
+    // hooks. The build installs, reports success, and the tester sees no difference.
+    //
+    // This is the same trap UpdateMod.ps1 already calls out by name: "Updating only the
+    // DLL was a trap: fixes that live in redscript silently never reached anyone, so two
+    // people could be on the same build and behave differently."
+    //
+    // ModPayload.zip is the DLL, the redscript and the Rpc definitions together - the
+    // same archive a normal install applies - so the two halves cannot disagree.
+    const payload = assets.find((a) => a.name === 'ModPayload.zip')
+    const dllAsset = assets.find((a) => a.name === 'CyberpunkMP.dll')
+
+    if (!payload && !dllAsset) {
+      return { ok: false, error: 'That pre-release has no ModPayload.zip or CyberpunkMP.dll attached.' }
+    }
+
+    const asset = payload || dllAsset
 
     const download = await axios.get(asset.browser_download_url,
       { responseType: 'arraybuffer', timeout: 120000, maxRedirects: 5 })
@@ -4299,12 +4404,27 @@ ipcMain.handle('prerelease:install', async (_event, tag) => {
 
     // The FIRST shipped dll is the one kept. Installing test build B over test build A
     // must not make the backup a copy of test build A.
+    //
+    // Kept for the payload path too, purely as the offline fallback for Restore. Restore
+    // prefers to re-download the current release, because that is the only DLL guaranteed
+    // to agree with the scripts it ships alongside.
     if (existsSync(dllPath) && !existsSync(backupPath)) copyFileSync(dllPath, backupPath)
 
-    writeFileSync(dllPath, bytes)
+    if (payload) {
+      // Same refusal as a normal install: an error page or a truncated archive must not
+      // be unpacked over a working mod.
+      if (bytes.length < 1024 * 1024) {
+        return { ok: false, error: `That payload looks wrong (${bytes.length} bytes) - install left alone.` }
+      }
+
+      new AdmZip(bytes).extractAllTo(modDir, true)
+    } else {
+      writeFileSync(dllPath, bytes)
+    }
+
     saveSettings({ testBuildTag: tag })
 
-    return { ok: true, tag }
+    return { ok: true, tag, payload: Boolean(payload) }
   } catch (err) {
     return { ok: false, error: err.message }
   }
@@ -4331,10 +4451,20 @@ ipcMain.handle('prerelease:restore', async () => {
     // release's DLL and the latest release's scripts are the only pair guaranteed to
     // agree, so that is what restore means now. The backup remains the offline
     // fallback: possibly stale, but strictly better than a test build known-dead.
+    // Prefer the release's WHOLE payload over its DLL alone.
+    //
+    // Test builds can now replace the scripts as well as the DLL, so putting back only
+    // the DLL would leave a test build's redscript in place under a release DLL - the
+    // exact mismatch the note above is about, just from the other direction. Re-extracting
+    // ModPayload.zip restores both halves from the same release, which is the only pair
+    // guaranteed to agree.
     try {
       const release = await axios.get(
         `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, { timeout: 8000 })
-      const asset = (release.data?.assets || []).find((a) => a.name === 'CyberpunkMP.dll')
+
+      const assets = release.data?.assets || []
+      const payload = assets.find((a) => a.name === 'ModPayload.zip')
+      const asset = payload || assets.find((a) => a.name === 'CyberpunkMP.dll')
 
       if (asset) {
         const download = await axios.get(asset.browser_download_url,
@@ -4345,11 +4475,15 @@ ipcMain.handle('prerelease:restore', async () => {
         const intact = !expected ||
           crypto.createHash('sha256').update(bytes).digest('hex') === expected
 
-        if (intact) {
-          writeFileSync(dllPath, bytes)
+        const plausible = !payload || bytes.length >= 1024 * 1024
+
+        if (intact && plausible) {
+          if (payload) new AdmZip(bytes).extractAllTo(modDir, true)
+          else writeFileSync(dllPath, bytes)
+
           if (existsSync(backupPath)) unlinkSync(backupPath)
           saveSettings({ testBuildTag: undefined })
-          return { ok: true, source: 'latest release' }
+          return { ok: true, source: payload ? 'latest release payload' : 'latest release' }
         }
       }
     } catch { /* offline or API down - fall back to the local backup */ }
