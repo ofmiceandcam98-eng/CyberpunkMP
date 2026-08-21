@@ -124,6 +124,13 @@ message NotifyCharacterLoad {
     // it is the half that talked to Discord.
     string username = 7;
 
+    // Which body to build - SERVER-GRANTED, like the name. Receivers used to re-derive
+    // gender by parsing the appearance blob with a silent fall-back to male, and a
+    // parse hiccup spawned a female character as the male mannequin (live, 2026-08-21:
+    // "cam is able to see me but as a character and is a male my character is a
+    // female"). The server stores the explicit flag at save time; now it says so.
+    bool is_male = 9;
+
     // Present only for SERVER-DECLARED characters (NPCs an admin placed): the exact
     // TweakDB record to build them from - a specific person, not a player mannequin.
     // Absent for players, whose record is derived from their appearance data.

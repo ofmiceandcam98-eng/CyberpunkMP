@@ -1124,6 +1124,11 @@ server::NotifyCharacterLoad Level::Serialize(flecs::entity aEntity) noexcept
                 message.set_username(pCharacter->Name.c_str());
             else
                 message.set_username(pPlayerComponent->Username.c_str());
+
+            // Body gender is granted here, next to the name, for the same reason: the
+            // server is the only side that stored the explicit answer. A player with no
+            // character yet gets the old default (male) until they save one.
+            message.set_is_male(pCharacter ? pCharacter->IsMale : true);
         }
     }
 
