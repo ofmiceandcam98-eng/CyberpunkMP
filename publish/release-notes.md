@@ -4,6 +4,10 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.88
+
+- **Admins stop hand-stretching the window.** The server controls make an admin's right-hand column a full card taller than a player's, and the fixed window height cut it off every session. The window now grows to fit once your role resolves - clamped to your screen, and never overriding a size you set yourself.
+
 ## What changed — v0.3.87
 
 - **The server buttons stop vanishing.** A hiccup in the role lookup - an expired Discord token, or fetching the role map mid-release - silently demoted admins to player and hid the server panel ("what happened to my server buttons", twice, live). A failed lookup now stands on your last confirmed level instead of demoting you; only Discord actually answering "no roles" changes anything. Both project owners are also carried on the hardcoded floor now, not just one.
