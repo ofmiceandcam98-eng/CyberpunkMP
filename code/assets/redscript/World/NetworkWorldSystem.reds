@@ -98,6 +98,14 @@ public native class NetworkWorldSystem extends IGameSystem {
     // Sends the spawn that was held back while the player sat on the selector. A no-op
     // when none is owed, so the old in-world connect path cannot announce twice.
     public native func EnterWorld() -> Void;
+
+    // Retires this account's character. The confirmation happens on the client, in front
+    // of the person losing it, before this is called.
+    public native func DeleteCharacter() -> Void;
+
+    // Why the last request was refused, empty when nothing was. Shown on the panel rather
+    // than swallowed - a button that appears to do nothing is the worst outcome here.
+    public native func GetCharacterError() -> String;
     public native func GetEntityIdByServerId(serverId: Uint64) -> EntityID;
     public native func GetAppearanceSystem() -> ref<AppearanceSystem>;
     public native func GetChatSystem() -> ref<ChatSystem>;
