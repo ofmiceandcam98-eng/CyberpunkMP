@@ -113,6 +113,12 @@ contextBridge.exposeInMainWorld('launcher', {
   deepClean: () => ipcRenderer.invoke('repair:run'),
   installMissingMods: () => ipcRenderer.invoke('mods:installMissing'),
 
+  // The signed manifest's state (verified / cached / absent / INVALID...), and repair
+  // for a mod whose files fail hash verification. Both live in the main process; the
+  // page only ever sees summaries.
+  manifestStatus: (force) => ipcRenderer.invoke('manifest:status', force),
+  repairMod: (id) => ipcRenderer.invoke('mods:repair', id),
+
   // The launcher updating itself: progress reports in, restart request out.
   onLauncherUpdate: (callback) => {
     ipcRenderer.on('launcher-update', (_e, info) => callback(info))
