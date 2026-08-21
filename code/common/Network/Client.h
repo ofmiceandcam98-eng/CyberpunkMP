@@ -55,6 +55,12 @@ struct Client
     [[nodiscard]] Statistics GetStatistics() const noexcept;
     [[nodiscard]] const SynchronizedClock& GetClock() const noexcept;
 
+    // The last transport-level refusal code (EDenialCode values), 0 if the last
+    // disconnect carried none. Survives the disconnect that delivered it - it exists
+    // precisely so the layer above can explain a connection that closed before
+    // authentication ever ran. Cleared when a new connect attempt starts.
+    [[nodiscard]] uint8_t GetLastRefusalCode() const noexcept { return m_lastRefusalCode; }
+
 private:
 
     static void SteamNetConnectionStatusChangedCallback(SteamNetConnectionStatusChangedCallback_t* apInfo);
@@ -64,6 +70,14 @@ private:
     void HandleMessage(const void* apData, uint32_t aSize) noexcept;
     void HandleServerTime(const void* apData, uint32_t aSize) noexcept;
     void HandleCompressedPayload(const void* apData, uint32_t aSize) noexcept;
+    void HandleRefused(const void* apData, uint32_t aSize) noexcept;
+
+    // Reads out everything the transport has already delivered for this connection.
+    // Called before acting on a close notification: GameNetworkingSockets can hand us
+    // the close in the same tick as the server's parting message (a refusal code, an
+    // AuthenticationResponse with the denial reason), and invalidating the connection
+    // first would destroy that message unread.
+    void DrainPendingMessages() noexcept;
 
     void SendHandshake() const noexcept;
 
@@ -77,4 +91,5 @@ private:
     void* m_pHandle{};
     uint64_t m_clientIdentifier;
     uint64_t m_serverIdentifier;
+    uint8_t m_lastRefusalCode{};
 };

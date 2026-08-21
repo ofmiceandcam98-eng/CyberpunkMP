@@ -170,6 +170,16 @@ void Server::Kick(const ConnectionId aConnectionId) noexcept
     OnDisconnection(aConnectionId, EDisconnectReason::Kicked);
 }
 
+void Server::SendRefusal(const ConnectionId aConnectionId, const uint8_t aCode) noexcept
+{
+    // Reliable, and sent before the Kick whose CloseConnection lingers - so the reason
+    // actually flushes to the wire instead of dying with the connection. The client's
+    // receive loop drains pending messages before it acts on the close notification,
+    // which is the other half of making this arrive (see Client.cpp).
+    const uint8_t data[2] = {kRefused, aCode};
+    m_pInterface->SendMessageToConnection(aConnectionId, data, sizeof(data), k_nSteamNetworkingSend_Reliable, nullptr);
+}
+
 uint16_t Server::GetPort() const noexcept
 {
     SteamNetworkingIPAddr address{};
@@ -316,6 +326,7 @@ void Server::HandleHandshake(const uint8_t* apData, uint32_t aSize, ConnectionId
                      "(theirs {:x}, ours {:x}). They need to update - or the server was "
                      "rebuilt without shipping a matching client.",
                      aConnectionId, aClientIdentifier, m_clientIdentifier);
+        SendRefusal(aConnectionId, 1 /* protocol mismatch - EDenialCode::kProtocolMismatch */);
         Kick(aConnectionId);
         return;
     }
@@ -323,6 +334,7 @@ void Server::HandleHandshake(const uint8_t* apData, uint32_t aSize, ConnectionId
     if (aServerIdentifier != m_serverIdentifier)
     {
         spdlog::warn("{} attempted to connect with wrong server protocol identifier {:x}, expected {:x}", aConnectionId, aServerIdentifier, m_serverIdentifier);
+        SendRefusal(aConnectionId, 1 /* protocol mismatch - EDenialCode::kProtocolMismatch */);
         Kick(aConnectionId);
         return;
     }

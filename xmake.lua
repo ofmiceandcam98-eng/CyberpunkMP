@@ -6,6 +6,17 @@ add_cxflags("-fPIC")
 
 -- c code will use c99,
 set_languages("c99", "cxx20")
+
+-- The release version reaches the binaries through the environment because only the
+-- ship pipeline knows it (the version lives in the launcher's package.json, and only a
+-- launcher ship moves it). A plain developer build has no release identity and says so.
+local nco_version = os.getenv("NCO_BUILD_VERSION") or "0.0.0-dev"
+local nco_major, nco_minor, nco_patch = nco_version:match("^(%d+)%.(%d+)%.(%d+)")
+set_configvar("NCO_VERSION", nco_version)
+set_configvar("NCO_VERSION_MAJOR", tonumber(nco_major) or 0)
+set_configvar("NCO_VERSION_MINOR", tonumber(nco_minor) or 0)
+set_configvar("NCO_VERSION_PATCH", tonumber(nco_patch) or 0)
+
 add_configfiles("BuildInfo.h.in")
 
 add_requires(

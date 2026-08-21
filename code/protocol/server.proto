@@ -52,6 +52,17 @@ message AuthenticationResponse {
     // difference later. Empty means no character, which is a state the selector must
     // handle anyway.
     repeated CharacterSummary characters = 4;
+
+    // Structured refusal, so the client can act on WHY instead of pattern-matching the
+    // error string. Values are EDenialCode in GameServer.h: 0 none, 1 protocol mismatch,
+    // 2 client outdated, 3 manifest mismatch, 4 digest mismatch, 5 discord expired,
+    // 6 not a member, 7 discord unreachable, 8 banned, 9 server full, 10 unmanaged
+    // blocked, 11 wrong password. The error string above stays the human sentence.
+    uint32 denial_code = 5;
+
+    // On manifest/digest denials: the manifestVersion the server wanted, so the popup
+    // can say exactly which update to fetch instead of "your installation is wrong".
+    string required_manifest = 6;
 }
 
 message Attribute {

@@ -62,6 +62,31 @@ struct Settings
     // verification is off; once it is on, the server replaces this with the name
     // Discord actually returns.
     String discordName{};
+
+    // ---------------------------------------------------------------------------
+    // Manifest attestation, handed over by the launcher via launch arguments and
+    // forwarded verbatim in the authentication request. The client neither computes
+    // nor inspects any of it - the launcher verified the installation, the server
+    // holds the expectations, and this is just the courier between them. All empty
+    // when the game was started without the launcher, which the server treats as
+    // "unverified" (denied once the migration window closes).
+    // See docs/MANIFEST-ARCHITECTURE.md sections 7.1-7.2.
+    // ---------------------------------------------------------------------------
+
+    // Which manifest the launcher verified this installation against (--manifest-version=).
+    String manifestVersion{};
+
+    // The launcher's install attestation - 64 lowercase hex chars (--install-digest=).
+    // Hex rather than base64 deliberately: the game's own argument tokenizer is a black
+    // box and '='/'/' are known hazards in it; [0-9a-f] cannot collide with anything.
+    String installDigest{};
+
+    // Unmanaged findings from the launcher's scan, type-prefixed, comma-joined in the
+    // argument and split here (--unmanaged=plugin:X,archive:Y.archive).
+    Vector<String> unmanaged{};
+
+    // Only sent when the server config sets a password (--server-password=).
+    String serverPassword{};
     // Shows the ImGui debug overlay - the "Test" menu bar. Off unless the launcher passes
     // --debug, which it only offers to accounts with a dev or admin Discord role.
     //

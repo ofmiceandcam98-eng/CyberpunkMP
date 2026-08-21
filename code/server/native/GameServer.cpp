@@ -1,6 +1,10 @@
 #include "GameServer.h"
 
 #include <cstdlib>   // getenv, for the bot token
+#include <algorithm> // sort, for the digest's canonical component order
+
+#include <openssl/sha.h>  // already linked for the Discord HTTPS calls
+#include <BuildInfo.h>    // BUILD_COMMIT - so a protocol denial can name the stale side
 
 #include <Components/PlayerComponent.h>
 #include <Components/MovementComponent.h>
@@ -50,6 +54,8 @@ GameServer::GameServer()
         m_players.Load(serverPath / "config" / "players.json");
         m_worldFacts.Load(serverPath / "config" / "worldfacts.json");
         m_vehicles.Load(serverPath / "config" / "vehicles.json");
+
+        LoadServerManifest(serverPath / "config" / "server-manifest.json");
 
         // Opened last, so its first line records a server that has finished loading its
         // state rather than one that may still fail on a malformed store.
@@ -546,31 +552,234 @@ void GameServer::OnDisconnection(ConnectionId aConnectionId, EDisconnectReason a
     }
 }
 
-void GameServer::HandleAuthentication(const PacketEvent<client::AuthenticationRequest>& aRequest)
+void GameServer::LoadServerManifest(const std::filesystem::path& acPath)
+{
+    std::ifstream file(acPath);
+    if (!file.is_open())
+    {
+        // The migration state, not an error: releases predating the manifest system have
+        // nothing to copy here, and the launcher-side fallback covers those players.
+        spdlog::info("No server-manifest.json - manifest checks disabled (migration state)");
+        return;
+    }
+
+    try
+    {
+        const auto data = json::parse(file);
+
+        m_manifestVersion = data.value("manifestVersion", "");
+        if (m_manifestVersion.empty())
+        {
+            spdlog::error("server-manifest.json has no manifestVersion - manifest checks stay disabled");
+            return;
+        }
+
+        m_unknownModPolicy = data.contains("policy") ? data["policy"].value("unknownMods", "warn") : "warn";
+
+        // The install digest, computed once from manifest-declared fields only - never
+        // from anything a client could vary. The canonical string is (and must stay)
+        // byte-identical to computeInstallDigest in code/launcher-lite/manifest.js:
+        //
+        //   for every component with required==true and audience=="all",
+        //   sorted by id ascending:   id + ":" + version + ":" + archive.sha256 + "\n"
+        //   then:                     "payload:" + client.payload.archive.sha256 + "\n"
+        //   then (no trailing \n):    "manifest:" + manifestVersion
+        //
+        // sha256 over the UTF-8 bytes, lowercase hex.
+        std::vector<std::pair<std::string, std::string>> lines;
+        if (data.contains("components"))
+        {
+            for (const auto& component : data["components"])
+            {
+                if (!component.value("required", false) || component.value("audience", "all") != "all")
+                    continue;
+
+                const auto id = component.value("id", "");
+                const auto version = component.value("version", "");
+                const std::string archiveSha = component.contains("archive") ? component["archive"].value("sha256", "") : "";
+
+                // The generator guarantees these for required components, so absence
+                // means a malformed manifest - refuse to compute a digest that the
+                // launcher (which throws on the same condition) can never match.
+                if (id.empty() || version.empty() || archiveSha.empty())
+                {
+                    spdlog::error("server-manifest.json component '{}' is required but missing version/archive hash - manifest checks stay disabled", id);
+                    m_manifestVersion.clear();
+                    return;
+                }
+
+                lines.emplace_back(id, id + ":" + version + ":" + archiveSha);
+            }
+        }
+
+        // Sorted by ID, not by the assembled line - the two differ once one id is a
+        // prefix of another ("mod2" sorts before "mod24" by id, but "mod2:" sorts AFTER
+        // "mod24:" byte-wise because ':' outranks '4'). The launcher sorts by id; a
+        // whole-line sort here would disagree on exactly the manifests with such ids.
+        std::sort(lines.begin(), lines.end(),
+                  [](const auto& a, const auto& b) { return a.first < b.first; });
+
+        std::string canonical;
+        for (const auto& line : lines)
+            canonical += line.second + "\n";
+
+        std::string payloadSha;
+        if (data.contains("client") && data["client"].contains("payload") && data["client"]["payload"].contains("archive"))
+            payloadSha = data["client"]["payload"]["archive"].value("sha256", "");
+
+        canonical += "payload:" + payloadSha + "\n";
+        canonical += "manifest:" + m_manifestVersion;
+
+        unsigned char digest[SHA256_DIGEST_LENGTH];
+        SHA256(reinterpret_cast<const unsigned char*>(canonical.data()), canonical.size(), digest);
+
+        m_expectedDigest.clear();
+        m_expectedDigest.reserve(SHA256_DIGEST_LENGTH * 2);
+        static constexpr char kHex[] = "0123456789abcdef";
+        for (const unsigned char byte : digest)
+        {
+            m_expectedDigest.push_back(kHex[byte >> 4]);
+            m_expectedDigest.push_back(kHex[byte & 0xF]);
+        }
+
+        spdlog::info("Manifest {} loaded: expecting install digest {}, unknown-mod policy '{}'",
+                     m_manifestVersion, m_expectedDigest, m_unknownModPolicy);
+    }
+    catch (const std::exception& e)
+    {
+        // Fail open on a malformed manifest, loudly. Failing closed here would let one
+        // bad deploy refuse every player, and the launcher already refused to verify
+        // against a manifest whose signature does not check out.
+        spdlog::error("Could not read {}: {} - manifest checks disabled", acPath.string(), e.what());
+        m_manifestVersion.clear();
+        m_expectedDigest.clear();
+    }
+}
+
+void GameServer::Deny(const ConnectionId aConnectionId, const EDenialCode aCode,
+                      const std::string& acReason, const bool aIncludeRequiredManifest)
 {
     server::AuthenticationResponse response;
+    response.set_success(false);
+    response.set_error(acReason.c_str());
+    response.set_denial_code(static_cast<uint32_t>(aCode));
 
+    if (aIncludeRequiredManifest && !m_manifestVersion.empty())
+        response.set_required_manifest(m_manifestVersion.c_str());
+
+    Send(aConnectionId, response);
+    Kick(aConnectionId);
+}
+
+bool GameServer::DenyIfFull(const ConnectionId aConnectionId)
+{
+    const auto* pPlayerManager = GetWorld()->get_mut<PlayerManager>();
+    if (pPlayerManager && pPlayerManager->Count() >= m_config.MaxPlayer)
+    {
+        spdlog::info("Refused connection {:x}: server is full ({}/{})", aConnectionId,
+                     pPlayerManager->Count(), m_config.MaxPlayer);
+        Deny(aConnectionId, EDenialCode::kServerFull,
+             "The server is full (" + std::to_string(m_config.MaxPlayer) + " players). Try again in a bit.");
+        return true;
+    }
+
+    return false;
+}
+
+void GameServer::HandleAuthentication(const PacketEvent<client::AuthenticationRequest>& aRequest)
+{
     if (aRequest.get_client_protocol() != client::kIdentifier)
     {
-        response.set_success(false);
-        response.set_error("Invalid protocol version!");
-
-        spdlog::warn("Connection attempt with client identifier {:x}, expected {:x}", aRequest.get_client_protocol(), client::kIdentifier);
-        Send(aRequest.ConnectionId, response);
-        Kick(aRequest.ConnectionId);
+        // The build stamp turns "Invalid protocol version!" from undiagnosable into a
+        // named pair of builds - which side is stale is now readable from either log.
+        spdlog::warn("Connection attempt with client identifier {:x}, expected {:x} (their build '{}', ours '{}')",
+                     aRequest.get_client_protocol(), client::kIdentifier,
+                     aRequest.get_build_stamp().c_str(), BUILD_COMMIT);
+        Deny(aRequest.ConnectionId, EDenialCode::kProtocolMismatch,
+             "Your mod is built against a different protocol than this server. Open the launcher and update.");
         return;
     }
 
     if (aRequest.get_server_protocol() != server::kIdentifier)
     {
-        response.set_success(false);
-        response.set_error("Invalid protocol version!");
-
-        spdlog::warn("Connection attempt with server identifier {:x}, expected {:x}", aRequest.get_client_protocol(), server::kIdentifier);
-        Send(aRequest.ConnectionId, response);
-        Kick(aRequest.ConnectionId);
+        spdlog::warn("Connection attempt with server identifier {:x}, expected {:x} (their build '{}', ours '{}')",
+                     aRequest.get_server_protocol(), server::kIdentifier,
+                     aRequest.get_build_stamp().c_str(), BUILD_COMMIT);
+        Deny(aRequest.ConnectionId, EDenialCode::kProtocolMismatch,
+             "Your mod is built against a different protocol than this server. Open the launcher and update.");
         return;
     }
+
+    // Checked before Discord is asked anything: a wrong password costs nothing to refuse,
+    // and the password gates the SERVER, not the identity.
+    if (!m_config.Password.empty() && m_config.Password != aRequest.get_password().c_str())
+    {
+        spdlog::warn("Refused connection {:x}: wrong server password", aRequest.ConnectionId);
+        Deny(aRequest.ConnectionId, EDenialCode::kWrongPassword, "Wrong server password.");
+        return;
+    }
+
+    // Manifest checks run only when the deploy provided one (migration otherwise). An
+    // empty client manifest_version means "started without the launcher", which during
+    // migration is every old client - the equality check catches both cases at once.
+    if (!m_manifestVersion.empty())
+    {
+        const std::string clientManifest = aRequest.get_manifest_version().c_str();
+        if (clientManifest != m_manifestVersion)
+        {
+            spdlog::info("Refused connection {:x}: manifest '{}', server wants '{}'",
+                         aRequest.ConnectionId, clientManifest, m_manifestVersion);
+            Deny(aRequest.ConnectionId, EDenialCode::kManifestMismatch,
+                 "Your installation was verified against manifest " +
+                     (clientManifest.empty() ? std::string("(none)") : clientManifest) +
+                     " but this server runs " + m_manifestVersion + ". Open the launcher and update.",
+                 true);
+            return;
+        }
+
+        // Same manifest version but different content verification outcome. This is the
+        // accident detector of docs/MANIFEST-ARCHITECTURE.md 7.2 - a half-updated or
+        // wrong-branch install cannot produce the right digest by accident, and that is
+        // all it claims to catch.
+        if (m_expectedDigest != aRequest.get_install_digest().c_str())
+        {
+            spdlog::info("Refused connection {:x}: install digest mismatch (theirs '{}', expected '{}')",
+                         aRequest.ConnectionId, aRequest.get_install_digest().c_str(), m_expectedDigest);
+            Deny(aRequest.ConnectionId, EDenialCode::kDigestMismatch,
+                 "Your installation does not match what the launcher verified for manifest " +
+                     m_manifestVersion + ". Open the launcher and press Verify.",
+                 true);
+            return;
+        }
+
+        // Advisory by design: this list is client-computed, so it stops the player who
+        // FORGOT about a mod, never one hiding it - which is exactly the population an
+        // RP server actually has (see the doc, 7.3). Never presented as a security gate.
+        if (!aRequest.get_unmanaged().empty())
+        {
+            std::string names;
+            for (const auto& entry : aRequest.get_unmanaged())
+            {
+                if (!names.empty())
+                    names += ", ";
+                names += entry.c_str();
+            }
+
+            if (m_unknownModPolicy == "block")
+            {
+                spdlog::info("Refused connection {:x}: unmanaged mods present ({})", aRequest.ConnectionId, names);
+                Deny(aRequest.ConnectionId, EDenialCode::kUnmanagedBlocked,
+                     "This server does not allow unmanaged mods. Found: " + names);
+                return;
+            }
+
+            spdlog::info("Connection {:x} carries unmanaged mods ({}) - policy '{}', admitted",
+                         aRequest.ConnectionId, names, m_unknownModPolicy);
+        }
+    }
+
+    if (DenyIfFull(aRequest.ConnectionId))
+        return;
 
     // Identity is decided by asking Discord - not by believing the client.
     // Note: the project's String has a custom allocator, so cross to std::string via c_str()
@@ -626,36 +835,34 @@ void GameServer::FinishAuthentication(const ConnectionId aConnectionId, const ED
     if (m_pendingVerifies.erase(aConnectionId) == 0 || !IsAlive(aConnectionId))
         return;
 
-    server::AuthenticationResponse response;
-
     if (aResult != EDiscordAuthResult::kOk)
     {
         const char* reason = "Discord sign-in required.";
+        auto code = EDenialCode::kDiscordExpired;
 
         switch (aResult)
         {
         case EDiscordAuthResult::kInvalidToken:
             reason = "Your Discord sign-in has expired. Open the launcher and sign in again.";
+            code = EDenialCode::kDiscordExpired;
             break;
         case EDiscordAuthResult::kNotAMember:
             reason = "You must be a member of the Night City Online Discord to play here.";
+            code = EDenialCode::kNotAMember;
             break;
         case EDiscordAuthResult::kUnreachable:
             // Fail closed. Membership is required, so an unverifiable token is not a
             // token we can accept - letting people in during an outage would mean
             // anyone could join by simply making Discord unreachable.
             reason = "Cannot reach Discord to verify your account right now. Try again shortly.";
+            code = EDenialCode::kDiscordUnreachable;
             break;
         default:
             break;
         }
 
         spdlog::warn("Rejected connection {:x}: {}", aConnectionId, reason);
-
-        response.set_success(false);
-        response.set_error(reason);
-        Send(aConnectionId, response);
-        Kick(aConnectionId);
+        Deny(aConnectionId, code, reason);
         return;
     }
 
@@ -666,14 +873,16 @@ void GameServer::FinishAuthentication(const ConnectionId aConnectionId, const ED
         spdlog::info("Rejected banned player {} ({}): {}", acIdentity.Username, acIdentity.Id,
                      pBan->Reason);
 
-        response.set_success(false);
-        response.set_error(pBan->Reason.empty()
-                               ? String("You are banned from this server.")
-                               : String(("You are banned from this server: " + pBan->Reason).c_str()));
-        Send(aConnectionId, response);
-        Kick(aConnectionId);
+        Deny(aConnectionId, EDenialCode::kBanned,
+             pBan->Reason.empty() ? std::string("You are banned from this server.")
+                                  : "You are banned from this server: " + std::string(pBan->Reason.c_str()));
         return;
     }
+
+    // Re-checked here because the count can grow while Discord answers - two players
+    // racing for the last slot both pass the pre-verify check, and only this one decides.
+    if (DenyIfFull(aConnectionId))
+        return;
 
     // Both ids together, on purpose. Players see only the derived number, so a
     // report saying "232998 is griefing" is meaningless unless the log ties it
