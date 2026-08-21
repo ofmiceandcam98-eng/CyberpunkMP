@@ -25,6 +25,9 @@ void Settings::Load()
     if (const auto key = launchParameters.Get("-voicekey"); key && key->size > 0)
         settings.voicePushToTalkKey = (*key)[0].c_str();
 
+    if (const auto rangeKey = launchParameters.Get("-voicerangekey"); rangeKey && rangeKey->size > 0)
+        settings.voiceCycleRangeKey = (*rangeKey)[0].c_str();
+
     if (const auto mode = launchParameters.Get("-voicemode"); mode && mode->size > 0)
         settings.voiceMode = (*mode)[0].c_str();
 

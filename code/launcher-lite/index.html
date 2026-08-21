@@ -790,6 +790,17 @@
 
           <div class="tool">
             <div style="min-width:0">
+              <div class="tool-name">Voice range key</div>
+              <div class="tool-desc">
+                Cycles whisper &rarr; local &rarr; yell. Separate from talking: pressing it
+                changes how far you carry, it does not put you on air.
+              </div>
+            </div>
+            <button class="action ghost" id="voiceBindRangeKey">B</button>
+          </div>
+
+          <div class="tool">
+            <div style="min-width:0">
               <div class="tool-name">Voice mode</div>
               <div class="tool-desc">
                 Hold to talk is the default on purpose - voice activation sends whatever
@@ -2718,6 +2729,10 @@
     $('voiceBindKey').dataset.key = key
     $('voiceBindKey').textContent = prettyKey(key)
 
+    const rangeKey = saved.cycleRangeKey || 'IK_B'
+    $('voiceBindRangeKey').dataset.key = rangeKey
+    $('voiceBindRangeKey').textContent = prettyKey(rangeKey)
+
     $('voiceMode').value = saved.mode || 'ptt'
 
     $('voiceMicVolume').value = saved.micVolume ?? 100
@@ -2806,12 +2821,13 @@
    * Escape is the one key everybody presses to get out of a prompt they did not mean to
    * open.
    */
-  function beginKeyBind () {
+  function beginKeyBind (buttonId) {
     if (bindingKey) return
 
     bindingKey = true
 
-    const btn = $('voiceBindKey')
+    const btn = $(buttonId)
+    const other = $(buttonId === 'voiceBindKey' ? 'voiceBindRangeKey' : 'voiceBindKey')
     const previous = btn.textContent
     btn.textContent = 'Press a key...'
     btn.classList.add('listening')
@@ -2827,13 +2843,25 @@
         return
       }
 
+      // Talking and changing range cannot share a key. They are the two controls most
+      // likely to be pressed together, and one key doing both means every range change
+      // also puts you on air.
+      if (other.dataset.key === gameKey) {
+        btn.textContent = previous
+        setSettingsStatus(prettyKey(gameKey) + ' is already your other voice key - '
+          + 'talking and changing range need different keys.', 'error')
+        return
+      }
+
       // The game's id is what gets saved and passed at launch; the button only ever shows
       // the readable form, so both have to be carried.
       btn.dataset.key = gameKey
       btn.textContent = prettyKey(gameKey)
 
       await saveVoicePrefs()
-      setSettingsStatus('Push-to-talk is now ' + prettyKey(gameKey) + '. Applies next time you launch.')
+
+      const what = (buttonId === 'voiceBindKey') ? 'Push-to-talk' : 'Voice range'
+      setSettingsStatus(what + ' is now ' + prettyKey(gameKey) + '. Applies next time you launch.')
     }
 
     const onKey = (e) => {
@@ -2868,13 +2896,15 @@
     window.addEventListener('mousedown', onMouse, true)
   }
 
-  $('voiceBindKey').addEventListener('click', beginKeyBind)
+  $('voiceBindKey').addEventListener('click', () => beginKeyBind('voiceBindKey'))
+  $('voiceBindRangeKey').addEventListener('click', () => beginKeyBind('voiceBindRangeKey'))
 
   async function saveVoicePrefs () {
     await window.launcher.saveVoiceSettings({
       inputDevice: $('voiceInput').value,
       outputDevice: $('voiceOutput').value,
       pushToTalkKey: $('voiceBindKey').dataset.key || 'IK_V',
+      cycleRangeKey: $('voiceBindRangeKey').dataset.key || 'IK_B',
       mode: $('voiceMode').value,
       micVolume: Number($('voiceMicVolume').value),
       chatVolume: Number($('voiceChatVolume').value)

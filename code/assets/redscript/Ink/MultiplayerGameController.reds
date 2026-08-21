@@ -15,6 +15,14 @@ public class MultiplayerGameController extends inkGameController {
     private let m_voiceTransmitting: Bool = false;
     private let m_voiceMode: MpVoiceMode = MpVoiceMode.PushToTalk;
 
+    // Local, always, at the start of a session - never restored from last time.
+    //
+    // Deliberate: somebody who ended yesterday on YELL and forgets would spend their first
+    // conversation broadcasting to everyone within forty metres, and the person doing it
+    // is the last to notice. The cost of re-pressing a key is far smaller than the cost of
+    // not knowing you are shouting.
+    private let m_voiceRange: MpVoiceRange = MpVoiceRange.Local;
+
     public let m_audioSystem: wref<AudioSystem>;
     public let m_uiSystem: wref<UISystem>;
     public let m_repeatingScrollActionEnabled: Bool = false;
@@ -91,6 +99,7 @@ public class MultiplayerGameController extends inkGameController {
         // NOT deduplicate, and the note further down this file records what a duplicate
         // registration already cost once.
         this.m_player.RegisterInputListener(this, n"VoicePushToTalk");
+        this.m_player.RegisterInputListener(this, n"VoiceCycleRange");
 
         // this.m_player.RegisterInputListener(this, n"UIDisconnectFromServer");
         this.UpdateInputHints();
@@ -1076,6 +1085,71 @@ public class MultiplayerGameController extends inkGameController {
         return this.m_voiceTransmitting;
     }
 
+    /**
+     * Step to the next voice range, wrapping forever.
+     *
+     * whisper -> local -> yell -> whisper
+     *
+     * DOES NOT TRANSMIT. Changing how far a voice would carry is not the same as talking,
+     * and a key that opened the microphone as a side effect of changing range would put
+     * somebody on air without them asking.
+     *
+     * Safe to press while already transmitting: the range is read when a voice packet is
+     * sent, so a change mid-sentence simply applies to the rest of it.
+     */
+    public func MpVoiceCycleRange() -> Void {
+        if Equals(this.m_voiceRange, MpVoiceRange.Whisper) {
+            this.m_voiceRange = MpVoiceRange.Local;
+        } else {
+            if Equals(this.m_voiceRange, MpVoiceRange.Local) {
+                this.m_voiceRange = MpVoiceRange.Yell;
+            } else {
+                this.m_voiceRange = MpVoiceRange.Whisper;
+            }
+        }
+
+        FTLog(s"[Voice] range -> \(this.MpVoiceRangeName())");
+        this.MpShowVoiceRange();
+    }
+
+    public func MpVoiceRangeName() -> String {
+        if Equals(this.m_voiceRange, MpVoiceRange.Whisper) {
+            return "WHISPER";
+        }
+
+        if Equals(this.m_voiceRange, MpVoiceRange.Yell) {
+            return "YELL";
+        }
+
+        return "LOCAL";
+    }
+
+    public func MpVoiceCurrentRange() -> MpVoiceRange {
+        return this.m_voiceRange;
+    }
+
+    /**
+     * Say the new range, briefly.
+     *
+     * Uses the game's own warning-message channel - the same one the autosave indicator
+     * uses - rather than a widget of ours. It appears, it says one word, it goes away, and
+     * it already looks like the game.
+     *
+     * Two seconds, and nothing persistent: a permanent readout for something that changes
+     * a few times an hour is clutter, and the transmit indicator is where "what am I on
+     * right now" belongs once it exists.
+     */
+    public func MpShowVoiceRange() -> Void {
+        let message: SimpleScreenMessage;
+        message.isShown = true;
+        message.duration = 2.0;
+        message.message = s"VOICE: \(this.MpVoiceRangeName())";
+
+        GameInstance.GetBlackboardSystem(GetGameInstance())
+            .Get(GetAllBlackboardDefs().UI_Notifications)
+            .SetVariant(GetAllBlackboardDefs().UI_Notifications.WarningMessage, ToVariant(message), true);
+    }
+
 // Actions
 
     protected cb func OnAction(action: ListenerAction, consumer: ListenerActionConsumer) -> Bool {
@@ -1098,6 +1172,20 @@ public class MultiplayerGameController extends inkGameController {
                 if Equals(actionType, gameinputActionType.BUTTON_RELEASED) {
                     this.MpVoiceKey(false);
                 }
+            }
+
+            return false;
+        }
+
+        // Range, on a key of its own. Press only - the XML accepts nothing else, so a tap
+        // advances once rather than twice.
+        //
+        // Never transmits. Changing how far a voice would carry is not talking, and a key
+        // that opened the microphone as a side effect would put somebody on air without
+        // them asking for it.
+        if Equals(actionName, n"VoiceCycleRange") {
+            if Equals(actionType, gameinputActionType.BUTTON_PRESSED) {
+                this.MpVoiceCycleRange();
             }
 
             return false;

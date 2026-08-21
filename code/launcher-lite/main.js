@@ -2508,6 +2508,7 @@ async function launchGame () {
     const chat = Number.isFinite(voice.voiceChatVolume) ? voice.voiceChatVolume : 100
 
     args.push(`--voicekey=${key}`)
+    args.push(`--voicerangekey=${voice.voiceCycleRangeKey || 'IK_B'}`)
     args.push(`--voicemode=${mode}`)
     args.push(`--micvolume=${mic}`)
     args.push(`--voicevolume=${chat}`)
@@ -3480,6 +3481,10 @@ ipcMain.handle('voice:get', async () => {
     // this only decides what the action is bound to on a machine that has never chosen.
     pushToTalkKey: settings.voicePushToTalkKey || 'IK_V',
 
+    // Separate key, separate default. Cycling range and talking are the two controls most
+    // likely to be pressed together, so they must never be the same key.
+    cycleRangeKey: settings.voiceCycleRangeKey || 'IK_B',
+
     // Hold to talk by default, deliberately: voice activation sends whatever the room is
     // doing to everyone nearby, and the person doing it is the last to find out.
     mode: settings.voiceMode || 'ptt',
@@ -3505,6 +3510,7 @@ ipcMain.handle('voice:save', async (_event, choice) => {
     voiceInputDevice: choice?.inputDevice || 'default',
     voiceOutputDevice: choice?.outputDevice || 'default',
     voicePushToTalkKey: choice?.pushToTalkKey || 'IK_V',
+    voiceCycleRangeKey: choice?.cycleRangeKey || 'IK_B',
     voiceMode: ['ptt', 'toggle', 'activation'].includes(choice?.mode) ? choice.mode : 'ptt',
     voiceMicVolume: clamp(choice?.micVolume, 100),
     voiceChatVolume: clamp(choice?.chatVolume, 100)

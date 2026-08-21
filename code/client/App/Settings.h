@@ -34,6 +34,11 @@ struct Settings
     // VoicePushToTalk ACTION; nothing downstream ever compares against it.
     String voicePushToTalkKey{"IK_V"};
 
+    // Cycles whisper -> local -> yell. A separate binding from push-to-talk on purpose:
+    // one decides WHEN somebody talks, the other HOW FAR it carries, and sharing a key
+    // would mean every range change also put them on air.
+    String voiceCycleRangeKey{"IK_B"};
+
     // "ptt", "toggle" or "activation".
     String voiceMode{"ptt"};
 

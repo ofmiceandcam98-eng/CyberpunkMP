@@ -39,6 +39,16 @@
 		<button id="IK_V" />
     </mapping>
 
+	<!-- Cycling the voice range: whisper, local, yell.
+	     A SEPARATE action from push-to-talk, and separately bindable. One decides WHEN
+	     somebody talks, the other decides HOW FAR it carries, and combining them would
+	     mean changing range required talking.
+	     IK_B is a starting value like IK_V is. Only the press is accepted - cycling on
+	     release as well would advance twice per tap. -->
+	<mapping name="VoiceCycleRange_Button" type="Button" >
+		<button id="IK_B" />
+    </mapping>
+
 	<mapping name="UIEnterChatMessage_Button" type="Button" >
 		<button id="IK_Semicolon" />
     </mapping>
@@ -140,8 +150,14 @@
 		<event name="BUTTON_RELEASED" />
 	</acceptedEvents>
 
+	<!-- Press only. Accepting the release too would cycle twice for every tap. -->
+	<acceptedEvents action="VoiceCycleRange">
+		<event name="BUTTON_PRESSED" />
+	</acceptedEvents>
+
     <context name="UIBase" append="true">
         <action name="VoicePushToTalk" map="VoicePushToTalk_Button" />
+        <action name="VoiceCycleRange" map="VoiceCycleRange_Button" />
         <action name="UIConnectToServer" map="UIConnectToServer_Button" />
         <action name="UIDisconnectFromServer" map="UIDisconnectFromServer_Button" />
         <action name="UIEnterChatMessage" map="UIEnterChatMessage_Button" />
