@@ -128,7 +128,10 @@ private:
 
     // Writes the resolved role -> level map to Discord.RolesFile, so the launcher grants
     // the same people the same controls the game does.
-    void WriteRolesFile(const std::map<std::string, std::string>& acRoleNames) const;
+    // aConclusive is false when the guild lookup was attempted and failed, so an empty
+    // map means "could not find out" rather than "there are none". See the definition.
+    void WriteRolesFile(const std::map<std::string, std::string>& acRoleNames,
+                        bool aConclusive) const;
 
     mutable std::mutex m_roleNameMutex;
     mutable std::map<std::string, std::string> m_roleNames;

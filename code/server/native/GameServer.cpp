@@ -779,6 +779,13 @@ std::map<std::string, std::string> GameServer::GetGuildRoleNames() const
 
     const auto token = GetBotToken();
 
+    // Did we actually find out?
+    //
+    // Distinct from "are there any". A server with no bot token configured has genuinely
+    // no role map and saying so is true; a server whose token was rejected has no idea,
+    // and must not say the same thing. Only the second case is a lie worth guarding.
+    bool conclusive = true;
+
     if (!token.empty() && !m_config.Discord.GuildId.empty())
     {
         httplib::Client roleClient("https://discord.com");
@@ -806,12 +813,20 @@ std::map<std::string, std::string> GameServer::GetGuildRoleNames() const
             catch (const std::exception& e)
             {
                 spdlog::warn("Could not parse the guild role list: {}", e.what());
+                conclusive = false;
             }
         }
         else if (roles)
         {
             // Deliberately prints no part of the token.
             spdlog::warn("Discord guild roles returned {} - role NAMES will not resolve, only ids", roles->status);
+            conclusive = false;
+        }
+        else
+        {
+            // No response at all - timed out, DNS, or no route. Same ignorance as a 401.
+            spdlog::warn("Could not reach Discord for the guild role list - role NAMES will not resolve");
+            conclusive = false;
         }
     }
 
@@ -823,7 +838,7 @@ std::map<std::string, std::string> GameServer::GetGuildRoleNames() const
         m_roleNamesExpire = std::chrono::steady_clock::now() + kRoleNameTtl;
     }
 
-    WriteRolesFile(names);
+    WriteRolesFile(names, conclusive);
 
     return names;
 }
@@ -837,10 +852,31 @@ std::map<std::string, std::string> GameServer::GetGuildRoleNames() const
 //
 // Ids, names and levels only. Nothing here is a secret - every member of the Discord can
 // already see who has which role.
-void GameServer::WriteRolesFile(const std::map<std::string, std::string>& acRoleNames) const
+void GameServer::WriteRolesFile(const std::map<std::string, std::string>& acRoleNames,
+                               bool aConclusive) const
 {
     if (m_config.Discord.RolesFile.empty())
         return;
+
+    // Never overwrite a good map with ignorance.
+    //
+    // This file is the launcher's only source for who is staff. Writing an empty list
+    // after a failed lookup does not merely fail to update it - it actively destroys the
+    // last known-good answer and tells every launcher that nobody is an admin.
+    //
+    // It happened: the bot token started returning 401 on 16 August and the next publish
+    // replaced two working mappings with "roles": []. It was caught before shipping only
+    // because the file showed up as an unexpected diff.
+    //
+    // Keeping the previous file is strictly better. A stale role map is wrong only when
+    // roles have actually changed; an empty one is wrong for everybody, immediately.
+    if (!aConclusive)
+    {
+        spdlog::warn("Not publishing the role map - the guild lookup failed, so the "
+                     "existing {} is left alone rather than replaced with an empty list",
+                     m_config.Discord.RolesFile);
+        return;
+    }
 
     try
     {
