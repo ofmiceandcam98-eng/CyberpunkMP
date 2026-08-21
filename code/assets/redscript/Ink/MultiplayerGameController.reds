@@ -593,7 +593,17 @@ public class MultiplayerGameController extends inkGameController {
             // this.m_emoteSelectorWidget.RegisterToCallback(n"OnCloseServerList", this, n"OnCloseServerList");
             this.m_emoteSelector = widget.GetController() as EmoteSelector;
             if IsDefined(this.m_emoteSelector) {
-                this.GetSystemRequestsHandler().PauseGame();
+                // The emote wheel used to stop the world while it was open. It is a menu
+                // that only exists on a server, so that pause was always the wrong call:
+                // everyone else keeps playing while this client sits frozen, and the
+                // client comes back some seconds behind them.
+                //
+                // The matching UnpauseGame in OnEmoteSelectorClosed is left as it is -
+                // unpausing something already running does nothing, and leaving it means
+                // the close path ends in the same state regardless of this branch.
+                if !MpTimeDilationBlocked() {
+                    this.GetSystemRequestsHandler().PauseGame();
+                }
                 this.m_uiSystem.PushGameContext(UIGameContext.ModalPopup);
                 this.m_uiSystem.RequestNewVisualState(n"inkModalPopupState");
                 TimeDilationHelper.SetTimeDilationWithProfile(this.m_player, "radialMenu", true, true);

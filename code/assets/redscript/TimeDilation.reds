@@ -123,3 +123,70 @@ public static func MpTimeDilationBlocked() -> Bool {
 
   return IsDefined(network) && network.IsConnected();
 }
+
+// ---------------------------------------------------------------------------
+// The radial menus
+// ---------------------------------------------------------------------------
+
+/**
+ * The weapon wheel and the emote selector slow time through a THIRD entry point.
+ *
+ * SetTimeDilation and SetTimeDilationOnPlayer are wrapped above; this one is a separate
+ * static that takes a named profile instead of a number, and it is what the radial menus
+ * actually call - our own emote selector included, at MultiplayerGameController's
+ * OnEmoteSelectorSpawned. Wrapping the other two and not this one left the most commonly
+ * opened menu in the game still dilating time.
+ *
+ * Signature taken from the game's own source rather than guessed - it ships at
+ * tools\redmod\scripts\cyberpunk\timeDilation\timeDilationHelper.script:28:
+ *
+ *   SetTimeDilationWithProfile( requester : weak< GameObject >,
+ *                               const profileName : ref< String >,
+ *                               enable : Bool,
+ *                               allowMultipleTimeDilationSimultaneously : Bool ) : Bool
+ *
+ * `const ref< String >` is script_ref<String>, NOT String - the same trap documented in
+ * PauseMenu.reds, and it costs the whole mod's compilation to get wrong. The fourth
+ * argument is required, not optional.
+ */
+@wrapMethod(TimeDilationHelper)
+public final static func SetTimeDilationWithProfile(requester: wref<GameObject>, profileName: script_ref<String>, enable: Bool, allowMultipleTimeDilationSimultaneously: Bool) -> Bool {
+  if MpTimeDilationBlocked() {
+    return false;
+  }
+
+  return wrappedMethod(requester, profileName, enable, allowMultipleTimeDilationSimultaneously);
+}
+
+// ---------------------------------------------------------------------------
+// The pause menu does not stop a shared world
+// ---------------------------------------------------------------------------
+
+/**
+ * Opening the pause menu froze the world for everyone at that client.
+ *
+ * Stopping time is the same problem as slowing it, only total: the player's world halts
+ * while the server and everybody else keep simulating, so their client resumes some
+ * seconds behind a world that moved on without them. On a server the menu has to be
+ * something you read while the world carries on around you.
+ *
+ * The pause is not the menu's own doing. From the game's source at
+ * cyberpunk\UI\fullscreen\ingame\pauseMenu.script:26, PauseMenuBackgroundGameController -
+ * the BACKGROUND controller, not PauseMenuGameController - calls PauseGame() in
+ * OnInitialize and UnpauseGame() in OnUninitialize. That is the only pause on this path.
+ *
+ * Unpausing straight after the original runs, rather than suppressing the original call.
+ * The matching UnpauseGame in OnUninitialize is left alone, so closing the menu still
+ * ends in the same state it always did whether or not this fired - and in singleplayer,
+ * where MpTimeDilationBlocked is false, the menu pauses exactly as it always has.
+ */
+@wrapMethod(PauseMenuBackgroundGameController)
+protected cb func OnInitialize() -> Bool {
+  let result = wrappedMethod();
+
+  if MpTimeDilationBlocked() {
+    this.GetSystemRequestsHandler().UnpauseGame();
+  }
+
+  return result;
+}
