@@ -37,6 +37,7 @@
       }
     ],
     "files": [
+      "fonts/**",
       "main.js",
       "preload.mjs",
       "index.html",

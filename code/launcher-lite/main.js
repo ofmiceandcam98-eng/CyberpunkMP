@@ -1526,10 +1526,10 @@ function createWindow () {
     //
     // A minimum size stops anyone shrinking it back into that state.
     width: 1180,
-    height: 760,
+    height: 800,
     minWidth: 1024,
-    minHeight: 700,
-    backgroundColor: '#0f1115',
+    minHeight: 740,
+    backgroundColor: '#0a0b0d',
     autoHideMenuBar: true,
     webPreferences: {
       // contextIsolation keeps the page's JavaScript in a separate world from
