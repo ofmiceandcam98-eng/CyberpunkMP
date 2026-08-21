@@ -20,6 +20,9 @@ importers:
       electron-updater:
         specifier: ^6.8.9
         version: 6.8.9
+      node-unrar-js:
+        specifier: ^2.0.2
+        version: 2.0.2
     devDependencies:
       electron:
         specifier: ^43.4.0
@@ -141,6 +144,7 @@ packages:
   '@xmldom/xmldom@0.9.10':
     resolution: {integrity: sha512-A9gOqLdi6cV4ibazAjcQufGj0B1y/vDqYrcuP6d/6x8P27gRS8643Dj9o1dEKtB6O7fwxb2FgBmJS2mX7gpvdw==}
     engines: {node: '>=14.6'}
+    deprecated: this version has critical issues, please update to the latest version
 
   abbrev@1.1.1:
     resolution: {integrity: sha512-nne9/IiQ/hzIhY6pdDnbBtz7DjPTKrY00P/zvPSm5pOFkl6xuGrGnXn/VtTNNfNtAfZ9/1RtehkszU9qcTii0Q==}
@@ -950,6 +954,10 @@ packages:
     resolution: {integrity: sha512-OQkWKbjQKbGkMf/xqI1jjy3oCTgMKJac58G2+bjZb3fza6gW2YrCSdMQYaoTb70crvE//Gngr4f0AgVHmqHvBQ==}
     engines: {node: ^12.13 || ^14.13 || >=16}
     hasBin: true
+
+  node-unrar-js@2.0.2:
+    resolution: {integrity: sha512-hLNmoJzqaKJnod8yiTVGe9hnlNRHotUi0CreSv/8HtfRi/3JnRC8DvsmKfeGGguRjTEulhZK6zXX5PXoVuDZ2w==}
+    engines: {node: '>=10.0.0'}
 
   nopt@6.0.0:
     resolution: {integrity: sha512-ZwLpbTgdhuZUnZzjd7nb1ZV+4DoiC6/sfiVKok72ym/4Tlf+DFdlHYmT2JPmcNNWV6Pi3SDf1kT+A4r9RTuT9g==}
@@ -2444,6 +2452,8 @@ snapshots:
     transitivePeerDependencies:
       - bluebird
       - supports-color
+
+  node-unrar-js@2.0.2: {}
 
   nopt@6.0.0:
     dependencies:

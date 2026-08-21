@@ -4,6 +4,10 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.92
+
+- **RAR mods install now.** v0.3.91 taught the installer .7z - and the very first mod turned out to be a .rar, the one format the bundled extractor genuinely cannot read ("7-Zip exit 2"). RAR now extracts in-memory through a proper unrar engine; same install loop, same per-file record, same uninstall sweep. Third format's the charm.
+
 ## What changed — v0.3.91
 
 - **Mod installs read every archive Nexus ships.** The installer only understood .zip, and plenty of Nexus main files are .7z or .rar - so "Direct install" and Mod Manager Download both died with a cryptic "No END header found" (Fast Launch was the live case). A real extractor now handles all three, and a download that's secretly a Nexus sign-in or rate-limit page says so in plain words instead of pretending to be a broken archive.
