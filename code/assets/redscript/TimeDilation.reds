@@ -47,17 +47,8 @@ import CyberpunkMP.World.*
 
 @wrapMethod(TimeDilationHelper)
 public final static func SetTimeDilation(requester: wref<GameObject>, reason: CName, timeDilation: Float, opt duration: Float, easeInCurve: CName, easeOutCurve: CName, allowMultipleTimeDilationSimultaneously: Bool, opt listener: ref<TimeDilationListener>) -> Bool {
-  // Passed through with a dilation of 1.0 rather than refused.
-  //
-  // Refusing froze the game. These calls carry a LISTENER, and the caller waits for it
-  // before continuing - holocalls are built this way. Returning false skipped the whole
-  // sequence, so the listener never fired and the call sat there forever with the player
-  // locked in it.
-  //
-  // Letting the call run at 1.0 keeps every callback and return value the game expects,
-  // while nothing actually slows down. The effect is suppressed; the protocol is not.
   if MpTimeDilationBlocked() {
-    return wrappedMethod(requester, reason, 1.0, duration, easeInCurve, easeOutCurve, allowMultipleTimeDilationSimultaneously, listener);
+    return false;
   }
 
   return wrappedMethod(requester, reason, timeDilation, duration, easeInCurve, easeOutCurve, allowMultipleTimeDilationSimultaneously, listener);
@@ -65,17 +56,8 @@ public final static func SetTimeDilation(requester: wref<GameObject>, reason: CN
 
 @wrapMethod(TimeDilationHelper)
 public final static func SetTimeDilationOnPlayer(requester: wref<GameObject>, reason: CName, timeDilation: Float, opt duration: Float, easeInCurve: CName, easeOutCurve: CName, allowMultipleTimeDilationSimultaneously: Bool, opt listener: ref<TimeDilationListener>) -> Bool {
-  // Passed through with a dilation of 1.0 rather than refused.
-  //
-  // Refusing froze the game. These calls carry a LISTENER, and the caller waits for it
-  // before continuing - holocalls are built this way. Returning false skipped the whole
-  // sequence, so the listener never fired and the call sat there forever with the player
-  // locked in it.
-  //
-  // Letting the call run at 1.0 keeps every callback and return value the game expects,
-  // while nothing actually slows down. The effect is suppressed; the protocol is not.
   if MpTimeDilationBlocked() {
-    return wrappedMethod(requester, reason, 1.0, duration, easeInCurve, easeOutCurve, allowMultipleTimeDilationSimultaneously, listener);
+    return false;
   }
 
   return wrappedMethod(requester, reason, timeDilation, duration, easeInCurve, easeOutCurve, allowMultipleTimeDilationSimultaneously, listener);

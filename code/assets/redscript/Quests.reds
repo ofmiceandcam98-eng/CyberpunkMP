@@ -30,9 +30,6 @@ import CyberpunkMP.World.*
 @wrapMethod(JournalNotificationQueue)
 private final func PushQuestNotification(questEntry: wref<JournalQuest>, state: gameJournalEntryState) -> Void {
   if MpQuestsSilenced() {
-    // Quest state just moved, which is when something becomes tracked. Untracking here
-    // catches the marker at the moment it would appear.
-    MpUntrackQuest();
     return;
   }
 
@@ -44,7 +41,6 @@ private final func PushQuestNotification(questEntry: wref<JournalQuest>, state: 
 @wrapMethod(JournalNotificationQueue)
 private final func PushObjectiveQuestNotification(entry: wref<JournalEntry>) -> Void {
   if MpQuestsSilenced() {
-    MpUntrackQuest();
     return;
   }
 
@@ -86,24 +82,4 @@ public static func MpQuestsSilenced() -> Bool {
   let network = GameInstance.GetNetworkWorldSystem();
 
   return IsDefined(network) && network.IsConnected();
-}
-
-/**
- * Stop the game tracking a quest at the player.
- *
- * The tracked objective is the "455M - GO TO THE DOGTOWN BORDER" marker: an arrow, a
- * distance, and a line of somebody else's story on screen at all times. Untracking removes
- * the presentation and touches no quest state, which is the whole point - the quest keeps
- * running for whatever world systems depend on it.
- *
- * Driven from the notification queue rather than a timer. The game notifies whenever quest
- * state moves, which is exactly when something would have become tracked, so this catches
- * it at the moment it happens rather than a second later.
- */
-public static func MpUntrackQuest() -> Void {
-  let journal = GameInstance.GetJournalManager(GetGameInstance());
-
-  if IsDefined(journal) {
-    journal.UntrackEntry();
-  }
 }
