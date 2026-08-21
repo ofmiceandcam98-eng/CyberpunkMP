@@ -8,6 +8,7 @@
 #include "Network/Client.h"
 #include "Red/TypeInfo/Macros/Definition.hpp"
 #include "AppearanceSystem.h"
+#include "App/Voice/VoiceAudioManager.h"
 #include "ChatSystem.h"
 #include "InterpolationSystem.h"
 #include "VehicleSystem.h"
@@ -167,6 +168,44 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // client, in front of the person losing it, before this is called.
     void DeleteCharacter();
 
+    // ---------------------------------------------------------------------------
+    // Voice devices and capture.
+    //
+    // Index-based accessors rather than returning a list, matching how the restore
+    // inventory is already read from script: redscript handles scalars across the native
+    // boundary far more comfortably than arrays of structs.
+    //
+    // Refresh takes a snapshot; the accessors read it. Enumerating per call would ask
+    // Windows for the whole device list once per row drawn.
+    // ---------------------------------------------------------------------------
+    void VoiceRefreshDevices();
+
+    uint32_t VoiceInputCount() const { return static_cast<uint32_t>(m_voiceInputs.size()); }
+    uint32_t VoiceOutputCount() const { return static_cast<uint32_t>(m_voiceOutputs.size()); }
+
+    Red::CString VoiceInputName(uint32_t aIndex) const;
+    Red::CString VoiceInputId(uint32_t aIndex) const;
+    bool VoiceInputIsDefault(uint32_t aIndex) const;
+
+    // True when the name matches a known system-audio loopback. The UI warns; nothing is
+    // hidden, because on some rigs a loopback is deliberately what somebody wants.
+    bool VoiceInputIsLoopback(uint32_t aIndex) const;
+
+    Red::CString VoiceOutputName(uint32_t aIndex) const;
+    Red::CString VoiceOutputId(uint32_t aIndex) const;
+
+    // Empty id follows the Windows default, which is what somebody wants when they have
+    // not chosen deliberately.
+    bool VoiceStartCapture(const Red::CString& acDeviceId);
+    void VoiceStopCapture();
+    bool VoiceIsCapturing() const;
+
+    // Loudest sample since the last call, 0..1. Reading clears it, so a meter shows the
+    // interval it is drawing rather than the loudest thing that has ever happened.
+    float VoiceInputLevel();
+
+    Red::CString VoiceLastError() const;
+
     // Why the last request was refused, empty when nothing was. The selector shows this
     // instead of appearing to ignore the button.
     Red::CString GetCharacterError() const { return Red::CString(m_characterError.c_str()); }
@@ -299,6 +338,12 @@ private:
     bool m_characterSpawnedBefore{false};
     std::string m_characterError;
 
+    // Owned here so its lifetime matches the system's - the destructor stops the capture
+    // thread, so a world teardown cannot leave a microphone open.
+    VoiceAudioManager m_voice;
+    std::vector<VoiceDevice> m_voiceInputs;
+    std::vector<VoiceDevice> m_voiceOutputs;
+
     // For measuring our own speed from how far we actually moved - see
     // UpdatePlayerLocation. Mutable because that function is const and only reports.
     mutable glm::vec3 m_lastPosition{};
@@ -390,6 +435,20 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(HasCharacterSpawnedBefore);
     RTTI_METHOD(EnterWorld);
     RTTI_METHOD(DeleteCharacter);
+    RTTI_METHOD(VoiceRefreshDevices);
+    RTTI_METHOD(VoiceInputCount);
+    RTTI_METHOD(VoiceOutputCount);
+    RTTI_METHOD(VoiceInputName);
+    RTTI_METHOD(VoiceInputId);
+    RTTI_METHOD(VoiceInputIsDefault);
+    RTTI_METHOD(VoiceInputIsLoopback);
+    RTTI_METHOD(VoiceOutputName);
+    RTTI_METHOD(VoiceOutputId);
+    RTTI_METHOD(VoiceStartCapture);
+    RTTI_METHOD(VoiceStopCapture);
+    RTTI_METHOD(VoiceIsCapturing);
+    RTTI_METHOD(VoiceInputLevel);
+    RTTI_METHOD(VoiceLastError);
     RTTI_METHOD(GetCharacterError);
     RTTI_METHOD(RequestRespawn);
     RTTI_METHOD(SaveCharacterAppearance);

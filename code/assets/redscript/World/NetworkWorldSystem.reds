@@ -106,6 +106,45 @@ public native class NetworkWorldSystem extends IGameSystem {
     // Why the last request was refused, empty when nothing was. Shown on the panel rather
     // than swallowed - a button that appears to do nothing is the worst outcome here.
     public native func GetCharacterError() -> String;
+
+    // ---------------------------------------------------------------------------
+    // Voice devices and capture, from Windows' own audio endpoints.
+    //
+    // Index-based rather than returning a list, the same shape the restore inventory
+    // uses: scalars cross the native boundary far more comfortably than arrays of
+    // structs. Refresh takes the snapshot; the rest read it.
+    //
+    // There is no per-manufacturer anything here or below. A Scarlett, an Apollo and a
+    // £20 headset are all just endpoints, which is the entire reason for going through
+    // WASAPI instead of maintaining a list of interfaces.
+    // ---------------------------------------------------------------------------
+    public native func VoiceRefreshDevices() -> Void;
+
+    public native func VoiceInputCount() -> Uint32;
+    public native func VoiceOutputCount() -> Uint32;
+
+    public native func VoiceInputName(index: Uint32) -> String;
+    public native func VoiceInputId(index: Uint32) -> String;
+    public native func VoiceInputIsDefault(index: Uint32) -> Bool;
+
+    // Names that look like Stereo Mix and friends. Windows reports them as ordinary
+    // microphones, so this is a warning for the UI to show - never a reason to hide one.
+    public native func VoiceInputIsLoopback(index: Uint32) -> Bool;
+
+    public native func VoiceOutputName(index: Uint32) -> String;
+    public native func VoiceOutputId(index: Uint32) -> String;
+
+    // An empty id follows the Windows default, which is what somebody means when they
+    // have not chosen deliberately.
+    public native func VoiceStartCapture(deviceId: String) -> Bool;
+    public native func VoiceStopCapture() -> Void;
+    public native func VoiceIsCapturing() -> Bool;
+
+    // Loudest sample since the last call, 0..1. READING CLEARS IT - a meter shows the
+    // interval it is drawing, not the loudest thing that has ever happened.
+    public native func VoiceInputLevel() -> Float;
+
+    public native func VoiceLastError() -> String;
     public native func GetEntityIdByServerId(serverId: Uint64) -> EntityID;
     public native func GetAppearanceSystem() -> ref<AppearanceSystem>;
     public native func GetChatSystem() -> ref<ChatSystem>;

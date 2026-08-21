@@ -1017,6 +1017,80 @@ void NetworkWorldSystem::SetCharacterStatus(bool aHasCharacter, const char* acNa
                                : "");
 }
 
+// ---------------------------------------------------------------------------
+// Voice
+// ---------------------------------------------------------------------------
+
+void NetworkWorldSystem::VoiceRefreshDevices()
+{
+    m_voiceInputs = m_voice.EnumerateInputDevices();
+    m_voiceOutputs = m_voice.EnumerateOutputDevices();
+
+    spdlog::info("[Voice] {} microphone(s), {} output(s)", m_voiceInputs.size(), m_voiceOutputs.size());
+
+    for (const auto& device : m_voiceInputs)
+    {
+        spdlog::info("[Voice]   in  {}{}{}", device.Name,
+                     device.IsDefault ? " (default)" : "",
+                     device.LooksLikeLoopback ? " [SYSTEM AUDIO]" : "");
+    }
+}
+
+Red::CString NetworkWorldSystem::VoiceInputName(uint32_t aIndex) const
+{
+    return aIndex < m_voiceInputs.size() ? Red::CString(m_voiceInputs[aIndex].Name.c_str()) : Red::CString("");
+}
+
+Red::CString NetworkWorldSystem::VoiceInputId(uint32_t aIndex) const
+{
+    return aIndex < m_voiceInputs.size() ? Red::CString(m_voiceInputs[aIndex].Id.c_str()) : Red::CString("");
+}
+
+bool NetworkWorldSystem::VoiceInputIsDefault(uint32_t aIndex) const
+{
+    return aIndex < m_voiceInputs.size() && m_voiceInputs[aIndex].IsDefault;
+}
+
+bool NetworkWorldSystem::VoiceInputIsLoopback(uint32_t aIndex) const
+{
+    return aIndex < m_voiceInputs.size() && m_voiceInputs[aIndex].LooksLikeLoopback;
+}
+
+Red::CString NetworkWorldSystem::VoiceOutputName(uint32_t aIndex) const
+{
+    return aIndex < m_voiceOutputs.size() ? Red::CString(m_voiceOutputs[aIndex].Name.c_str()) : Red::CString("");
+}
+
+Red::CString NetworkWorldSystem::VoiceOutputId(uint32_t aIndex) const
+{
+    return aIndex < m_voiceOutputs.size() ? Red::CString(m_voiceOutputs[aIndex].Id.c_str()) : Red::CString("");
+}
+
+bool NetworkWorldSystem::VoiceStartCapture(const Red::CString& acDeviceId)
+{
+    return m_voice.StartCapture(acDeviceId.c_str());
+}
+
+void NetworkWorldSystem::VoiceStopCapture()
+{
+    m_voice.StopCapture();
+}
+
+bool NetworkWorldSystem::VoiceIsCapturing() const
+{
+    return m_voice.IsCapturing();
+}
+
+float NetworkWorldSystem::VoiceInputLevel()
+{
+    return m_voice.ReadInputPeak();
+}
+
+Red::CString NetworkWorldSystem::VoiceLastError() const
+{
+    return Red::CString(m_voice.GetLastError().c_str());
+}
+
 void NetworkWorldSystem::DeleteCharacter()
 {
     const auto& service = Core::Container::Get<NetworkService>();
