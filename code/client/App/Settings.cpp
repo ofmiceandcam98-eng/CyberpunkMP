@@ -17,6 +17,38 @@ void Settings::Load()
     if (launchParameters.Contains(RED4ext::CString("-debug")))
         settings.debug = true;
 
+    // Voice, from the launcher's Settings > Voice page.
+    //
+    // Every one has a working default, so a game started without the launcher - or by an
+    // older launcher that does not send these - still has a usable voice configuration
+    // rather than no key and silence.
+    if (const auto key = launchParameters.Get("-voicekey"); key && key->size > 0)
+        settings.voicePushToTalkKey = (*key)[0].c_str();
+
+    if (const auto mode = launchParameters.Get("-voicemode"); mode && mode->size > 0)
+        settings.voiceMode = (*mode)[0].c_str();
+
+    if (const auto mic = launchParameters.Get("-micvolume"); mic && mic->size > 0)
+    {
+        // Clamped again here. The launcher clamps before saving, but this is a launch
+        // argument - anything can pass one - and a gain read straight from an argument is
+        // a scream waiting to happen.
+        const auto value = std::strtoul((*mic)[0].c_str(), nullptr, 10);
+        settings.voiceMicVolume = static_cast<uint32_t>(value > 200 ? 200 : value);
+    }
+
+    if (const auto chat = launchParameters.Get("-voicevolume"); chat && chat->size > 0)
+    {
+        const auto value = std::strtoul((*chat)[0].c_str(), nullptr, 10);
+        settings.voiceChatVolume = static_cast<uint32_t>(value > 200 ? 200 : value);
+    }
+
+    if (const auto in = launchParameters.Get("-voicein"); in && in->size > 0)
+        settings.voiceInputDevice = (*in)[0].c_str();
+
+    if (const auto out = launchParameters.Get("-voiceout"); out && out->size > 0)
+        settings.voiceOutputDevice = (*out)[0].c_str();
+
     bool ipFromArgs = false;
     bool portFromArgs = false;
 

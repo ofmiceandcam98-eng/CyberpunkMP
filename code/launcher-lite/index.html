@@ -119,6 +119,15 @@
   }
   .voice-select:disabled { color: var(--ink-dim); }
 
+  .voice-range { width: 100%; margin-top: .45rem; accent-color: var(--accent); }
+
+  /* While waiting for a key. The button has to look like it is listening, or a press that
+     did not register is indistinguishable from one that did. */
+  .action.listening {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
   .accounts { display: flex; align-items: center; gap: 1.5rem; }
 
   /* Nexus has no avatar to show - the API returns a name, not a picture - so the slot
@@ -771,10 +780,53 @@
 
           <div class="tool">
             <div style="min-width:0">
-              <div class="tool-name" id="voiceStatusTitle">Not set up yet</div>
+              <div class="tool-name">Push-to-talk key</div>
+              <div class="tool-desc">
+                Held to talk. Any key, or a mouse button - side buttons work.
+              </div>
+            </div>
+            <button class="action ghost" id="voiceBindKey">V</button>
+          </div>
+
+          <div class="tool">
+            <div style="min-width:0">
+              <div class="tool-name">Voice mode</div>
+              <div class="tool-desc">
+                Hold to talk is the default on purpose - voice activation sends whatever
+                your room is doing, and you are the last to know.
+              </div>
+              <select id="voiceMode" class="voice-select">
+                <option value="ptt">Hold to talk</option>
+                <option value="toggle">Toggle on and off</option>
+                <option value="activation">Open when I speak</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="tool">
+            <div style="min-width:0">
+              <div class="tool-name">Microphone volume</div>
+              <div class="tool-desc">How loud you are to everyone else.</div>
+              <input type="range" id="voiceMicVolume" class="voice-range" min="0" max="200" value="100">
+              <div class="tool-desc"><span id="voiceMicVolumeValue">100%</span></div>
+            </div>
+          </div>
+
+          <div class="tool">
+            <div style="min-width:0">
+              <div class="tool-name">Voice chat volume</div>
+              <div class="tool-desc">How loud everyone else is to you.</div>
+              <input type="range" id="voiceChatVolume" class="voice-range" min="0" max="200" value="100">
+              <div class="tool-desc"><span id="voiceChatVolumeValue">100%</span></div>
+            </div>
+          </div>
+
+          <div class="tool">
+            <div style="min-width:0">
+              <div class="tool-name" id="voiceStatusTitle">Saved on this PC</div>
               <div class="tool-desc" id="voiceStatus">
-                Voice capture is not built yet - this page only chooses the devices it will
-                use. Your choice is saved.
+                These are passed to the game when you press JACK IN, so change them before
+                launching. Voice capture itself is still being built - nothing transmits yet.
               </div>
             </div>
           </div>
@@ -2415,6 +2467,11 @@
     selectSettingsTab(currentSettingsTab)
     setSettingsStatus('')
     refreshSettings()
+
+    // Voice preferences are meaningful without a device scan, so they are restored on
+    // open. Showing defaults over somebody's saved binding would look like the launcher
+    // had forgotten it.
+    loadVoicePrefs()
   }
 
   function closeSettings () {
@@ -2641,6 +2698,205 @@
   }
 
   $('voiceScan').addEventListener('click', scanVoiceDevices)
+
+  /**
+   * Put the saved voice settings back on screen.
+   *
+   * Called when Settings opens rather than only after a scan: the key, mode and volumes
+   * are meaningful without ever pressing Find devices, and a page that showed defaults
+   * over the top of somebody's saved binding would look like it had forgotten it.
+   *
+   * The device dropdowns are deliberately NOT filled here - their options do not exist
+   * until a scan has run, and inventing rows for device ids whose names we cannot read
+   * would show a list of unidentifiable entries.
+   */
+  async function loadVoicePrefs () {
+    const saved = await window.launcher.getVoiceSettings()
+    if (!saved) return
+
+    const key = saved.pushToTalkKey || 'IK_V'
+    $('voiceBindKey').dataset.key = key
+    $('voiceBindKey').textContent = prettyKey(key)
+
+    $('voiceMode').value = saved.mode || 'ptt'
+
+    $('voiceMicVolume').value = saved.micVolume ?? 100
+    $('voiceChatVolume').value = saved.chatVolume ?? 100
+    $('voiceMicVolumeValue').textContent = $('voiceMicVolume').value + '%'
+    $('voiceChatVolumeValue').textContent = $('voiceChatVolume').value + '%'
+  }
+
+  // ---------------------------------------------------------------------------
+  // VOICE - push-to-talk key
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Browser key name -> the game's own key id.
+   *
+   * The game speaks IK_* and the browser speaks KeyboardEvent.code, so somewhere has to
+   * translate. Here, once, rather than in the game: the launcher is where the key is
+   * chosen and it is the only side that ever sees a browser event.
+   *
+   * Letters and digits follow a pattern and are generated. Everything else is listed,
+   * because the two naming schemes agree far less often than they appear to - Escape is
+   * IK_Escape but ControlLeft is IK_LControl, and guessing produces a binding that saves
+   * cleanly and does nothing in game.
+   */
+  const KEY_MAP = (() => {
+    const map = {
+      Escape: 'IK_Escape', Space: 'IK_Space', Enter: 'IK_Enter', Tab: 'IK_Tab',
+      Backspace: 'IK_Backspace', CapsLock: 'IK_CapsLock',
+      ShiftLeft: 'IK_LShift', ShiftRight: 'IK_RShift',
+      ControlLeft: 'IK_LControl', ControlRight: 'IK_RControl',
+      AltLeft: 'IK_LAlt', AltRight: 'IK_RAlt',
+      ArrowUp: 'IK_Up', ArrowDown: 'IK_Down', ArrowLeft: 'IK_Left', ArrowRight: 'IK_Right',
+      Insert: 'IK_Insert', Delete: 'IK_Delete', Home: 'IK_Home', End: 'IK_End',
+      PageUp: 'IK_PageUp', PageDown: 'IK_PageDown',
+      Backquote: 'IK_Tilde', Minus: 'IK_Minus', Equal: 'IK_Equals',
+      BracketLeft: 'IK_LBracket', BracketRight: 'IK_RBracket', Backslash: 'IK_Backslash',
+      Semicolon: 'IK_Semicolon', Quote: 'IK_Apostrophe',
+      Comma: 'IK_Comma', Period: 'IK_Period', Slash: 'IK_Slash'
+    }
+
+    for (let i = 0; i < 26; i++) {
+      const letter = String.fromCharCode(65 + i)
+      map['Key' + letter] = 'IK_' + letter
+    }
+    for (let i = 0; i <= 9; i++) map['Digit' + i] = 'IK_' + i
+    for (let i = 1; i <= 12; i++) map['F' + i] = 'IK_F' + i
+    for (let i = 0; i <= 9; i++) map['Numpad' + i] = 'IK_Pad_' + i
+
+    return map
+  })()
+
+  // Mouse buttons the game understands. Left is deliberately absent - binding voice to
+  // left click makes the game unplayable, and somebody trying it has misunderstood rather
+  // than made a choice worth honouring.
+  const MOUSE_MAP = {
+    1: 'IK_MiddleMouse',
+    2: 'IK_RightMouse',
+    3: 'IK_Mouse4',
+    4: 'IK_Mouse5'
+  }
+
+  // What to SHOW. IK_Mouse4 is what the game wants; "Mouse 4" is what a person recognises.
+  function prettyKey (gameKey) {
+    if (!gameKey) return 'None'
+
+    return gameKey
+      .replace(/^IK_/, '')
+      .replace('LShift', 'Left Shift').replace('RShift', 'Right Shift')
+      .replace('LControl', 'Left Ctrl').replace('RControl', 'Right Ctrl')
+      .replace('LAlt', 'Left Alt').replace('RAlt', 'Right Alt')
+      .replace('MiddleMouse', 'Middle Mouse').replace('RightMouse', 'Right Mouse')
+      .replace('Mouse4', 'Mouse 4').replace('Mouse5', 'Mouse 5')
+      .replace('Pad_', 'Numpad ')
+  }
+
+  let bindingKey = false
+
+  /**
+   * Listen for the next key or mouse button and bind it.
+   *
+   * Captured on the window with capture:true so it is seen before anything else can act on
+   * it - otherwise choosing Escape closes the settings dialog instead of binding, and
+   * choosing Tab moves focus.
+   *
+   * Escape cancels rather than binds. A key that cannot be escaped out of is a trap, and
+   * Escape is the one key everybody presses to get out of a prompt they did not mean to
+   * open.
+   */
+  function beginKeyBind () {
+    if (bindingKey) return
+
+    bindingKey = true
+
+    const btn = $('voiceBindKey')
+    const previous = btn.textContent
+    btn.textContent = 'Press a key...'
+    btn.classList.add('listening')
+
+    const finish = async (gameKey) => {
+      window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('mousedown', onMouse, true)
+      bindingKey = false
+      btn.classList.remove('listening')
+
+      if (!gameKey) {
+        btn.textContent = previous
+        return
+      }
+
+      // The game's id is what gets saved and passed at launch; the button only ever shows
+      // the readable form, so both have to be carried.
+      btn.dataset.key = gameKey
+      btn.textContent = prettyKey(gameKey)
+
+      await saveVoicePrefs()
+      setSettingsStatus('Push-to-talk is now ' + prettyKey(gameKey) + '. Applies next time you launch.')
+    }
+
+    const onKey = (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+
+      if (e.code === 'Escape') return finish(null)
+
+      const mapped = KEY_MAP[e.code]
+      if (!mapped) {
+        setSettingsStatus('That key is not one the game recognises - try another.')
+        return
+      }
+
+      finish(mapped)
+    }
+
+    const onMouse = (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+
+      const mapped = MOUSE_MAP[e.button]
+      if (!mapped) {
+        setSettingsStatus('Left click cannot be used for voice - pick another button.')
+        return
+      }
+
+      finish(mapped)
+    }
+
+    window.addEventListener('keydown', onKey, true)
+    window.addEventListener('mousedown', onMouse, true)
+  }
+
+  $('voiceBindKey').addEventListener('click', beginKeyBind)
+
+  async function saveVoicePrefs () {
+    await window.launcher.saveVoiceSettings({
+      inputDevice: $('voiceInput').value,
+      outputDevice: $('voiceOutput').value,
+      pushToTalkKey: $('voiceBindKey').dataset.key || 'IK_V',
+      mode: $('voiceMode').value,
+      micVolume: Number($('voiceMicVolume').value),
+      chatVolume: Number($('voiceChatVolume').value)
+    })
+  }
+
+  for (const id of ['voiceMicVolume', 'voiceChatVolume']) {
+    $(id).addEventListener('input', () => {
+      $(id + 'Value').textContent = $(id).value + '%'
+    })
+    $(id).addEventListener('change', saveVoicePrefs)
+  }
+
+  $('voiceMode').addEventListener('change', async () => {
+    await saveVoicePrefs()
+
+    // Say what changed, because the modes differ in a way the words alone do not carry.
+    $('voiceStatus').textContent = $('voiceMode').value === 'activation'
+      ? 'Your microphone will open by itself when you speak - and will send whatever else '
+        + 'your room is doing. Hold to talk if anyone has ever heard your keyboard.'
+      : 'Saved. Applies next time you launch.'
+  })
 
   // Saved on change rather than behind a Save button - a dropdown that needs confirming is
   // a dropdown people forget to confirm.

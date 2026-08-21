@@ -18,6 +18,35 @@ struct Settings
     fs::path exePath{};
     fs::path gamePath{};
     String Version{};
+
+    // ---------------------------------------------------------------------------
+    // Voice, chosen in the launcher and handed over at launch.
+    //
+    // Owned by the launcher rather than the game because that is where a person can
+    // actually change them - a key capture and two sliders in a settings page, instead of
+    // a rebind screen that a custom input action is not guaranteed to appear in.
+    //
+    // Read once at startup, like every other launch parameter. Changing them takes effect
+    // next launch; live changes would need a file the mod can re-read.
+    // ---------------------------------------------------------------------------
+
+    // The game's own key id - IK_V, IK_Mouse4, IK_CapsLock. Only used to bind the
+    // VoicePushToTalk ACTION; nothing downstream ever compares against it.
+    String voicePushToTalkKey{"IK_V"};
+
+    // "ptt", "toggle" or "activation".
+    String voiceMode{"ptt"};
+
+    // Percentages where 100 means unchanged. Above 100 is allowed on purpose: a quiet
+    // microphone on a professional interface is normal, and the alternative is telling
+    // somebody to go and change their hardware gain.
+    uint32_t voiceMicVolume{100};
+    uint32_t voiceChatVolume{100};
+
+    // Windows endpoint ids. Empty means follow the Windows default, which is what somebody
+    // means when they have not chosen deliberately.
+    String voiceInputDevice{};
+    String voiceOutputDevice{};
     String ip = "127.0.0.1";
     uint16_t port = 11778;
     // Discord OAuth access token, handed over by the launcher via --discord-token=.

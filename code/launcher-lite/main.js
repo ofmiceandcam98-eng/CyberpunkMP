@@ -2485,6 +2485,41 @@ async function launchGame () {
   args.push(`--ip=${server.host}`)
   args.push(`--port=${server.port}`)
 
+  // Voice preferences, chosen in Settings > Voice and handed over at launch.
+  //
+  // Passed as arguments because that is how the mod already receives its configuration -
+  // the same path -ip and -port take - rather than inventing a config file and a watcher
+  // for four values.
+  //
+  // The cost is that these apply at LAUNCH: changing a key or a volume takes effect next
+  // time the game starts, not immediately. Worth knowing before somebody drags a slider
+  // mid-session and concludes it does nothing. Live changes need the mod reading a file it
+  // can re-read, which is a later piece of work.
+  //
+  // The device ids are Windows endpoint strings and can contain spaces and braces, so they
+  // are quoted. Everything else is a bare token by construction - the key is one of a
+  // fixed map, the mode is one of three, and the volumes are clamped integers.
+  {
+    const voice = loadSettings()
+
+    const key = voice.voicePushToTalkKey || 'IK_V'
+    const mode = voice.voiceMode || 'ptt'
+    const mic = Number.isFinite(voice.voiceMicVolume) ? voice.voiceMicVolume : 100
+    const chat = Number.isFinite(voice.voiceChatVolume) ? voice.voiceChatVolume : 100
+
+    args.push(`--voicekey=${key}`)
+    args.push(`--voicemode=${mode}`)
+    args.push(`--micvolume=${mic}`)
+    args.push(`--voicevolume=${chat}`)
+
+    if (voice.voiceInputDevice && voice.voiceInputDevice !== 'default') {
+      args.push(`--voicein=${voice.voiceInputDevice}`)
+    }
+    if (voice.voiceOutputDevice && voice.voiceOutputDevice !== 'default') {
+      args.push(`--voiceout=${voice.voiceOutputDevice}`)
+    }
+  }
+
   console.log(`[launch] server ${server.host}:${server.port} (from ${server.source})`)
   launcherLog(`launching: server ${server.host}:${server.port} (${server.source}), ` +
               `${args.length} args, token ${accessToken ? 'present' : 'MISSING'}, ` +
@@ -3439,15 +3474,42 @@ ipcMain.handle('voice:get', async () => {
   const settings = loadSettings()
   return {
     inputDevice: settings.voiceInputDevice || 'default',
-    outputDevice: settings.voiceOutputDevice || 'default'
+    outputDevice: settings.voiceOutputDevice || 'default',
+
+    // IK_V is a starting value, not the key. Everything downstream reads the ACTION, so
+    // this only decides what the action is bound to on a machine that has never chosen.
+    pushToTalkKey: settings.voicePushToTalkKey || 'IK_V',
+
+    // Hold to talk by default, deliberately: voice activation sends whatever the room is
+    // doing to everyone nearby, and the person doing it is the last to find out.
+    mode: settings.voiceMode || 'ptt',
+
+    // Percentages, where 100 means unchanged. Allowed above 100 because a quiet
+    // microphone on a professional interface is normal and the alternative is telling
+    // somebody to go and change their hardware gain.
+    micVolume: Number.isFinite(settings.voiceMicVolume) ? settings.voiceMicVolume : 100,
+    chatVolume: Number.isFinite(settings.voiceChatVolume) ? settings.voiceChatVolume : 100
   }
 })
 
 ipcMain.handle('voice:save', async (_event, choice) => {
+  // Clamped here rather than trusted from the page. The renderer is ours, but a stored
+  // volume of 10000 would be carried into a launch argument and then into an audio gain,
+  // and the first anyone would know is a scream.
+  const clamp = (value, fallback) => {
+    const n = Number(value)
+    return Number.isFinite(n) ? Math.min(200, Math.max(0, Math.round(n))) : fallback
+  }
+
   saveSettings({
     voiceInputDevice: choice?.inputDevice || 'default',
-    voiceOutputDevice: choice?.outputDevice || 'default'
+    voiceOutputDevice: choice?.outputDevice || 'default',
+    voicePushToTalkKey: choice?.pushToTalkKey || 'IK_V',
+    voiceMode: ['ptt', 'toggle', 'activation'].includes(choice?.mode) ? choice.mode : 'ptt',
+    voiceMicVolume: clamp(choice?.micVolume, 100),
+    voiceChatVolume: clamp(choice?.chatVolume, 100)
   })
+
   return { ok: true }
 })
 
