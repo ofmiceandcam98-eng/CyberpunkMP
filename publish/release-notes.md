@@ -4,6 +4,10 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.91
+
+- **Mod installs read every archive Nexus ships.** The installer only understood .zip, and plenty of Nexus main files are .7z or .rar - so "Direct install" and Mod Manager Download both died with a cryptic "No END header found" (Fast Launch was the live case). A real extractor now handles all three, and a download that's secretly a Nexus sign-in or rate-limit page says so in plain words instead of pretending to be a broken archive.
+
 ## What changed — v0.3.90
 
 - **Direct install from Nexus, next to Verify.** One button installs every mod on the server's list that's missing - straight into the game folder, the path this launcher owns end to end. Premium Nexus keys download directly through the API; free accounts get the mod page opened and one press of "Mod Manager Download" lands it here automatically (that button already routes to this launcher). Nexus doesn't allow more automation than this for free accounts - it's their policy, and honoring it is the deal that lets us integrate at all.
