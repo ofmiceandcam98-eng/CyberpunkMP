@@ -298,6 +298,26 @@ function findGameDir () {
     }
   } catch { /* reg unavailable - fall through to guessing */ }
 
+  // Epic keeps authoritative install records too: one JSON manifest per installed
+  // game, each naming its InstallLocation. Read them the way GOG's registry is read -
+  // as the source of truth for drives and folders the guessing below would miss.
+  // This matters even on C:: Epic's DEFAULT path is C:\Program Files\Epic Games\...,
+  // which no guess covered, so a bone-stock Epic install used to be "not found".
+  try {
+    const manifests = path.join(process.env.ProgramData || 'C:\\ProgramData',
+                                'Epic', 'EpicGamesLauncher', 'Data', 'Manifests')
+    for (const name of readdirSync(manifests)) {
+      if (!name.endsWith('.item')) continue
+      try {
+        const item = JSON.parse(readFileSync(path.join(manifests, name), 'utf8'))
+        // Push every install; the exe check at the bottom decides which one is
+        // actually Cyberpunk. Epic's internal app names are opaque codenames, so
+        // matching on them would be guessing with extra steps.
+        if (item.InstallLocation) candidates.push(item.InstallLocation)
+      } catch { /* malformed manifest - skip it */ }
+    }
+  } catch { /* Epic not installed */ }
+
   // Steam knows where its own libraries are - far better than guessing.
   for (const root of steamRoots()) {
     candidates.push(path.join(root, 'steamapps', 'common', 'Cyberpunk 2077'))
@@ -314,12 +334,18 @@ function findGameDir () {
     }
   }
 
-  // Common layouts on every drive letter, for GOG / Epic / manual installs.
+  // Common layouts on EVERY drive letter, A through Z - C first because it is the
+  // likeliest, A and B last because they are the rarest. But rare is not never: one
+  // player's Steam library lives on B:. Nothing here should ever be trimmed to "the
+  // usual drives"; a missing letter reads as "game not found" to the one person whose
+  // layout it excluded, and existsSync on an absent drive costs nothing.
   for (const letter of 'CDEFGHIJKLMNOPQRSTUVWXYZAB') {
     for (const suffix of ['SteamLibrary\\steamapps\\common\\Cyberpunk 2077',
                           'Games\\Cyberpunk 2077',
+                          'Games\\GOG\\Cyberpunk 2077',
                           'GOG Games\\Cyberpunk 2077',
                           'Program Files (x86)\\GOG Galaxy\\Games\\Cyberpunk 2077',
+                          'Program Files\\Epic Games\\Cyberpunk2077',
                           'Epic Games\\Cyberpunk2077',
                           'Cyberpunk 2077']) {
       candidates.push(`${letter}:\\${suffix}`)
@@ -2103,16 +2129,11 @@ async function launchGame () {
     console.warn('[mods] duplicate check failed:', err.message)
   }
 
-  const child = spawn(exe, args, {
-    detached: true,
-    stdio: 'ignore'
-  })
-
-  child.on('error', (err) => {
+  const sendLaunchError = (message) => {
     if (mainWindow) {
-      mainWindow.webContents.send('launch-error', err.message)
+      mainWindow.webContents.send('launch-error', message)
     }
-  })
+  }
 
   // Watch for a crash.
   //
@@ -2120,13 +2141,63 @@ async function launchGame () {
   // the launcher IS still open we can still see it exit - and that is exactly when
   // someone needs their log. Nobody should have to go hunting through Program Files for
   // a file whose name they do not know.
-  child.on('exit', (code) => {
+  const onExit = (code) => {
     // 0 is a normal quit. 0xC0000005 (-1073741819) is an access violation - the crash
     // this project has spent days on. Anything else non-zero is also worth capturing.
     if (code === 0 || code === null) return
 
     handleGameCrash(code)
+  }
+
+  const child = spawn(exe, args, {
+    detached: true,
+    stdio: 'ignore'
   })
+
+  child.on('error', (err) => {
+    // EACCES here rarely means the file is unreadable - the launcher just FOUND it.
+    // It means CreateProcess was refused: a "Run as administrator" compatibility flag
+    // on Cyberpunk2077.exe (a UAC boundary Node cannot cross), restrictive ACLs on an
+    // unusual drive (seen live: a Steam library on B:), or an antivirus interposing.
+    // The Windows SHELL can cross the first case - it shows the UAC prompt instead of
+    // failing - so retry through cmd's `start`, which routes via ShellExecute.
+    if (err.code === 'EACCES' || err.code === 'EPERM' || err.code === 'UNKNOWN') {
+      console.warn(`[launch] direct start refused (${err.code}) - retrying through the shell, which can raise a UAC prompt`)
+
+      // One pre-quoted command line under windowsVerbatimArguments, because cmd has
+      // its own quoting rules and Node's default escaping garbles them. The empty ""
+      // is start's window-title slot - without it, start would treat the quoted exe
+      // path as the title and run nothing.
+      const line = ['/c', 'start', '""', `"${exe}"`, ...args.map((a) => `"${a}"`)].join(' ')
+      const retry = spawn('cmd.exe', [line], {
+        detached: true,
+        stdio: 'ignore',
+        windowsVerbatimArguments: true,
+        cwd: path.dirname(exe)
+      })
+
+      // The exit we can watch here is cmd's, not the game's - it leaves as soon as
+      // ShellExecute hands off, always with 0, so onExit stays quiet and crash capture
+      // for this session comes from the shipped logs instead. watchForGameExit() still
+      // tracks the real process by name either way.
+      retry.on('error', (err2) => {
+        sendLaunchError(
+          `Windows refused to start the game twice (${err.code}, then ${err2.code}). ` +
+          'Usual causes: "Run as administrator" is ticked on Cyberpunk2077.exe ' +
+          '(right-click it > Properties > Compatibility - untick it), or your ' +
+          'antivirus is blocking the launcher from starting programs. The game files ' +
+          'themselves are fine.'
+        )
+      })
+      retry.on('exit', onExit)
+      retry.unref()
+      return
+    }
+
+    sendLaunchError(err.message)
+  })
+
+  child.on('exit', onExit)
 
   child.unref()
 
