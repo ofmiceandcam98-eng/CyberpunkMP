@@ -4,6 +4,32 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.79
+
+- **"Could not start the game: EACCES" is handled.** Windows sometimes refuses to start the game directly — usually a "Run as administrator" flag on Cyberpunk2077.exe or an antivirus interposing — even though the launcher found it fine (seen live on a Steam library on drive B:). The launcher now retries through the Windows shell, which can raise a proper UAC prompt instead of failing; if both attempts are refused, the error message finally says what to actually do about it.
+- **Epic installs are found automatically.** The launcher reads Epic's own install manifests, the same way it reads GOG's registry and Steam's library file. This matters even on default installs: Epic's standard path was in nobody's guess list, so a bone-stock Epic copy showed "game not found".
+- **More install layouts found on every drive A–Z**: `Games\GOG\...` and Epic's `Program Files` layout join the per-drive search. All 26 drive letters were already scanned; now more folder shapes are recognized on each.
+
+## What changed — v0.3.78
+
+- **Fixes the freeze in v0.3.77.** That build tried to stop Songbird's opening call by refusing to build the call's interface, which locked the game up instead. It has been taken back out - she calls again, exactly as the base game intends, and nothing freezes.
+- **Everything else from v0.3.77 is still here**: Dogtown open from your first spawn, level 15 and 15 street cred for new characters, phone numbers, `/pay`, contacts, and the admin quest commands.
+- **Your log is quieter.** A diagnostic dump was shipping by accident and writing hundreds of lines every time the world loaded.
+
+**If you are on v0.3.77, update.** That build can hard-freeze when a story call arrives.
+
+## What changed — v0.3.77
+
+- **Dogtown is open from your first spawn.** No Songbird call, no Dog Eat Dog, no locked gate, no four missions to get in. The checkpoint works as a checkpoint - drive in, drive out, turrets leave you alone. Both male and female worlds.
+- **Everyone starts at level 15 with 15 street cred.** The server sets this when a character is created, so the world you spawn into no longer decides how powerful you are.
+- **Quests stay out of your way.** No quest popups, no objective markers, no quest pins cluttering the map, no incoming story calls, and the journal's quest list is gone. The world still runs on its own quest systems - doors, vendors and NPCs are untouched - you just are not the protagonist of somebody else's story.
+- **The phone no longer crashes when you open it**, and your contacts list is down to Delamain instead of two dozen strangers from a story you did not play.
+- **Phone numbers.** Every character gets one. `/number` shows yours, `/addcontact` saves someone else's, `/contacts` lists them. Contacts are yours alone - nobody else's phone changes because you looked someone up.
+- **Send eddies with `/pay <number> <amount>`.** The server moves the money, so what you send is exactly what they receive.
+- **Admin quest controls.** `/quest allow`, `/quest deny`, `/quest skip` and `/quest list`, for handing a specific story beat to a specific person.
+
+**Testing welcome.** Most of this is new and has never been through more than one pair of hands - if something is wrong, say so in Discord.
+
 ## What changed — v0.3.75
 
 - **The car-materialization crash is fixed for everyone.** When another player's car appeared nearby, your game could die seconds later - a use-after-free between the game's animation thread and ours. This was already fixed on the test channel; tonight's session proved the shipped mod still had it, so it ships now.
@@ -321,3 +347,4 @@ The mod writes one log per launch to `red4ext\plugins\zzzCyberpunkMP\logs\`. Cra
 CyberpunkMP is the work of **Tilted Phoques and contributors**. This is an unofficial community build and is not released by them.
 
 Bundled prerequisites, all MIT licensed, all credit to their authors: [RED4ext](https://github.com/WopsS/RED4ext) (Octavian Dima), [redscript](https://github.com/jac3km4/redscript) (jac3km4), [Codeware](https://github.com/psiberx/cp2077-codeware), [ArchiveXL](https://github.com/psiberx/cp2077-archive-xl), [TweakXL](https://github.com/psiberx/cp2077-tweak-xl) (Pavel Siberx), and [Input Loader](https://github.com/jackhumbert/cyberpunk2077-input-loader) (Jack Humbert).
+
