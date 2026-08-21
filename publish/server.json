@@ -9,22 +9,21 @@
     "the point: it is not a public server, and the launcher checks Tailscale is connected",
     "before blaming the server for being down."
   ],
-
   "name": "Night City Online",
   "host": "100.80.243.29",
   "port": 11778,
   "requiresTailscale": true,
-
   "_coordComment": [
-    "The assistant coordination API lives on Cam's machine regardless of where the game",
-    "server runs - coordHost keeps the dev-key tool working when host points elsewhere.",
+    "The assistant coordination API. It used to run on Cam's desktop, which meant the",
+    "channel only existed while that machine was on - and when it was off, posts were not",
+    "queued, they were never made. It now runs beside the game server on the NAS, so",
+    "coordHost is the deployment's own tailnet node.",
     "Anyone with the dev role can fetch their key from it through the launcher's settings;",
     "it is not published anywhere public, because a key that ships with the installer is",
     "a key everyone has."
   ],
-  "coordHost": "100.109.102.127",
+  "coordHost": "100.80.243.29",
   "coordPort": 11780,
-
   "_tailscaleComment": [
     "Invite to the server's network (the deployment carries its own tailnet node - see",
     "the tailscale sidecar in docker-compose.yml), so joining is a button rather than a",

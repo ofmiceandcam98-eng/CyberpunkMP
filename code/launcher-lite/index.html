@@ -6,17 +6,20 @@
       content="default-src 'none'; img-src 'self' https://cdn.discordapp.com; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
 <title>Night City Online</title>
 <style>
-  /* A slightly green-biased near-black rather than pure grey - it sits with the
-     yellow accent instead of fighting it. */
+  /* The Blackwall look: a red-biased near-black with a hot signal red, after the
+     RedSync/Blackwall terminal aesthetic the crew liked. Colors only - every
+     control keeps its function. Status colors stay green/amber-red because they
+     are read as MEANING, not theme; an all-red palette would make "broken" and
+     "styled" the same color. */
   :root {
-    --ground:  #0f1115;
-    --surface: #171a20;
-    --line:    #262a33;
-    --ink:     #e7e6df;
-    --ink-dim: #8b8f9a;
-    --accent:  #fcee0a;
+    --ground:  #070406;
+    --surface: #120a0d;
+    --line:    #2a1418;
+    --ink:     #e8e2e2;
+    --ink-dim: #9a8b8d;
+    --accent:  #ff2a32;
     --ok:      #5bc07e;
-    --bad:     #f0705a;
+    --bad:     #f0a05a;
     --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
     --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   }
@@ -837,7 +840,7 @@
         <button class="action update" id="update" style="display:none">Update</button>
       </div>
 
-      <button class="action play" id="play" disabled>Launch Game</button>
+      <button class="action play" id="play" disabled>JACK IN</button>
 
       <!-- Why the button is dead. A greyed-out Launch with no explanation is the most
            frustrating thing a launcher can do - people conclude it is broken and leave,
@@ -1124,11 +1127,11 @@
                        gameState.launching || gameState.running
 
     if (gameState.launching) {
-      playBtn.textContent = 'Launching...'
+      playBtn.textContent = 'JACKING IN...'
     } else if (gameState.running) {
       playBtn.textContent = 'Game running'
     } else {
-      playBtn.textContent = 'Launch Game'
+      playBtn.textContent = 'JACK IN'
     }
 
     // Say WHY, in the order someone has to fix them. Signing in first, then files, then
@@ -1153,9 +1156,25 @@
     if (!serverState) {
       blockers.push('Still checking the server')
     } else if (!serverState.online) {
-      blockers.push(user?.isAdmin
-        ? 'The server is offline — you can launch anyway, but nobody else can'
-        : 'The server is offline — ask in the Discord when it will be back')
+      // Unreachable is not the same as offline, and for a new player it is almost never
+      // offline. The server address is on a private tailnet, so somebody who has not
+      // joined it yet cannot reach a perfectly healthy server - and telling them it is
+      // down sends them to the Discord to ask about an outage that is not happening,
+      // instead of to the one button that would let them in.
+      //
+      // tailscaleState is already fetched for the indicator above; this just asks it the
+      // question the player actually needs answered, in the order they have to fix things.
+      if (user?.isAdmin) {
+        blockers.push('The server is offline — you can launch anyway, but nobody else can')
+      } else if (tailscaleState && !tailscaleState.installed) {
+        blockers.push('Install Tailscale — the link is at the bottom of this window. The server is on a private network.')
+      } else if (tailscaleState && !tailscaleState.connected) {
+        blockers.push('Tailscale is installed but not signed in — open it from the system tray')
+      } else if (tailscaleState && tailscaleState.connected) {
+        blockers.push("You are not on the server's network yet — press “Join the server's network” above and accept the invite")
+      } else {
+        blockers.push('Cannot reach the server — press Verify files for a step-by-step check')
+      }
     }
 
     $('playReason').textContent = blockers.length > 0 ? blockers.join('  ·  ') : ''
@@ -1404,7 +1423,7 @@
     // inside that gap - which is precisely the double launch this exists to prevent.
     if (playBtn.disabled) return
     playBtn.disabled = true
-    playBtn.textContent = 'Launching...'
+    playBtn.textContent = 'JACKING IN...'
 
     setStatus('Starting game...')
     const result = await window.launcher.launchGame()
@@ -1793,7 +1812,7 @@
   }
 
   function check (ok, text) {
-    return `<div class="check ${ok ? 'yes' : 'no'}">${ok ? 'âœ“' : 'âœ—'} ${text}</div>`
+    return `<div class="check ${ok ? 'yes' : 'no'}">${ok ? '✓' : '✗'} ${text}</div>`
   }
 
   async function refreshSettings () {

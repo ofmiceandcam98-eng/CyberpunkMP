@@ -828,29 +828,38 @@ void Level::HandleEnterVehicleRequest(PacketEvent<client::EnterVehicleRequest>& 
 {
     flecs::entity target(GetWorld()->get_world(), aMessage.get_id());
 
+    // These rejections say everything they know - which id the client sent (generation
+    // bits included), whether that entity is alive, and what the parent actually is -
+    // the same shape the movement rejection took when every observed desync turned out
+    // to funnel through a warn that named nothing.
     if (!target)
     {
-        spdlog::warn("Attempt to enter vehicle from invalid entity from connection {:x}", aMessage.ConnectionId);
+        spdlog::warn("Attempt to enter vehicle from invalid entity id={:#x} from connection {:x}",
+                     aMessage.get_id(), aMessage.ConnectionId);
         return;
     }
 
     const auto player = target.parent();
     if (!player)
     {
-        spdlog::warn("Attempt to enter vehicle an entity without an owner from connection {:x}", aMessage.ConnectionId);
+        spdlog::warn("Attempt to enter vehicle from an entity without an owner! enter id={:#x} alive={} target='{}' from connection {:x}",
+                     aMessage.get_id(), target.is_alive(), target.name().c_str(), aMessage.ConnectionId);
         return;
     }
 
     auto* pPlayer = player.get<PlayerComponent>();
     if (!pPlayer)
     {
-        spdlog::warn("The entity's owner is not a player! From connection {:x}", aMessage.ConnectionId);
+        spdlog::warn("The entity's owner is not a player! enter id={:#x} alive={} target='{}' parent id={:#x} parent='{}' from connection {:x}",
+                     aMessage.get_id(), target.is_alive(), target.name().c_str(),
+                     player.raw_id(), player.name().c_str(), aMessage.ConnectionId);
         return;
     }
 
     if (pPlayer->Connection != aMessage.ConnectionId)
     {
-        spdlog::warn("The entity's owner is not the current player! From connection {:x}", aMessage.ConnectionId);
+        spdlog::warn("The entity's owner is not the current player! enter id={:#x} owned by '{}' on connection {:x}, sent from connection {:x}",
+                     aMessage.get_id(), pPlayer->Username, pPlayer->Connection, aMessage.ConnectionId);
         return;
     }
 
@@ -948,29 +957,36 @@ void Level::HandleExitVehicleRequest(PacketEvent<client::ExitVehicleRequest>& aM
 {
     flecs::entity target(GetWorld()->get_world(), aMessage.get_id());
 
+    // Same informative shape as the enter and movement rejections: the id as sent,
+    // liveness, and the actual parent, so a live desync names itself in one line.
     if (!target)
     {
-        spdlog::warn("Attempt to exit vehicle from invalid entity from connection {:x}", aMessage.ConnectionId);
+        spdlog::warn("Attempt to exit vehicle from invalid entity id={:#x} from connection {:x}",
+                     aMessage.get_id(), aMessage.ConnectionId);
         return;
     }
 
     const auto player = target.parent();
     if (!player)
     {
-        spdlog::warn("Attempt to exit vehicle an entity without an owner from connection {:x}", aMessage.ConnectionId);
+        spdlog::warn("Attempt to exit vehicle from an entity without an owner! exit id={:#x} alive={} target='{}' from connection {:x}",
+                     aMessage.get_id(), target.is_alive(), target.name().c_str(), aMessage.ConnectionId);
         return;
     }
 
     auto* pPlayer = player.get<PlayerComponent>();
     if (!pPlayer)
     {
-        spdlog::warn("The entity's owner is not a player! From connection {:x}", aMessage.ConnectionId);
+        spdlog::warn("The entity's owner is not a player! exit id={:#x} alive={} target='{}' parent id={:#x} parent='{}' from connection {:x}",
+                     aMessage.get_id(), target.is_alive(), target.name().c_str(),
+                     player.raw_id(), player.name().c_str(), aMessage.ConnectionId);
         return;
     }
 
     if (pPlayer->Connection != aMessage.ConnectionId)
     {
-        spdlog::warn("The entity's owner is not the current player! From connection {:x}", aMessage.ConnectionId);
+        spdlog::warn("The entity's owner is not the current player! exit id={:#x} owned by '{}' on connection {:x}, sent from connection {:x}",
+                     aMessage.get_id(), pPlayer->Username, pPlayer->Connection, aMessage.ConnectionId);
         return;
     }
 

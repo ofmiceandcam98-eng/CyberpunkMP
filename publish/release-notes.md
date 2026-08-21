@@ -4,10 +4,21 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
-## What changed — v0.3.79
+## What changed — v0.3.80
 
+- **"Uninstall launcher" works on installed copies.** It looked for an uninstaller filename that never existed, so every installed launcher was told it was "the portable build" and left with no way out. It now finds the real uninstaller (and points at Windows Settings > Apps as the fallback).
+- **The Blackwall look.** Red-on-black terminal palette, and the button now says JACK IN. Colors and words only - every control works exactly as before.
+- **Diagnostics checkmarks render again** instead of the garbled "âœ“" an encoding slip shipped.
+
+- **Uninstalling a test build restores the REAL current mod.** It used to bring back a backup DLL from whenever your first test build was installed — weeks old, under scripts the launcher had kept current — which is exactly the mismatch that makes RED4ext close the game at launch with "invalid native definitions". Restore now fetches the latest release's DLL, checksum-verified, and only falls back to the old backup when offline.
 - **Your game is found wherever it is installed.** The launcher now asks Epic for its exact install path instead of guessing at folder names, and looks for Xbox / Microsoft Store copies too. Steam and GOG were already handled, including libraries on a second drive.
 - **The autosave says so.** A brief SAVED appears when your character is stored, every ninety seconds. It was already saving - it just never told anyone, which is indistinguishable from being broken.
+
+## What changed — v0.3.79
+
+- **"Could not start the game: EACCES" is handled.** Windows sometimes refuses to start the game directly — usually a "Run as administrator" flag on Cyberpunk2077.exe or an antivirus interposing — even though the launcher found it fine (seen live on a Steam library on drive B:). The launcher now retries through the Windows shell, which can raise a proper UAC prompt instead of failing; if both attempts are refused, the error message finally says what to actually do about it.
+- **Epic installs are found automatically.** The launcher reads Epic's own install manifests, the same way it reads GOG's registry and Steam's library file. This matters even on default installs: Epic's standard path was in nobody's guess list, so a bone-stock Epic copy showed "game not found".
+- **More install layouts found on every drive A–Z**: `Games\GOG\...` and Epic's `Program Files` layout join the per-drive search. All 26 drive letters were already scanned; now more folder shapes are recognized on each.
 
 ## What changed — v0.3.78
 
@@ -346,3 +357,4 @@ The mod writes one log per launch to `red4ext\plugins\zzzCyberpunkMP\logs\`. Cra
 CyberpunkMP is the work of **Tilted Phoques and contributors**. This is an unofficial community build and is not released by them.
 
 Bundled prerequisites, all MIT licensed, all credit to their authors: [RED4ext](https://github.com/WopsS/RED4ext) (Octavian Dima), [redscript](https://github.com/jac3km4/redscript) (jac3km4), [Codeware](https://github.com/psiberx/cp2077-codeware), [ArchiveXL](https://github.com/psiberx/cp2077-archive-xl), [TweakXL](https://github.com/psiberx/cp2077-tweak-xl) (Pavel Siberx), and [Input Loader](https://github.com/jackhumbert/cyberpunk2077-input-loader) (Jack Humbert).
+

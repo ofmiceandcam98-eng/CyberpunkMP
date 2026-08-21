@@ -238,3 +238,37 @@ playerStateMachineInputContext.uiEmoteSelectionContext
 	];
 	CName forceInputContext = "UI_EmoteSelection";
 }
+
+// The mannequins above stand on PLAYER CUTSCENE entity templates, and cutscene rigs
+// ship almost no locomotion clips - that is the male glide, and it has been the male
+// glide since the first session. Story NPCs carry COMPLETE locomotion sets on their
+// own entities (RedSync corroborates: their remotes are literally Jackie and Panam,
+// and their movement is the part that works). These two records are the muppet
+// multiplayer manners - blank names so the server's name reaches the nameplate,
+// NoReaction, crouch/sprint - applied over the story records WITHOUT overriding
+// template or appearance, so the NPC's own rig and clips are what spawns.
+//
+// Deliberately NOT the defaults yet. Character.Panam spawns are proven (/npc);
+// Character.Jackie is the unvalidated half - one -puppet-record session decides.
+// TweakXL skips an unresolvable record and logs it, so a wrong Jackie name cannot
+// take the file down with it.
+
+Character.MaJackie : Character.Jackie {
+	priority = "SpawnableObjectPriority.Regular";
+	reactionPreset = "ReactionPresets.NoReaction";
+	uiNameplate = "UINameplate.MpPlayerSettings";
+	abilities += [ "Ability.CanCrouch", "Ability.CanSprint" ];
+	displayName = "";
+	fullDisplayName = "";
+	alternativeDisplayName = "";
+}
+
+Character.WaPanam : Character.Panam {
+	priority = "SpawnableObjectPriority.Regular";
+	reactionPreset = "ReactionPresets.NoReaction";
+	uiNameplate = "UINameplate.MpPlayerSettings";
+	abilities += [ "Ability.CanCrouch", "Ability.CanSprint" ];
+	displayName = "";
+	fullDisplayName = "";
+	alternativeDisplayName = "";
+}

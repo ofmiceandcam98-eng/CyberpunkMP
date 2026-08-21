@@ -14,6 +14,7 @@
 #include "App/Components/SpawningComponent.h"
 #include "App/Components/InterpolationComponent.h"
 #include "App/Components/DriverComponent.h"
+#include "App/World/PuppetRegistry.h"
 
 
 // Puts a network vehicle fully under remote control: no local player input, no local
@@ -423,6 +424,19 @@ bool VehicleSystem::HandleVehicleExitMessage(const PacketEvent<server::NotifyVeh
             pInterpolation->TimePoints.clear();
             pInterpolation->HasPrevious = false;
             pInterpolation->LastRenderTick = 0.f;
+        }
+
+        // Exit grace for the idle-controller hook. The engine hands this puppet a
+        // FRESH idle controller while it rebuilds the components post-exit, and the
+        // hook attaching our multi controller into that teardown is the confirmed
+        // 2026-08-20 23:31 crash (observer's log ends 2s after the attach line).
+        // Four seconds: the live attach came 2s after "exit done", doubled for slow
+        // frames. The hook forwards to vanilla idle during the window.
+        if (const auto* pEntityComponent = characterEntity.get<EntityComponent>())
+        {
+            App::PuppetRegistry::SetExitGrace(pEntityComponent->Id.hash, 4000);
+            spdlog::info("[VehicleSystem] puppet {:x} in exit grace for 4s - no controller attach during rebuild",
+                         pEntityComponent->Id.hash);
         }
 
         // Driver-puppet stand-down. The engine spends the next several frames tearing

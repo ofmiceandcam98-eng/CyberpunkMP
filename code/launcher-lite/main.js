@@ -144,6 +144,40 @@ async function resolveServer () {
   return { host: '127.0.0.1', port: 11778, source: 'fallback' }
 }
 
+/**
+ * Is a game server actually listening on this machine?
+ *
+ * Asked only when address resolution has fallen all the way through to 127.0.0.1. That
+ * address is correct for exactly one person - whoever is hosting - and wrong for everybody
+ * else, and the two cases are indistinguishable from the launcher's point of view until
+ * you look at whether anything is there.
+ *
+ * UDP, because that is what the game server binds. A TCP probe finds nothing even on a
+ * perfectly healthy host and would turn every local session into a false alarm.
+ *
+ * Treated as "yes" if the check itself fails. Being unable to read the socket table is not
+ * evidence that nobody is hosting, and guessing "no" there would block a launch that would
+ * have worked.
+ */
+function isServerListeningLocally (port) {
+  return new Promise((resolve) => {
+    try {
+      const check = spawn('netstat', ['-ano', '-p', 'UDP'], { windowsHide: true })
+
+      let out = ''
+      check.stdout.on('data', (c) => { out += c.toString() })
+      check.on('error', () => resolve(true))
+      check.on('close', () => {
+        // Matches ":11778" at the end of a local-address column, so port 117780 or a
+        // remote address that merely contains the digits cannot be mistaken for it.
+        resolve(new RegExp(`:${port}\\b`).test(out))
+      })
+    } catch {
+      resolve(true)
+    }
+  })
+}
+
 // ---------------------------------------------------------------------------
 // State held only in the main process
 // ---------------------------------------------------------------------------
@@ -312,12 +346,18 @@ function findGameDir () {
     candidates.push(`${letter}:\\Program Files\\WindowsApps\\Cyberpunk 2077`)
   }
 
-  // Common layouts on every drive letter, for GOG / Epic / manual installs.
+  // Common layouts on EVERY drive letter, A through Z - C first because it is the
+  // likeliest, A and B last because they are the rarest. But rare is not never: one
+  // player's Steam library lives on B:. Nothing here should ever be trimmed to "the
+  // usual drives"; a missing letter reads as "game not found" to the one person whose
+  // layout it excluded, and existsSync on an absent drive costs nothing.
   for (const letter of 'CDEFGHIJKLMNOPQRSTUVWXYZAB') {
     for (const suffix of ['SteamLibrary\\steamapps\\common\\Cyberpunk 2077',
                           'Games\\Cyberpunk 2077',
+                          'Games\\GOG\\Cyberpunk 2077',
                           'GOG Games\\Cyberpunk 2077',
                           'Program Files (x86)\\GOG Galaxy\\Games\\Cyberpunk 2077',
+                          'Program Files\\Epic Games\\Cyberpunk2077',
                           'Epic Games\\Cyberpunk2077',
                           'Cyberpunk 2077']) {
       candidates.push(`${letter}:\\${suffix}`)
@@ -2050,6 +2090,29 @@ async function launchGame () {
   // else the game silently used its own 127.0.0.1 default - connecting to their own PC
   // and timing out with nothing in the log explaining why.
   const server = await resolveServer()
+
+  // Refuse the launch that was always going to fail.
+  //
+  // Reaching 'fallback' means every real source was unavailable: nothing saved in
+  // Settings, server.json unfetchable, no MP_SERVER. The address left is 127.0.0.1, which
+  // is right for whoever is hosting and wrong for everybody else - and the player was
+  // never told which of those they are. They launched, waited through a load screen,
+  // connected to their own PC, and timed out with nothing anywhere explaining it.
+  //
+  // The check is what makes this safe to be strict about: if a server really is listening
+  // here, this is a host testing locally and the launch proceeds untouched.
+  if (server.source === 'fallback' && !(await isServerListeningLocally(server.port))) {
+    console.warn('[launch] refused - address resolution fell through to 127.0.0.1 with nothing listening')
+
+    throw new Error(
+      'Could not find out where the server is, so there is nothing to connect to.\n\n' +
+      'The address normally comes from the latest release, which means this is usually a ' +
+      'connection problem at this end - check your internet and try again in a minute.\n\n' +
+      'If it keeps happening, ask in the Discord: the address may need republishing. ' +
+      '(An admin can set one by hand in Settings to get in meanwhile.)'
+    )
+  }
+
   args.push(`--ip=${server.host}`)
   args.push(`--port=${server.port}`)
 
@@ -2092,16 +2155,11 @@ async function launchGame () {
     console.warn('[mods] duplicate check failed:', err.message)
   }
 
-  const child = spawn(exe, args, {
-    detached: true,
-    stdio: 'ignore'
-  })
-
-  child.on('error', (err) => {
+  const sendLaunchError = (message) => {
     if (mainWindow) {
-      mainWindow.webContents.send('launch-error', err.message)
+      mainWindow.webContents.send('launch-error', message)
     }
-  })
+  }
 
   // Watch for a crash.
   //
@@ -2109,13 +2167,63 @@ async function launchGame () {
   // the launcher IS still open we can still see it exit - and that is exactly when
   // someone needs their log. Nobody should have to go hunting through Program Files for
   // a file whose name they do not know.
-  child.on('exit', (code) => {
+  const onExit = (code) => {
     // 0 is a normal quit. 0xC0000005 (-1073741819) is an access violation - the crash
     // this project has spent days on. Anything else non-zero is also worth capturing.
     if (code === 0 || code === null) return
 
     handleGameCrash(code)
+  }
+
+  const child = spawn(exe, args, {
+    detached: true,
+    stdio: 'ignore'
   })
+
+  child.on('error', (err) => {
+    // EACCES here rarely means the file is unreadable - the launcher just FOUND it.
+    // It means CreateProcess was refused: a "Run as administrator" compatibility flag
+    // on Cyberpunk2077.exe (a UAC boundary Node cannot cross), restrictive ACLs on an
+    // unusual drive (seen live: a Steam library on B:), or an antivirus interposing.
+    // The Windows SHELL can cross the first case - it shows the UAC prompt instead of
+    // failing - so retry through cmd's `start`, which routes via ShellExecute.
+    if (err.code === 'EACCES' || err.code === 'EPERM' || err.code === 'UNKNOWN') {
+      console.warn(`[launch] direct start refused (${err.code}) - retrying through the shell, which can raise a UAC prompt`)
+
+      // One pre-quoted command line under windowsVerbatimArguments, because cmd has
+      // its own quoting rules and Node's default escaping garbles them. The empty ""
+      // is start's window-title slot - without it, start would treat the quoted exe
+      // path as the title and run nothing.
+      const line = ['/c', 'start', '""', `"${exe}"`, ...args.map((a) => `"${a}"`)].join(' ')
+      const retry = spawn('cmd.exe', [line], {
+        detached: true,
+        stdio: 'ignore',
+        windowsVerbatimArguments: true,
+        cwd: path.dirname(exe)
+      })
+
+      // The exit we can watch here is cmd's, not the game's - it leaves as soon as
+      // ShellExecute hands off, always with 0, so onExit stays quiet and crash capture
+      // for this session comes from the shipped logs instead. watchForGameExit() still
+      // tracks the real process by name either way.
+      retry.on('error', (err2) => {
+        sendLaunchError(
+          `Windows refused to start the game twice (${err.code}, then ${err2.code}). ` +
+          'Usual causes: "Run as administrator" is ticked on Cyberpunk2077.exe ' +
+          '(right-click it > Properties > Compatibility - untick it), or your ' +
+          'antivirus is blocking the launcher from starting programs. The game files ' +
+          'themselves are fine.'
+        )
+      })
+      retry.on('exit', onExit)
+      retry.unref()
+      return
+    }
+
+    sendLaunchError(err.message)
+  })
+
+  child.on('exit', onExit)
 
   child.unref()
 
@@ -2442,6 +2550,25 @@ async function startCoordApiQuietly () {
   } catch (err) {
     console.warn('[coord] could not start:', err.message)
   }
+}
+
+/**
+ * Does THIS machine host the coordination feed?
+ *
+ * Having the source is not the same as owning the service. Any checkout has the source,
+ * and a second instance is not a spare - it has its own participant keys and its own
+ * append-only history, and the two diverge silently from the moment both are running.
+ *
+ * Holding the participant file is what makes a machine the host, so that is the question
+ * asked. A fresh clone does not have one and stays out of the way; the machine that has
+ * been running the feed all along keeps doing so.
+ */
+function hostsCoordApi () {
+  const script = coordApiPath()
+  if (!script) return false
+
+  const dataDir = process.env.NCO_COORD_DATA || path.join(path.dirname(script), 'data')
+  return existsSync(path.join(dataDir, 'participants.json'))
 }
 
 async function restartServer () {
@@ -3258,12 +3385,23 @@ ipcMain.handle('launcher:openInstallDir', async () => {
  */
 ipcMain.handle('launcher:uninstall', async () => {
   const dir = path.dirname(process.execPath)
-  const uninstaller = path.join(dir, 'Uninstall Night City Online Launcher.exe')
 
-  if (!existsSync(uninstaller)) {
+  // Found by scanning, not by a hardcoded name. Two productNames exist (package.json
+  // top-level says "Night City Online", the build block overrides with "...Launcher"),
+  // so a hardcoded filename is one rename away from declaring every install portable.
+  // The scan also keeps the answer honest for people RUNNING a portable copy while an
+  // installed copy sits in AppData - the live case behind the 2026-08-21 report.
+  let uninstaller = null
+  try {
+    const found = readdirSync(dir).find((f) => /^uninstall.*\.exe$/i.test(f))
+    if (found) uninstaller = path.join(dir, found)
+  } catch { /* unreadable dir - treat as portable below */ }
+
+  if (!uninstaller) {
     return {
       ok: false,
-      error: 'No uninstaller here - this looks like the portable build. Just delete the .exe.'
+      error: 'No uninstaller here - this looks like the portable build. Just delete the .exe. ' +
+             '(Installed via the Setup? Use Windows Settings > Apps > Night City Online.)'
     }
   }
 
@@ -3739,14 +3877,48 @@ ipcMain.handle('prerelease:restore', async () => {
     const dllPath = path.join(modDir, 'CyberpunkMP.dll')
     const backupPath = path.join(modDir, 'CyberpunkMP.dll.shipped')
 
+    // Restore fetches the CURRENT release DLL rather than trusting the backup.
+    //
+    // The backup is first-write-wins, so after weeks of test builds it holds whatever
+    // DLL was current when the FIRST one was installed - while the launcher has kept
+    // updating the mod's SCRIPTS to the latest release the whole time. Scripts declare
+    // native functions the DLL must define; restore an old DLL under new scripts and
+    // RED4ext refuses to start the game at all ("invalid native definitions" - the
+    // live failure of 2026-08-20, a test.5 DLL under v0.3.78 scripts). The latest
+    // release's DLL and the latest release's scripts are the only pair guaranteed to
+    // agree, so that is what restore means now. The backup remains the offline
+    // fallback: possibly stale, but strictly better than a test build known-dead.
+    try {
+      const release = await axios.get(
+        `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, { timeout: 8000 })
+      const asset = (release.data?.assets || []).find((a) => a.name === 'CyberpunkMP.dll')
+
+      if (asset) {
+        const download = await axios.get(asset.browser_download_url,
+          { responseType: 'arraybuffer', timeout: 120000, maxRedirects: 5 })
+        const bytes = Buffer.from(download.data)
+
+        const expected = String(asset.digest || '').replace(/^sha256:/, '').toLowerCase()
+        const intact = !expected ||
+          crypto.createHash('sha256').update(bytes).digest('hex') === expected
+
+        if (intact) {
+          writeFileSync(dllPath, bytes)
+          if (existsSync(backupPath)) unlinkSync(backupPath)
+          saveSettings({ testBuildTag: undefined })
+          return { ok: true, source: 'latest release' }
+        }
+      }
+    } catch { /* offline or API down - fall back to the local backup */ }
+
     if (!existsSync(backupPath))
-      return { ok: false, error: 'No shipped backup found - use Verify game files instead.' }
+      return { ok: false, error: 'Could not fetch the shipped mod and no local backup exists - use Reinstall mod files.' }
 
     copyFileSync(backupPath, dllPath)
     unlinkSync(backupPath)
     saveSettings({ testBuildTag: undefined })
 
-    return { ok: true }
+    return { ok: true, source: 'local backup (offline) - Reinstall mod files if the game will not start' }
   } catch (err) {
     return { ok: false, error: err.message }
   }
@@ -4113,6 +4285,23 @@ app.whenReady().then(() => {
   mainWindow.once('ready-to-show', () => {
     offerShortcuts()
     initAutoUpdater()
+
+    // Bring the coordination feed up with the launcher, on the machine that hosts it.
+    //
+    // It was only ever started by server:start and server:restart, which was right while
+    // Cam hosted the game server - the feed came up beside it. After the servers moved to
+    // the NAS he stopped starting one, so neither handler fired again and the service that
+    // "starts automatically" quietly stopped being started at all.
+    //
+    // Nothing broke; the trigger simply stopped happening. The feed was then down for two
+    // days without anyone noticing, and posts made from the other side during that window
+    // were not queued - they were never made. Seventeen releases are missing from the
+    // history because of it.
+    //
+    // Tied to the launcher instead, because that is the thing Cam actually opens. Guarded
+    // by hostsCoordApi so a checkout on someone else's machine does not start a second
+    // one, and startCoordApiQuietly returns early if it is already up.
+    if (hostsCoordApi()) startCoordApiQuietly()
   })
 
   // Catch-up sweep for logs nobody shipped live: a crash that took the launcher down
