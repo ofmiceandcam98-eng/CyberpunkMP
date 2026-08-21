@@ -22,6 +22,86 @@ import CyberpunkMP.World.*
 // (core/ui/baseControllers/widgetController.script:84), not a free function, so it only
 // resolves on classes that inherit it. The controller does; the scenario does not.
 
+/**
+ * Waits for the server to say what character this account owns, then acts on it.
+ *
+ * THE SELECTOR'S STATE MACHINE, in the one place the game gives us to put it. The brief's
+ * own instruction is to make the states work before making them pretty, and this is that:
+ * CHARACTER_SELECT is the interval between pressing MULTIPLAYER and the answer arriving.
+ *
+ * Polls rather than listens because the answer lands on the network thread into native
+ * state - there is no script-side event to subscribe to. Ten attempts at a quarter second
+ * is two and a half seconds, which is generous for a round trip on a tailnet and short
+ * enough that a dead server does not leave somebody staring at a menu that never responds.
+ *
+ * Giving up says so. Failing silently here would be indistinguishable from the button not
+ * working, which is the single most expensive bug shape this project has had.
+ */
+public class MpSelectorPoll extends DelayCallback {
+    public let controller: wref<SingleplayerMenuGameController>;
+    public let attempts: Int32;
+
+    public func Call() -> Void {
+        let network = GameInstance.GetNetworkWorldSystem();
+
+        if !IsDefined(network) || !IsDefined(this.controller) {
+            return;
+        }
+
+        if network.IsCharacterStatusKnown() {
+            this.controller.MpEnterWithCharacter();
+            return;
+        }
+
+        this.attempts += 1;
+
+        if this.attempts >= 10 {
+            FTLogError(s"[CyberpunkMP] the server never said what character this account has - is it up?");
+            return;
+        }
+
+        let again = new MpSelectorPoll();
+        again.controller = this.controller;
+        again.attempts = this.attempts;
+
+        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(again, 0.25, false);
+    }
+}
+
+@addMethod(SingleplayerMenuGameController)
+public func MpEnterWithCharacter() -> Void {
+    let network = GameInstance.GetNetworkWorldSystem();
+    if !IsDefined(network) {
+        return;
+    }
+
+    if network.HasCharacter() {
+        FTLog(s"[CyberpunkMP] playing as '\(network.GetCharacterName())' (level \(network.GetCharacterLevel()))");
+
+        // Arm the in-world half. The world still has to be loaded to have somewhere to
+        // stand; what changed is that the server already knows who is arriving.
+        network.RequestJoin();
+        this.GetSystemRequestsHandler().LoadLastCheckpoint(false);
+        return;
+    }
+
+    // No character on this account - the CREATE branch.
+    //
+    // Routed through the game's own New Game flow for the reason spelled out below: the
+    // customization system is native-only and cannot be opened on demand, so New Game is
+    // the only real character creation that exists.
+    FTLog(s"[CyberpunkMP] this account has no character - starting creation");
+
+    network.RequestJoin();
+    network.MarkNewCharacter();
+
+    // The menu's own New Game event, not a call on the requests handler - RequestNewGame
+    // does not exist there, as the NEW CHARACTER path below already established. This is
+    // the event the vanilla New Game item spawns, so it is the real flow with the real
+    // lifepath and creator screens.
+    this.m_menuEventDispatcher.SpawnEvent(n"OnNewGame");
+}
+
 @wrapMethod(SingleplayerMenuGameController)
 private func PopulateMenuItemList() -> Void {
     wrappedMethod();
@@ -72,13 +152,39 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
         FTLog(s"[CyberpunkMP] MULTIPLAYER selected from the main menu");
 
         let network = GameInstance.GetNetworkWorldSystem();
-        if IsDefined(network) {
-            network.RequestJoin();
-        } else {
+        if !IsDefined(network) {
             FTLogError(s"[CyberpunkMP] No NetworkWorldSystem in the menu - cannot arm the join");
+            return true;
         }
 
-        this.GetSystemRequestsHandler().LoadLastCheckpoint(false);
+        // ASK THE SERVER FIRST, then decide where this player goes.
+        //
+        // This used to load a save immediately and connect once the world was up, which
+        // meant the server's answer to "what character does this account own" arrived
+        // AFTER the player was already standing in the world as it. There was no moment in
+        // which a selector could exist.
+        //
+        // So connect here, from the menu, and wait. The socket survives the load into the
+        // world - only an explicit Disconnect closes it - and the spawn is held back until
+        // EnterWorld, so authenticating early does not put anybody anywhere.
+        //
+        // Connecting is skipped when we already are: re-entering the menu after a
+        // disconnect-and-return should not stack a second connection, and each Connect
+        // aborts the previous one.
+        if !network.IsConnected() {
+            FTLog(s"[CyberpunkMP] not connected yet - signing in before offering a character");
+            network.Connect();
+        }
+
+        // The wait is a poll rather than a callback because the answer arrives on the
+        // network thread into native state; there is no script event to hang off. A
+        // quarter second is well inside a human's tolerance for a menu press and well
+        // outside the round trip.
+        let poll = new MpSelectorPoll();
+        poll.controller = this;
+        poll.attempts = 0;
+
+        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(poll, 0.25, false);
         return true;
     }
 

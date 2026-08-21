@@ -101,8 +101,20 @@ public class MultiplayerGameController extends inkGameController {
         // actually asked to join on, and not for any load after it.
         let network = GameInstance.GetNetworkWorldSystem();
         if IsDefined(network) && network.ConsumeJoinRequest() {
-            FTLog(s"[MultiplayerGameController] Joining - requested from the main menu");
-            network.Connect();
+            // Already signed in means the selector did it, back on the main menu, and the
+            // spawn has been held ever since. Connecting again here would abort that
+            // connection and start a second one - so this sends the held spawn instead,
+            // which is the moment the player actually enters the world.
+            //
+            // Not connected is the original route: the menu armed the join and this is the
+            // first point where there is somewhere for other players to be spawned.
+            if network.IsConnected() {
+                FTLog(s"[MultiplayerGameController] Already signed in - entering the world");
+                network.EnterWorld();
+            } else {
+                FTLog(s"[MultiplayerGameController] Joining - requested from the main menu");
+                network.Connect();
+            }
         }
     }
 

@@ -4177,8 +4177,30 @@ ipcMain.handle('prerelease:install', async (_event, tag) => {
       `https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${encodeURIComponent(tag)}`,
       { timeout: 8000 })
 
-    const asset = (release.data?.assets || []).find((a) => a.name === 'CyberpunkMP.dll')
-    if (!asset) return { ok: false, error: 'That pre-release has no CyberpunkMP.dll attached.' }
+    const assets = release.data?.assets || []
+
+    // The WHOLE payload when the build has one, not just the DLL.
+    //
+    // Test builds used to swap CyberpunkMP.dll and nothing else, which works only while
+    // the change under test is pure C++ - "remote players MOVE" was, so it was fine. It
+    // silently delivers NOTHING when the change lives in redscript, and half this mod
+    // does: menus, the seat transition, appearance re-application, the time and pause
+    // hooks. The build installs, reports success, and the tester sees no difference.
+    //
+    // This is the same trap UpdateMod.ps1 already calls out by name: "Updating only the
+    // DLL was a trap: fixes that live in redscript silently never reached anyone, so two
+    // people could be on the same build and behave differently."
+    //
+    // ModPayload.zip is the DLL, the redscript and the Rpc definitions together - the
+    // same archive a normal install applies - so the two halves cannot disagree.
+    const payload = assets.find((a) => a.name === 'ModPayload.zip')
+    const dllAsset = assets.find((a) => a.name === 'CyberpunkMP.dll')
+
+    if (!payload && !dllAsset) {
+      return { ok: false, error: 'That pre-release has no ModPayload.zip or CyberpunkMP.dll attached.' }
+    }
+
+    const asset = payload || dllAsset
 
     const download = await axios.get(asset.browser_download_url,
       { responseType: 'arraybuffer', timeout: 120000, maxRedirects: 5 })
@@ -4196,12 +4218,27 @@ ipcMain.handle('prerelease:install', async (_event, tag) => {
 
     // The FIRST shipped dll is the one kept. Installing test build B over test build A
     // must not make the backup a copy of test build A.
+    //
+    // Kept for the payload path too, purely as the offline fallback for Restore. Restore
+    // prefers to re-download the current release, because that is the only DLL guaranteed
+    // to agree with the scripts it ships alongside.
     if (existsSync(dllPath) && !existsSync(backupPath)) copyFileSync(dllPath, backupPath)
 
-    writeFileSync(dllPath, bytes)
+    if (payload) {
+      // Same refusal as a normal install: an error page or a truncated archive must not
+      // be unpacked over a working mod.
+      if (bytes.length < 1024 * 1024) {
+        return { ok: false, error: `That payload looks wrong (${bytes.length} bytes) - install left alone.` }
+      }
+
+      new AdmZip(bytes).extractAllTo(modDir, true)
+    } else {
+      writeFileSync(dllPath, bytes)
+    }
+
     saveSettings({ testBuildTag: tag })
 
-    return { ok: true, tag }
+    return { ok: true, tag, payload: Boolean(payload) }
   } catch (err) {
     return { ok: false, error: err.message }
   }
@@ -4228,10 +4265,20 @@ ipcMain.handle('prerelease:restore', async () => {
     // release's DLL and the latest release's scripts are the only pair guaranteed to
     // agree, so that is what restore means now. The backup remains the offline
     // fallback: possibly stale, but strictly better than a test build known-dead.
+    // Prefer the release's WHOLE payload over its DLL alone.
+    //
+    // Test builds can now replace the scripts as well as the DLL, so putting back only
+    // the DLL would leave a test build's redscript in place under a release DLL - the
+    // exact mismatch the note above is about, just from the other direction. Re-extracting
+    // ModPayload.zip restores both halves from the same release, which is the only pair
+    // guaranteed to agree.
     try {
       const release = await axios.get(
         `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, { timeout: 8000 })
-      const asset = (release.data?.assets || []).find((a) => a.name === 'CyberpunkMP.dll')
+
+      const assets = release.data?.assets || []
+      const payload = assets.find((a) => a.name === 'ModPayload.zip')
+      const asset = payload || assets.find((a) => a.name === 'CyberpunkMP.dll')
 
       if (asset) {
         const download = await axios.get(asset.browser_download_url,
@@ -4242,11 +4289,15 @@ ipcMain.handle('prerelease:restore', async () => {
         const intact = !expected ||
           crypto.createHash('sha256').update(bytes).digest('hex') === expected
 
-        if (intact) {
-          writeFileSync(dllPath, bytes)
+        const plausible = !payload || bytes.length >= 1024 * 1024
+
+        if (intact && plausible) {
+          if (payload) new AdmZip(bytes).extractAllTo(modDir, true)
+          else writeFileSync(dllPath, bytes)
+
           if (existsSync(backupPath)) unlinkSync(backupPath)
           saveSettings({ testBuildTag: undefined })
-          return { ok: true, source: 'latest release' }
+          return { ok: true, source: payload ? 'latest release payload' : 'latest release' }
         }
       }
     } catch { /* offline or API down - fall back to the local backup */ }

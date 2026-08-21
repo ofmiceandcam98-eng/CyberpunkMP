@@ -82,6 +82,22 @@ public native class NetworkWorldSystem extends IGameSystem {
     // FTLog goes somewhere we cannot read. This lands in CyberpunkMP.log.
     public native func ScriptLog(text: String) -> Void;
     public native func ConsumeJoinRequest() -> Bool;
+
+    // What the SERVER says this account owns. Never derived from the save on disk - that
+    // save is the world template, not anybody's identity.
+    //
+    // Status-known is separate from has-character on purpose: before the authentication
+    // reply lands both are false, and a selector that could not tell those apart would
+    // offer CREATE to somebody who already has a character.
+    public native func IsCharacterStatusKnown() -> Bool;
+    public native func HasCharacter() -> Bool;
+    public native func GetCharacterName() -> String;
+    public native func GetCharacterLevel() -> Int32;
+    public native func HasCharacterSpawnedBefore() -> Bool;
+
+    // Sends the spawn that was held back while the player sat on the selector. A no-op
+    // when none is owed, so the old in-world connect path cannot announce twice.
+    public native func EnterWorld() -> Void;
     public native func GetEntityIdByServerId(serverId: Uint64) -> EntityID;
     public native func GetAppearanceSystem() -> ref<AppearanceSystem>;
     public native func GetChatSystem() -> ref<ChatSystem>;
