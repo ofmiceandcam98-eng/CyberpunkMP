@@ -6,6 +6,10 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 ## What changed — v0.3.80
 
+- **"Uninstall launcher" works on installed copies.** It looked for an uninstaller filename that never existed, so every installed launcher was told it was "the portable build" and left with no way out. It now finds the real uninstaller (and points at Windows Settings > Apps as the fallback).
+- **The Blackwall look.** Red-on-black terminal palette, and the button now says JACK IN. Colors and words only - every control works exactly as before.
+- **Diagnostics checkmarks render again** instead of the garbled "âœ“" an encoding slip shipped.
+
 - **Uninstalling a test build restores the REAL current mod.** It used to bring back a backup DLL from whenever your first test build was installed — weeks old, under scripts the launcher had kept current — which is exactly the mismatch that makes RED4ext close the game at launch with "invalid native definitions". Restore now fetches the latest release's DLL, checksum-verified, and only falls back to the old backup when offline.
 - **Your game is found wherever it is installed.** The launcher now asks Epic for its exact install path instead of guessing at folder names, and looks for Xbox / Microsoft Store copies too. Steam and GOG were already handled, including libraries on a second drive.
 - **The autosave says so.** A brief SAVED appears when your character is stored, every ninety seconds. It was already saving - it just never told anyone, which is indistinguishable from being broken.

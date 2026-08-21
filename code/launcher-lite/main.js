@@ -3385,12 +3385,23 @@ ipcMain.handle('launcher:openInstallDir', async () => {
  */
 ipcMain.handle('launcher:uninstall', async () => {
   const dir = path.dirname(process.execPath)
-  const uninstaller = path.join(dir, 'Uninstall Night City Online Launcher.exe')
 
-  if (!existsSync(uninstaller)) {
+  // Found by scanning, not by a hardcoded name. electron-builder names the file
+  // "Uninstall <productName>.exe" - ours is "Uninstall Night City Online.exe" - and
+  // this code looked for "...Online Launcher.exe", a file that never existed. Every
+  // INSTALLED copy was told it was the portable build and to "just delete the .exe",
+  // which is how a player ends up unable to uninstall at all.
+  let uninstaller = null
+  try {
+    const found = readdirSync(dir).find((f) => /^uninstall.*\.exe$/i.test(f))
+    if (found) uninstaller = path.join(dir, found)
+  } catch { /* unreadable dir - treat as portable below */ }
+
+  if (!uninstaller) {
     return {
       ok: false,
-      error: 'No uninstaller here - this looks like the portable build. Just delete the .exe.'
+      error: 'No uninstaller here - this looks like the portable build. Just delete the .exe. ' +
+             '(Installed via the Setup? Use Windows Settings > Apps > Night City Online.)'
     }
   }
 
