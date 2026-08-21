@@ -41,6 +41,17 @@ if [ -n "$PLAYERS" ] && [ "$PLAYERS" -gt 0 ]; then
     exit 0   # retry on the next cron tick; the fetch already happened, pull comes later
 fi
 
+# Rebuild only when the commits touch something the server image actually uses.
+# Launcher releases and their bookkeeping (version bumps, notes, publish/ assets)
+# land on this branch constantly, and every one used to rebuild the whole native
+# image and RESTART the server - players saw "server not reachable" for each
+# no-op deploy. A pull with no relevant changes is recorded and left running.
+if ! git diff --name-only "$LOCAL" "$REMOTE" | grep -qE '^(code/(server|common|protocol|assets|client)|docker|Dockerfile|xmake)'; then
+    git pull --quiet || { echo "$(date -Is) pull failed" >> "$LOG"; exit 1; }
+    echo "$(date -Is) pulled $(git rev-parse --short @) - nothing the server uses changed, no restart" >> "$LOG"
+    exit 0
+fi
+
 echo "$(date -Is) updating $LOCAL -> $REMOTE" >> "$LOG"
 git pull --quiet || { echo "$(date -Is) pull failed" >> "$LOG"; exit 1; }
 
