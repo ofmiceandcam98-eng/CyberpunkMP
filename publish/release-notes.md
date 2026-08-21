@@ -4,6 +4,12 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.81
+
+- **THE FOOTPRINT RULE: uninstall now removes everything.** The launcher program, its Windows "Apps" entry, every data folder it has ever used (settings, sign-in, keys - old versions' folders included), updater caches, shortcuts, Desktop crash-log copies, dead registry entries from older installs, and the multiplayer mod itself. A machine after uninstall takes a fresh build as if the launcher had never been there. This is now a hard rule in the code: every location the launcher writes is registered in one manifest that uninstall and Deep clean both sweep.
+- **Settings gains "Deep clean".** Scans for leftovers from OLD installs - stale data folders under previous names, ghost "Apps" rows pointing at deleted uninstallers, orphaned shortcuts, crash logs piling on the Desktop - shows you the list, and removes it. Exactly what a stuck fresh install needs.
+- Uninstalling from a portable copy now wipes all launcher data too, then tells you the .exe itself is the one remaining file to delete.
+
 ## What changed — v0.3.80
 
 - **"Uninstall launcher" works on installed copies.** It looked for an uninstaller filename that never existed, so every installed launcher was told it was "the portable build" and left with no way out. It now finds the real uninstaller (and points at Windows Settings > Apps as the fallback).
