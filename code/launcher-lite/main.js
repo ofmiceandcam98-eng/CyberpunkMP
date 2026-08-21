@@ -22,6 +22,11 @@ import AdmZip from 'adm-zip'
 // .zip - AdmZip alone made every non-zip mod fail with "No END header found" (live,
 // 2026-08-21: Fast Launch). The binary is asar-unpacked so it can actually execute.
 import { path7za } from '7zip-bin'
+// RAR is the one format 7za genuinely cannot read (exit 2, live within the hour of
+// shipping it - Fast Launch is a .rar). Full 7-Zip could, but does not ship as a
+// clean binary; unrar-as-WASM does the one legal thing the unRAR license allows -
+// extraction - with no binary and no asar gymnastics.
+import { createExtractorFromData } from 'node-unrar-js'
 const SEVEN_ZIP = path7za.replace('app.asar', 'app.asar.unpacked')
 import crypto from 'node:crypto'
 import os from 'node:os'
@@ -4770,9 +4775,20 @@ async function installModArchive (modId, buffer) {
   if (isZip) {
     const zip = new AdmZip(buffer)
     entries = zip.getEntries().filter((e) => !e.isDirectory)
+  } else if (isRar) {
+    // In-memory WASM extraction; the results feed the same install loop as zip
+    // entries - one guard, one record, whatever the wrapper was.
+    const data = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+    const extractor = await createExtractorFromData({ data })
+    const { files: rarFiles } = extractor.extract()
+    entries = [...rarFiles]
+      .filter((f) => !f.fileHeader.flags.directory && f.extraction)
+      .map((f) => ({
+        entryName: f.fileHeader.name,
+        getData: () => Buffer.from(f.extraction)
+      }))
   } else {
-    // .7z and .rar go through 7za into a scratch folder, then feed the same install
-    // loop as zip entries - one guard, one record, whatever the wrapper was.
+    // .7z goes through 7za into a scratch folder, then feeds the same install loop.
     const tmpRoot = path.join(os.tmpdir(), `nco-mod-${modId}-${Date.now()}`)
     const outDir = path.join(tmpRoot, 'out')
     mkdirSync(outDir, { recursive: true })
@@ -4782,7 +4798,8 @@ async function installModArchive (modId, buffer) {
     const run = spawnSync(SEVEN_ZIP, ['x', '-y', `-o${outDir}`, archivePath], { windowsHide: true })
     if (run.status !== 0) {
       rmSync(tmpRoot, { recursive: true, force: true })
-      throw new Error(`Could not extract the archive (7-Zip exit ${run.status ?? run.error?.message}).`)
+      const detail = (run.stderr?.toString() || run.error?.message || '').trim().split(/\r?\n/).pop() || ''
+      throw new Error(`Could not extract the archive (7-Zip exit ${run.status ?? '?'}${detail ? ': ' + detail : ''}).`)
     }
 
     const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((d) => {
