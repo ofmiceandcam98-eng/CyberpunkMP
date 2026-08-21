@@ -105,38 +105,101 @@ function defaultServerDir () {
 const GAME_ARGS = ['-skipStartScreen']
 const FAST_LAUNCH_MOD_ID = 5186
 
+// Install one Nexus mod DIRECTLY into the game folder - the path this launcher owns
+// end to end (installModArchive extracts it and records every file it places).
+// Nexus permits fully-automated downloads only for PREMIUM API keys - their policy,
+// not a gap here, and working around it would breach their API terms. A free key
+// gets { needsWebsite: true } and the website's "Mod Manager Download" button, which
+// routes straight back through our nxm:// handler and lands in the same
+// launcher-owned path. Either road, same destination.
+async function installNexusMod (modId) {
+  const installed = loadInstalledMods()
+  if (installed && (installed[modId] || installed[String(modId)])) return { ok: true, already: true }
+
+  const apiKey = loadNexusKey()
+  if (!apiKey) return { needsWebsite: true, reason: 'no Nexus key saved' }
+
+  const headers = { apikey: apiKey, 'User-Agent': 'NightCityOnline-Launcher/1.0' }
+
+  const files = await axios.get(
+    `https://api.nexusmods.com/v1/games/cyberpunk2077/mods/${modId}/files.json?category=main`,
+    { headers, timeout: 15000 })
+  const fileId = files.data?.files?.[0]?.file_id
+  if (!fileId) return { needsWebsite: true, reason: 'no main file listed' }
+
+  let url = null
+  try {
+    const link = await axios.get(
+      `https://api.nexusmods.com/v1/games/cyberpunk2077/mods/${modId}/files/${fileId}/download_link.json`,
+      { headers, timeout: 15000 })
+    url = link.data?.[0]?.URI
+  } catch (err) {
+    // 403 is Nexus saying "free account" - direct links are premium-only.
+    if (err.response?.status === 403) return { needsWebsite: true, reason: 'free Nexus account' }
+    throw err
+  }
+  if (!url) return { needsWebsite: true, reason: 'no download link' }
+
+  const file = await axios.get(url, { responseType: 'arraybuffer', timeout: 300000 })
+  const result = await installModArchive(modId, Buffer.from(file.data))
+  return { ok: true, ...result }
+}
+
 async function ensureFastLaunch () {
   try {
-    const installed = loadInstalledMods()
-    if (installed && (installed[FAST_LAUNCH_MOD_ID] || installed[String(FAST_LAUNCH_MOD_ID)])) return
-
-    const apiKey = loadNexusKey()
-    if (!apiKey) return // quiet - the Mods panel still offers the one-click install
-
-    const headers = { apikey: apiKey, 'User-Agent': 'NightCityOnline-Launcher/1.0' }
-
-    const files = await axios.get(
-      `https://api.nexusmods.com/v1/games/cyberpunk2077/mods/${FAST_LAUNCH_MOD_ID}/files.json?category=main`,
-      { headers, timeout: 15000 })
-    const fileId = files.data?.files?.[0]?.file_id
-    if (!fileId) return
-
-    // Direct links work for premium keys; free accounts need the website's nxm
-    // handshake, which cannot be automated - they keep the Mods panel button.
-    const link = await axios.get(
-      `https://api.nexusmods.com/v1/games/cyberpunk2077/mods/${FAST_LAUNCH_MOD_ID}/files/${fileId}/download_link.json`,
-      { headers, timeout: 15000 })
-    const url = link.data?.[0]?.URI
-    if (!url) return
-
-    const file = await axios.get(url, { responseType: 'arraybuffer', timeout: 300000 })
-    await installModArchive(FAST_LAUNCH_MOD_ID, Buffer.from(file.data))
-    launcherLog('boot policy: Fast Launch auto-installed - intro videos are gone from the next boot')
+    const result = await installNexusMod(FAST_LAUNCH_MOD_ID)
+    if (result.ok && !result.already)
+      launcherLog('boot policy: Fast Launch auto-installed - intro videos are gone from the next boot')
+    else if (result.needsWebsite)
+      launcherLog(`boot policy: Fast Launch auto-install skipped (${result.reason})`)
   } catch (err) {
     // Never a blocker and never a nag; the policy converges when it can.
     launcherLog(`boot policy: Fast Launch auto-install skipped (${err.response?.status || err.message})`)
   }
 }
+
+// Settings > "Direct install from Nexus": every mod on the server's list that is
+// missing here, in one click - installed straight into the game folder on a premium
+// key, or handed one page at a time to the website's Mod Manager Download button
+// (which comes right back through our nxm:// handler) on a free one.
+ipcMain.handle('mods:installMissing', async () => {
+  try {
+    const mods = await fetchModList()
+    const level = await refreshUserLevel().catch(() => 'player')
+    const isStaff = (LEVELS[level] || 0) >= LEVELS.admin || isAdmin()
+
+    const done = []
+    const manual = []
+    const failed = []
+
+    for (const mod of mods) {
+      if (mod.devOnly && !isStaff) continue
+      try {
+        const result = await installNexusMod(mod.nexusModId)
+        if (result.ok && !result.already) done.push(mod.nexusModId)
+        else if (result.needsWebsite) manual.push(mod.nexusModId)
+      } catch (err) {
+        failed.push(`${mod.nexusModId} (${err.response?.status || err.message})`)
+      }
+    }
+
+    if (manual.length) {
+      // One page at a time - a browser volley of every missing mod is chaos. The nxm
+      // handler installs each as its button is pressed; running this again picks up
+      // where the person left off.
+      shell.openExternal(`https://www.nexusmods.com/cyberpunk2077/mods/${manual[0]}?tab=files`)
+    }
+
+    const parts = []
+    if (done.length) parts.push(`installed ${done.length} directly`)
+    if (manual.length) parts.push(`${manual.length} need one click on Nexus (page opened - press "Mod Manager Download", it lands here automatically)`)
+    if (failed.length) parts.push(`failed: ${failed.join(', ')}`)
+
+    return { ok: !failed.length, message: parts.length ? parts.join('; ') : 'Everything on the list is already installed.' }
+  } catch (err) {
+    return { ok: false, message: err.message }
+  }
+})
 
 // Where the game server is.
 //
@@ -3776,6 +3839,7 @@ ipcMain.handle('launcher:uninstall', async () => {
       '- updater caches, shortcuts, crash-log copies on the Desktop\n' +
       '- dead registry entries left by older installs\n' +
       (modDir ? `- the multiplayer mod:  ${modDir}\n` : '') +
+      '- every Nexus mod this launcher installed (the frameworks stay)\n' +
       '\nCyberpunk 2077 itself, your saves, and the framework mods (RED4ext, ' +
       'redscript, Codeware...) are not touched. A fresh build installs cleanly ' +
       'afterwards.',
@@ -3799,6 +3863,25 @@ ipcMain.handle('launcher:uninstall', async () => {
         try { rmSync(modDir, { recursive: true, force: true }) } catch (err) { note = `The mod folder resisted deletion (${err.code || err.message}). ` }
       }
     }
+
+    // Every Nexus mod this launcher installed is on record, file by file - THE RULE
+    // covers what we put on the machine wherever we put it, so those files go too.
+    // The prerequisite frameworks stay: FullInstall placed them for the game's
+    // benefit and other, non-NCO mods may depend on them.
+    try {
+      const gameDir = findGameDir()
+      const record = loadInstalledMods()
+      if (gameDir && record) {
+        const root = path.resolve(gameDir).toLowerCase()
+        for (const entry of Object.values(record)) {
+          for (const rel of entry.files || []) {
+            const target = path.resolve(path.join(gameDir, rel))
+            if (!target.toLowerCase().startsWith(root)) continue
+            try { rmSync(target, { force: true }) } catch { /* locked - the purge report below covers honesty */ }
+          }
+        }
+      }
+    } catch { /* record unreadable - nothing to sweep */ }
 
     const failed = purgeResidue(collectResidue(true))
     if (failed.length) note += `Could not remove: ${failed.join(', ')}. `

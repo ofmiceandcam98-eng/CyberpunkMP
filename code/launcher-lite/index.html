@@ -825,6 +825,19 @@
 
           <div class="tool">
             <div>
+              <div class="tool-name">Direct install from Nexus</div>
+              <div class="tool-desc">
+                Installs every mod on the server's list that is missing here, straight
+                into the game folder. Premium Nexus keys download directly; free
+                accounts get the mod page opened - press "Mod Manager Download" there
+                and it lands here automatically either way.
+              </div>
+            </div>
+            <button class="action ghost" id="nexusDirectInstall">Install missing</button>
+          </div>
+
+          <div class="tool">
+            <div>
               <div class="tool-name">Reinstall mod files</div>
               <div class="tool-desc">
                 Re-downloads the current build over the top. Fixes a corrupted or partial
@@ -1990,6 +2003,15 @@
     // Report every problem at once. Fixing one at a time, re-running, and finding
     // another is a miserable way to learn what is wrong.
     setStatus(result.problems.join('  |  '), 'error')
+  })
+
+  $('nexusDirectInstall').addEventListener('click', async () => {
+    const btn = $('nexusDirectInstall')
+    btn.disabled = true
+    setStatus('Checking the server\'s mod list...', '')
+    const result = await window.launcher.installMissingMods()
+    btn.disabled = false
+    setStatus(result.message || 'Done', result.ok ? 'ok' : 'error')
   })
 
   $('deepClean').addEventListener('click', async () => {

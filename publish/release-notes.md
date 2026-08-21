@@ -4,6 +4,11 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.90
+
+- **Direct install from Nexus, next to Verify.** One button installs every mod on the server's list that's missing - straight into the game folder, the path this launcher owns end to end. Premium Nexus keys download directly through the API; free accounts get the mod page opened and one press of "Mod Manager Download" lands it here automatically (that button already routes to this launcher). Nexus doesn't allow more automation than this for free accounts - it's their policy, and honoring it is the deal that lets us integrate at all.
+- **Uninstall covers these too**: every Nexus mod the launcher installed is recorded file by file, and Uninstall removes them along with everything else. The prerequisite frameworks stay - other mods may depend on them.
+
 ## What changed — v0.3.89
 
 - **Straight to the menu, hardcoded.** No press-any-key, no intro videos: the launcher now installs Fast Launch by itself whenever it's missing and your Nexus key allows it - quietly, never blocking Play. Double-click to MULTIPLAYER is the boot, by policy.
