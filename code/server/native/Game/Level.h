@@ -72,6 +72,14 @@ public:
     void BroadcastAppearance(flecs::entity aPuppet) noexcept;
 
 private:
+    // Hand a vehicle to somebody still inside it: the simulation AND the driver's seat.
+    //
+    // One function because the two must not drift apart. Transferring authority alone is
+    // what shipped until now, and it left a passenger responsible for a car they could not
+    // drive; sending the seat alone would put somebody at the wheel of a car another
+    // machine is still simulating.
+    void PromoteToDriver(flecs::entity aVehicle, flecs::entity aPlayer) noexcept;
+
     void ReleaseVehicleIfEmpty(flecs::entity aVehicle) noexcept;
 
 public:

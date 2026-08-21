@@ -175,6 +175,9 @@ protected:
     // only fires at spawn, so without this an outfit change never left the wearer's screen.
     void HandleAppearanceUpdate(const PacketEvent<server::NotifyAppearanceUpdate>& aMessage);
 
+    // The server made us the driver of a car we are already sitting in - take the seat.
+    void HandleVehicleControlAssigned(const PacketEvent<server::NotifyVehicleControlAssigned>& aMessage);
+
     // Watches what the local player is wearing and tells the server when it changes.
     // Separate from PollAppearanceChanges, which only fires while the character creator is
     // open - equipping a jacket never opens it, which is why clothing never replicated.

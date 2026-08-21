@@ -3,6 +3,41 @@ module CyberpunkMP.World
 import Codeware.*
 import CyberpunkMP.*
 
+/**
+ * The second half of a seat promotion, run after the unmount has had time to land.
+ *
+ * A separate callback rather than a delay on the mount itself: MountingRequest has no
+ * delay field - only UnmountingRequest does - so the wait has to live out here.
+ */
+public class MpTakeDriverSeatCallback extends DelayCallback {
+    public let player: wref<GameObject>;
+    public let vehicleId: EntityID;
+
+    public func Call() -> Void {
+        if !IsDefined(this.player) {
+            return;
+        }
+
+        let info: MountingInfo;
+        info.childId = this.player.GetEntityID();
+        info.parentId = this.vehicleId;
+        info.slotId.id = VehicleComponent.GetDriverSlotName();
+
+        let request = new MountingRequest();
+        request.lowLevelMountingInfo = info;
+        request.mountData = new MountEventData();
+
+        // The player is being moved into a seat of a car they are standing in, not
+        // teleported to one - keeping the position avoids the lurch that mounting from
+        // scratch produces.
+        request.preservePositionAfterMounting = true;
+
+        GameInstance.GetMountingFacility(GetGameInstance()).Mount(request);
+
+        FTLog(s"[NetworkWorldSystem] took the driver seat of \(EntityID.GetHash(this.vehicleId))");
+    }
+}
+
 public native class NetworkWorldSystem extends IGameSystem {
     public native func Connect() -> Void;
     public native func Disconnect() -> Void;
@@ -200,6 +235,64 @@ public native class NetworkWorldSystem extends IGameSystem {
 
 
         return GameInstance.GetDynamicEntitySystem().CreateEntity(npcSpec);
+    }
+
+    /**
+     * Slide into the driver's seat, on the server's instruction.
+     *
+     * The driver getting out of a car with a passenger still in it already hands that
+     * passenger the vehicle's SIMULATION - NextOccupant picks them by the server's seat
+     * priority and TransferAuthority moves the authority across. What never happened is
+     * the part a human can see: they stayed sitting in the passenger seat of a car they
+     * were now responsible for, unable to drive it.
+     *
+     * This is that missing half. The server decides who is promoted - clients must not each
+     * pick their own new driver - and sends NotifyVehicleControlAssigned to the one player
+     * it chose.
+     *
+     * Two steps, because the mounting facility negotiates rather than commands and
+     * unmounting is not instant: leave the current seat, then take the driver's on a short
+     * delay. Mounting in the same frame as the unmount races it, which is the same lesson
+     * the teleport path below already learned.
+     *
+     * The seat name comes from the game rather than a literal: VehicleComponent knows which
+     * slot is the driver's, and hard-coding 'seat_front_left' here would be a second place
+     * to be wrong if that ever differs by vehicle.
+     */
+    public func TakeDriverSeat(vehicleId: EntityID) -> Void {
+        let player = GetPlayer(GetGameInstance());
+        if !IsDefined(player) {
+            FTLogError(s"[NetworkWorldSystem] driver seat assigned with no local player");
+            return;
+        }
+
+        let vehicle = GameInstance.FindEntityByID(GetGameInstance(), vehicleId) as VehicleObject;
+        if !IsDefined(vehicle) {
+            FTLogError(s"[NetworkWorldSystem] driver seat assigned for a vehicle we do not have");
+            return;
+        }
+
+        let facility = GameInstance.GetMountingFacility(GetGameInstance());
+        let current = facility.GetMountingInfoSingleWithObjects(player);
+
+        // Already driving - nothing to do. Reached when the promotion arrives for somebody
+        // who was the only occupant and never left, and re-seating them would be a visible
+        // stutter for no reason.
+        if Equals(current.slotId.id, VehicleComponent.GetDriverSlotName()) {
+            return;
+        }
+
+        let leave = new UnmountingRequest();
+        leave.lowLevelMountingInfo = current;
+        leave.mountData = new MountEventData();
+
+        facility.Unmount(leave);
+
+        let promote = new MpTakeDriverSeatCallback();
+        promote.player = player;
+        promote.vehicleId = vehicleId;
+
+        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(promote, 0.35, false);
     }
 
     // Moves the local player, on the server's instruction.

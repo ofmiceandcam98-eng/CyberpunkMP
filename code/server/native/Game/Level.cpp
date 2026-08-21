@@ -317,7 +317,7 @@ void Level::RemoveOwnedVehicles(flecs::entity aPlayer) noexcept
     {
         if (const auto next = NextOccupant(vehicle, aPlayer))
         {
-            TransferAuthority(vehicle, next.parent());
+            PromoteToDriver(vehicle, next.parent());
             continue;
         }
 
@@ -844,6 +844,30 @@ void Level::HandleMoveEntityRequest(PacketEvent<client::MoveEntityRequest>& aMes
     target.set(component);
 }
 
+void Level::PromoteToDriver(flecs::entity aVehicle, flecs::entity aPlayer) noexcept
+{
+    if (!aVehicle || !aVehicle.is_alive() || !aPlayer || !aPlayer.is_alive())
+        return;
+
+    TransferAuthority(aVehicle, aPlayer);
+
+    const auto* pPlayer = aPlayer.get<PlayerComponent>();
+    if (!pPlayer)
+        return;
+
+    // The server picks the driver, never the clients.
+    //
+    // Every client can see who is in the car, so every client could work out a new driver
+    // for itself - and they would not always agree, which is two people at one wheel. The
+    // choice is made once here, by seat priority, and the chosen client is told.
+    server::NotifyVehicleControlAssigned message;
+    message.set_vehicle_id(aVehicle.id());
+
+    GServer->Send(pPlayer->Connection, message);
+
+    spdlog::info("{} promoted to driver of vehicle {:x}", pPlayer->Username, aVehicle.id());
+}
+
 void Level::BroadcastAppearance(flecs::entity aPuppet) noexcept
 {
     if (!aPuppet || !aPuppet.is_alive())
@@ -1144,7 +1168,7 @@ void Level::HandleExitVehicleRequest(PacketEvent<client::ExitVehicleRequest>& aM
     if (vehicle && vehicle.is_alive() && vehicle.parent() == player)
     {
         if (const auto next = NextOccupant(vehicle, player))
-            TransferAuthority(vehicle, next.parent());
+            PromoteToDriver(vehicle, next.parent());
     }
 
     ReleaseVehicleIfEmpty(vehicle);

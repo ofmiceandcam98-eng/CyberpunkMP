@@ -1066,6 +1066,29 @@ void NetworkWorldSystem::OnBeforeWorldDetach(RED4ext::world::RuntimeScene* aScen
     spdlog::info("[Detach] done - the engine owns the teardown from here");
 }
 
+void NetworkWorldSystem::HandleVehicleControlAssigned(const PacketEvent<server::NotifyVehicleControlAssigned>& aMessage)
+{
+    // The server has made this player the driver of a car they are already sitting in.
+    // Getting them into the actual seat is script work - the mounting facility is not
+    // reachable from here - so this only has to find the local entity and ask.
+    const auto entity = GetEntityByServerId(aMessage.get_vehicle_id());
+
+    if (!entity)
+    {
+        spdlog::warn("[Vehicle] promoted to driver of {} but we have no such vehicle",
+                     aMessage.get_vehicle_id());
+        return;
+    }
+
+    const auto* pEntityComponent = entity.get<EntityComponent>();
+    if (!pEntityComponent)
+        return;
+
+    spdlog::info("[Vehicle] promoted to driver of {} - taking the seat", aMessage.get_vehicle_id());
+
+    Red::CallVirtual(Red::GetGameSystem<NetworkWorldSystem>(), "TakeDriverSeat", pEntityComponent->Id);
+}
+
 void NetworkWorldSystem::HandleAppearanceUpdate(const PacketEvent<server::NotifyAppearanceUpdate>& aMessage)
 {
     const auto entity = GetEntityByServerId(aMessage.get_id());
@@ -1549,6 +1572,7 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleWorldState>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleInteraction>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleAppearanceUpdate>(this);
+    pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleVehicleControlAssigned>(this);
 
     m_remotePlayerId = std::nullopt;
 
