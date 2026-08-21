@@ -8,14 +8,11 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 - **Direct install from Nexus, next to Verify.** One button installs every mod on the server's list that's missing - straight into the game folder, the path this launcher owns end to end. Premium Nexus keys download directly through the API; free accounts get the mod page opened and one press of "Mod Manager Download" lands it here automatically (that button already routes to this launcher). Nexus doesn't allow more automation than this for free accounts - it's their policy, and honoring it is the deal that lets us integrate at all.
 - **Uninstall covers these too**: every Nexus mod the launcher installed is recorded file by file, and Uninstall removes them along with everything else. The prerequisite frameworks stay - other mods may depend on them.
+- **Test builds carry the whole mod, not just half of it.** Installing a test build swapped `CyberpunkMP.dll` and nothing else - fine for C++ changes, silently useless for script-side ones. It now installs the full payload (DLL, scripts and RPC together), and Restore puts back a matching set. Devs only.
 
 ## What changed — v0.3.89
 
 - **Straight to the menu, hardcoded.** No press-any-key, no intro videos: the launcher now installs Fast Launch by itself whenever it's missing and your Nexus key allows it - quietly, never blocking Play. Double-click to MULTIPLAYER is the boot, by policy.
-
-## What changed — v0.3.89
-
-- **Test builds carry the whole mod, not just half of it.** Installing a test build swapped `CyberpunkMP.dll` and nothing else. That works while the change being tested is C++ — "remote players MOVE" was, so it was fine — and silently delivers **nothing** when the change lives in the game scripts, which is where menus, seat transitions and appearance live. The build installed, said success, and changed nothing. It now installs the full payload (DLL, scripts and RPC together), and Restore puts back a matching set from the current release rather than a DLL alone. Devs only; players never see test builds.
 
 ## What changed — v0.3.88
 
