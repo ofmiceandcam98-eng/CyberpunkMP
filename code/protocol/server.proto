@@ -8,12 +8,29 @@ message Settings {
     uint32 update_rate = 1;
 }
 
+// Enough to draw one row of a character selector, and deliberately no more.
+//
+// Not the whole record: the appearance blob is 9KB and nothing on a selection screen needs
+// an inventory. What a player needs to recognise their character is the name and how far
+// they got.
+message CharacterSummary {
+    string id = 1;
+    string name = 2;
+    int32 level = 3;
+
+    // Has this character ever stood in the world? One that was created but never spawned
+    // goes to the configured server spawn; one that has been played resumes where the
+    // server last recorded it. Here so the selector can say "new", not to be acted on -
+    // the server decides where anybody lands.
+    bool spawned_before = 4;
+}
+
 message AuthenticationResponse {
     bool success = 1;
     string error = 2;
     Settings settings = 3;
 
-    // What character this ACCOUNT has, decided by the server and sent unasked.
+    // What characters this ACCOUNT has, decided by the server and sent unasked.
     //
     // The client must never answer "do I have a character" for itself. It has a Cyberpunk
     // save sitting on disk that looks exactly like an answer and is not one - that save is
@@ -24,20 +41,17 @@ message AuthenticationResponse {
     // Carried on the authentication reply rather than a message of its own: it is known
     // the moment the account is, and a second round trip is a window in which the client
     // has been authenticated but does not yet know who it is playing.
-    bool has_character = 4;
-
-    // Present only when has_character is true. Enough to draw a selector - who they are
-    // and how far they got - and deliberately not the whole record: the appearance blob
-    // is 9KB and nothing on a selection screen needs the inventory.
-    string character_id = 5;
-    string character_name = 6;
-    int32 character_level = 7;
-
-    // Whether this character has ever stood in the world. A character that was created but
-    // never spawned goes to the configured server spawn; one that has been played resumes
-    // where the server last recorded it. The client does not decide this either - it is
-    // here so the selector can say "new" rather than to be acted on.
-    bool character_spawned_before = 8;
+    //
+    // A LIST, even though the rule today is one character per account.
+    //
+    // Not because slots are wanted now - they are explicitly not - but because "how many
+    // characters does this account have" is answered in three places once it ships: here,
+    // the selector that draws it, and everything that reads the selection. Flat singular
+    // fields make all three assume the answer is one, and the day that changes every one
+    // of them changes with it. A list of length one costs nothing today and is the whole
+    // difference later. Empty means no character, which is a state the selector must
+    // handle anyway.
+    repeated CharacterSummary characters = 4;
 }
 
 message Attribute {

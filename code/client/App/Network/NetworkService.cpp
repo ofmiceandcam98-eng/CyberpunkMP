@@ -164,11 +164,22 @@ void NetworkService::HandleAuthentication(const PacketEvent<server::Authenticati
     // The character selector is drawn from this. It has to be stored rather than acted on
     // here, because authentication can now happen at the main menu - where there is no
     // world, no player, and nothing to spawn.
+    // A list, of length zero or one today. Taking the first rather than assuming one
+    // exists - empty is a real answer and means "no character", which is the state the
+    // selector has to offer CREATE from.
     auto* pWorldSystem = Red::GetGameSystem<NetworkWorldSystem>();
-    pWorldSystem->SetCharacterStatus(aResponse.get_has_character(),
-                                     aResponse.get_character_name().c_str(),
-                                     aResponse.get_character_level(),
-                                     aResponse.get_character_spawned_before());
+    const auto& characters = aResponse.get_characters();
+
+    if (characters.empty())
+    {
+        pWorldSystem->SetCharacterStatus(false, "", 0, false);
+    }
+    else
+    {
+        const auto& first = characters[0];
+        pWorldSystem->SetCharacterStatus(true, first.get_name().c_str(), first.get_level(),
+                                         first.get_spawned_before());
+    }
 
     pWorldSystem->OnConnected();
 

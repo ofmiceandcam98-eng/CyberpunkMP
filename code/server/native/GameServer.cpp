@@ -706,20 +706,30 @@ void GameServer::AdmitPlayer(const ConnectionId aConnectionId, const std::string
     // account to hang a character on and every connection is effectively a stranger.
     if (!acDiscordId.empty())
     {
+        // One lookup, appended to a list. The store is keyed on Discord id so there can
+        // only be one - but the shape is a list, so the day slots exist this loop grows
+        // rather than every reader changing.
         if (const auto* pCharacter = m_players.FindCharacter(acDiscordId))
         {
-            response.set_has_character(true);
+            server::CharacterSummary summary;
+
             // Through c_str(): the project's String carries a custom allocator and is not
             // interchangeable with std::string at this boundary.
-            response.set_character_id(pCharacter->CharacterId.c_str());
-            response.set_character_name(pCharacter->Name.c_str());
-            response.set_character_spawned_before(pCharacter->SpawnedBefore);
+            summary.set_id(pCharacter->CharacterId.c_str());
+            summary.set_name(pCharacter->Name.c_str());
+            summary.set_spawned_before(pCharacter->SpawnedBefore);
 
             // The record's own Level field, not a search through Proficiencies. Both hold
             // it - the note in CharacterRecord explains why the overlap was kept - and
             // this is the one the spawn path applies, so a selector that read the other
             // could show a number the player never actually gets.
-            response.set_character_level(pCharacter->Level);
+            summary.set_level(pCharacter->Level);
+
+            // Set as a whole list, not appended: the generator emits set_X(vector) for
+            // repeated fields, the same shape SaveCharacterRequest's inventory uses.
+            Vector<server::CharacterSummary> characters;
+            characters.push_back(summary);
+            response.set_characters(characters);
 
             spdlog::info("{} has character '{}' ({})", acUsername,
                          pCharacter->Name.empty() ? "unnamed" : pCharacter->Name,
