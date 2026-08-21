@@ -3935,6 +3935,9 @@ ipcMain.handle('links:open', async (_event, which) => {
     diagnostic: 'https://github.com/ofmiceandcam98-eng/CyberpunkMP/releases/latest',
     discord: DISCORD_INVITE,
     tailscale: TAILSCALE_DOWNLOAD,
+    // The upstream project this is a fork of. Their licence asks for clear
+    // attribution, and a credit nobody can click through to is a weak one.
+    upstream: 'https://github.com/tiltedphoques/CyberpunkMP',
     // Straight to the API key section, not the account page. "Go to settings and find
     // the API tab" is three more chances to end up somewhere else.
     nexusApi: 'https://www.nexusmods.com/users/myaccount?tab=api+access'
