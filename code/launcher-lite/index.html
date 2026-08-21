@@ -2655,6 +2655,15 @@
     }
 
     select.disabled = false
+
+    // Marks this list as real, so saving knows the value is a device rather than a
+    // placeholder. Without it, a save before any scan stores "Press Find devices" as
+    // somebody's microphone and hands that to the game at launch.
+    select.dataset.populated = '1'
+
+    // The saved choice, if that device is still here. A device that has been unplugged
+    // since falls back to the Windows default rather than selecting nothing - a dropdown
+    // with no selection reads as broken.
     if (savedId) select.value = savedId
     if (!select.value) select.value = 'default'
   }
@@ -2729,7 +2738,7 @@
     $('voiceBindKey').dataset.key = key
     $('voiceBindKey').textContent = prettyKey(key)
 
-    const rangeKey = saved.cycleRangeKey || 'IK_B'
+    const rangeKey = saved.cycleRangeKey || 'IK_F12'
     $('voiceBindRangeKey').dataset.key = rangeKey
     $('voiceBindRangeKey').textContent = prettyKey(rangeKey)
 
@@ -2739,6 +2748,33 @@
     $('voiceChatVolume').value = saved.chatVolume ?? 100
     $('voiceMicVolumeValue').textContent = $('voiceMicVolume').value + '%'
     $('voiceChatVolumeValue').textContent = $('voiceChatVolume').value + '%'
+
+    // Show the saved devices by NAME, before any scan has run.
+    //
+    // The dropdowns cannot hold the real list yet - that needs Windows, and asking for it
+    // every time Settings opens would put a microphone permission prompt in front of
+    // somebody who came to look at something else. But showing "Press Find devices" over
+    // a choice they already made reads as the launcher having forgotten it.
+    //
+    // So the saved name is shown as the selected row until a scan replaces it with the
+    // live list, which then re-selects the same device by id.
+    showSavedDevice($('voiceInput'), saved.inputDevice, saved.inputDeviceName)
+    showSavedDevice($('voiceOutput'), saved.outputDevice, saved.outputDeviceName)
+  }
+
+  function showSavedDevice (select, deviceId, deviceName) {
+    // Only while the list is still the placeholder. Once a scan has populated it, the real
+    // options are better than a remembered name.
+    if (select.dataset.populated === '1') return
+
+    select.innerHTML = ''
+
+    const option = document.createElement('option')
+    option.value = deviceId || 'default'
+    option.textContent = deviceName || 'Windows default'
+
+    select.appendChild(option)
+    select.value = option.value
   }
 
   // ---------------------------------------------------------------------------
@@ -2899,12 +2935,36 @@
   $('voiceBindKey').addEventListener('click', () => beginKeyBind('voiceBindKey'))
   $('voiceBindRangeKey').addEventListener('click', () => beginKeyBind('voiceBindRangeKey'))
 
+  /**
+   * Write every voice choice down.
+   *
+   * The device dropdowns are only read once they have been POPULATED. Before a scan they
+   * hold a placeholder row - "Press Find devices" - and saving that would store the
+   * placeholder as somebody's microphone, then hand it to the game at launch. The
+   * previously saved device is kept instead, which is the correct answer for "they have
+   * not chosen anything new".
+   *
+   * The device NAME is saved beside the id so the choice can be shown again before any
+   * scan has run. An endpoint id is unreadable, and a settings page that shows an
+   * unreadable string looks like it lost the setting.
+   */
   async function saveVoicePrefs () {
+    const previous = await window.launcher.getVoiceSettings()
+
+    const inputReady = $('voiceInput').dataset.populated === '1'
+    const outputReady = $('voiceOutput').dataset.populated === '1'
+
+    const chosenName = (select) => select.selectedOptions[0]?.textContent || ''
+
     await window.launcher.saveVoiceSettings({
-      inputDevice: $('voiceInput').value,
-      outputDevice: $('voiceOutput').value,
+      inputDevice: inputReady ? $('voiceInput').value : previous?.inputDevice,
+      inputDeviceName: inputReady ? chosenName($('voiceInput')) : previous?.inputDeviceName,
+
+      outputDevice: outputReady ? $('voiceOutput').value : previous?.outputDevice,
+      outputDeviceName: outputReady ? chosenName($('voiceOutput')) : previous?.outputDeviceName,
+
       pushToTalkKey: $('voiceBindKey').dataset.key || 'IK_V',
-      cycleRangeKey: $('voiceBindRangeKey').dataset.key || 'IK_B',
+      cycleRangeKey: $('voiceBindRangeKey').dataset.key || 'IK_F12',
       mode: $('voiceMode').value,
       micVolume: Number($('voiceMicVolume').value),
       chatVolume: Number($('voiceChatVolume').value)

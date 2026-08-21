@@ -43,10 +43,10 @@
 	     A SEPARATE action from push-to-talk, and separately bindable. One decides WHEN
 	     somebody talks, the other decides HOW FAR it carries, and combining them would
 	     mean changing range required talking.
-	     IK_B is a starting value like IK_V is. Only the press is accepted - cycling on
+	     IK_F12 is a starting value like IK_V is. Only the press is accepted - cycling on
 	     release as well would advance twice per tap. -->
 	<mapping name="VoiceCycleRange_Button" type="Button" >
-		<button id="IK_B" />
+		<button id="IK_F12" />
     </mapping>
 
 	<mapping name="UIEnterChatMessage_Button" type="Button" >

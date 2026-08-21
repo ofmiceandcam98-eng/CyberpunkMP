@@ -2508,7 +2508,7 @@ async function launchGame () {
     const chat = Number.isFinite(voice.voiceChatVolume) ? voice.voiceChatVolume : 100
 
     args.push(`--voicekey=${key}`)
-    args.push(`--voicerangekey=${voice.voiceCycleRangeKey || 'IK_B'}`)
+    args.push(`--voicerangekey=${voice.voiceCycleRangeKey || 'IK_F12'}`)
     args.push(`--voicemode=${mode}`)
     args.push(`--micvolume=${mic}`)
     args.push(`--voicevolume=${chat}`)
@@ -3477,13 +3477,19 @@ ipcMain.handle('voice:get', async () => {
     inputDevice: settings.voiceInputDevice || 'default',
     outputDevice: settings.voiceOutputDevice || 'default',
 
+    // Kept beside the ids so the settings page can show a chosen device by name before it
+    // has asked Windows for the list. An endpoint id is unreadable, and showing one - or
+    // showing nothing - reads as the choice having been lost.
+    inputDeviceName: settings.voiceInputDeviceName || '',
+    outputDeviceName: settings.voiceOutputDeviceName || '',
+
     // IK_V is a starting value, not the key. Everything downstream reads the ACTION, so
     // this only decides what the action is bound to on a machine that has never chosen.
     pushToTalkKey: settings.voicePushToTalkKey || 'IK_V',
 
     // Separate key, separate default. Cycling range and talking are the two controls most
     // likely to be pressed together, so they must never be the same key.
-    cycleRangeKey: settings.voiceCycleRangeKey || 'IK_B',
+    cycleRangeKey: settings.voiceCycleRangeKey || 'IK_F12',
 
     // Hold to talk by default, deliberately: voice activation sends whatever the room is
     // doing to everyone nearby, and the person doing it is the last to find out.
@@ -3509,8 +3515,10 @@ ipcMain.handle('voice:save', async (_event, choice) => {
   saveSettings({
     voiceInputDevice: choice?.inputDevice || 'default',
     voiceOutputDevice: choice?.outputDevice || 'default',
+    voiceInputDeviceName: choice?.inputDeviceName || '',
+    voiceOutputDeviceName: choice?.outputDeviceName || '',
     voicePushToTalkKey: choice?.pushToTalkKey || 'IK_V',
-    voiceCycleRangeKey: choice?.cycleRangeKey || 'IK_B',
+    voiceCycleRangeKey: choice?.cycleRangeKey || 'IK_F12',
     voiceMode: ['ptt', 'toggle', 'activation'].includes(choice?.mode) ? choice.mode : 'ptt',
     voiceMicVolume: clamp(choice?.micVolume, 100),
     voiceChatVolume: clamp(choice?.chatVolume, 100)
