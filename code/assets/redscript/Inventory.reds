@@ -157,6 +157,20 @@ public class MpInventory {
     transaction.GetItemListByTag(player, n"Cyberware", chrome);
 
     network.ScriptLog(s"capture DONE: \(counted) stack(s), \(ArraySize(chrome)) cyberware, \(money) eddies");
+
+    // Say so on screen.
+    //
+    // The autosave has been running every ninety seconds and telling nobody. The chat
+    // message was removed on purpose - it was noise - but nothing replaced it, so a working
+    // save and a broken one looked identical from the player's side, and the save got
+    // reported as broken while the log showed sixteen of them ninety seconds apart.
+    //
+    // Shown from here rather than from the C++ timer because this function already runs on
+    // every save, automatic or not. Doing it in script needs no new native, and a native
+    // declared on one side and not the other takes the whole mod down - which has already
+    // happened once.
+    MpShowSaved();
+
     return true;
   }
 
@@ -424,4 +438,25 @@ public class MpInventory {
 public struct MpItemStack {
   public let id: Uint64;
   public let quantity: Uint32;
+}
+
+/**
+ * A brief on-screen confirmation that the character was saved.
+ *
+ * The same SimpleScreenMessage path Death.reds uses for FLATLINED - proven to work on 2.31,
+ * which matters more here than finding something prettier.
+ *
+ * Short and quiet on purpose. This fires every ninety seconds for as long as somebody is
+ * playing, so anything longer or louder becomes the thing they notice instead of the game.
+ * Two seconds is enough to catch out of the corner of an eye and short enough to ignore.
+ */
+public func MpShowSaved() -> Void {
+  let message: SimpleScreenMessage;
+  message.isShown = true;
+  message.duration = 2.0;
+  message.message = "SAVED";
+
+  GameInstance.GetBlackboardSystem(GetGameInstance())
+    .Get(GetAllBlackboardDefs().UI_Notifications)
+    .SetVariant(GetAllBlackboardDefs().UI_Notifications.WarningMessage, ToVariant(message), true);
 }

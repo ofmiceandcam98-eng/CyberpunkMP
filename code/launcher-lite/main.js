@@ -280,6 +280,38 @@ function findGameDir () {
     }
   }
 
+  // Epic records every install in a manifest, one .item file per game, each holding the
+  // exact InstallLocation. Asking is authoritative; the drive-letter guessing below only
+  // ever finds an Epic copy that happens to sit in the default folder, which is not where
+  // anyone with a second drive puts it.
+  try {
+    const manifestDir = path.join(process.env.PROGRAMDATA || 'C:\\ProgramData',
+                                  'Epic', 'EpicGamesLauncher', 'Data', 'Manifests')
+
+    for (const file of readdirSync(manifestDir)) {
+      if (!file.toLowerCase().endsWith('.item')) continue
+
+      try {
+        const manifest = JSON.parse(readFileSync(path.join(manifestDir, file), 'utf8'))
+        const name = `${manifest.DisplayName || ''} ${manifest.MandatoryAppFolderName || ''}`
+
+        // Matched on the name rather than a catalog id: Epic's ids for this game differ
+        // between the base game and the expansion bundle, and a name match covers both.
+        if (/cyberpunk/i.test(name) && manifest.InstallLocation) {
+          candidates.push(manifest.InstallLocation)
+        }
+      } catch { /* a malformed manifest must not stop the others */ }
+    }
+  } catch { /* Epic not installed */ }
+
+  // Xbox / Microsoft Store. Installs land under a per-drive XboxGames folder with the
+  // playable files one level down in Content, which is the part a plain folder guess gets
+  // wrong even when it looks in the right place.
+  for (const letter of 'CDEFGHIJKLMNOPQRSTUVWXYZAB') {
+    candidates.push(`${letter}:\\XboxGames\\Cyberpunk 2077\\Content`)
+    candidates.push(`${letter}:\\Program Files\\WindowsApps\\Cyberpunk 2077`)
+  }
+
   // Common layouts on every drive letter, for GOG / Epic / manual installs.
   for (const letter of 'CDEFGHIJKLMNOPQRSTUVWXYZAB') {
     for (const suffix of ['SteamLibrary\\steamapps\\common\\Cyberpunk 2077',

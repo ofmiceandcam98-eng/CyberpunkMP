@@ -4,6 +4,11 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.79
+
+- **Your game is found wherever it is installed.** The launcher now asks Epic for its exact install path instead of guessing at folder names, and looks for Xbox / Microsoft Store copies too. Steam and GOG were already handled, including libraries on a second drive.
+- **The autosave says so.** A brief SAVED appears when your character is stored, every ninety seconds. It was already saving - it just never told anyone, which is indistinguishable from being broken.
+
 ## What changed — v0.3.78
 
 - **Fixes the freeze in v0.3.77.** That build tried to stop Songbird's opening call by refusing to build the call's interface, which locked the game up instead. It has been taken back out - she calls again, exactly as the base game intends, and nothing freezes.
