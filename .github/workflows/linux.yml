@@ -6,6 +6,12 @@ on:
     branches:
       - main
       - dev
+    paths-ignore:
+      - 'publish/**'
+      - 'tools/**'
+      - 'code/launcher-lite/**'
+      - 'docs/**'
+      - '**.md'
 
 jobs:
   build:
