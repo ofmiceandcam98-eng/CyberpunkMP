@@ -4,6 +4,12 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.96
+
+- **Test your microphone before you play.** Pick your mic in Settings → Voice, press **Test**, and speak — a live meter shows whether Windows can actually hear you. It turns red and tells you to lower your gain if you're clipping, which is the usual problem on an XLR interface. It runs entirely in the launcher: no server, no game, nothing to join first. Your mic is released the moment you stop, change device, or close Settings.
+- **Your voice settings are remembered properly now.** Microphone, output device, both volumes, both keybinds and your voice mode all persist. Previously the device dropdowns showed "Press Find devices" again on reopening, which looked like the launcher had forgotten your choice — it now shows what you picked by name until you rescan.
+- **Voice range key is F12 by default** (whisper → local → yell), and rebindable like everything else. **Note for Steam users:** Steam's overlay uses F12 for screenshots, so change one of the two or you'll collect screenshots every time you cycle.
+
 ## What changed — v0.3.95
 
 **Voice chat groundwork.** Nothing transmits yet — this is the part that has to be right before anything else works, and it's all in **Settings → Voice**.
