@@ -100,6 +100,28 @@
   .brand span { color: var(--accent); }
 
   /* --- account chip in the header, shown once signed in --- */
+  /* The two identities travel together. Without this the header's space-between
+     scatters brand / Discord / Nexus / gear evenly across the bar, which reads as four
+     unrelated things rather than one account row. */
+  .accounts { display: flex; align-items: center; gap: 1.5rem; }
+
+  /* Nexus has no avatar to show - the API returns a name, not a picture - so the slot
+     is filled with a mark of the same size, keeping both rows the same height whether
+     or not anyone is signed in. */
+  .nexus-mark {
+    width: 34px; height: 34px; border-radius: 50%;
+    display: grid; place-items: center;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: .95rem;
+    font-weight: 700;
+    color: var(--ink-dim);
+  }
+  /* Lit only once a key is actually held, so the mark answers "can this thing install
+     mods" at a glance rather than just decorating the corner. */
+  .nexus-mark.on { color: var(--accent); border-color: var(--accent); }
+
   .account { display: none; align-items: center; gap: .75rem; }
   .account.visible { display: flex; }
   .account img { width: 34px; height: 34px; border-radius: 50%; background: var(--surface); }
@@ -633,6 +655,10 @@
   <header>
     <div class="brand">Night City <span>Online</span></div>
 
+    <!-- Both identities in one group, so the header's space-between keeps them together
+         as a pair instead of scattering four children across the bar. -->
+    <div class="accounts">
+
     <div class="account" id="account">
       <img id="avatar" alt="">
       <div class="who">
@@ -640,6 +666,22 @@
         <div class="id" id="discordId"></div>
       </div>
       <button class="linkbtn" id="logout">Log out</button>
+    </div>
+
+    <!-- The Nexus account, read the same way as the Discord one beside it.
+         Mods come from Nexus, so whether you are signed in there decides whether the
+         mod list can install anything - and that was previously only discoverable by
+         opening Settings and reading a paragraph. Same shape as the block above so it
+         reads as the second half of one identity row, not a new feature. -->
+    <div class="account" id="nexusAccount">
+      <div class="nexus-mark" id="nexusMark" aria-hidden="true">N</div>
+      <div class="who">
+        <div class="name" id="nexusAccountName">Nexus</div>
+        <div class="id" id="nexusAccountState">not signed in</div>
+      </div>
+      <button class="linkbtn" id="nexusHeaderAction">Sign in</button>
+    </div>
+
     </div>
 
     <button class="gear" id="openSettings" title="Settings" aria-label="Settings">&#9881;</button>
@@ -1413,6 +1455,11 @@
     $('dot').className = 'dot' + (verified ? ' on' : '')
     $('account').className = 'account' + (signedIn ? ' visible' : '')
     loginBtn.style.display = signedIn ? 'none' : 'inline-block'
+
+    // The Nexus chip appears and disappears with the Discord one, since it sits beside it.
+    // Fired here rather than only from Settings so the header is right on first paint -
+    // otherwise it reads "not signed in" until somebody happens to open Settings.
+    refreshNexus()
 
     showAdminPanel(signedIn && user.isAdmin)
 
@@ -2334,7 +2381,87 @@
     $('nexusState').textContent = status.signedIn
       ? '✓ Signed in as ' + (status.name || 'Nexus user')
       : 'Not signed in'
+
+    // The header says the same thing, because that is where people look.
+    //
+    // Whether Nexus is connected decides whether the mod list can install anything, and
+    // that was previously only discoverable by opening Settings and reading a paragraph -
+    // so "Install does nothing" was the first anyone heard of it.
+    renderNexusHeader(status)
   }
+
+  // Shown next to the Discord account, in the same shape, because they are two halves of
+  // one question: who are you here, and who are you on Nexus.
+  function renderNexusHeader (status) {
+    const account = $('nexusAccount')
+    const mark = $('nexusMark')
+    const action = $('nexusHeaderAction')
+
+    // Only alongside a signed-in Discord account. On the sign-in screen there is no
+    // account row to sit beside, and a lone Nexus chip there would be asking the wrong
+    // question first.
+    const discordVisible = $('account').classList.contains('visible')
+    account.className = 'account' + (discordVisible ? ' visible' : '')
+
+    if (status && status.signedIn) {
+      $('nexusAccountName').textContent = status.name || 'Nexus user'
+      $('nexusAccountState').textContent = 'nexus mods'
+      mark.className = 'nexus-mark on'
+      action.textContent = 'Sign out'
+      action.dataset.mode = 'out'
+    } else {
+      $('nexusAccountName').textContent = 'Nexus'
+      $('nexusAccountState').textContent = 'not signed in'
+      mark.className = 'nexus-mark'
+      action.textContent = 'Sign in'
+      action.dataset.mode = 'in'
+    }
+  }
+
+  /**
+   * The header's Nexus button: one press to connect, one to disconnect.
+   *
+   * Tries the browser sign-in FIRST - the whole point is not having to find and paste an
+   * API key. That flow only works for applications Nexus has approved, so when it is
+   * refused this falls through to opening the key page and pointing at Settings, which is
+   * the path that always works. The person still gets somewhere either way; they do not
+   * get a button that failed and said nothing.
+   */
+  $('nexusHeaderAction').addEventListener('click', async () => {
+    const action = $('nexusHeaderAction')
+
+    if (action.dataset.mode === 'out') {
+      await window.launcher.nexusSignOut()
+      await refreshNexus()
+      setStatus('Signed out of Nexus.', 'ok')
+      return
+    }
+
+    action.disabled = true
+    action.textContent = 'Opening...'
+    setStatus('Approve the sign-in in your browser, then come back.')
+
+    try {
+      const result = await window.launcher.nexusSsoLogin()
+
+      if (result && result.ok) {
+        await refreshNexus()
+        setStatus('Signed in to Nexus as ' + (result.name || 'Nexus user') + '.', 'ok')
+        return
+      }
+
+      // Refused - almost always because this launcher is not an approved Nexus
+      // application. Say so plainly and open the page that does work.
+      await window.launcher.openLink('nexusApi')
+      setStatus('Nexus would not approve the one-click sign-in, so your API key page is open - '
+        + 'copy the key into Settings > Dev.', 'error')
+    } catch (err) {
+      setStatus('Could not reach Nexus: ' + err.message, 'error')
+    } finally {
+      action.disabled = false
+      await refreshNexus()
+    }
+  })
 
   $('nexusGetKey').addEventListener('click', async () => {
     await window.launcher.openLink('nexusApi')

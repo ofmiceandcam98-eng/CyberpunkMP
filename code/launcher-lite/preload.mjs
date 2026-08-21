@@ -95,6 +95,7 @@ contextBridge.exposeInMainWorld('launcher', {
   nexusSsoLogin: () => ipcRenderer.invoke('nexus:ssoLogin'),
   nexusSignIn: (key) => ipcRenderer.invoke('nexus:signIn', key),
   nexusStatus: () => ipcRenderer.invoke('nexus:status'),
+  nexusSignOut: () => ipcRenderer.invoke('nexus:signOut'),
 
   // Desktop + Start Menu shortcuts. Asked once on first run; this is the way back.
   createShortcuts: () => ipcRenderer.invoke('shortcuts:create'),

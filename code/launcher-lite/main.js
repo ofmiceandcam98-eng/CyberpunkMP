@@ -3411,6 +3411,25 @@ ipcMain.handle('nexus:status', async () => {
   return { ok: true, signedIn: Boolean(settings.nexusKey), name: settings.nexusName || null }
 })
 
+/**
+ * Forget the Nexus key.
+ *
+ * The counterpart to the header's Sign in, so connecting and disconnecting live in the
+ * same place rather than "sign in from the header, clear it by editing settings".
+ *
+ * saveNexusKey(null) drops both the key and the name - a name left behind would show a
+ * signed-in account whose key has gone, which is exactly the state that makes an install
+ * fail with no explanation.
+ *
+ * Only the local copy. Nothing is revoked on Nexus: the key is theirs and lives on their
+ * account page, and a launcher quietly invalidating it would be reaching further than
+ * anyone asked.
+ */
+ipcMain.handle('nexus:signOut', async () => {
+  saveNexusKey(null)
+  return { ok: true }
+})
+
 function installedModsPath () {
   return path.join(app.getPath('userData'), 'mods-installed.json')
 }
