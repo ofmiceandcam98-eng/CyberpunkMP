@@ -163,6 +163,14 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // held back while they were on the selector.
     void EnterWorld();
 
+    // Ask the server to delete this account's character. The confirmation happens on the
+    // client, in front of the person losing it, before this is called.
+    void DeleteCharacter();
+
+    // Why the last request was refused, empty when nothing was. The selector shows this
+    // instead of appearing to ignore the button.
+    Red::CString GetCharacterError() const { return Red::CString(m_characterError.c_str()); }
+
     // Called from redscript when the local player is downed - see Death.reds.
     void RequestRespawn();
 
@@ -196,6 +204,9 @@ protected:
     // Somebody already in the world changed clothes or had work done. NotifyCharacterLoad
     // only fires at spawn, so without this an outfit change never left the wearer's screen.
     void HandleAppearanceUpdate(const PacketEvent<server::NotifyAppearanceUpdate>& aMessage);
+
+    // The account's characters changed - a delete landed, or one was refused.
+    void HandleCharacterList(const PacketEvent<server::NotifyCharacterList>& aMessage);
 
     // The server made us the driver of a car we are already sitting in - take the seat.
     void HandleVehicleControlAssigned(const PacketEvent<server::NotifyVehicleControlAssigned>& aMessage);
@@ -286,6 +297,7 @@ private:
     std::string m_characterName;
     int32_t m_characterLevel{0};
     bool m_characterSpawnedBefore{false};
+    std::string m_characterError;
 
     // For measuring our own speed from how far we actually moved - see
     // UpdatePlayerLocation. Mutable because that function is const and only reports.
@@ -377,6 +389,8 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(GetCharacterLevel);
     RTTI_METHOD(HasCharacterSpawnedBefore);
     RTTI_METHOD(EnterWorld);
+    RTTI_METHOD(DeleteCharacter);
+    RTTI_METHOD(GetCharacterError);
     RTTI_METHOD(RequestRespawn);
     RTTI_METHOD(SaveCharacterAppearance);
     RTTI_METHOD(IsConnected);

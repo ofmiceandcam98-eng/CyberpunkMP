@@ -45,6 +45,7 @@ ChatSystem::ChatSystem(gsl::not_null<World*> apWorld)
     GServer->RegisterHandler<&ChatSystem::HandleChatMessageRequest>(this);
     GServer->RegisterHandler<&ChatSystem::HandleRespawnRequest>(this);
     GServer->RegisterHandler<&ChatSystem::HandleSaveCharacterRequest>(this);
+    GServer->RegisterHandler<&ChatSystem::HandleDeleteCharacterRequest>(this);
 
     // Walks every dummy in a slow circle. Registered here rather than beside the command
     // so it exists exactly once, whatever anyone types.
@@ -94,6 +95,94 @@ ChatSystem::ChatSystem(gsl::not_null<World*> apWorld)
                 // so the dummy takes exactly the path being tested.
                 aEntity.modified<MovementComponent>();
             });
+}
+
+void ChatSystem::SendCharacterList(const PlayerComponent& acPlayer, const std::string& acError)
+{
+    server::NotifyCharacterList message;
+
+    if (!acPlayer.DiscordId.empty())
+    {
+        if (const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(acPlayer.DiscordId))
+        {
+            server::CharacterSummary summary;
+            summary.set_id(pCharacter->CharacterId.c_str());
+            summary.set_name(pCharacter->Name.c_str());
+            summary.set_level(pCharacter->Level);
+            summary.set_spawned_before(pCharacter->SpawnedBefore);
+
+            Vector<server::CharacterSummary> characters;
+            characters.push_back(summary);
+            message.set_characters(characters);
+        }
+    }
+
+    if (!acError.empty())
+        message.set_error(acError.c_str());
+
+    GServer->Send(acPlayer.Connection, message);
+}
+
+void ChatSystem::HandleDeleteCharacterRequest(const PacketEvent<client::DeleteCharacterRequest>& aMessage)
+{
+    auto* pPlayerManager = m_pWorld->get<PlayerManager>();
+
+    const auto entity = pPlayerManager->GetByConnectionId(aMessage.ConnectionId);
+    if (!entity || !entity.has<PlayerComponent>())
+        return;
+
+    const auto* pPlayer = entity.get<PlayerComponent>();
+
+    // Whose character this is comes from the CONNECTION. The request carries no id, so
+    // "delete mine" cannot be spelled "delete theirs" - the one request where getting that
+    // wrong cannot be undone by the person it happened to.
+    if (pPlayer->DiscordId.empty())
+    {
+        SendCharacterList(*pPlayer, "Your Discord sign-in could not be verified.");
+        return;
+    }
+
+    // Not while they are standing in the world as it.
+    //
+    // A puppet means they are spawned. Retiring the record underneath a live character
+    // leaves the server simulating somebody whose record has gone, and the next autosave
+    // would write the deleted character straight back - a delete that silently undoes
+    // itself is worse than one that refuses.
+    if (pPlayer->Puppet && pPlayer->Puppet.is_alive())
+    {
+        SendCharacterList(*pPlayer, "Leave the world before deleting your character.");
+        Tell(*pPlayer, "You cannot delete your character while you are playing as it.");
+        return;
+    }
+
+    auto& store = GServer->GetPlayerStore();
+
+    if (!store.FindCharacter(pPlayer->DiscordId))
+    {
+        SendCharacterList(*pPlayer, "There is no character to delete.");
+        return;
+    }
+
+    // Retired, not destroyed. The store keeps it in RetiredCharacters precisely so that
+    // "I clicked the wrong thing" has an answer that is not "it is gone" - and nothing
+    // about a trash can in a menu makes that less true.
+    //
+    // Owned vehicles and other character-owned records are deliberately NOT cascaded here.
+    // Working out what should be deleted, transferred or orphaned is its own decision, and
+    // a delete that quietly took someone's cars with it would be discovered far too late.
+    const bool retired = store.RetireCharacter(pPlayer->DiscordId);
+
+    if (!retired)
+    {
+        SendCharacterList(*pPlayer, "That character could not be deleted.");
+        return;
+    }
+
+    GServer->GetAuditLog().Record("character.delete", pPlayer->DiscordId, pPlayer->DiscordId);
+
+    spdlog::info("{} deleted their character", pPlayer->Username);
+
+    SendCharacterList(*pPlayer);
 }
 
 void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharacterRequest>& aMessage)

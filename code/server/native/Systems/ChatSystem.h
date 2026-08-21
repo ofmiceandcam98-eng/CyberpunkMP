@@ -123,6 +123,13 @@ protected:
     // server keeps - the spawn message's describes whatever save the client loaded.
     void HandleSaveCharacterRequest(const PacketEvent<client::SaveCharacterRequest>& aMessage);
 
+    // The selector's trash can. Retires rather than destroys - see PlayerStore.
+    void HandleDeleteCharacterRequest(const PacketEvent<client::DeleteCharacterRequest>& aMessage);
+
+    // Send this connection its current character list. The selector redraws from this
+    // rather than assuming what a delete did.
+    void SendCharacterList(const PlayerComponent& acPlayer, const std::string& acError = {});
+
     // Splits a chat channel prefix off the front of a line. Returns false when the line
     // named a channel the sender is not allowed to use, or gave it no text, having
     // already told them why.

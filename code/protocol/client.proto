@@ -185,6 +185,17 @@ message UpdateAppearanceRequest {
     bytes ccstate = 2;
 }
 
+// Delete this account's character. Permanently.
+//
+// NO ID FIELD, deliberately. The server derives whose character this is from the
+// authenticated connection, so "delete mine" cannot be spelled "delete theirs" - the one
+// request where getting that wrong is unrecoverable rather than merely wrong.
+//
+// The confirmation belongs on the client, in front of the person losing the character. By
+// the time this message exists they have already answered it.
+message DeleteCharacterRequest {
+}
+
 message Protocol {
     oneof content {
         AuthenticationRequest authentication_request = 1;
@@ -197,5 +208,6 @@ message Protocol {
         RespawnRequest respawn_request = 8;
         SaveCharacterRequest save_character_request = 9;
         UpdateAppearanceRequest update_appearance_request = 10;
+        DeleteCharacterRequest delete_character_request = 11;
     }
 }

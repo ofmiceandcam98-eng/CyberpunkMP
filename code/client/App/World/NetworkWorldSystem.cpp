@@ -1017,6 +1017,43 @@ void NetworkWorldSystem::SetCharacterStatus(bool aHasCharacter, const char* acNa
                                : "");
 }
 
+void NetworkWorldSystem::DeleteCharacter()
+{
+    const auto& service = Core::Container::Get<NetworkService>();
+
+    if (!service || !service->IsConnected())
+    {
+        spdlog::warn("[Character] delete requested with no connection");
+        return;
+    }
+
+    spdlog::info("[Character] asking the server to delete this account's character");
+
+    client::DeleteCharacterRequest request;
+    service->Send(request);
+}
+
+void NetworkWorldSystem::HandleCharacterList(const PacketEvent<server::NotifyCharacterList>& aMessage)
+{
+    m_characterError = aMessage.get_error().c_str();
+
+    const auto& characters = aMessage.get_characters();
+
+    if (characters.empty())
+    {
+        SetCharacterStatus(false, "", 0, false);
+    }
+    else
+    {
+        const auto& first = characters[0];
+        SetCharacterStatus(true, first.get_name().c_str(), first.get_level(),
+                           first.get_spawned_before());
+    }
+
+    if (!m_characterError.empty())
+        spdlog::warn("[Character] the server refused: {}", m_characterError);
+}
+
 void NetworkWorldSystem::EnterWorld()
 {
     const auto& service = Core::Container::Get<NetworkService>();
@@ -1608,6 +1645,7 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleInteraction>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleAppearanceUpdate>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleVehicleControlAssigned>(this);
+    pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleCharacterList>(this);
 
     m_remotePlayerId = std::nullopt;
 

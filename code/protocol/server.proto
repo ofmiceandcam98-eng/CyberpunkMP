@@ -374,6 +374,20 @@ message NotifyAppearanceUpdate {
     bytes ccstate = 3;
 }
 
+// The account's characters changed - one was deleted, or one was created.
+//
+// The same list AuthenticationResponse carries, sent again when it stops being true. The
+// selector redraws from this rather than assuming what a delete did: the server is the one
+// that knows whether it actually happened, and a client that assumed success would offer
+// PLAY on a character that no longer exists.
+message NotifyCharacterList {
+    repeated CharacterSummary characters = 1;
+
+    // Said out loud when something was refused, so the selector can show a reason instead
+    // of appearing to ignore the button. Empty on success.
+    string error = 2;
+}
+
 message Protocol {
     oneof content {
         AuthenticationResponse authentication_response = 1;
@@ -398,5 +412,6 @@ message Protocol {
         NotifyMoney notify_money = 20;
         NotifyQuestSkip notify_quest_skip = 21;
         NotifyAppearanceUpdate notify_appearance_update = 22;
+        NotifyCharacterList notify_character_list = 23;
     }
 }
