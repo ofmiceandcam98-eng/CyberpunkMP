@@ -4,6 +4,10 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.85
+
+- **If your launcher grabbed the wrong v0.3.84, this gets you the right one.** Two v0.3.84 builds were published minutes apart tonight; one of them re-broke the fallback-launch fix (arguments wrapped in quotes the game ignores - the "multiplayer dials your own PC" bug). v0.3.85 exists so every launcher, whichever 84 it got, updates to a build where the fix is definitely in. Nothing else changes.
+
 ## What changed — v0.3.84
 
 - **Remote players move.** This is the one. You could see another player's body at the spot they spawned and nothing after that, while they were walking around on their end — and every diagnostic said the connection was healthy, because it was. The client held render time in a 32-bit float. Ticks are milliseconds since the epoch, around 1,787,000,000,000, and a float that large can only count in steps of 131,072 — about two minutes. So the 100ms interpolation delay rounded away to nothing, every buffered movement sample compared as "already in the past", and the code that positions the puppet hit a guard and returned without moving anything, every frame, forever. The body stayed where it was last put: its spawn point. Ticks are now kept as whole numbers, and only the differences between them — a few milliseconds — are allowed to be fractional.
