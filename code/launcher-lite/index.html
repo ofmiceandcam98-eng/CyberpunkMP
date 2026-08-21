@@ -6,17 +6,20 @@
       content="default-src 'none'; img-src 'self' https://cdn.discordapp.com; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
 <title>Night City Online</title>
 <style>
-  /* A slightly green-biased near-black rather than pure grey - it sits with the
-     yellow accent instead of fighting it. */
+  /* The Blackwall look: a red-biased near-black with a hot signal red, after the
+     RedSync/Blackwall terminal aesthetic the crew liked. Colors only - every
+     control keeps its function. Status colors stay green/amber-red because they
+     are read as MEANING, not theme; an all-red palette would make "broken" and
+     "styled" the same color. */
   :root {
-    --ground:  #0f1115;
-    --surface: #171a20;
-    --line:    #262a33;
-    --ink:     #e7e6df;
-    --ink-dim: #8b8f9a;
-    --accent:  #fcee0a;
+    --ground:  #070406;
+    --surface: #120a0d;
+    --line:    #2a1418;
+    --ink:     #e8e2e2;
+    --ink-dim: #9a8b8d;
+    --accent:  #ff2a32;
     --ok:      #5bc07e;
-    --bad:     #f0705a;
+    --bad:     #f0a05a;
     --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
     --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   }
@@ -837,7 +840,7 @@
         <button class="action update" id="update" style="display:none">Update</button>
       </div>
 
-      <button class="action play" id="play" disabled>Launch Game</button>
+      <button class="action play" id="play" disabled>JACK IN</button>
 
       <!-- Why the button is dead. A greyed-out Launch with no explanation is the most
            frustrating thing a launcher can do - people conclude it is broken and leave,
@@ -1124,11 +1127,11 @@
                        gameState.launching || gameState.running
 
     if (gameState.launching) {
-      playBtn.textContent = 'Launching...'
+      playBtn.textContent = 'JACKING IN...'
     } else if (gameState.running) {
       playBtn.textContent = 'Game running'
     } else {
-      playBtn.textContent = 'Launch Game'
+      playBtn.textContent = 'JACK IN'
     }
 
     // Say WHY, in the order someone has to fix them. Signing in first, then files, then
@@ -1420,7 +1423,7 @@
     // inside that gap - which is precisely the double launch this exists to prevent.
     if (playBtn.disabled) return
     playBtn.disabled = true
-    playBtn.textContent = 'Launching...'
+    playBtn.textContent = 'JACKING IN...'
 
     setStatus('Starting game...')
     const result = await window.launcher.launchGame()
