@@ -4,6 +4,10 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.89
+
+- **Straight to the menu, hardcoded.** No press-any-key, no intro videos: the launcher now installs Fast Launch by itself whenever it's missing and your Nexus key allows it - quietly, never blocking Play. Double-click to MULTIPLAYER is the boot, by policy.
+
 ## What changed — v0.3.88
 
 - **Admins stop hand-stretching the window.** The server controls make an admin's right-hand column a full card taller than a player's, and the fixed window height cut it off every session. The window now grows to fit once your role resolves - clamped to your screen, and never overriding a size you set yourself.

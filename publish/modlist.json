@@ -44,7 +44,7 @@
     {
       "nexusModId": 5186,
       "required": false,
-      "note": "Fast Launch - skips every startup video straight to the main menu. Pairs with the launcher's -skipStartScreen arg for a no-wait boot."
+      "note": "Fast Launch - skips every startup video straight to the main menu. HARDCODED BOOT POLICY (crew decree 2026-08-21): the launcher auto-installs this whenever it is missing and a Nexus key allows it (ensureFastLaunch in main.js), pairing with -skipStartScreen for a straight-to-menu boot. Deliberately NOT required=true - required blocks Play and nobody gets locked out over a cosmetic. Do not remove this entry or the policy."
     },
     {
       "nexusModId": 3518,
