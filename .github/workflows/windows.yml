@@ -6,6 +6,12 @@ on:
     branches:
       - main
       - dev
+    paths-ignore:
+      - 'publish/**'
+      - 'tools/**'
+      - 'code/launcher-lite/**'
+      - 'docs/**'
+      - '**.md'
 
 # NOTE: pnpm doesn't support command 'ci' for now.
 #
@@ -73,7 +79,17 @@ jobs:
       # compiler unable to find windows.h/stdio.h at all, which is how this workflow
       # died twice (19041 first, then 22621). Auto-detection tracks the image.
       - name: 'Configure xmake and install dependencies'
-        run: xmake config --arch=${{ matrix.arch }} --mode=${{ matrix.mode }} --yes
+        # Retried: this step clones xmake's package repos and downloads sources, and
+        # both flake under GitHub rate limits (a 403 cloning build-artifacts failed a
+        # run on 2026-08-21 with no code change at all). Three tries, spaced out.
+        shell: bash
+        run: |
+          for i in 1 2 3; do
+            xmake config --arch=${{ matrix.arch }} --mode=${{ matrix.mode }} --yes && exit 0
+            echo "xmake config failed (attempt $i) - retrying in 30s"
+            sleep 30
+          done
+          exit 1
 
       # Build the game
       - name: 'Build with xmake'

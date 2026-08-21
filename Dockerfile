@@ -39,7 +39,10 @@ COPY . .
 # tried; raise it per-host with --build-arg BUILD_JOBS=N if the hardware has headroom.
 ARG BUILD_JOBS=2
 
-RUN --mount=type=cache,target=/root/.xmake xmake -y -j${BUILD_JOBS}
+# Retried: xmake downloads package sources here, and the mirrors 504 under load -
+# a Linux CI run died on cryptopp/flecs/entt fetches with no code change. A retry
+# resumes from the package cache, so a second attempt only refetches what failed.
+RUN --mount=type=cache,target=/root/.xmake sh -c 'for i in 1 2 3; do xmake -y -j${BUILD_JOBS} && exit 0; echo "xmake build failed (attempt $i) - retrying in 20s"; sleep 20; done; exit 1'
 
 # xmake writes to build/linux/<arch>/release, where <arch> is x86_64 on Intel and
 # arm64 on ARM. Collect it into a fixed path so the release stage does not have to
