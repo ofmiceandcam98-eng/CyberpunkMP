@@ -141,6 +141,28 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     int32_t GetRestoreMoney() const;
     bool ConsumeJoinRequest();
 
+    // ---------------------------------------------------------------------------
+    // The character this ACCOUNT owns, as the server reported it at sign-in.
+    //
+    // Read by the selector. Never derived from the Cyberpunk save on disk - that save is
+    // the world template, not anybody's identity, and treating it as one is how the local
+    // save creeps back in as the source of truth.
+    // ---------------------------------------------------------------------------
+    void SetCharacterStatus(bool aHasCharacter, const char* acName, int32_t aLevel, bool aSpawnedBefore);
+
+    // Has the server told us yet? False until the authentication reply lands, which is
+    // what the selector waits on rather than assuming "no character".
+    bool IsCharacterStatusKnown() const { return m_characterStatusKnown; }
+
+    bool HasCharacter() const { return m_hasCharacter; }
+    Red::CString GetCharacterName() const { return Red::CString(m_characterName.c_str()); }
+    int32_t GetCharacterLevel() const { return m_characterLevel; }
+    bool HasCharacterSpawnedBefore() const { return m_characterSpawnedBefore; }
+
+    // Called when the world is up and the player pressed PLAY: sends the spawn that was
+    // held back while they were on the selector.
+    void EnterWorld();
+
     // Called from redscript when the local player is downed - see Death.reds.
     void RequestRespawn();
 
@@ -258,6 +280,13 @@ private:
     bool m_ready{false};
     bool m_joinRequested{false};
 
+    // The account's character, as reported at sign-in. See SetCharacterStatus.
+    bool m_characterStatusKnown{false};
+    bool m_hasCharacter{false};
+    std::string m_characterName;
+    int32_t m_characterLevel{0};
+    bool m_characterSpawnedBefore{false};
+
     // For measuring our own speed from how far we actually moved - see
     // UpdatePlayerLocation. Mutable because that function is const and only reports.
     mutable glm::vec3 m_lastPosition{};
@@ -342,6 +371,12 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(GetRestoreQuantity);
     RTTI_METHOD(GetRestoreMoney);
     RTTI_METHOD(ConsumeJoinRequest);
+    RTTI_METHOD(IsCharacterStatusKnown);
+    RTTI_METHOD(HasCharacter);
+    RTTI_METHOD(GetCharacterName);
+    RTTI_METHOD(GetCharacterLevel);
+    RTTI_METHOD(HasCharacterSpawnedBefore);
+    RTTI_METHOD(EnterWorld);
     RTTI_METHOD(RequestRespawn);
     RTTI_METHOD(SaveCharacterAppearance);
     RTTI_METHOD(IsConnected);

@@ -1002,6 +1002,41 @@ bool NetworkWorldSystem::IsConnected() const
     return service && service->IsConnected();
 }
 
+void NetworkWorldSystem::SetCharacterStatus(bool aHasCharacter, const char* acName, int32_t aLevel,
+                                            bool aSpawnedBefore)
+{
+    m_characterStatusKnown = true;
+    m_hasCharacter = aHasCharacter;
+    m_characterName = acName ? acName : "";
+    m_characterLevel = aLevel;
+    m_characterSpawnedBefore = aSpawnedBefore;
+
+    spdlog::info("[Character] server reports: {}{}", aHasCharacter ? "has a character" : "no character",
+                 aHasCharacter ? fmt::format(" - '{}' level {}, {}", m_characterName, aLevel,
+                                             aSpawnedBefore ? "played before" : "never spawned")
+                               : "");
+}
+
+void NetworkWorldSystem::EnterWorld()
+{
+    const auto& service = Core::Container::Get<NetworkService>();
+
+    if (!service || !service->IsConnected())
+    {
+        spdlog::warn("[Character] EnterWorld with no connection - nothing to announce");
+        return;
+    }
+
+    // Only when one is actually owed. Entering the world by a route that already spawned -
+    // the old in-world connect path - must not send a second announcement, which would
+    // tell everybody to build a second puppet for this player.
+    if (!service->IsSpawnDeferred())
+        return;
+
+    spdlog::info("[Character] entering the world - sending the spawn held back at the selector");
+    service->SendSpawnCharacterRequest();
+}
+
 bool NetworkWorldSystem::ConsumeJoinRequest()
 {
     // Deliberately one-shot. Loading a save from the MULTIPLAYER entry should connect;

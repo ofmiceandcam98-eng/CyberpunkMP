@@ -159,14 +159,52 @@ void NetworkService::HandleAuthentication(const PacketEvent<server::Authenticati
 
     m_settings = aResponse.get_settings();
 
-    Red::GetGameSystem<NetworkWorldSystem>()->OnConnected();
+    // What the SERVER says this account is playing, kept before anything else runs.
+    //
+    // The character selector is drawn from this. It has to be stored rather than acted on
+    // here, because authentication can now happen at the main menu - where there is no
+    // world, no player, and nothing to spawn.
+    auto* pWorldSystem = Red::GetGameSystem<NetworkWorldSystem>();
+    pWorldSystem->SetCharacterStatus(aResponse.get_has_character(),
+                                     aResponse.get_character_name().c_str(),
+                                     aResponse.get_character_level(),
+                                     aResponse.get_character_spawned_before());
 
+    pWorldSystem->OnConnected();
+
+    SendSpawnCharacterRequest();
+}
+
+void NetworkService::SendSpawnCharacterRequest()
+{
     client::SpawnCharacterRequest request;
     request.set_is_player(true);
 
     const auto system = Red::GetGameSystem<Game::PlayerSystem>();
     Red::Handle<Red::GameObject> player;
-    system->GetLocalPlayerControlledGameObject(player);
+
+    if (system)
+        system->GetLocalPlayerControlledGameObject(player);
+
+    // No player means we are not in the world yet - authenticated from the main menu,
+    // standing on the character selector.
+    //
+    // This used to be impossible: connecting only ever happened from the in-world HUD
+    // controller, so a player object was always there. Now that MULTIPLAYER can connect
+    // before loading anything, spawning here would build a request out of a null player -
+    // and the position, equipment and appearance would all be read from nothing.
+    //
+    // Remembered rather than dropped. The spawn is what puts this player in front of
+    // everyone else, so it has to happen once the world is up; EnterWorld() is what asks
+    // for it, and it is called when the world is ready and PLAY has been pressed.
+    if (!player)
+    {
+        spdlog::info("[Spawn] authenticated with no world loaded - holding the spawn until PLAY");
+        m_spawnDeferred = true;
+        return;
+    }
+
+    m_spawnDeferred = false;
 
     // Use worldTransform: localTransform is relative and stays near-origin, which made
     // the server spawn our puppet at ~(0, 3.6, 0) instead of our actual world position.
