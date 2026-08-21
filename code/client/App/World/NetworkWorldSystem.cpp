@@ -998,9 +998,31 @@ void NetworkWorldSystem::OnBeforeWorldDetach(RED4ext::world::RuntimeScene* aScen
     {
         return;
     }
+
+    // Stand everything down BEFORE the engine starts destroying entities. A quit (or a
+    // death-reload, or a server switch) tears the world apart while remote puppets are
+    // still live - and until now our animation hook, interpolation pass and vehicle
+    // bookkeeping kept driving them straight into that teardown. zeldfep's 2026-08-21
+    // 01:30 crash-on-quit ends exactly one line into the detach with no stage named,
+    // which is why every stage announces itself here: the next teardown death names
+    // its killer instead of ending the log mid-sentence.
+    spdlog::info("[Detach] stand-down: silencing the animation hook");
+    App::PuppetRegistry::Clear();
+    App::PuppetRegistry::ClearDrivers();
+
+    spdlog::info("[Detach] stand-down: stopping interpolation");
+    m_interpolationSystem->OnDisconnected();
+
+    spdlog::info("[Detach] stand-down: dropping vehicle state");
+    m_vehicleSystem->OnDisconnected();
+
+    spdlog::info("[Detach] engine detach");
     IGameSystem::OnBeforeWorldDetach(aScene);
 
+    spdlog::info("[Detach] appearance detach");
     m_appearanceSystem->OnBeforeWorldDetach(aScene);
+
+    spdlog::info("[Detach] done - the engine owns the teardown from here");
 }
 
 void NetworkWorldSystem::HandleCharacterLoad(const PacketEvent<server::NotifyCharacterLoad>& aMessage)
