@@ -2326,6 +2326,27 @@ async function launchGame () {
     throw new Error('Could not find Cyberpunk 2077. Use "Locate game" to point at it.')
   }
 
+  // A Steam copy launched while Steam itself is NOT running does not keep our
+  // arguments: the game boots Steam and relaunches itself bare, so the mod reads no
+  // --ip and dials 127.0.0.1 forever (phonix, five identical sessions, 2026-08-21 -
+  // every log says "not launched from the launcher" even when it was). Refusing with
+  // the reason beats launching into a guaranteed dead end.
+  if (/steamapps/i.test(exe)) {
+    const steamUp = await new Promise((resolve) => {
+      const check = spawn('tasklist', ['/FI', 'IMAGENAME eq steam.exe', '/NH'], { windowsHide: true })
+      let out = ''
+      check.stdout.on('data', (c) => { out += c.toString() })
+      check.on('close', () => resolve(/steam\.exe/i.test(out)))
+      check.on('error', () => resolve(true)) // cannot tell - do not block on a guess
+    })
+
+    if (!steamUp) {
+      throw new Error('Steam is not running. Start Steam, wait for it to sign in, then JACK IN - ' +
+                      'a Steam copy launched without Steam restarts itself and loses the ' +
+                      'multiplayer connection settings.')
+    }
+  }
+
   // Last thing before starting: make sure only one copy of the mod will load.
   //
   // Here rather than at install time because a duplicate does not have to arrive through
