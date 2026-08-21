@@ -695,6 +695,42 @@ void GameServer::AdmitPlayer(const ConnectionId aConnectionId, const std::string
     settings.set_update_rate(m_config.UpdateRate);
     response.set_settings(settings);
 
+    // Tell them what character this ACCOUNT owns, before they can decide for themselves.
+    //
+    // Keyed on the Discord id the server just verified - never on anything the client
+    // sent, and never on the Cyberpunk save sitting on their disk, which looks like an
+    // answer and is not one. One account, at most one character: the store is keyed that
+    // way, so "which of their characters" is not a question that can be asked.
+    //
+    // Absent when Discord verification is disabled, because then there is no durable
+    // account to hang a character on and every connection is effectively a stranger.
+    if (!acDiscordId.empty())
+    {
+        if (const auto* pCharacter = m_players.FindCharacter(acDiscordId))
+        {
+            response.set_has_character(true);
+            // Through c_str(): the project's String carries a custom allocator and is not
+            // interchangeable with std::string at this boundary.
+            response.set_character_id(pCharacter->CharacterId.c_str());
+            response.set_character_name(pCharacter->Name.c_str());
+            response.set_character_spawned_before(pCharacter->SpawnedBefore);
+
+            // The record's own Level field, not a search through Proficiencies. Both hold
+            // it - the note in CharacterRecord explains why the overlap was kept - and
+            // this is the one the spawn path applies, so a selector that read the other
+            // could show a number the player never actually gets.
+            response.set_character_level(pCharacter->Level);
+
+            spdlog::info("{} has character '{}' ({})", acUsername,
+                         pCharacter->Name.empty() ? "unnamed" : pCharacter->Name,
+                         pCharacter->SpawnedBefore ? "played" : "never spawned");
+        }
+        else
+        {
+            spdlog::info("{} has no character yet", acUsername);
+        }
+    }
+
     server::RpcDefinitions definitions;
 
     const auto* pRpc = static_cast<RpcScriptInstance*>(IRpc::Get());

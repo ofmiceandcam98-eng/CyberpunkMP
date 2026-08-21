@@ -12,6 +12,32 @@ message AuthenticationResponse {
     bool success = 1;
     string error = 2;
     Settings settings = 3;
+
+    // What character this ACCOUNT has, decided by the server and sent unasked.
+    //
+    // The client must never answer "do I have a character" for itself. It has a Cyberpunk
+    // save sitting on disk that looks exactly like an answer and is not one - that save is
+    // the world template, not anybody's identity. The account owns the character, the
+    // server owns the account, and this is the server saying so before the client has a
+    // chance to guess.
+    //
+    // Carried on the authentication reply rather than a message of its own: it is known
+    // the moment the account is, and a second round trip is a window in which the client
+    // has been authenticated but does not yet know who it is playing.
+    bool has_character = 4;
+
+    // Present only when has_character is true. Enough to draw a selector - who they are
+    // and how far they got - and deliberately not the whole record: the appearance blob
+    // is 9KB and nothing on a selection screen needs the inventory.
+    string character_id = 5;
+    string character_name = 6;
+    int32 character_level = 7;
+
+    // Whether this character has ever stood in the world. A character that was created but
+    // never spawned goes to the configured server spawn; one that has been played resumes
+    // where the server last recorded it. The client does not decide this either - it is
+    // here so the selector can say "new" rather than to be acted on.
+    bool character_spawned_before = 8;
 }
 
 message Attribute {
