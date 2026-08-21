@@ -15,7 +15,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } from 'electron'
 import electronUpdater from 'electron-updater'
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, copyFileSync, unlinkSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, copyFileSync, unlinkSync, realpathSync } from 'node:fs'
 import fsp from 'node:fs/promises'
 import AdmZip from 'adm-zip'
 import crypto from 'node:crypto'
@@ -262,12 +262,17 @@ function findUninstallRegistryEntries () {
     let cmd = null
     const flush = () => {
       if (key && name && /night city online/i.test(name)) {
+        // Orphaned ONLY when the UninstallString names an ABSOLUTE exe that is
+        // provably gone. Everything else - unquoted paths with spaces we cannot
+        // parse, MsiExec-style relative commands, unexpanded %vars%, no string at
+        // all - is assumed healthy: deleting a live product's Apps row is the ghost
+        // problem in the other direction, and "not sure" must never delete.
         let exe = null
         if (cmd) {
           const m = cmd.match(/"([^"]+\.exe)"/i) || cmd.match(/^(\S+\.exe)/i)
-          if (m) exe = m[1]
+          if (m && path.isAbsolute(m[1])) exe = m[1]
         }
-        entries.push({ key, displayName: name, orphaned: !exe || !existsSync(exe) })
+        entries.push({ key, displayName: name, orphaned: Boolean(exe) && !existsSync(exe) })
       }
     }
     for (const line of out.split(/\r?\n/)) {
@@ -296,21 +301,32 @@ function isGameRunning () {
 // needs to keep running. aIncludeLive widens the sweep for the uninstall purge: the
 // live data folder and working shortcuts go too (the NSIS uninstaller re-sweeps after
 // this process exits, catching whatever Electron recreates on the way out).
+// Windows path identity: case-insensitive, and 8.3 aliases / junctions / whatever
+// casing the exe was launched with all name the same folder. A string compare that
+// misses ANY of those classes the running install as residue and shreds it mid-run -
+// canonicalize first, compare folded.
+function samePath (a, b) {
+  const canon = (p) => {
+    try { return realpathSync.native(p).toLowerCase() } catch { return path.resolve(p).toLowerCase() }
+  }
+  return canon(a) === canon(b)
+}
+
 function collectResidue (aIncludeLive) {
   const fp = launcherFootprint()
-  const ownDir = path.resolve(path.dirname(process.execPath))
-  const liveData = path.resolve(app.getPath('userData'))
+  const ownDir = path.dirname(process.execPath)
+  const liveData = app.getPath('userData')
 
   const dirs = []
   for (const d of [...fp.dataDirs, ...fp.updaterDirs]) {
     if (!existsSync(d)) continue
-    if (!aIncludeLive && path.resolve(d) === liveData) continue
+    if (!aIncludeLive && samePath(d, liveData)) continue
     dirs.push(d)
   }
   for (const d of fp.installDirs) {
     // NEVER the folder this process runs from - deleting it out from under a live
     // exe fails halfway and manufactures exactly the residue this hunts.
-    if (existsSync(d) && path.resolve(d) !== ownDir) dirs.push(d)
+    if (existsSync(d) && !samePath(d, ownDir)) dirs.push(d)
   }
 
   const files = []
@@ -342,7 +358,7 @@ function collectResidue (aIncludeLive) {
 // fatal - a half-clean with an honest list beats an exception with nothing done.
 function purgeResidue (aResidue) {
   const failed = []
-  const { execSync } = require('node:child_process')
+  const { execFileSync } = require('node:child_process')
 
   for (const d of aResidue.dirs) {
     try { rmSync(d, { recursive: true, force: true }) } catch (err) { failed.push(`${d} (${err.code || err.message})`) }
@@ -350,10 +366,28 @@ function purgeResidue (aResidue) {
   for (const f of aResidue.files) {
     try { rmSync(f, { force: true }) } catch (err) { failed.push(`${f} (${err.code || err.message})`) }
   }
-  for (const k of aResidue.regKeys) {
-    try { execSync(`reg delete "${k}" /f`, { windowsHide: true }) } catch { failed.push(k) }
+
+  // Registry LAST, and re-scanned: purging another copy's folder just deleted ITS
+  // uninstaller, so its Apps row became a ghost within this very run - sweep it now
+  // rather than leaving it for a second Deep clean. execFileSync, not a cmd string:
+  // any user process can create a key whose NAME carries quotes.
+  const orphanedNow = findUninstallRegistryEntries().filter((e) => e.orphaned).map((e) => e.key)
+  for (const k of new Set([...aResidue.regKeys, ...orphanedNow])) {
+    try { execFileSync('reg', ['delete', k, '/f'], { windowsHide: true }) } catch { failed.push(k) }
   }
   return failed
+}
+
+// The one folder the uninstall flow deletes OUTSIDE our own footprint is the mod's,
+// and it comes from a settings override a person once typed. Validate the shape, not
+// just the marker file: a botched manual install can leave CyberpunkMP.dll at the
+// GAME ROOT, and a picker pointed there would pass the dll check - then "remove the
+// mod" recursively deletes all of Cyberpunk 2077. A real mod folder sits under
+// red4ext\plugins and does not contain the game exe.
+function isSafeModDir (aModDir) {
+  if (!aModDir) return false
+  if (existsSync(path.join(aModDir, 'bin', 'x64', 'Cyberpunk2077.exe'))) return false
+  return /[\\/]red4ext[\\/]plugins[\\/][^\\/]+$/i.test(path.resolve(aModDir))
 }
 
 function loadSettings () {
@@ -1401,6 +1435,14 @@ async function uninstallMod () {
   })
 
   if (choice.response !== 0) return { removed: false }
+
+  // Same shape-check the uninstall flow uses: a settings override pointed at the
+  // game root (with a stray dll making it look valid) must never become
+  // "recursively delete Cyberpunk 2077".
+  if (!isSafeModDir(modDir)) {
+    throw new Error(`The mod folder looks wrong (${modDir}) - not deleting it. ` +
+                    'Remove red4ext\\plugins\\zzzCyberpunkMP by hand.')
+  }
 
   rmSync(modDir, { recursive: true, force: true })
   saveSettings({ installedStamp: null, installedVersion: null })
@@ -3578,16 +3620,24 @@ ipcMain.handle('launcher:uninstall', async () => {
 
   // The mod goes first, while the settings that locate it still exist.
   let note = ''
-  if (modDir) {
-    if (await isGameRunning()) {
-      note = 'Cyberpunk is running, so the mod was left in place - close the game and use Remove mod. '
-    } else {
-      try { rmSync(modDir, { recursive: true, force: true }) } catch (err) { note = `The mod folder resisted deletion (${err.code || err.message}). ` }
+  try {
+    if (modDir) {
+      if (!isSafeModDir(modDir)) {
+        note = `The mod folder looks wrong (${modDir}) - left alone. Delete red4ext\\plugins\\zzzCyberpunkMP by hand. `
+      } else if (await isGameRunning()) {
+        note = 'Cyberpunk is running, so the mod was left in place - close the game and use Remove mod. '
+      } else {
+        try { rmSync(modDir, { recursive: true, force: true }) } catch (err) { note = `The mod folder resisted deletion (${err.code || err.message}). ` }
+      }
     }
-  }
 
-  const failed = purgeResidue(collectResidue(true))
-  if (failed.length) note += `Could not remove: ${failed.join(', ')}. `
+    const failed = purgeResidue(collectResidue(true))
+    if (failed.length) note += `Could not remove: ${failed.join(', ')}. `
+  } catch (err) {
+    // Whatever already got removed stays removed; the person hears what stopped it
+    // rather than the IPC rejecting with the work half-done.
+    note += `Cleanup stopped early: ${err.message}. `
+  }
 
   if (!uninstaller) {
     // Portable copy: no NSIS uninstaller to hand over to, and everything else is
@@ -3632,7 +3682,7 @@ ipcMain.handle('repair:run', async () => {
       detail:
         listing.slice(0, 14).join('\n') +
         (listing.length > 14 ? `\n...and ${listing.length - 14} more` : '') +
-        '\n\nNone of this belongs to the current install - removing it cannot sign you out or break the mod.',
+        '\n\nNothing here is used by the copy you are running right now.',
       buttons: ['Clean everything', 'Keep'],
       defaultId: 1,
       cancelId: 1,
