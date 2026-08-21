@@ -8,6 +8,10 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 - **Straight to the menu, hardcoded.** No press-any-key, no intro videos: the launcher now installs Fast Launch by itself whenever it's missing and your Nexus key allows it - quietly, never blocking Play. Double-click to MULTIPLAYER is the boot, by policy.
 
+## What changed — v0.3.89
+
+- **Test builds carry the whole mod, not just half of it.** Installing a test build swapped `CyberpunkMP.dll` and nothing else. That works while the change being tested is C++ — "remote players MOVE" was, so it was fine — and silently delivers **nothing** when the change lives in the game scripts, which is where menus, seat transitions and appearance live. The build installed, said success, and changed nothing. It now installs the full payload (DLL, scripts and RPC together), and Restore puts back a matching set from the current release rather than a DLL alone. Devs only; players never see test builds.
+
 ## What changed — v0.3.88
 
 - **Admins stop hand-stretching the window.** The server controls make an admin's right-hand column a full card taller than a player's, and the fixed window height cut it off every session. The window now grows to fit once your role resolves - clamped to your screen, and never overriding a size you set yourself.
