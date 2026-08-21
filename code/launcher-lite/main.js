@@ -298,26 +298,6 @@ function findGameDir () {
     }
   } catch { /* reg unavailable - fall through to guessing */ }
 
-  // Epic keeps authoritative install records too: one JSON manifest per installed
-  // game, each naming its InstallLocation. Read them the way GOG's registry is read -
-  // as the source of truth for drives and folders the guessing below would miss.
-  // This matters even on C:: Epic's DEFAULT path is C:\Program Files\Epic Games\...,
-  // which no guess covered, so a bone-stock Epic install used to be "not found".
-  try {
-    const manifests = path.join(process.env.ProgramData || 'C:\\ProgramData',
-                                'Epic', 'EpicGamesLauncher', 'Data', 'Manifests')
-    for (const name of readdirSync(manifests)) {
-      if (!name.endsWith('.item')) continue
-      try {
-        const item = JSON.parse(readFileSync(path.join(manifests, name), 'utf8'))
-        // Push every install; the exe check at the bottom decides which one is
-        // actually Cyberpunk. Epic's internal app names are opaque codenames, so
-        // matching on them would be guessing with extra steps.
-        if (item.InstallLocation) candidates.push(item.InstallLocation)
-      } catch { /* malformed manifest - skip it */ }
-    }
-  } catch { /* Epic not installed */ }
-
   // Steam knows where its own libraries are - far better than guessing.
   for (const root of steamRoots()) {
     candidates.push(path.join(root, 'steamapps', 'common', 'Cyberpunk 2077'))
@@ -332,6 +312,38 @@ function findGameDir () {
         }
       } catch { /* no such library file */ }
     }
+  }
+
+  // Epic records every install in a manifest, one .item file per game, each holding the
+  // exact InstallLocation. Asking is authoritative; the drive-letter guessing below only
+  // ever finds an Epic copy that happens to sit in the default folder, which is not where
+  // anyone with a second drive puts it.
+  try {
+    const manifestDir = path.join(process.env.PROGRAMDATA || 'C:\\ProgramData',
+                                  'Epic', 'EpicGamesLauncher', 'Data', 'Manifests')
+
+    for (const file of readdirSync(manifestDir)) {
+      if (!file.toLowerCase().endsWith('.item')) continue
+
+      try {
+        const manifest = JSON.parse(readFileSync(path.join(manifestDir, file), 'utf8'))
+        const name = `${manifest.DisplayName || ''} ${manifest.MandatoryAppFolderName || ''}`
+
+        // Matched on the name rather than a catalog id: Epic's ids for this game differ
+        // between the base game and the expansion bundle, and a name match covers both.
+        if (/cyberpunk/i.test(name) && manifest.InstallLocation) {
+          candidates.push(manifest.InstallLocation)
+        }
+      } catch { /* a malformed manifest must not stop the others */ }
+    }
+  } catch { /* Epic not installed */ }
+
+  // Xbox / Microsoft Store. Installs land under a per-drive XboxGames folder with the
+  // playable files one level down in Content, which is the part a plain folder guess gets
+  // wrong even when it looks in the right place.
+  for (const letter of 'CDEFGHIJKLMNOPQRSTUVWXYZAB') {
+    candidates.push(`${letter}:\\XboxGames\\Cyberpunk 2077\\Content`)
+    candidates.push(`${letter}:\\Program Files\\WindowsApps\\Cyberpunk 2077`)
   }
 
   // Common layouts on EVERY drive letter, A through Z - C first because it is the
@@ -2008,17 +2020,31 @@ async function launchGame () {
     const template = await ensureTemplateSave()
 
     if (template.installed) {
-      // Only until they have a world of their own. See hasOwnWorldSince - forcing this
-      // every launch is what made everybody spawn as the character the template was built
-      // from, and it overrode the character they had just created through NEW CHARACTER.
-      const own = await hasOwnWorldSince(template.fresh ? Date.now() : templateInstalledAt())
-
-      if (own) {
-        console.log('[template] player has their own world - leaving their saves alone')
-      } else {
-        await stampTemplateNewest()
-        console.log('[template] no character yet - multiplayer will start from the template')
-      }
+      // Every launch now, deliberately - and this is a reversal.
+      //
+      // It used to be conditional (see hasOwnWorldSince), because forcing the template
+      // made everybody spawn as the character it was built from and overrode characters
+      // people had just created. That was the right fix at the time and the reason for it
+      // has since gone: the server now owns appearance, name, body, position, inventory
+      // and cyberware, and overwrites every one of them on arrival. The template cannot
+      // leak an identity any more, because nothing it contains about who you are survives
+      // contact with the server.
+      //
+      // What it buys is that everybody boots into the SAME world. Before this, the save
+      // used to reach multiplayer was whatever that person last played - so two players
+      // stood in one session with different quest states, different open doors, different
+      // vehicles, and no way to tell which differences were bugs. The template makes the
+      // starting world a constant instead of a variable.
+      //
+      // Their own saves are untouched - this changes which one is newest, nothing else.
+      // Singleplayer is exactly as they left it.
+      //
+      // Still template-derived, and worth being honest about: quest progress, perk and
+      // skill allocation, street cred, owned vehicles and apartments. The server holds
+      // level and points and applies those on top, but not where they were spent. That is
+      // the next thing to move, not something this pretends to have solved.
+      await stampTemplateNewest()
+      console.log('[template] multiplayer starts from the shared template - the server owns the character')
     } else {
       console.warn('[template] not available:', template.reason || 'unknown')
     }
@@ -3359,12 +3385,23 @@ ipcMain.handle('launcher:openInstallDir', async () => {
  */
 ipcMain.handle('launcher:uninstall', async () => {
   const dir = path.dirname(process.execPath)
-  const uninstaller = path.join(dir, 'Uninstall Night City Online Launcher.exe')
 
-  if (!existsSync(uninstaller)) {
+  // Found by scanning, not by a hardcoded name. electron-builder names the file
+  // "Uninstall <productName>.exe" - ours is "Uninstall Night City Online.exe" - and
+  // this code looked for "...Online Launcher.exe", a file that never existed. Every
+  // INSTALLED copy was told it was the portable build and to "just delete the .exe",
+  // which is how a player ends up unable to uninstall at all.
+  let uninstaller = null
+  try {
+    const found = readdirSync(dir).find((f) => /^uninstall.*\.exe$/i.test(f))
+    if (found) uninstaller = path.join(dir, found)
+  } catch { /* unreadable dir - treat as portable below */ }
+
+  if (!uninstaller) {
     return {
       ok: false,
-      error: 'No uninstaller here - this looks like the portable build. Just delete the .exe.'
+      error: 'No uninstaller here - this looks like the portable build. Just delete the .exe. ' +
+             '(Installed via the Setup? Use Windows Settings > Apps > Night City Online.)'
     }
   }
 
@@ -3840,14 +3877,48 @@ ipcMain.handle('prerelease:restore', async () => {
     const dllPath = path.join(modDir, 'CyberpunkMP.dll')
     const backupPath = path.join(modDir, 'CyberpunkMP.dll.shipped')
 
+    // Restore fetches the CURRENT release DLL rather than trusting the backup.
+    //
+    // The backup is first-write-wins, so after weeks of test builds it holds whatever
+    // DLL was current when the FIRST one was installed - while the launcher has kept
+    // updating the mod's SCRIPTS to the latest release the whole time. Scripts declare
+    // native functions the DLL must define; restore an old DLL under new scripts and
+    // RED4ext refuses to start the game at all ("invalid native definitions" - the
+    // live failure of 2026-08-20, a test.5 DLL under v0.3.78 scripts). The latest
+    // release's DLL and the latest release's scripts are the only pair guaranteed to
+    // agree, so that is what restore means now. The backup remains the offline
+    // fallback: possibly stale, but strictly better than a test build known-dead.
+    try {
+      const release = await axios.get(
+        `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, { timeout: 8000 })
+      const asset = (release.data?.assets || []).find((a) => a.name === 'CyberpunkMP.dll')
+
+      if (asset) {
+        const download = await axios.get(asset.browser_download_url,
+          { responseType: 'arraybuffer', timeout: 120000, maxRedirects: 5 })
+        const bytes = Buffer.from(download.data)
+
+        const expected = String(asset.digest || '').replace(/^sha256:/, '').toLowerCase()
+        const intact = !expected ||
+          crypto.createHash('sha256').update(bytes).digest('hex') === expected
+
+        if (intact) {
+          writeFileSync(dllPath, bytes)
+          if (existsSync(backupPath)) unlinkSync(backupPath)
+          saveSettings({ testBuildTag: undefined })
+          return { ok: true, source: 'latest release' }
+        }
+      }
+    } catch { /* offline or API down - fall back to the local backup */ }
+
     if (!existsSync(backupPath))
-      return { ok: false, error: 'No shipped backup found - use Verify game files instead.' }
+      return { ok: false, error: 'Could not fetch the shipped mod and no local backup exists - use Reinstall mod files.' }
 
     copyFileSync(backupPath, dllPath)
     unlinkSync(backupPath)
     saveSettings({ testBuildTag: undefined })
 
-    return { ok: true }
+    return { ok: true, source: 'local backup (offline) - Reinstall mod files if the game will not start' }
   } catch (err) {
     return { ok: false, error: err.message }
   }
