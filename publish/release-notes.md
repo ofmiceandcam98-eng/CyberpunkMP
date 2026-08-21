@@ -14,6 +14,11 @@ Four things, all needing two people to confirm. None of it has been in a live se
 - **The passenger takes the wheel.** When a driver got out of a car with someone still inside, that passenger already inherited responsibility for the vehicle — but stayed sitting in the passenger seat, unable to drive it. They now actually move into the driver's seat. The server picks who gets promoted, so two clients can never disagree and put two people at one wheel.
 
 **Known gap:** nothing cleans up abandoned cars yet, so a long session will slowly accumulate them. That is a deliberate follow-up — the trigger for removing a car should be a real rule, not "the driver got out".
+- **The Blackwall interface.** The launcher's new face, pointed by the crew: a red-burning-to-black motif on the header, footer and panel titles (solid bar, diagonal cut, echo dash, circuit trace ending on a node pad), a fading dark-grey ground with depth, notched-corner buttons, bracket-cornered panels, and a bigger NIGHT CITY ONLINE in a proper display face (Orbitron - ships with its license).
+- **Settings is tabs now** - one per section (Folders / Tools / Dev / Remove / About), centered and spaced, opening with a boot-up flicker. The scroll wall is gone.
+- **Loading looks like loading**: checks-in-progress spin a segmented ring, and JACK IN becomes a moving hazard-tread bar while the game starts. Status dots are square industrial LEDs with a glow when lit.
+- **Errors announce themselves**: failures read as /// WARNING /// in hazard yellow followed by the message in red.
+- The window is sized to its content (1180x800) and the fallback-launch font policy is fixed so the display face actually loads (the security policy previously blocked all fonts silently).
 
 ## What changed — v0.3.85
 
