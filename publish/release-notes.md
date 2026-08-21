@@ -4,6 +4,11 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.94
+
+- **Fixes v0.3.93, which would not start.** That build opened with "A JavaScript error occurred in the main process — Cannot find package '7zip-bin'" and went no further. The archive-extraction libraries added in v0.3.91 were listed correctly but never actually installed before the build was packaged, so the launcher shipped importing code that wasn't inside it. If you're stuck on that error, this release is the fix — the updater still works, so reopening should pull it.
+- **This can't ship again.** Packaging now refuses outright if any declared dependency is missing from the build machine. Every existing check passed v0.3.93 — the code parsed, every button resolved, and the "does it start?" test was fooled because Windows keeps a crashed Electron app alive behind its error dialog. A missing folder is not ambiguous, so that's what's checked now.
+
 ## What changed — v0.3.93
 
 - **Your Nexus account shows in the header, next to Discord.** Whether Nexus is connected decides whether the mod list can install anything, and until now that was only visible if you opened Settings and read a paragraph about API keys — so "Install does nothing" was usually the first anyone heard of it. It now sits beside your Discord account as the second half of one identity row, lit when a key is held. Sign in and sign out from there; the button tries the one-press browser sign-in first and, if Nexus refuses it, opens your API key page and says so rather than failing quietly. (Nexus only allows one-press sign-in for mod managers they've approved — that's their policy, not a bug.)

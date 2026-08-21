@@ -388,6 +388,34 @@ if ($Launcher) {
     }
     Ok "javascript parses"
 
+    # Every declared dependency must actually be installed BEFORE packaging.
+    #
+    # v0.3.93 shipped a launcher that could not start for anybody: "Cannot find package
+    # '7zip-bin'". The package was correctly declared - it arrived with the .7z/.rar
+    # support - but nobody ran pnpm install after merging, so electron-builder packaged an
+    # app importing modules that were not on disk. Every existing gate passed: the
+    # javascript parsed, the ids resolved, the markup balanced.
+    #
+    # The smoke test did not catch it either, and could not: an uncaught exception in the
+    # main process puts up a modal error dialog and the process STAYS ALIVE behind it, so
+    # "still running after 8 seconds" is exactly what a fatally broken launcher looks like.
+    #
+    # This check is the one that would have. It is a directory listing - no launching, no
+    # timing, no ambiguity about what "running" means.
+    $pkgJson = Get-Content (Join-Path $LauncherDir "package.json") -Raw | ConvertFrom-Json
+    $missing = @()
+
+    foreach ($dep in $pkgJson.dependencies.PSObject.Properties.Name) {
+        if (-not (Test-Path (Join-Path $LauncherDir "node_modules\$dep"))) { $missing += $dep }
+    }
+
+    if ($missing.Count -gt 0) {
+        Pop-Location
+        Die ("these dependencies are declared but not installed: {0}. Run 'pnpm install' in {1} - packaging now would ship a launcher that cannot start." -f ($missing -join ', '), $LauncherDir)
+    }
+
+    Ok "every declared dependency is installed"
+
     # Every id the script reaches for must exist in the markup. Getting this wrong
     # produces a dead button and no error at all.
     $html = Get-Content "index.html" -Raw
