@@ -495,6 +495,11 @@ void GameServer::OnDisconnection(ConnectionId aConnectionId, EDisconnectReason a
 {
     spdlog::info("Connection {:x} ended (reason {})", aConnectionId, static_cast<uint32_t>(aReason));
 
+    // If their verification is still out with Discord, the verdict no longer has a
+    // recipient. The completion task checks this set before acting, so erasing here is
+    // what turns a mid-verify disconnect into a non-event instead of a join for a ghost.
+    m_pendingVerifies.erase(aConnectionId);
+
     auto* pPlayerManager = GetWorld()->get_mut<PlayerManager>();
 
     if (const auto player = pPlayerManager->GetByConnectionId(aConnectionId))
@@ -558,80 +563,123 @@ void GameServer::HandleAuthentication(const PacketEvent<client::AuthenticationRe
         return;
     }
 
-    // Identity is decided here, by asking Discord - not by believing the client.
+    // Identity is decided by asking Discord - not by believing the client.
     // Note: the project's String has a custom allocator, so cross to std::string via c_str()
     // at the boundary with httplib rather than assuming they are interchangeable.
-    std::string username = aRequest.get_username().c_str();
-    std::string discordId;
-    auto level = EPermissionLevel::kPlayer;
-
-    if (m_config.Discord.Enabled)
+    if (!m_config.Discord.Enabled)
     {
-        DiscordIdentity identity;
-        const auto result = VerifyDiscordToken(aRequest.get_token().c_str(), identity);
+        const std::string username = aRequest.get_username().c_str();
 
-        if (result != EDiscordAuthResult::kOk)
-        {
-            const char* reason = "Discord sign-in required.";
-
-            switch (result)
-            {
-            case EDiscordAuthResult::kInvalidToken:
-                reason = "Your Discord sign-in has expired. Open the launcher and sign in again.";
-                break;
-            case EDiscordAuthResult::kNotAMember:
-                reason = "You must be a member of the Night City Online Discord to play here.";
-                break;
-            case EDiscordAuthResult::kUnreachable:
-                // Fail closed. Membership is required, so an unverifiable token is not a
-                // token we can accept - letting people in during an outage would mean
-                // anyone could join by simply making Discord unreachable.
-                reason = "Cannot reach Discord to verify your account right now. Try again shortly.";
-                break;
-            default:
-                break;
-            }
-
-            spdlog::warn("Rejected connection {:x}: {}", aRequest.ConnectionId, reason);
-
-            response.set_success(false);
-            response.set_error(reason);
-            Send(aRequest.ConnectionId, response);
-            Kick(aRequest.ConnectionId);
-            return;
-        }
-
-        // Banned? Checked here, after Discord has told us who they actually are, so the
-        // ban follows the account rather than a name or address they can change.
-        if (const auto* pBan = m_bans.Find(identity.Id))
-        {
-            spdlog::info("Rejected banned player {} ({}): {}", identity.Username, identity.Id,
-                         pBan->Reason);
-
-            response.set_success(false);
-            response.set_error(pBan->Reason.empty()
-                                   ? String("You are banned from this server.")
-                                   : String(("You are banned from this server: " + pBan->Reason).c_str()));
-            Send(aRequest.ConnectionId, response);
-            Kick(aRequest.ConnectionId);
-            return;
-        }
-
-        username = identity.Username;
-        discordId = identity.Id;
-        level = identity.Level;
-
-        // Both ids together, on purpose. Players see only the derived number, so a
-        // report saying "232998 is griefing" is meaningless unless the log ties it
-        // back to an account you can actually moderate.
-        spdlog::info("Authorised {} [player {}] (discord {}) as {} on connection {:x}", username,
-                     DerivePlayerId(discordId), discordId, ToString(level), aRequest.ConnectionId);
-    }
-    else
-    {
         spdlog::info("Authorize connection from {} (Discord verification disabled)", username);
+
+        AdmitPlayer(aRequest.ConnectionId, username, {}, EPermissionLevel::kPlayer,
+                    aRequest.get_token().c_str());
+        return;
     }
 
+    // A join already being verified needs no second verification. The client sends one
+    // AuthenticationRequest per connection, so a duplicate here is a retransmit or a
+    // misbehaving client - either way, the answer already on its way covers it.
+    if (m_pendingVerifies.count(aRequest.ConnectionId))
+        return;
+
+    m_pendingVerifies.insert(aRequest.ConnectionId);
+
+    // The verify is up to two blocking HTTPS calls with five-second timeouts, and this
+    // handler runs on the thread that relays everyone's movement. Inline, every cold join
+    // froze every player's stream for the duration - the excavation measured 4/4
+    // crash-rejoins each hitching the relay. So only the WAITING moves to a worker; the
+    // world, the player manager and the connection are still touched exclusively from the
+    // game thread, via the task queue, exactly as ReverifyPlayers already does. Until the
+    // completion task runs, no player entity exists for this connection, so every handler
+    // refuses its traffic the same way it refuses any unauthenticated connection.
+    std::thread(
+        [this, connection = aRequest.ConnectionId,
+         token = std::string(aRequest.get_token().c_str())]()
+        {
+            DiscordIdentity identity;
+            const auto result = VerifyDiscordToken(token, identity);
+
+            GetTaskQueue()->Add(
+                [this, connection, token, result, identity]()
+                { FinishAuthentication(connection, result, identity, token); });
+        })
+        .detach();
+}
+
+void GameServer::FinishAuthentication(const ConnectionId aConnectionId, const EDiscordAuthResult aResult,
+                                      const DiscordIdentity& acIdentity, const std::string& acToken)
+{
+    // The connection can die while Discord is answering. OnDisconnection removes it from
+    // the pending set, so a missing entry means this verdict has no recipient - dropped
+    // without a word, as if they had never asked. IsAlive covers the remaining sliver:
+    // a disconnect the transport has seen that has not reached OnDisconnection yet.
+    if (m_pendingVerifies.erase(aConnectionId) == 0 || !IsAlive(aConnectionId))
+        return;
+
+    server::AuthenticationResponse response;
+
+    if (aResult != EDiscordAuthResult::kOk)
+    {
+        const char* reason = "Discord sign-in required.";
+
+        switch (aResult)
+        {
+        case EDiscordAuthResult::kInvalidToken:
+            reason = "Your Discord sign-in has expired. Open the launcher and sign in again.";
+            break;
+        case EDiscordAuthResult::kNotAMember:
+            reason = "You must be a member of the Night City Online Discord to play here.";
+            break;
+        case EDiscordAuthResult::kUnreachable:
+            // Fail closed. Membership is required, so an unverifiable token is not a
+            // token we can accept - letting people in during an outage would mean
+            // anyone could join by simply making Discord unreachable.
+            reason = "Cannot reach Discord to verify your account right now. Try again shortly.";
+            break;
+        default:
+            break;
+        }
+
+        spdlog::warn("Rejected connection {:x}: {}", aConnectionId, reason);
+
+        response.set_success(false);
+        response.set_error(reason);
+        Send(aConnectionId, response);
+        Kick(aConnectionId);
+        return;
+    }
+
+    // Banned? Checked here, after Discord has told us who they actually are, so the
+    // ban follows the account rather than a name or address they can change.
+    if (const auto* pBan = m_bans.Find(acIdentity.Id))
+    {
+        spdlog::info("Rejected banned player {} ({}): {}", acIdentity.Username, acIdentity.Id,
+                     pBan->Reason);
+
+        response.set_success(false);
+        response.set_error(pBan->Reason.empty()
+                               ? String("You are banned from this server.")
+                               : String(("You are banned from this server: " + pBan->Reason).c_str()));
+        Send(aConnectionId, response);
+        Kick(aConnectionId);
+        return;
+    }
+
+    // Both ids together, on purpose. Players see only the derived number, so a
+    // report saying "232998 is griefing" is meaningless unless the log ties it
+    // back to an account you can actually moderate.
+    spdlog::info("Authorised {} [player {}] (discord {}) as {} on connection {:x}", acIdentity.Username,
+                 DerivePlayerId(acIdentity.Id), acIdentity.Id, ToString(acIdentity.Level), aConnectionId);
+
+    AdmitPlayer(aConnectionId, acIdentity.Username, acIdentity.Id, acIdentity.Level, acToken);
+}
+
+void GameServer::AdmitPlayer(const ConnectionId aConnectionId, const std::string& acUsername,
+                             const std::string& acDiscordId, const EPermissionLevel aLevel,
+                             const std::string& acToken)
+{
+    server::AuthenticationResponse response;
     response.set_success(true);
 
     server::Settings settings;
@@ -643,14 +691,14 @@ void GameServer::HandleAuthentication(const PacketEvent<client::AuthenticationRe
     const auto* pRpc = static_cast<RpcScriptInstance*>(IRpc::Get());
     pRpc->Serialize(definitions);
 
-    if (!Send(aRequest.ConnectionId, definitions))
-        spdlog::error("Failed to send message to {:x}", aRequest.ConnectionId);
+    if (!Send(aConnectionId, definitions))
+        spdlog::error("Failed to send message to {:x}", aConnectionId);
 
-    if (!Send(aRequest.ConnectionId, response))
-        spdlog::error("Failed to send message to {:x}", aRequest.ConnectionId);
+    if (!Send(aConnectionId, response))
+        spdlog::error("Failed to send message to {:x}", aConnectionId);
 
     // The player was accepted, rpc definitions are ready, we can create the player's handle
-    const auto player = GetWorld()->get_mut<PlayerManager>()->Create(aRequest.ConnectionId, username.c_str());
+    const auto player = GetWorld()->get_mut<PlayerManager>()->Create(aConnectionId, acUsername.c_str());
 
     // Attach the identity Discord vouched for. Gameplay code reads permissions from here,
     // so every check is against something the server established - not something a client
@@ -659,9 +707,9 @@ void GameServer::HandleAuthentication(const PacketEvent<client::AuthenticationRe
     {
         if (auto* pComponent = player.get_mut<PlayerComponent>())
         {
-            pComponent->DiscordId = discordId;
-            pComponent->Level = level;
-            pComponent->DiscordToken = aRequest.get_token().c_str();
+            pComponent->DiscordId = acDiscordId;
+            pComponent->Level = aLevel;
+            pComponent->DiscordToken = acToken.c_str();
         }
     }
 }

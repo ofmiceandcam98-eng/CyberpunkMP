@@ -92,6 +92,24 @@ private:
     // own claims about its identity are ignored entirely.
     EDiscordAuthResult VerifyDiscordToken(const std::string& acToken, DiscordIdentity& aOutIdentity) const;
 
+    // Finishes a join once Discord has answered. Runs on the game thread, via the task
+    // queue - everything HandleAuthentication used to do after the verify lives here.
+    void FinishAuthentication(ConnectionId aConnectionId, EDiscordAuthResult aResult,
+                              const DiscordIdentity& acIdentity, const std::string& acToken);
+
+    // The accepted tail shared by the Discord and no-Discord paths: response, settings,
+    // rpc definitions, player creation, identity attachment. Game thread only.
+    void AdmitPlayer(ConnectionId aConnectionId, const std::string& acUsername,
+                     const std::string& acDiscordId, EPermissionLevel aLevel,
+                     const std::string& acToken);
+
+    // Connections whose join verification is out with Discord. Game-thread only - written
+    // by HandleAuthentication, erased by the completion task and by OnDisconnection, all
+    // of which run inside Update(), so it needs no lock. A connection in here has no
+    // player entity yet: to every handler it looks exactly like any unauthenticated
+    // connection, which is the point - pending is not a third state, it is "not yet".
+    Set<ConnectionId> m_pendingVerifies;
+
     // A short-lived record of a successful verification.
     //
     // Discord rate-limits unauthenticated requests, and every connect costs two calls.
