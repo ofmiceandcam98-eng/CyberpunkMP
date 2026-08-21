@@ -141,7 +141,7 @@ const FAST_LAUNCH_MOD_ID = 5186
 // gets { needsWebsite: true } and the website's "Mod Manager Download" button, which
 // routes straight back through our nxm:// handler and lands in the same
 // launcher-owned path. Either road, same destination.
-async function installNexusMod (modId) {
+async function installNexusMod (modId, options = {}) {
   const installed = loadInstalledMods()
   if (installed && (installed[modId] || installed[String(modId)])) return { ok: true, already: true }
 
@@ -171,7 +171,15 @@ async function installNexusMod (modId) {
   }
   if (!url) return { needsWebsite: true, reason: 'no download link' }
 
-  const file = await axios.get(url, { responseType: 'arraybuffer', timeout: 300000 })
+  const file = await axios.get(url, {
+    responseType: 'arraybuffer',
+    timeout: 300000,
+    // Byte progress for the queue row. Nexus does not always send a length; a null
+    // percent renders as plain "downloading" rather than a bar frozen at 0.
+    onDownloadProgress: options.onProgress
+      ? (e) => options.onProgress(e.total ? Math.round((e.loaded / e.total) * 100) : null)
+      : undefined
+  })
   const result = await installModArchive(modId, Buffer.from(file.data), { servedFileId: fileId })
   return { ok: true, ...result }
 }
@@ -189,48 +197,141 @@ async function ensureFastLaunch () {
   }
 }
 
+// ---------------------------------------------------------------------------
+// The download queue - strictly one mod at a time, strictly in install order.
+//
+// Parallel downloads were never the problem parallel downloads solve: the list is a
+// handful of small archives, and what actually broke installs was ORDER - a mod landing
+// before its framework fails silently in game. So the queue is deliberately serial and
+// deliberately head-of-line: the topo-sorted list is processed front to back, and when
+// a mod needs the person to press "Mod Manager Download" on Nexus (free accounts), the
+// whole queue waits at that mod rather than skipping ahead of a framework someone has
+// not clicked yet. The click lands through nxm://, which advances the queue.
+// ---------------------------------------------------------------------------
+let modQueue = []
+let modQueueRunning = false
+
+function emitModQueue () {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('mod-queue', modQueue.map((q) => ({ ...q })))
+  }
+}
+
+function queueSet (modId, state, extra = {}) {
+  const entry = modQueue.find((q) => String(q.modId) === String(modId))
+  if (!entry) return
+  entry.state = state
+  if (extra.detail !== undefined) entry.detail = extra.detail
+  if (extra.percent !== undefined) entry.percent = extra.percent
+  emitModQueue()
+}
+
+async function runModQueue () {
+  if (modQueueRunning) return
+  modQueueRunning = true
+
+  try {
+    // Front to back, never past an unfinished head. 'installed' and 'failed' are
+    // terminal; 'waiting' stops the runner entirely - the nxm:// handler restarts it
+    // when the download the person was asked for actually lands.
+    for (const entry of modQueue) {
+      if (entry.state === 'installed' || entry.state === 'failed') continue
+
+      if (entry.state === 'waiting') return
+
+      queueSet(entry.modId, 'downloading', { detail: null, percent: null })
+
+      try {
+        const result = await installNexusMod(entry.modId, {
+          onProgress: (percent) => queueSet(entry.modId, 'downloading', { percent })
+        })
+
+        if (result.already) {
+          queueSet(entry.modId, 'installed', { detail: 'was already installed' })
+        } else if (result.ok) {
+          queueSet(entry.modId, 'installed', { detail: `${result.count} file(s)` })
+        } else if (result.needsWebsite) {
+          // The one press only Nexus may receive (their policy - see installNexusMod).
+          // Page opened straight at the pinned file; the queue holds here until the
+          // nxm:// hand-off delivers it.
+          queueSet(entry.modId, 'waiting', { detail: 'press "Mod Manager Download" on the Nexus page that just opened' })
+          const mods = await fetchModList().catch(() => [])
+          const mod = mods.find((m) => String(m.nexusModId) === String(entry.modId))
+          const url = mod?.nexusFileId
+            ? `https://www.nexusmods.com/cyberpunk2077/mods/${entry.modId}?tab=files&file_id=${mod.nexusFileId}`
+            : `https://www.nexusmods.com/cyberpunk2077/mods/${entry.modId}?tab=files`
+          shell.openExternal(url)
+          return
+        }
+      } catch (err) {
+        // A failed framework does not stop the queue - its dependents fail on their own
+        // turn with the dependency gate's message naming exactly what was missing,
+        // which is a better report than a queue that silently stopped halfway.
+        queueSet(entry.modId, 'failed', { detail: err.response?.status ? `Nexus said ${err.response.status}` : err.message })
+      }
+    }
+
+    launcherLog(`mod queue finished: ${modQueue.filter((q) => q.state === 'installed').length}/${modQueue.length} installed, ` +
+                `${modQueue.filter((q) => q.state === 'failed').length} failed`)
+  } finally {
+    modQueueRunning = false
+  }
+}
+
+// Called by the nxm:// handler when a download lands: if it was the mod the queue was
+// waiting on (or anywhere in it), mark it done and let the queue move to the next one.
+function queueNotifyInstalled (modId, result) {
+  const entry = modQueue.find((q) => String(q.modId) === String(modId))
+  if (!entry) return
+  entry.state = 'installed'
+  entry.detail = result?.count ? `${result.count} file(s)` : null
+  emitModQueue()
+  runModQueue()
+}
+
 // Settings > "Direct install from Nexus": every mod on the server's list that is
-// missing here, in one click - installed straight into the game folder on a premium
-// key, or handed one page at a time to the website's Mod Manager Download button
-// (which comes right back through our nxm:// handler) on a free one.
+// missing here, queued in dependency order and downloaded ONE AT A TIME - frameworks
+// first, visibly, in the queue under the mod list.
 ipcMain.handle('mods:installMissing', async () => {
   try {
+    if (modQueueRunning || modQueue.some((q) => q.state === 'queued' || q.state === 'downloading')) {
+      return { ok: true, message: 'The queue is already running - watch it below.' }
+    }
+
     const mods = await fetchModList()
     const level = await refreshUserLevel().catch(() => 'player')
     const isStaff = (LEVELS[level] || 0) >= LEVELS.admin || isAdmin()
 
-    const done = []
-    const manual = []
-    const failed = []
+    const gameDir = findGameDir()
+    const installed = loadInstalledMods()
 
-    // Install order matters: frameworks before the mods that need them, or the
-    // dependency gate in installModArchive rightly refuses the dependent. The same
-    // topo-sort the list view uses guarantees a mod's requirements were attempted -
-    // and on a premium key, installed - earlier in this very loop.
-    for (const mod of sortByDependencies(mods)) {
-      if (mod.devOnly && !isStaff) continue
-      try {
-        const result = await installNexusMod(mod.nexusModId)
-        if (result.ok && !result.already) done.push(mod.nexusModId)
-        else if (result.needsWebsite) manual.push(mod.nexusModId)
-      } catch (err) {
-        failed.push(`${mod.nexusModId} (${err.response?.status || err.message})`)
-      }
+    // Only what is actually missing, in install order. Already-installed mods are left
+    // out of the queue entirely - a list of ✓ rows for things that were already fine
+    // reads like work happened when none did.
+    const missing = sortByDependencies(mods)
+      .filter((mod) => !mod.devOnly || isStaff)
+      .filter((mod) => !gameDir || describeInstalledMod(mod, installed, gameDir).state !== 'installed')
+
+    if (missing.length === 0) {
+      modQueue = []
+      emitModQueue()
+      return { ok: true, message: 'Everything on the list is already installed.' }
     }
 
-    if (manual.length) {
-      // One page at a time - a browser volley of every missing mod is chaos. The nxm
-      // handler installs each as its button is pressed; running this again picks up
-      // where the person left off.
-      shell.openExternal(`https://www.nexusmods.com/cyberpunk2077/mods/${manual[0]}?tab=files`)
-    }
+    modQueue = missing.map((mod) => ({
+      modId: String(mod.nexusModId),
+      name: mod.name || `Nexus mod ${mod.nexusModId}`,
+      state: 'queued',
+      detail: null,
+      percent: null
+    }))
+    emitModQueue()
+    launcherLog(`mod queue started: ${modQueue.map((q) => q.name).join(' -> ')}`)
 
-    const parts = []
-    if (done.length) parts.push(`installed ${done.length} directly`)
-    if (manual.length) parts.push(`${manual.length} need one click on Nexus (page opened - press "Mod Manager Download", it lands here automatically)`)
-    if (failed.length) parts.push(`failed: ${failed.join(', ')}`)
+    // Deliberately not awaited - the button answers now, the queue reports itself.
+    runModQueue()
 
-    return { ok: !failed.length, message: parts.length ? parts.join('; ') : 'Everything on the list is already installed.' }
+    return { ok: true, message: `Queued ${missing.length} mod(s) - downloading one at a time, in load order, below.` }
   } catch (err) {
     return { ok: false, message: err.message }
   }
@@ -5518,6 +5619,10 @@ async function handleNxmLink (url) {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('mod-progress', { modId, state: 'installed', ...result })
     }
+
+    // If the queue was holding at this mod (free-account flow: it opened the page,
+    // the person pressed the button, the download landed here), move it along.
+    queueNotifyInstalled(modId, result)
   } catch (err) {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('mod-progress', { modId, state: 'failed', error: err.message })

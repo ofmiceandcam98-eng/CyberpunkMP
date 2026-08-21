@@ -92,6 +92,12 @@ contextBridge.exposeInMainWorld('launcher', {
     ipcRenderer.on('mod-progress', (_e, info) => callback(info))
   },
 
+  // The download queue - a full snapshot on every change, so the renderer never has to
+  // reconstruct state from a stream of deltas it may have missed.
+  onModQueue: (callback) => {
+    ipcRenderer.on('mod-queue', (_e, queue) => callback(queue))
+  },
+
   nexusSsoLogin: () => ipcRenderer.invoke('nexus:ssoLogin'),
   nexusSignIn: (key) => ipcRenderer.invoke('nexus:signIn', key),
   getVoiceSettings: () => ipcRenderer.invoke('voice:get'),

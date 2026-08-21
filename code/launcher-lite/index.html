@@ -222,6 +222,44 @@
     padding-right: .25rem;
   }
 
+  /* --- the download queue, under the mod list --- */
+  .modqueue {
+    margin-top: .5rem;
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    background: rgba(255, 42, 50, .04);
+    padding: .45rem .6rem .5rem;
+  }
+  .modqueue-head {
+    font-size: .62rem;
+    letter-spacing: .14em;
+    color: var(--dim);
+    margin-bottom: .35rem;
+  }
+  .queue-row {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    padding: .22rem 0;
+    font-size: .8rem;
+  }
+  .queue-row .qname { min-width: 9rem; }
+  .queue-row .qdetail { color: var(--dim); font-size: .72rem; flex: 1; }
+  .queue-row.failed .qdetail { color: var(--accent); }
+  .queue-row.waiting .qdetail { color: var(--hazard); }
+  .qbar {
+    flex: 1;
+    max-width: 10rem;
+    height: 4px;
+    background: #22262e;
+    overflow: hidden;
+  }
+  .qbar > div {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2, #7a1016));
+    transition: width .3s ease;
+  }
+
   .mod {
     display: flex;
     align-items: center;
@@ -1361,6 +1399,14 @@
         </div>
 
         <div class="modlist" id="modList"></div>
+
+        <!-- The download queue: one mod at a time, in load order, frameworks first.
+             Hidden until Install missing starts one. Strictly serial on purpose - what
+             broke installs was never speed, it was a mod landing before its framework. -->
+        <div class="modqueue" id="modQueue" style="display:none">
+          <div class="modqueue-head">/// DOWNLOAD QUEUE — one at a time, load order ///</div>
+          <div id="modQueueRows"></div>
+        </div>
 
         <div class="field-hint" id="modHint" style="margin-top:.5rem"></div>
       </div>
@@ -3434,6 +3480,66 @@
           })
         }
       }
+    }
+  })
+
+  // The download queue, under the mod list. A full snapshot arrives on every change;
+  // rendering is a rebuild, not a patch - at this row count there is nothing to win by
+  // being clever, and snapshots cannot drift out of sync.
+  window.launcher.onModQueue((queue) => {
+    const box = $('modQueue')
+    const rows = $('modQueueRows')
+
+    if (!queue || queue.length === 0) {
+      box.style.display = 'none'
+      return
+    }
+    box.style.display = 'block'
+    rows.textContent = ''
+
+    for (const entry of queue) {
+      const row = document.createElement('div')
+      row.className = 'queue-row ' + entry.state
+
+      const dot = document.createElement('span')
+      // The same state language as everything else in the launcher: green = done,
+      // spinning ring = working, plain = waiting its turn.
+      dot.className = 'dot' +
+        (entry.state === 'installed' ? ' on' : '') +
+        (entry.state === 'downloading' ? ' busy' : '')
+      row.appendChild(dot)
+
+      const name = document.createElement('span')
+      name.className = 'qname'
+      name.textContent = entry.name
+      row.appendChild(name)
+
+      if (entry.state === 'downloading' && typeof entry.percent === 'number') {
+        const bar = document.createElement('div')
+        bar.className = 'qbar'
+        const fill = document.createElement('div')
+        fill.style.width = entry.percent + '%'
+        bar.appendChild(fill)
+        row.appendChild(bar)
+      }
+
+      const detail = document.createElement('span')
+      detail.className = 'qdetail'
+      detail.textContent =
+        entry.state === 'queued' ? 'queued' :
+        entry.state === 'downloading' ? (typeof entry.percent === 'number' ? entry.percent + '%' : 'downloading...') :
+        entry.state === 'waiting' ? (entry.detail || 'waiting for your click on Nexus') :
+        entry.state === 'failed' ? ('✗ ' + (entry.detail || 'failed')) :
+        ('✓ installed' + (entry.detail ? ' — ' + entry.detail : ''))
+      row.appendChild(detail)
+
+      rows.appendChild(row)
+    }
+
+    // Refresh the list's install states when the queue finishes its last row, so ✓s in
+    // the queue and "Installed" in the list can never tell two different stories.
+    if (queue.every((q) => q.state === 'installed' || q.state === 'failed')) {
+      refreshMods()
     }
   })
 
