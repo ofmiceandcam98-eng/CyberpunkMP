@@ -24,11 +24,20 @@ constexpr static float sCellSize = 60 * 100;
 constexpr static int16_t sCellLoadRadius = 3;
 constexpr static int16_t sCellUnloadRadius = 4;
 
-// An empty vehicle awaiting teardown. ReleaseVehicleIfEmpty schedules instead of
-// destroying because "empty" is routinely a transient: a seat swap is an exit and an
-// enter a millisecond apart, and destroying at the exit deleted the car out from under
-// the re-enter - with its simulator still driving it. Any occupant arriving before the
-// deadline cancels the teardown.
+// An empty vehicle awaiting teardown.
+//
+// NOTHING SETS THIS ANY MORE, and the system that consumes it therefore never fires.
+// Kept, rather than deleted, because it is the shape an abandoned-vehicle cleanup policy
+// will want: a deadline per entity and a sweep that acts when it passes.
+//
+// It became unused when ReleaseVehicleIfEmpty stopped destroying empty vehicles and began
+// parking them instead - a car whose driver got out is a parked car, not litter. The delay
+// existed to absorb a seat swap, which is an exit and an enter a millisecond apart, where
+// destroying at the exit deleted the car out from under the re-enter with its simulator
+// still driving it. Parking is reversible, so that race no longer needs absorbing.
+//
+// Anyone reviving this: the trigger for removing a car should be a real lifecycle rule -
+// stored, destroyed, owner reclaimed it, idle for hours - and never "the driver got out".
 struct PendingReleaseComponent
 {
     std::chrono::steady_clock::time_point At;
@@ -312,7 +321,17 @@ void Level::RemoveOwnedVehicles(flecs::entity aPlayer) noexcept
             continue;
         }
 
-        Remove(vehicle);
+        // Nobody left inside, so park it rather than delete it.
+        //
+        // A player's connection dropping is not a reason for their car to stop existing.
+        // It used to be: the vehicle was a child of the player entity, so losing the player
+        // took the car with it - somebody's parked car evaporating out from under the
+        // people standing next to it because its last driver alt-tabbed and timed out.
+        //
+        // Same parking as the exit path. The car keeps its network id, its position, and
+        // its place on every client; the only thing it loses is a simulator, which is
+        // correct, because the machine that was simulating it has gone.
+        TransferAuthority(vehicle, flecs::entity::null());
     }
 }
 
@@ -1165,10 +1184,34 @@ void Level::ReleaseVehicleIfEmpty(flecs::entity aVehicle) noexcept
         return;
     }
 
-    // Schedule, never destroy on the spot - see PendingReleaseComponent for the race
-    // this absorbs. Two seconds is far beyond any reordered exit/enter pair and far
-    // below anyone noticing an abandoned car linger.
-    aVehicle.set<PendingReleaseComponent>({std::chrono::steady_clock::now() + std::chrono::seconds(2)});
+    // PARK IT. Do not destroy it.
+    //
+    // This used to schedule the vehicle for destruction two seconds after the last person
+    // got out, which is why a car vanished the moment its driver stepped away from it. The
+    // destruction was never the goal: it was the fix for a DIFFERENT bug, where entering a
+    // car created a fresh network entity every single time and nothing ever removed the old
+    // ones - seven copies stacked in the road in one session.
+    //
+    // That duplication is prevented at the other end now: a client entering a car that is
+    // already networked names it with remote_vehicle_id and joins the existing entity
+    // rather than making another. So the entity can safely outlive its occupants, which is
+    // what a parked car in the street actually is.
+    //
+    // Parking is TransferAuthority with no player, which the handoff already supports:
+    // nobody simulates it, nobody may move it, and it holds its last replicated position
+    // until somebody takes it over. Crucially it is reversible - the two-second delay
+    // existed to absorb a reordered exit/enter pair, and a parked car that is re-entered
+    // simply gets an owner again. There is nothing left to race against.
+    //
+    // The vehicle is NOT unloaded on the clients, so their mapping from the car in front of
+    // them to its network id survives, and getting back in reuses this same entity.
+    //
+    // Still missing, deliberately: a cleanup policy. Nothing removes an abandoned car yet,
+    // so a long session will accumulate them. That is a server-side lifecycle rule to be
+    // written, not a reason to keep deleting cars people are still standing next to.
+    TransferAuthority(aVehicle, flecs::entity::null());
+
+    aVehicle.remove<PendingReleaseComponent>();
 }
 
 server::NotifyCharacterLoad Level::Serialize(flecs::entity aEntity) noexcept
