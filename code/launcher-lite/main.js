@@ -92,7 +92,51 @@ function defaultServerDir () {
 // -skipStartScreen is the game's own documented launch option: boot lands on the main
 // menu instead of the "press any key" breach screen. Testers relaunch constantly, and
 // every screen between double-click and MULTIPLAYER is dead time.
+// ============================= HARDCODED BOOT POLICY =============================
+// The game boots STRAIGHT TO THE MENU. Crew decree, 2026-08-21: "skip the opening
+// scenes and jump to the menu, hard code it and make note to not lose that for the
+// future." Two halves, and BOTH stay:
+//   1. -skipStartScreen below - kills the press-any-key screen.
+//   2. The Fast Launch mod (Nexus 5186) - kills the intro videos. It cannot be marked
+//      required in modlist.json (required blocks Play, and nobody gets locked out of
+//      the server over a cosmetic), so ensureFastLaunch() installs it by itself
+//      whenever it is missing and a Nexus key makes that possible.
+// Removing either half regresses the boot to logo-watching. Do not.
 const GAME_ARGS = ['-skipStartScreen']
+const FAST_LAUNCH_MOD_ID = 5186
+
+async function ensureFastLaunch () {
+  try {
+    const installed = loadInstalledMods()
+    if (installed && (installed[FAST_LAUNCH_MOD_ID] || installed[String(FAST_LAUNCH_MOD_ID)])) return
+
+    const apiKey = loadNexusKey()
+    if (!apiKey) return // quiet - the Mods panel still offers the one-click install
+
+    const headers = { apikey: apiKey, 'User-Agent': 'NightCityOnline-Launcher/1.0' }
+
+    const files = await axios.get(
+      `https://api.nexusmods.com/v1/games/cyberpunk2077/mods/${FAST_LAUNCH_MOD_ID}/files.json?category=main`,
+      { headers, timeout: 15000 })
+    const fileId = files.data?.files?.[0]?.file_id
+    if (!fileId) return
+
+    // Direct links work for premium keys; free accounts need the website's nxm
+    // handshake, which cannot be automated - they keep the Mods panel button.
+    const link = await axios.get(
+      `https://api.nexusmods.com/v1/games/cyberpunk2077/mods/${FAST_LAUNCH_MOD_ID}/files/${fileId}/download_link.json`,
+      { headers, timeout: 15000 })
+    const url = link.data?.[0]?.URI
+    if (!url) return
+
+    const file = await axios.get(url, { responseType: 'arraybuffer', timeout: 300000 })
+    await installModArchive(FAST_LAUNCH_MOD_ID, Buffer.from(file.data))
+    launcherLog('boot policy: Fast Launch auto-installed - intro videos are gone from the next boot')
+  } catch (err) {
+    // Never a blocker and never a nag; the policy converges when it can.
+    launcherLog(`boot policy: Fast Launch auto-install skipped (${err.response?.status || err.message})`)
+  }
+}
 
 // Where the game server is.
 //
@@ -2387,6 +2431,11 @@ async function launchGame () {
 
     launcherLog('steam guard: steam.exe running - proceeding')
   }
+
+  // Boot policy self-heal, deliberately not awaited: an installed Fast Launch is a
+  // cheap no-op check, and a missing one downloading in the background must not
+  // delay the JACK IN that was just pressed - it lands for the next boot.
+  ensureFastLaunch()
 
   // Last thing before starting: make sure only one copy of the mod will load.
   //
