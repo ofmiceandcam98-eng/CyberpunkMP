@@ -2,6 +2,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <mutex>
 
@@ -230,5 +231,102 @@ inline void ClearDrivers()
         slot.store(0, std::memory_order_release);
 
     GetDriverHighWater().store(0, std::memory_order_release);
+}
+
+// ---------------------------------------------------------------------------
+// EXIT GRACE: puppets whose vehicle exit is still being digested by the engine.
+//
+// A vehicle exit rebuilds the puppet's components over several engine frames, and
+// mid-rebuild the engine hands it a FRESH idle controller. The hook attaching our
+// multi controller into that teardown is the 2026-08-20 23:31 crash: the observing
+// client's log ends two seconds after "(re)entered ... attaching multi controller",
+// sixteen seconds before the connection died. While a puppet is in grace the hook
+// forwards to the vanilla idle instead - engine code on an engine controller - and
+// the multi controller re-attaches on the first frame after the grace lapses.
+//
+// Written on the main thread (vehicle exit handling), read on the animation threads:
+// same lock-free shape as the tables above, with a parallel deadline array. A slot's
+// id is claimed under the write mutex; its deadline is a plain atomic the reader
+// compares against a monotonic now.
+// ---------------------------------------------------------------------------
+
+inline uint64_t NowMs()
+{
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+inline std::array<std::atomic<uint64_t>, kCapacity>& GetGraceSlots()
+{
+    static std::array<std::atomic<uint64_t>, kCapacity> s_slots{};
+    return s_slots;
+}
+
+inline std::array<std::atomic<uint64_t>, kCapacity>& GetGraceDeadlines()
+{
+    static std::array<std::atomic<uint64_t>, kCapacity> s_deadlines{};
+    return s_deadlines;
+}
+
+inline std::atomic<size_t>& GetGraceHighWater()
+{
+    static std::atomic<size_t> s_highWater{0};
+    return s_highWater;
+}
+
+inline void SetExitGrace(uint64_t aEntityIdHash, uint32_t aDurationMs)
+{
+    if (aEntityIdHash == 0)
+        return;
+
+    const uint64_t deadline = NowMs() + aDurationMs;
+
+    std::lock_guard _(GetWriteMutex());
+
+    auto& slots = GetGraceSlots();
+    auto& deadlines = GetGraceDeadlines();
+
+    // Reuse this puppet's slot, else any expired one, else a fresh one. Expired slots
+    // are recycled rather than cleared because nothing ever needs to remove a grace -
+    // it just lapses.
+    size_t chosen = kCapacity;
+    for (size_t i = 0; i < kCapacity; ++i)
+    {
+        const auto id = slots[i].load(std::memory_order_relaxed);
+        if (id == aEntityIdHash) { chosen = i; break; }
+        if (chosen == kCapacity &&
+            (id == 0 || deadlines[i].load(std::memory_order_relaxed) < NowMs()))
+            chosen = i;
+    }
+    if (chosen == kCapacity)
+        return; // table full of live graces - impossible in practice (128 simultaneous exits)
+
+    deadlines[chosen].store(deadline, std::memory_order_release);
+    slots[chosen].store(aEntityIdHash, std::memory_order_release);
+
+    auto& highWater = GetGraceHighWater();
+    if (highWater.load(std::memory_order_relaxed) < chosen + 1)
+        highWater.store(chosen + 1, std::memory_order_release);
+}
+
+inline bool InExitGrace(uint64_t aEntityIdHash)
+{
+    if (aEntityIdHash == 0)
+        return false;
+
+    const size_t used = GetGraceHighWater().load(std::memory_order_acquire);
+    if (used == 0)
+        return false;
+
+    const auto& slots = GetGraceSlots();
+    const auto& deadlines = GetGraceDeadlines();
+
+    for (size_t i = 0; i < used; ++i)
+    {
+        if (slots[i].load(std::memory_order_acquire) == aEntityIdHash)
+            return deadlines[i].load(std::memory_order_acquire) > NowMs();
+    }
+
+    return false;
 }
 } // namespace App::PuppetRegistry

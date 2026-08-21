@@ -472,6 +472,19 @@ void HookIdleController_SetAnimation(Game::Controller* apController, AnimationDa
             if (App::PuppetRegistry::IsDriver(pOwner->id.hash))
                 return;
 
+            // A vehicle exit rebuilds this puppet's components over the next several
+            // frames, and the engine hands it a fresh idle controller mid-teardown.
+            // Attaching ours into that window killed the observing client on
+            // 2026-08-20 (log ends 2s after the attach line below, 16s before the
+            // connection died). While the exit is being digested, the vanilla idle
+            // runs instead - engine code on an engine controller - and the multi
+            // controller re-attaches on the first frame after the grace lapses.
+            if (App::PuppetRegistry::InExitGrace(pOwner->id.hash))
+            {
+                RealIdleController_SetAnimation(apController, data);
+                return;
+            }
+
             if (apController->m_type == MultiMovementController::kMulti)
                 return;
 
