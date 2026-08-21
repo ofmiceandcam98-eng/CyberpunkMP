@@ -4,6 +4,12 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.93
+
+- **Your Nexus account shows in the header, next to Discord.** Whether Nexus is connected decides whether the mod list can install anything, and until now that was only visible if you opened Settings and read a paragraph about API keys — so "Install does nothing" was usually the first anyone heard of it. It now sits beside your Discord account as the second half of one identity row, lit when a key is held. Sign in and sign out from there; the button tries the one-press browser sign-in first and, if Nexus refuses it, opens your API key page and says so rather than failing quietly. (Nexus only allows one-press sign-in for mod managers they've approved — that's their policy, not a bug.)
+- **The mod list has real names.** Every row read "Nexus mod 5186". The launcher asks Nexus for names, which needs an API key — so without one, every mod showed as its ID number. Names now come from the list itself and show for everyone, with or without a key.
+- **Three mods added**: DLC Call Off, Audioware and RedData. Two entries are still listed by number because their names couldn't be confirmed — they'll get names once someone checks rather than guesses.
+
 ## What changed — v0.3.92
 
 - **RAR mods install now.** v0.3.91 taught the installer .7z - and the very first mod turned out to be a .rar, the one format the bundled extractor genuinely cannot read ("7-Zip exit 2"). RAR now extracts in-memory through a proper unrar engine; same install loop, same per-file record, same uninstall sweep. Third format's the charm.
