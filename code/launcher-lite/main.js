@@ -1873,6 +1873,7 @@ async function hydrateUserFromToken () {
       if (currentUser && level && level !== 'player') {
         currentUser.isAdmin = isAdmin()
         console.log(`[roles] ${currentUser.handle} resolved to ${level}`)
+        fitWindowToRole()
 
         // Tell the page, or the controls never actually appear. The profile the
         // renderer got at sign-in was built before this answer arrived, with isAdmin
@@ -2619,6 +2620,28 @@ let cachedLevel = 'player'
 async function refreshUserLevel () {
   cachedLevel = await resolveUserLevel()
   return cachedLevel
+}
+
+// The admin stack (server lifecycle row, admin link, credentials, coordination
+// controls) is a full card taller than what players see - a window sized for players
+// cuts it off, and the owner was hand-stretching every session ("windows rezing still
+// happening"). Grow to fit the role once it resolves, clamped to the screen, and
+// never fight a size the person chose themselves: only a window still at the height
+// WE last set gets adjusted.
+let lastAutoHeight = 0
+
+function fitWindowToRole () {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  try {
+    const { screen } = require('electron')
+    const work = screen.getDisplayMatching(mainWindow.getBounds()).workAreaSize
+    const wanted = Math.min(isAdmin() ? 940 : 800, work.height - 24)
+    const [w, h] = mainWindow.getSize()
+    if (wanted > h && (lastAutoHeight === 0 || h === lastAutoHeight)) {
+      mainWindow.setSize(w, wanted)
+      lastAutoHeight = wanted
+    }
+  } catch { /* a sizing nicety must never break sign-in */ }
 }
 
 function isAdmin () {
