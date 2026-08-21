@@ -35,9 +35,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Every git clone beyond the checkout - xmake's build-artifacts, package repos,
+      # submodules - is anonymous by default, and GitHub 403-rate-limits anonymous
+      # clones from Actions runner IPs ("RPC failed; HTTP 403" cloning build-artifacts
+      # killed 4 consecutive runs, 2026-08-21; the retry loop just hit the same wall
+      # three times). Rewriting both URL forms to carry the run's own token moves every
+      # clone into the authenticated pool.
+      - name: 'Authenticate git clones to GitHub'
+        run: |
+          git config --global url."https://x-access-token:${{ github.token }}@github.com/".insteadOf "https://github.com/"
+          git config --global --add url."https://x-access-token:${{ github.token }}@github.com/".insteadOf "git@github.com:"
+
       - name: 'Checkout submodules'
         run: |
-          git config --global url."https://github.com/".insteadOf "git@github.com:"
           git submodule sync --recursive
           git submodule update --init --force --recursive --depth=1
 
@@ -79,9 +89,9 @@ jobs:
       # compiler unable to find windows.h/stdio.h at all, which is how this workflow
       # died twice (19041 first, then 22621). Auto-detection tracks the image.
       - name: 'Configure xmake and install dependencies'
-        # Retried: this step clones xmake's package repos and downloads sources, and
-        # both flake under GitHub rate limits (a 403 cloning build-artifacts failed a
-        # run on 2026-08-21 with no code change at all). Three tries, spaced out.
+        # Retried: this step downloads package sources from many mirrors, which flake
+        # with transient 5xx. The 403 class (GitHub rate-limiting anonymous clones) is
+        # fixed at the root by the auth step above - retries alone never cured it.
         shell: bash
         run: |
           for i in 1 2 3; do
