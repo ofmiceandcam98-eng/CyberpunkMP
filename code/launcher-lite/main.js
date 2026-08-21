@@ -15,7 +15,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } from 'electron'
 import electronUpdater from 'electron-updater'
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, copyFileSync, unlinkSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, copyFileSync, unlinkSync, realpathSync } from 'node:fs'
 import fsp from 'node:fs/promises'
 import AdmZip from 'adm-zip'
 import crypto from 'node:crypto'
@@ -199,6 +199,195 @@ let lastServerStatus = null
 
 function settingsPath () {
   return path.join(app.getPath('userData'), 'settings.json')
+}
+
+// ================================ THE FOOTPRINT RULE ================================
+// HARD RULE (crew decree, 2026-08-21): uninstalling leaves NOTHING. No files, no
+// folders, no registry entries - not in AppData Roaming or Local, not on the Desktop,
+// not anywhere. A machine after uninstall takes a fresh build as if the launcher had
+// never been there.
+//
+// The enforcement is this manifest: every location the launcher can write OUTSIDE its
+// own install folder is listed here, and the uninstall purge and the Deep clean scan
+// walk this list - only this list. Writing to a new location without adding it here
+// is a bug by definition: if it is not in the manifest, uninstall cannot remove it,
+// and the next "fresh install fails" screenshot traces back to that omission.
+//
+// Three data-folder names exist because the app has answered to three names over its
+// life: Electron's runtime name ("Night City Online", from package.json productName),
+// the installer's product name ("Night City Online Launcher", from the build block),
+// and the package name ("nightcity-launcher"). Old installs left data under each, so
+// each is hunted.
+function launcherFootprint () {
+  const roaming = app.getPath('appData')
+  const local = process.env.LOCALAPPDATA || path.join(app.getPath('home'), 'AppData', 'Local')
+  const desktop = app.getPath('desktop')
+  const startMenu = path.join(roaming, 'Microsoft', 'Windows', 'Start Menu', 'Programs')
+
+  const names = ['Night City Online', 'Night City Online Launcher', 'nightcity-launcher']
+
+  return {
+    // Settings, sign-in tokens, the Nexus key, window caches - one per historical name.
+    dataDirs: names.map((n) => path.join(roaming, n)),
+    // electron-updater's download cache, same name variants.
+    updaterDirs: names.map((n) => path.join(local, `${n}-updater`)),
+    // Where the Setup installs, per name. The RUNNING copy's folder is excluded by
+    // the callers - the NSIS uninstaller removes that one itself.
+    installDirs: names.map((n) => path.join(local, 'Programs', n)),
+    // Made by the installer AND by the Settings "Desktop shortcut" button.
+    shortcuts: [
+      path.join(desktop, 'Night City Online Launcher.lnk'),
+      path.join(startMenu, 'Night City Online Launcher.lnk')
+    ],
+    // Crash-log copies handleGameCrash puts on the Desktop for handing over.
+    desktopDir: desktop,
+    desktopLogPattern: /^NightCityOnline-CRASH-.*\.log$/i
+  }
+}
+
+// The launcher's uninstall registry entries live under HKCU (perMachine is false in
+// the build config, so nothing of ours is ever under HKLM). Returns every entry whose
+// display name is ours; orphaned means the uninstaller it points at no longer exists -
+// the ghost row in Windows "Apps" that survives a hand-deleted folder.
+function findUninstallRegistryEntries () {
+  const entries = []
+  try {
+    const { execSync } = require('node:child_process')
+    const out = execSync(
+      'reg query "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall" /s',
+      { windowsHide: true, maxBuffer: 8 * 1024 * 1024 }).toString()
+
+    let key = null
+    let name = null
+    let cmd = null
+    const flush = () => {
+      if (key && name && /night city online/i.test(name)) {
+        // Orphaned ONLY when the UninstallString names an ABSOLUTE exe that is
+        // provably gone. Everything else - unquoted paths with spaces we cannot
+        // parse, MsiExec-style relative commands, unexpanded %vars%, no string at
+        // all - is assumed healthy: deleting a live product's Apps row is the ghost
+        // problem in the other direction, and "not sure" must never delete.
+        let exe = null
+        if (cmd) {
+          const m = cmd.match(/"([^"]+\.exe)"/i) || cmd.match(/^(\S+\.exe)/i)
+          if (m && path.isAbsolute(m[1])) exe = m[1]
+        }
+        entries.push({ key, displayName: name, orphaned: Boolean(exe) && !existsSync(exe) })
+      }
+    }
+    for (const line of out.split(/\r?\n/)) {
+      if (/^HKEY_/i.test(line)) { flush(); key = line.trim(); name = null; cmd = null; continue }
+      let m = line.match(/^\s+DisplayName\s+REG_SZ\s+(.+)$/i)
+      if (m) { name = m[1].trim(); continue }
+      m = line.match(/^\s+UninstallString\s+REG_(?:EXPAND_)?SZ\s+(.+)$/i)
+      if (m) cmd = m[1].trim()
+    }
+    flush()
+  } catch { /* reg unavailable - nothing to report */ }
+  return entries
+}
+
+function isGameRunning () {
+  return new Promise((resolve) => {
+    const check = spawn('tasklist', ['/FI', 'IMAGENAME eq Cyberpunk2077.exe', '/NH'], { windowsHide: true })
+    let out = ''
+    check.stdout.on('data', (c) => { out += c.toString() })
+    check.on('close', () => resolve(out.includes('Cyberpunk2077.exe')))
+    check.on('error', () => resolve(false))
+  })
+}
+
+// Everything of ours found on the machine right now, EXCEPT what the running copy
+// needs to keep running. aIncludeLive widens the sweep for the uninstall purge: the
+// live data folder and working shortcuts go too (the NSIS uninstaller re-sweeps after
+// this process exits, catching whatever Electron recreates on the way out).
+// Windows path identity: case-insensitive, and 8.3 aliases / junctions / whatever
+// casing the exe was launched with all name the same folder. A string compare that
+// misses ANY of those classes the running install as residue and shreds it mid-run -
+// canonicalize first, compare folded.
+function samePath (a, b) {
+  const canon = (p) => {
+    try { return realpathSync.native(p).toLowerCase() } catch { return path.resolve(p).toLowerCase() }
+  }
+  return canon(a) === canon(b)
+}
+
+function collectResidue (aIncludeLive) {
+  const fp = launcherFootprint()
+  const ownDir = path.dirname(process.execPath)
+  const liveData = app.getPath('userData')
+
+  const dirs = []
+  for (const d of [...fp.dataDirs, ...fp.updaterDirs]) {
+    if (!existsSync(d)) continue
+    if (!aIncludeLive && samePath(d, liveData)) continue
+    dirs.push(d)
+  }
+  for (const d of fp.installDirs) {
+    // NEVER the folder this process runs from - deleting it out from under a live
+    // exe fails halfway and manufactures exactly the residue this hunts.
+    if (existsSync(d) && !samePath(d, ownDir)) dirs.push(d)
+  }
+
+  const files = []
+  for (const s of fp.shortcuts) {
+    if (!existsSync(s)) continue
+    if (aIncludeLive) { files.push(s); continue }
+    // For Deep clean, a shortcut is residue only when it points at a dead exe.
+    try {
+      const { target } = shell.readShortcutLink(s)
+      if (target && !existsSync(target)) files.push(s)
+    } catch { /* unreadable link - leave it alone */ }
+  }
+  try {
+    for (const f of readdirSync(fp.desktopDir)) {
+      if (fp.desktopLogPattern.test(f)) files.push(path.join(fp.desktopDir, f))
+    }
+  } catch { /* desktop unreadable - skip */ }
+
+  // Orphaned registry rows are residue always; the LIVE entry belongs to the NSIS
+  // uninstaller, which removes it itself.
+  const regKeys = findUninstallRegistryEntries()
+    .filter((e) => e.orphaned)
+    .map((e) => e.key)
+
+  return { dirs, files, regKeys }
+}
+
+// Removes what collectResidue found. Locked or protected items are reported, not
+// fatal - a half-clean with an honest list beats an exception with nothing done.
+function purgeResidue (aResidue) {
+  const failed = []
+  const { execFileSync } = require('node:child_process')
+
+  for (const d of aResidue.dirs) {
+    try { rmSync(d, { recursive: true, force: true }) } catch (err) { failed.push(`${d} (${err.code || err.message})`) }
+  }
+  for (const f of aResidue.files) {
+    try { rmSync(f, { force: true }) } catch (err) { failed.push(`${f} (${err.code || err.message})`) }
+  }
+
+  // Registry LAST, and re-scanned: purging another copy's folder just deleted ITS
+  // uninstaller, so its Apps row became a ghost within this very run - sweep it now
+  // rather than leaving it for a second Deep clean. execFileSync, not a cmd string:
+  // any user process can create a key whose NAME carries quotes.
+  const orphanedNow = findUninstallRegistryEntries().filter((e) => e.orphaned).map((e) => e.key)
+  for (const k of new Set([...aResidue.regKeys, ...orphanedNow])) {
+    try { execFileSync('reg', ['delete', k, '/f'], { windowsHide: true }) } catch { failed.push(k) }
+  }
+  return failed
+}
+
+// The one folder the uninstall flow deletes OUTSIDE our own footprint is the mod's,
+// and it comes from a settings override a person once typed. Validate the shape, not
+// just the marker file: a botched manual install can leave CyberpunkMP.dll at the
+// GAME ROOT, and a picker pointed there would pass the dll check - then "remove the
+// mod" recursively deletes all of Cyberpunk 2077. A real mod folder sits under
+// red4ext\plugins and does not contain the game exe.
+function isSafeModDir (aModDir) {
+  if (!aModDir) return false
+  if (existsSync(path.join(aModDir, 'bin', 'x64', 'Cyberpunk2077.exe'))) return false
+  return /[\\/]red4ext[\\/]plugins[\\/][^\\/]+$/i.test(path.resolve(aModDir))
 }
 
 function loadSettings () {
@@ -1247,6 +1436,14 @@ async function uninstallMod () {
 
   if (choice.response !== 0) return { removed: false }
 
+  // Same shape-check the uninstall flow uses: a settings override pointed at the
+  // game root (with a stray dll making it look valid) must never become
+  // "recursively delete Cyberpunk 2077".
+  if (!isSafeModDir(modDir)) {
+    throw new Error(`The mod folder looks wrong (${modDir}) - not deleting it. ` +
+                    'Remove red4ext\\plugins\\zzzCyberpunkMP by hand.')
+  }
+
   rmSync(modDir, { recursive: true, force: true })
   saveSettings({ installedStamp: null, installedVersion: null })
 
@@ -1269,7 +1466,7 @@ async function resetLauncherData () {
       'You will need to sign in with Discord again next time.\n\n' +
       'Your game and the mod are untouched.\n\n' +
       'To revoke the launcher\'s access entirely, also remove it under ' +
-      'Discord â†’ Settings â†’ Authorized Apps.'
+      'Discord > Settings > Authorized Apps.'
   })
 
   if (choice.response !== 0) return { reset: false }
@@ -3386,33 +3583,34 @@ ipcMain.handle('launcher:openInstallDir', async () => {
 ipcMain.handle('launcher:uninstall', async () => {
   const dir = path.dirname(process.execPath)
 
-  // Found by scanning, not by a hardcoded name. electron-builder names the file
-  // "Uninstall <productName>.exe" - ours is "Uninstall Night City Online.exe" - and
-  // this code looked for "...Online Launcher.exe", a file that never existed. Every
-  // INSTALLED copy was told it was the portable build and to "just delete the .exe",
-  // which is how a player ends up unable to uninstall at all.
+  // Found by scanning, not by a hardcoded name. Two productNames exist (package.json
+  // top-level says "Night City Online", the build block overrides with "...Launcher"),
+  // so a hardcoded filename is one rename away from declaring every install portable.
+  // The scan also keeps the answer honest for people RUNNING a portable copy while an
+  // installed copy sits in AppData - the live case behind the 2026-08-21 report.
   let uninstaller = null
   try {
     const found = readdirSync(dir).find((f) => /^uninstall.*\.exe$/i.test(f))
     if (found) uninstaller = path.join(dir, found)
   } catch { /* unreadable dir - treat as portable below */ }
 
-  if (!uninstaller) {
-    return {
-      ok: false,
-      error: 'No uninstaller here - this looks like the portable build. Just delete the .exe. ' +
-             '(Installed via the Setup? Use Windows Settings > Apps > Night City Online.)'
-    }
-  }
+  const modDir = findModDir()
 
   const { response } = await dialog.showMessageBox(mainWindow, {
     type: 'warning',
-    title: 'Uninstall Night City Online Launcher',
-    message: 'Remove the launcher from this PC?',
-    detail: 'This removes the launcher and everything it saved here - your sign-in, settings ' +
-            'and keys. The mod stays installed in your game folder, and Cyberpunk 2077 is not ' +
-            'touched. Use "Remove mod" first if you want that gone too.',
-    buttons: ['Uninstall', 'Cancel'],
+    title: 'Uninstall Night City Online',
+    message: 'Remove Night City Online from this PC - all of it?',
+    detail:
+      'THE RULE: after this, nothing of ours remains. Removed:\n\n' +
+      '- the launcher program and its Windows "Apps" entry\n' +
+      '- saved sign-in, settings and keys (all data folders, old versions included)\n' +
+      '- updater caches, shortcuts, crash-log copies on the Desktop\n' +
+      '- dead registry entries left by older installs\n' +
+      (modDir ? `- the multiplayer mod:  ${modDir}\n` : '') +
+      '\nCyberpunk 2077 itself, your saves, and the framework mods (RED4ext, ' +
+      'redscript, Codeware...) are not touched. A fresh build installs cleanly ' +
+      'afterwards.',
+    buttons: ['Uninstall everything', 'Cancel'],
     defaultId: 1,
     cancelId: 1,
     noLink: true
@@ -3420,10 +3618,86 @@ ipcMain.handle('launcher:uninstall', async () => {
 
   if (response !== 0) return { ok: false }
 
+  // The mod goes first, while the settings that locate it still exist.
+  let note = ''
+  try {
+    if (modDir) {
+      if (!isSafeModDir(modDir)) {
+        note = `The mod folder looks wrong (${modDir}) - left alone. Delete red4ext\\plugins\\zzzCyberpunkMP by hand. `
+      } else if (await isGameRunning()) {
+        note = 'Cyberpunk is running, so the mod was left in place - close the game and use Remove mod. '
+      } else {
+        try { rmSync(modDir, { recursive: true, force: true }) } catch (err) { note = `The mod folder resisted deletion (${err.code || err.message}). ` }
+      }
+    }
+
+    const failed = purgeResidue(collectResidue(true))
+    if (failed.length) note += `Could not remove: ${failed.join(', ')}. `
+  } catch (err) {
+    // Whatever already got removed stays removed; the person hears what stopped it
+    // rather than the IPC rejecting with the work half-done.
+    note += `Cleanup stopped early: ${err.message}. `
+  }
+
+  if (!uninstaller) {
+    // Portable copy: no NSIS uninstaller to hand over to, and everything else is
+    // already gone. The exe someone double-clicks is the one thing a running program
+    // cannot delete about itself.
+    return {
+      ok: true,
+      message: note + 'All launcher data is wiped. This portable .exe is the last piece - close it and delete the file.'
+    }
+  }
+
   spawn(uninstaller, [], { detached: true, stdio: 'ignore' }).unref()
   app.quit()
 
   return { ok: true }
+})
+
+// Settings > Deep clean: the same manifest sweep the uninstaller runs, minus what a
+// working install needs (its own data folder, its own registry row, live shortcuts).
+// Everything it finds is by definition wreckage from OLD installs - the exact debris
+// behind "fresh install fails": stale data folders under previous names, ghost rows
+// in Windows Apps pointing at deleted uninstallers, crash logs piling on the Desktop.
+ipcMain.handle('repair:run', async () => {
+  try {
+    const residue = collectResidue(false)
+    const count = residue.dirs.length + residue.files.length + residue.regKeys.length
+
+    if (count === 0) {
+      return { ok: true, message: 'No residue - this machine is clean.' }
+    }
+
+    const listing = [
+      ...residue.dirs.map((d) => `folder:  ${d}`),
+      ...residue.files.map((f) => `file:  ${f}`),
+      ...residue.regKeys.map((k) => `registry:  ${k}`)
+    ]
+
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      title: 'Deep clean',
+      message: `Found ${count} leftover(s) from old installs`,
+      detail:
+        listing.slice(0, 14).join('\n') +
+        (listing.length > 14 ? `\n...and ${listing.length - 14} more` : '') +
+        '\n\nNothing here is used by the copy you are running right now.',
+      buttons: ['Clean everything', 'Keep'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true
+    })
+
+    if (response !== 0) return { ok: false, message: 'Left as found.' }
+
+    const failed = purgeResidue(residue)
+    return failed.length
+      ? { ok: false, message: `Cleaned ${count - failed.length} of ${count} - locked: ${failed.join(', ')}` }
+      : { ok: true, message: `Cleaned ${count} leftover(s). This machine takes a fresh install cleanly.` }
+  } catch (err) {
+    return { ok: false, message: err.message }
+  }
 })
 
 // Re-runnable from Settings, because the first-run question is asked exactly once and
@@ -3935,6 +4209,9 @@ ipcMain.handle('links:open', async (_event, which) => {
     diagnostic: 'https://github.com/ofmiceandcam98-eng/CyberpunkMP/releases/latest',
     discord: DISCORD_INVITE,
     tailscale: TAILSCALE_DOWNLOAD,
+    // The upstream project this is a fork of. Their licence asks for clear
+    // attribution, and a credit nobody can click through to is a weak one.
+    upstream: 'https://github.com/tiltedphoques/CyberpunkMP',
     // Straight to the API key section, not the account page. "Go to settings and find
     // the API tab" is three more chances to end up somewhere else.
     nexusApi: 'https://www.nexusmods.com/users/myaccount?tab=api+access'

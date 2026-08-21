@@ -650,6 +650,19 @@
             </div>
             <button class="action ghost" id="reinstallMod">Reinstall</button>
           </div>
+
+          <div class="tool">
+            <div>
+              <div class="tool-name">Deep clean</div>
+              <div class="tool-desc">
+                Hunts leftovers from old installs - stale data folders, dead Windows
+                "Apps" entries, orphaned shortcuts, crash logs on the Desktop - and
+                removes them after showing you the list. The uninstaller runs this
+                same sweep, so uninstalling leaves nothing behind.
+              </div>
+            </div>
+            <button class="action ghost" id="deepClean">Scan</button>
+          </div>
         </section>
 
         <!-- DEV TOOLS
@@ -745,6 +758,24 @@
               <div class="tool-desc">Mod updates are checked every time the launcher opens.</div>
             </div>
             <button class="action ghost" id="checkFromSettings">Check</button>
+          </div>
+
+          <!-- Attribution, in the launcher rather than only in the README.
+               The licence asks for clear credit to Tilted Phoques SRL as the original
+               creator of CyberpunkMP, and a README is not something a player ever opens -
+               this panel is. Night City Online is a fork; most of the code underneath it
+               is still theirs. The link goes through the data-link allowlist rather than
+               a raw anchor, so it cannot become "open any URL". -->
+          <div class="tool">
+            <div style="min-width:0">
+              <div class="tool-name">Built on CyberpunkMP</div>
+              <div class="tool-desc">
+                Night City Online is a fork of CyberpunkMP, the multiplayer mod created by
+                <b>Tilted Phoques SRL</b>. Used and modified under their licence, which ships
+                with the source.
+              </div>
+            </div>
+            <button class="action ghost" data-link="upstream">Source</button>
           </div>
         </section>
 
@@ -849,9 +880,9 @@
 
       <div class="footlinks">
         <button class="linkbtn" id="pickGameDir">Game not found? Locate it</button>
-        <span class="sep">Â·</span>
+        <span class="sep">·</span>
         <button class="linkbtn" id="uninstallMod">Remove mod</button>
-        <span class="sep">Â·</span>
+        <span class="sep">·</span>
         <button class="linkbtn" id="resetLauncher">Sign out &amp; reset</button>
       </div>
     </div>
@@ -934,11 +965,11 @@
   <footer>
     <div class="links">
       <button class="linkbtn" data-link="release">Download the mod</button>
-      <span class="sep">Â·</span>
+      <span class="sep">·</span>
       <button class="linkbtn" data-link="diagnostic">Diagnostic build</button>
-      <span class="sep">Â·</span>
+      <span class="sep">·</span>
       <button class="linkbtn" data-link="tailscale">Tailscale</button>
-      <span class="sep">Â·</span>
+      <span class="sep">·</span>
       <button class="linkbtn" data-link="discord">Discord</button>
     </div>
     <!-- The LAUNCHER's own version, which is not the same number as the mod's.
@@ -947,7 +978,7 @@
          mod's. Two different things called v0.1.6 is a coincidence that will not
          survive the next mod-only ship. -->
     <div style="margin-top:.4rem">
-      Your Discord ID is used to identify you in game. <span class="sep">Â·</span> <span id="footerVersion"></span>
+      Your Discord ID is used to identify you in game. <span class="sep">·</span> <span id="footerVersion"></span>
     </div>
   </footer>
 
@@ -1772,6 +1803,14 @@
     // Report every problem at once. Fixing one at a time, re-running, and finding
     // another is a miserable way to learn what is wrong.
     setStatus(result.problems.join('  |  '), 'error')
+  })
+
+  $('deepClean').addEventListener('click', async () => {
+    const btn = $('deepClean')
+    btn.disabled = true
+    const result = await window.launcher.deepClean()
+    btn.disabled = false
+    setStatus(result.message || 'Done', result.ok ? 'ok' : 'error')
   })
 
   $('uninstallMod').addEventListener('click', async () => {
