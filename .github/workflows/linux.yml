@@ -30,9 +30,18 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    # Every git clone this job makes beyond the checkout - xmake-repo, build-artifacts,
+    # package sources, submodules - is anonymous by default, and GitHub 403-rate-limits
+    # anonymous clones from Actions runner IPs (killed 4 consecutive runs, 2026-08-21;
+    # retrying just hit the same wall). Rewriting both URL forms to carry the run's own
+    # token moves every clone into the authenticated pool.
+    - name: 'Authenticate git clones to GitHub'
+      run: |
+        git config --global url."https://x-access-token:${{ github.token }}@github.com/".insteadOf "https://github.com/"
+        git config --global --add url."https://x-access-token:${{ github.token }}@github.com/".insteadOf "git@github.com:"
+
     - name: 'Checkout submodules'
       run: |
-        git config --global url."https://github.com/".insteadOf "git@github.com:"
         git submodule sync --recursive
         git submodule update --init --force --recursive --depth=1
 
@@ -52,9 +61,16 @@ jobs:
       with:
         xmake-version: branch@master
 
-    # Update xmake repository (in order to have the file that will be cached)
+    # Update xmake repository (in order to have the file that will be cached).
+    # Retried for transient mirror hiccups; the 403 class is fixed by the auth step above.
     - name: 'Update xmake repository'
-      run: xmake repo --update
+      run: |
+        for i in 1 2 3; do
+          xmake repo --update && exit 0
+          echo "xmake repo update failed (attempt $i) - retrying in 30s"
+          sleep 30
+        done
+        exit 1
 
     - name: Setup dotnet
       uses: actions/setup-dotnet@v4
