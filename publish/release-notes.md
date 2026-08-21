@@ -4,6 +4,10 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.87
+
+- **The server buttons stop vanishing.** A hiccup in the role lookup - an expired Discord token, or fetching the role map mid-release - silently demoted admins to player and hid the server panel ("what happened to my server buttons", twice, live). A failed lookup now stands on your last confirmed level instead of demoting you; only Discord actually answering "no roles" changes anything. Both project owners are also carried on the hardcoded floor now, not just one.
+
 ## What changed — v0.3.86
 
 Four things, all needing two people to confirm. None of it has been in a live session yet.
