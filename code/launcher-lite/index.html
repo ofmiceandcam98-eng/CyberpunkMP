@@ -121,6 +121,28 @@
 
   .voice-range { width: 100%; margin-top: .45rem; accent-color: var(--accent); }
 
+  /* The input meter. Segmented rather than a smooth bar so movement is obvious at a
+     glance - a continuous fill creeping by a few pixels is hard to distinguish from a
+     microphone doing nothing, which is the exact question this control exists to answer. */
+  .voice-meter {
+    height: 14px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .voice-meter-fill {
+    height: 100%;
+    width: 0%;
+    background: repeating-linear-gradient(
+      90deg, var(--accent) 0 6px, transparent 6px 9px);
+    transition: width .05s linear;
+  }
+  /* Red once it is clipping. Somebody whose interface gain is too high needs to SEE it,
+     not read about it afterwards. */
+  .voice-meter-fill.hot { background: repeating-linear-gradient(
+      90deg, #e05555 0 6px, transparent 6px 9px); }
+
   /* While waiting for a key. The button has to look like it is listening, or a press that
      did not register is indistinguishable from one that did. */
   .action.listening {
@@ -762,7 +784,15 @@
               <select id="voiceInput" class="voice-select" disabled>
                 <option>Press Find devices</option>
               </select>
+
+              <!-- The meter. Hidden until a test is running: an empty bar sitting there
+                   permanently reads as a microphone that is not working. -->
+              <div id="voiceMeterRow" style="display:none;margin-top:.5rem">
+                <div class="voice-meter"><div class="voice-meter-fill" id="voiceMeterFill"></div></div>
+                <div class="tool-desc" id="voiceMeterText">Say something.</div>
+              </div>
             </div>
+            <button class="action ghost" id="voiceTest">Test</button>
           </div>
 
           <div class="tool">
@@ -2487,6 +2517,11 @@
 
   function closeSettings () {
     $('settingsModal').style.display = 'none'
+
+    // Never leave the microphone open behind a closed dialog. Windows shows a recording
+    // indicator, and a launcher that appears to be listening after you have walked away
+    // from it is alarming whether or not it is doing anything.
+    stopMicTest()
   }
 
   $('openSettings').addEventListener('click', openSettings)
@@ -2778,6 +2813,120 @@
   }
 
   // ---------------------------------------------------------------------------
+  // VOICE - microphone test
+  //
+  // Runs entirely here. No server, no game, no native audio - the browser engine can
+  // already open a capture device and measure it, and somebody debugging a silent
+  // microphone should not have to launch Cyberpunk to find out whether Windows hears them.
+  // ---------------------------------------------------------------------------
+
+  let micTest = null
+
+  async function startMicTest () {
+    const deviceId = $('voiceInput').value
+    const btn = $('voiceTest')
+
+    try {
+      // The SELECTED device, not the default - testing something other than the device
+      // about to be used would be worse than not testing at all. `exact` so the browser
+      // fails rather than quietly substituting another microphone.
+      const constraints = (deviceId && deviceId !== 'default')
+        ? { audio: { deviceId: { exact: deviceId } } }
+        : { audio: true }
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints)
+
+      const ctx = new AudioContext()
+      const source = ctx.createMediaStreamSource(stream)
+      const analyser = ctx.createAnalyser()
+
+      // Small window, so the meter reacts at the speed a person expects. A large one
+      // averages away the transients that make a meter look alive.
+      analyser.fftSize = 1024
+
+      source.connect(analyser)
+
+      // Deliberately NOT connected to the destination. Routing a microphone to the
+      // speakers is how a test session becomes a feedback squeal, and on speakers it is
+      // instant.
+      const data = new Float32Array(analyser.fftSize)
+      let clippedRecently = false
+
+      const tick = () => {
+        if (!micTest) return
+
+        analyser.getFloatTimeDomainData(data)
+
+        let peak = 0
+        for (let i = 0; i < data.length; i++) {
+          const v = Math.abs(data[i])
+          if (v > peak) peak = v
+        }
+
+        // Full scale is 1.0. Shown on a curve rather than linearly, because a linear
+        // meter spends most of a normal speaking voice in the bottom fifth and looks
+        // broken.
+        const shown = Math.min(100, Math.round(Math.pow(peak, 0.6) * 100))
+
+        const fill = $('voiceMeterFill')
+        fill.style.width = shown + '%'
+
+        const clipping = peak >= 0.99
+        fill.className = 'voice-meter-fill' + (clipping ? ' hot' : '')
+
+        if (clipping) clippedRecently = true
+
+        $('voiceMeterText').textContent = clipping
+          ? 'Too loud - turn your interface gain or mic level down.'
+          : peak < 0.01
+            ? 'Not hearing anything. Say something, or check the device is the right one.'
+            : clippedRecently
+              ? 'Working. It clipped earlier - worth turning the gain down a little.'
+              : 'Working.'
+
+        micTest.frame = requestAnimationFrame(tick)
+      }
+
+      micTest = { stream, ctx, frame: 0 }
+      $('voiceMeterRow').style.display = ''
+      btn.textContent = 'Stop'
+      btn.classList.add('listening')
+
+      tick()
+    } catch (err) {
+      // Named causes where the browser gives one. "It didn't work" is useless when the
+      // difference is Windows privacy settings versus a device somebody unplugged.
+      const reason = err && err.name === 'NotAllowedError'
+        ? 'Windows is not allowing microphone access - check privacy settings for desktop apps.'
+        : err && err.name === 'NotFoundError'
+          ? 'That microphone is not connected any more. Press Find devices again.'
+          : err && err.name === 'NotReadableError'
+            ? 'Another program is using that microphone exclusively.'
+            : 'Could not open that microphone: ' + (err?.message || 'unknown error')
+
+      setSettingsStatus(reason, 'error')
+    }
+  }
+
+  function stopMicTest () {
+    if (!micTest) return
+
+    cancelAnimationFrame(micTest.frame)
+    micTest.stream.getTracks().forEach((t) => t.stop())
+    micTest.ctx.close()
+    micTest = null
+
+    $('voiceMeterRow').style.display = 'none'
+    $('voiceTest').textContent = 'Test'
+    $('voiceTest').classList.remove('listening')
+  }
+
+  $('voiceTest').addEventListener('click', () => {
+    if (micTest) stopMicTest()
+    else startMicTest()
+  })
+
+  // ---------------------------------------------------------------------------
   // VOICE - push-to-talk key
   // ---------------------------------------------------------------------------
 
@@ -2992,6 +3141,11 @@
   // a dropdown people forget to confirm.
   for (const id of ['voiceInput', 'voiceOutput']) {
     $(id).addEventListener('change', async () => {
+      // A running test is measuring the device that was just replaced. Stopping is
+      // honest; leaving it would show a meter for one microphone under the name of
+      // another, which is the single most confusing thing this page could do.
+      if (id === 'voiceInput') stopMicTest()
+
       await window.launcher.saveVoiceSettings({
         inputDevice: $('voiceInput').value,
         outputDevice: $('voiceOutput').value
