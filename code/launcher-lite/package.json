@@ -17,6 +17,7 @@
     "electron-builder": "^25.1.8"
   },
   "dependencies": {
+    "7zip-bin": "^5.2.0",
     "adm-zip": "^0.6.0",
     "axios": "^1.7.9",
     "electron-updater": "^6.8.9"
@@ -74,6 +75,9 @@
     },
     "portable": {
       "artifactName": "NightCityOnline-Portable.exe"
-    }
+    },
+    "asarUnpack": [
+      "**/7zip-bin/**"
+    ]
   }
 }

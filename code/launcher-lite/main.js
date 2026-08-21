@@ -14,10 +14,15 @@
 
 import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } from 'electron'
 import electronUpdater from 'electron-updater'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, copyFileSync, unlinkSync, realpathSync, appendFileSync } from 'node:fs'
 import fsp from 'node:fs/promises'
 import AdmZip from 'adm-zip'
+// 7-Zip's standalone extractor, because Nexus main files are as often .7z or .rar as
+// .zip - AdmZip alone made every non-zip mod fail with "No END header found" (live,
+// 2026-08-21: Fast Launch). The binary is asar-unpacked so it can actually execute.
+import { path7za } from '7zip-bin'
+const SEVEN_ZIP = path7za.replace('app.asar', 'app.asar.unpacked')
 import crypto from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
@@ -4743,10 +4748,56 @@ async function installModArchive (modId, buffer) {
   const mods = await fetchModList().catch(() => [])
   const mod = mods.find((m) => String(m.nexusModId) === String(modId))
 
-  const zip = new AdmZip(buffer)
-  const entries = zip.getEntries().filter((e) => !e.isDirectory)
+  // What did Nexus actually send? Mods ship as .zip, .7z or .rar - and a rate-limit
+  // or sign-in page arrives as HTML wearing a 200. Naming each case beats AdmZip's
+  // "No END header found".
+  const head = buffer.subarray(0, 8)
+  const isZip = head[0] === 0x50 && head[1] === 0x4b
+  const isRar = head[0] === 0x52 && head[1] === 0x61 && head[2] === 0x72 && head[3] === 0x21
+  const is7z = head[0] === 0x37 && head[1] === 0x7a && head[2] === 0xbc && head[3] === 0xaf
 
-  if (entries.length === 0) throw new Error('That archive is empty.')
+  if (!isZip && !isRar && !is7z) {
+    if (head[0] === 0x3c) {
+      throw new Error('Nexus sent a webpage instead of the file - usually a sign-in or ' +
+                      'rate-limit page. Wait a minute and try again, or install from the mod page.')
+    }
+    throw new Error('That download is not an archive this launcher can read.')
+  }
+
+  let entries
+  let cleanup = null
+
+  if (isZip) {
+    const zip = new AdmZip(buffer)
+    entries = zip.getEntries().filter((e) => !e.isDirectory)
+  } else {
+    // .7z and .rar go through 7za into a scratch folder, then feed the same install
+    // loop as zip entries - one guard, one record, whatever the wrapper was.
+    const tmpRoot = path.join(os.tmpdir(), `nco-mod-${modId}-${Date.now()}`)
+    const outDir = path.join(tmpRoot, 'out')
+    mkdirSync(outDir, { recursive: true })
+    const archivePath = path.join(tmpRoot, 'archive.bin')
+    writeFileSync(archivePath, buffer)
+
+    const run = spawnSync(SEVEN_ZIP, ['x', '-y', `-o${outDir}`, archivePath], { windowsHide: true })
+    if (run.status !== 0) {
+      rmSync(tmpRoot, { recursive: true, force: true })
+      throw new Error(`Could not extract the archive (7-Zip exit ${run.status ?? run.error?.message}).`)
+    }
+
+    const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((d) => {
+      const full = path.join(dir, d.name)
+      return d.isDirectory() ? walk(full) : [full]
+    })
+
+    entries = walk(outDir).map((full) => ({
+      entryName: path.relative(outDir, full),
+      getData: () => readFileSync(full)
+    }))
+    cleanup = () => rmSync(tmpRoot, { recursive: true, force: true })
+  }
+
+  if (entries.length === 0) { if (cleanup) cleanup(); throw new Error('That archive is empty.') }
 
   const files = []
   for (const entry of entries) {
@@ -4770,6 +4821,8 @@ async function installModArchive (modId, buffer) {
     at: Date.now()
   }
   saveInstalledMods(installed)
+
+  if (cleanup) cleanup()
 
   return { name: installed[String(modId)].name, count: files.length }
 }
