@@ -46,6 +46,7 @@ Level::Level(World* apWorld) noexcept
     GServer->RegisterHandler<&Level::HandleMoveEntityRequest>(this);
     GServer->RegisterHandler<&Level::HandleEnterVehicleRequest>(this);
     GServer->RegisterHandler<&Level::HandleExitVehicleRequest>(this);
+    GServer->RegisterHandler<&Level::HandleUpdateAppearanceRequest>(this);
 
     m_updateSystem = m_pWorld->system<const LevelActorTag>("Level Update")
         .each([this](flecs::entity aEntity, const LevelActorTag&)
@@ -822,6 +823,106 @@ void Level::HandleMoveEntityRequest(PacketEvent<client::MoveEntityRequest>& aMes
     }
 
     target.set(component);
+}
+
+void Level::BroadcastAppearance(flecs::entity aPuppet) noexcept
+{
+    if (!aPuppet || !aPuppet.is_alive())
+        return;
+
+    const auto* pAppearance = aPuppet.get<AppearanceComponent>();
+    if (!pAppearance)
+        return;
+
+    const auto owner = aPuppet.parent();
+
+    server::NotifyAppearanceUpdate message;
+    message.set_id(aPuppet.id());
+    message.set_equipment(pAppearance->equipment);
+    message.set_ccstate(pAppearance->ccstate);
+
+    // Everyone except the person it is about. Their own game already shows what they are
+    // wearing - it is where the change came from - and echoing it back invites the client
+    // to re-apply an appearance to the local player, which is a different code path with
+    // its own hazards.
+    GetWorld()->get_world().each(
+        [&message, owner](flecs::entity player, const PlayerComponent& aPlayerComponent)
+        {
+            if (player == owner)
+                return;
+
+            GServer->Send(aPlayerComponent.Connection, message);
+        });
+}
+
+void Level::HandleUpdateAppearanceRequest(PacketEvent<client::UpdateAppearanceRequest>& aMessage) noexcept
+{
+    auto* pPlayerManager = GetWorld()->get_mut<PlayerManager>();
+
+    const auto player = pPlayerManager->GetByConnectionId(aMessage.ConnectionId);
+    if (!player)
+        return;
+
+    auto* pComponent = player.get_mut<PlayerComponent>();
+    if (!pComponent || !pComponent->Puppet || !pComponent->Puppet.is_alive())
+        return;
+
+    // The puppet comes from the CONNECTION, never from the message.
+    //
+    // There is no id field on this request precisely so that "change my clothes" cannot be
+    // spelled "change theirs". The authenticated connection decides whose appearance this
+    // is, and a client that wants to dress somebody else has nowhere to say so.
+    const auto puppet = pComponent->Puppet;
+
+    auto* pAppearance = puppet.get_mut<AppearanceComponent>();
+    if (!pAppearance)
+        return;
+
+    // Same bounds the spawn path uses, for the same reason - this is relayed to every other
+    // client, so an unbounded blob is a way to make one wardrobe visit allocate arbitrary
+    // memory everywhere.
+    constexpr size_t kMaxCcstate = 256 * 1024;
+    constexpr size_t kMaxEquipment = 64;
+
+    if (aMessage.get_ccstate().size() > kMaxCcstate || aMessage.get_equipment().size() > kMaxEquipment)
+    {
+        spdlog::warn("Refused an appearance update from {} - {} bytes, {} item(s)",
+                     pComponent->Username, aMessage.get_ccstate().size(),
+                     aMessage.get_equipment().size());
+        return;
+    }
+
+    bool changed = false;
+
+    if (aMessage.get_equipment() != pAppearance->equipment)
+    {
+        pAppearance->equipment = aMessage.get_equipment();
+        changed = true;
+    }
+
+    // Only when it is plausible AND actually sent.
+    //
+    // Absence means "clothing only", which is most updates - clearing the stored face
+    // because a jacket changed would undo a ripperdoc visit every time somebody got
+    // dressed. Too small means the customization state was read before it was populated,
+    // which is the 23-byte case that has already reached storage once.
+    constexpr size_t kMinCcstate = 1024;
+
+    if (aMessage.get_ccstate().size() >= kMinCcstate && aMessage.get_ccstate() != pAppearance->ccstate)
+    {
+        pAppearance->ccstate = aMessage.get_ccstate();
+        changed = true;
+    }
+
+    if (!changed)
+        return;
+
+    puppet.modified<AppearanceComponent>();
+
+    spdlog::info("{} changed appearance - {} item(s), {} bytes", pComponent->Username,
+                 pAppearance->equipment.size(), pAppearance->ccstate.size());
+
+    BroadcastAppearance(puppet);
 }
 
 void Level::HandleEnterVehicleRequest(PacketEvent<client::EnterVehicleRequest>& aMessage) noexcept

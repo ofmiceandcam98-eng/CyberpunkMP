@@ -123,6 +123,17 @@ void AppearanceSystem::AddEntity(const Red::EntityID entityID, const Red::DynArr
 
 }
 
+Vector<uint8_t> AppearanceSystem::GetEntityCcstate(const Red::EntityID entityID)
+{
+    std::lock_guard lock(m_mapLock);
+
+    const auto it = m_playerCcstate.find(entityID);
+    if (it == m_playerCcstate.end())
+        return {};
+
+    return it->second;
+}
+
 void AppearanceSystem::SetEntityName(Red::EntityID entityID, const std::string& acName)
 {
     std::lock_guard lock(m_mapLock);

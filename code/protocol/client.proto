@@ -164,6 +164,27 @@ message RpcCall {
 	bytes arguments = 2;
 }
 
+// "What I look like right now" - sent while already in the world.
+//
+// SaveCharacterRequest is the wrong message for this. It means "this is who this character
+// IS": it carries possessions, money and progression, it is what the character creator
+// closing produces, and the server treats it as a full identity write. Changing a jacket is
+// none of those things, and routing it through that path would mean a wardrobe visit
+// rewriting somebody's inventory record.
+//
+// Appearance only ever reached other players at spawn - NotifyCharacterLoad and nothing
+// else - so a player who changed clothes stayed dressed the way they arrived until everyone
+// watching rejoined. This is the message that was missing.
+message UpdateAppearanceRequest {
+    // Equipped items, as raw TweakDBIDs. Same reasoning as everywhere else: the server does
+    // not need to know what a garment IS in order to relay which ones somebody has on.
+    repeated uint64 equipment = 1;
+
+    // The customization blob, when it changed too - a ripperdoc visit rather than a
+    // wardrobe one. Optional, because most updates are clothing alone and the blob is 9KB.
+    bytes ccstate = 2;
+}
+
 message Protocol {
     oneof content {
         AuthenticationRequest authentication_request = 1;
@@ -175,5 +196,6 @@ message Protocol {
         ExitVehicleRequest exit_vehicle_request = 7;
         RespawnRequest respawn_request = 8;
         SaveCharacterRequest save_character_request = 9;
+        UpdateAppearanceRequest update_appearance_request = 10;
     }
 }

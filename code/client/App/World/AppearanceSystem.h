@@ -21,6 +21,10 @@ struct AppearanceSystem : RED4ext::IScriptable
     Red::DynArray<Red::TweakDBID> GetEntityItems(Red::EntityID &);
     void AddEntity(const Red::EntityID entityID, const Red::DynArray<Red::TweakDBID>& items, const Vector<uint8_t> ccstate);
 
+    // What we already hold for this entity, so a clothing-only update can keep the face it
+    // came in with rather than clearing it. Empty when the entity is unknown.
+    Vector<uint8_t> GetEntityCcstate(const Red::EntityID entityID);
+
     // Who a puppet belongs to, so its nameplate can say so. Empty for anything that is
     // not a player - server-spawned characters have no Discord account behind them.
     void SetEntityName(Red::EntityID entityID, const std::string& acName);

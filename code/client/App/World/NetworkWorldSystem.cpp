@@ -760,6 +760,64 @@ void NetworkWorldSystem::DumpCustomizationApi() const
  * once a second, not a serialisation, so the cost is nothing until someone is actually
  * standing at a mirror.
  */
+void NetworkWorldSystem::PollEquipmentChanges()
+{
+    const auto& service = Core::Container::Get<NetworkService>();
+    if (!service || !service->IsConnected())
+        return;
+
+    // Nothing to compare against until the restore has landed.
+    //
+    // A capture during restore reads the pre-restore loadout, and reporting THAT as a
+    // change would tell everyone the player got dressed in whatever the world template was
+    // wearing - the same race the possessions autosave already refuses to run into.
+    if (m_restorePending)
+        return;
+
+    const auto system = Red::GetGameSystem<Game::PlayerSystem>();
+    Red::Handle<Red::GameObject> player;
+
+    if (system)
+        system->GetLocalPlayerControlledGameObject(player);
+
+    if (!player)
+        return;
+
+    const auto apprSystem = GetAppearanceSystem();
+    if (!apprSystem)
+        return;
+
+    auto items = apprSystem->GetPlayerItems(player);
+
+    // An empty read is "nobody looked", not "wearing nothing" - the same ambiguity the
+    // server refuses to act on for possessions. Sending it would strip the player on every
+    // other screen the first time the item system was busy.
+    if (items.empty())
+        return;
+
+    if (items == m_lastSentEquipment)
+        return;
+
+    // First read of the session establishes the baseline without sending. What they are
+    // wearing on arrival already went out with their spawn, so announcing it again would
+    // be a redundant 9KB for every player who simply logged in.
+    const bool firstRead = m_lastSentEquipment.empty();
+    m_lastSentEquipment = items;
+
+    if (firstRead)
+        return;
+
+    client::UpdateAppearanceRequest request;
+    request.set_equipment(items);
+
+    // Clothing only. The customization blob is deliberately left empty: it is 9KB, it has
+    // not changed, and the server treats absence as "keep the face you have". A ripperdoc
+    // visit goes through the character save path, which broadcasts on its own.
+    service->Send(request);
+
+    spdlog::info("[Appearance] equipment changed - told the server about {} item(s)", items.size());
+}
+
 void NetworkWorldSystem::PollAppearanceChanges()
 {
     const auto& service = Core::Container::Get<NetworkService>();
@@ -1006,6 +1064,46 @@ void NetworkWorldSystem::OnBeforeWorldDetach(RED4ext::world::RuntimeScene* aScen
     m_appearanceSystem->OnBeforeWorldDetach(aScene);
 
     spdlog::info("[Detach] done - the engine owns the teardown from here");
+}
+
+void NetworkWorldSystem::HandleAppearanceUpdate(const PacketEvent<server::NotifyAppearanceUpdate>& aMessage)
+{
+    const auto entity = GetEntityByServerId(aMessage.get_id());
+
+    if (!entity)
+    {
+        // Nothing to re-dress. Not an error worth shouting about: a player can change
+        // clothes while somebody else is still streaming them in, and their spawn carries
+        // the current appearance anyway - so the update is redundant rather than lost.
+        spdlog::info("[Appearance] update for id {} arrived before its puppet", aMessage.get_id());
+        return;
+    }
+
+    const auto* pEntityComponent = entity.get<EntityComponent>();
+    if (!pEntityComponent)
+        return;
+
+    const auto apprSystem = GetAppearanceSystem();
+    if (!apprSystem)
+        return;
+
+    // An empty blob means the clothing changed and the face did not, which is most
+    // updates. Keeping what is already stored is what stops a wardrobe visit from
+    // wiping a ripperdoc one.
+    Vector<uint8_t> ccstate = aMessage.get_ccstate();
+
+    if (ccstate.empty())
+        ccstate = apprSystem->GetEntityCcstate(pEntityComponent->Id);
+
+    Red::DynArray<Red::TweakDBID> items;
+    for (const auto id : aMessage.get_equipment())
+        items.PushBack(Red::TweakDBID(id));
+
+    // Replace the stored data, then ask the script side to make the game read it again -
+    // ApplyAppearance is script-only, and it is what actually re-dresses the puppet.
+    apprSystem->AddEntity(pEntityComponent->Id, items, ccstate);
+
+    Red::CallVirtual(apprSystem, "ReapplyAppearance", pEntityComponent->Id);
 }
 
 void NetworkWorldSystem::HandleCharacterLoad(const PacketEvent<server::NotifyCharacterLoad>& aMessage)
@@ -1450,6 +1548,7 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleRequestCharacterName>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleWorldState>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleInteraction>(this);
+    pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleAppearanceUpdate>(this);
 
     m_remotePlayerId = std::nullopt;
 
@@ -1526,6 +1625,7 @@ void NetworkWorldSystem::OnConnected()
         .run([this](flecs::iter& it)
         {
             PollAppearanceChanges();
+            PollEquipmentChanges();
         });
 
     // Save what the character owns on a timer, so nobody has to remember a command.

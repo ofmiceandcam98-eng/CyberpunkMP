@@ -348,6 +348,29 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
 
     store.SaveCharacter(pPlayer->DiscordId, pPlayer->Username, character);
 
+    // Correct everyone who is already looking at this player.
+    //
+    // Appearance used to reach other clients at spawn and never again, so a save that
+    // landed afterwards changed the stored record and nothing on screen. Two visible
+    // consequences: a ripperdoc visit was invisible until everyone watching rejoined, and
+    // a player whose spawn went out before their customization state was populated stayed
+    // FACELESS for the rest of the session - the blob was fixed in storage within seconds
+    // and no one was ever told.
+    //
+    // The live puppet is updated from the same bytes that were just validated and stored,
+    // so the thing on screen and the thing in the record cannot drift apart.
+    if (pPlayer->Puppet && pPlayer->Puppet.is_alive())
+    {
+        if (auto* pAppearance = pPlayer->Puppet.get_mut<AppearanceComponent>())
+        {
+            pAppearance->ccstate.assign(blob.begin(), blob.end());
+            pPlayer->Puppet.modified<AppearanceComponent>();
+
+            if (auto* pLevel = m_pWorld->get_mut<Level>())
+                pLevel->BroadcastAppearance(pPlayer->Puppet);
+        }
+    }
+
     spdlog::info("{} saved character '{}' from the creator ({} bytes)", pPlayer->Username,
                  character.Name, blob.size());
 

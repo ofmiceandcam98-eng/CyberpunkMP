@@ -170,6 +170,18 @@ protected:
     void OnBeforeWorldDetach(RED4ext::world::RuntimeScene* aScene) override;
 
     void HandleCharacterLoad(const PacketEvent<server::NotifyCharacterLoad>& aMessage);
+
+    // Somebody already in the world changed clothes or had work done. NotifyCharacterLoad
+    // only fires at spawn, so without this an outfit change never left the wearer's screen.
+    void HandleAppearanceUpdate(const PacketEvent<server::NotifyAppearanceUpdate>& aMessage);
+
+    // Watches what the local player is wearing and tells the server when it changes.
+    // Separate from PollAppearanceChanges, which only fires while the character creator is
+    // open - equipping a jacket never opens it, which is why clothing never replicated.
+    void PollEquipmentChanges();
+
+    // The loadout as last reported, so a poll that finds the same thing stays silent.
+    Vector<uint64_t> m_lastSentEquipment;
     void HandleEntityUnload(const PacketEvent<server::NotifyEntityUnload>& aMessage);
     void HandleSpawnCharacterResponse(const PacketEvent<server::SpawnCharacterResponse>& aMessage);
 

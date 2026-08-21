@@ -312,6 +312,28 @@ message NotifyInteraction {
     uint64 interaction_id = 3;
 }
 
+// Somebody already in the world now looks different.
+//
+// The counterpart to NotifyCharacterLoad, which only ever fires at spawn. Without this a
+// player who changed clothes kept wearing whatever they arrived in on every other screen,
+// and a character whose appearance arrived late - a spawn that beat its own customization
+// state - stayed faceless until everyone watching rejoined.
+//
+// Deliberately its own message rather than a field on movement: appearance changes a few
+// times an hour and the blob is 9KB, while movement goes out thirty times a second.
+message NotifyAppearanceUpdate {
+    // The puppet this is about, in the server's ids - the same id NotifyCharacterLoad used,
+    // so the receiving client already has an entity registered under it.
+    uint64 id = 1;
+
+    repeated uint64 equipment = 2;
+
+    // Empty when only the clothing changed, which is the common case. The receiving client
+    // keeps the customization it already has rather than clearing a face because a jacket
+    // moved.
+    bytes ccstate = 3;
+}
+
 message Protocol {
     oneof content {
         AuthenticationResponse authentication_response = 1;
@@ -335,5 +357,6 @@ message Protocol {
         NotifyInteraction notify_interaction = 19;
         NotifyMoney notify_money = 20;
         NotifyQuestSkip notify_quest_skip = 21;
+        NotifyAppearanceUpdate notify_appearance_update = 22;
     }
 }

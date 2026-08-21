@@ -194,6 +194,34 @@ public native class AppearanceSystem extends IScriptable {
         entity.animCallbackId = GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(delay, 2.0, false);
     }
 
+    /**
+     * Re-dress a puppet that is already standing in the world.
+     *
+     * ApplyAppearance only ever ran from OnEntityAttached, so a remote player's clothes
+     * were whatever they had when they spawned and nothing after that - somebody could
+     * change their whole outfit and every other screen kept showing the old one until they
+     * rejoined.
+     *
+     * Called from native when a NotifyAppearanceUpdate lands. The native side has already
+     * replaced the stored equipment and customization for this entity by then, so this
+     * only has to make the game read them again.
+     *
+     * Reached through the entity system rather than a search of m_entities: the array holds
+     * weak refs that may have gone stale, and FindEntityByID answers the question directly.
+     */
+    public func ReapplyAppearance(entityId: EntityID) -> Void {
+        let entity = GameInstance.FindEntityByID(GetGameInstance(), entityId) as GameObject;
+
+        if !IsDefined(entity) {
+            FTLog(s"[AppearanceSystem] cannot re-dress \(EntityID.GetHash(entityId)) - no entity");
+            return;
+        }
+
+        if this.ApplyAppearance(entity) {
+            FTLog(s"[AppearanceSystem] re-dressed \(EntityID.GetHash(entityId))");
+        }
+    }
+
     private cb func OnEntityAttached(event: ref<EntityLifecycleEvent>) {
         let entity = event.GetEntity() as GameObject;
 
