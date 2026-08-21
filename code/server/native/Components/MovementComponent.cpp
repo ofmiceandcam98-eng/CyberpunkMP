@@ -31,6 +31,36 @@ constexpr float kReducedRateRange = 600.f;
 constexpr uint32_t kReducedRateDivisor = 4;
 constexpr uint32_t kDistantRateDivisor = 16;
 
+// Where the recipient effectively is, for measuring interest.
+//
+// A mounted character sends no movement of their own - their client parents the puppet
+// to the vehicle - so their server-side MovementComponent freezes wherever they got in.
+// Measuring from that stale point meant a car driving 200m from the mount spot had its
+// updates TO its own passenger decimated to 1/4, then 1/16 past 600m: the passenger
+// watched their own ride stutter. When the recipient is mounted, their position is
+// their vehicle's.
+const MovementComponent* RecipientMovement(flecs::entity aRecipientPuppet)
+{
+    if (!aRecipientPuppet)
+        return nullptr;
+
+    if (const auto* pAttachment = aRecipientPuppet.get<AttachmentComponent>())
+    {
+        const auto vehicle = pAttachment->Parent;
+
+        if (vehicle && vehicle.is_alive())
+        {
+            if (const auto* pVehicleMovement = vehicle.get<MovementComponent>())
+                return pVehicleMovement;
+        }
+
+        // A mount whose vehicle has no position to offer falls through to the puppet's
+        // own - stale beats absent, and ShouldSendTo already errs towards sending.
+    }
+
+    return aRecipientPuppet.get<MovementComponent>();
+}
+
 // Should this recipient get this particular update?
 bool ShouldSendTo(const glm::vec3& acFrom, const MovementComponent* apRecipient, uint32_t aSequence)
 {
@@ -111,9 +141,7 @@ void ReplicateMovementComponent(flecs::entity aEntity, const MovementComponent& 
             if (!IsDebug() && player == owner)
                 return;
 
-            const auto* pTheirs = aPlayerComponent.Puppet
-                                      ? aPlayerComponent.Puppet.get<MovementComponent>()
-                                      : nullptr;
+            const auto* pTheirs = RecipientMovement(aPlayerComponent.Puppet);
 
             if (!ShouldSendTo(from, pTheirs, sequence))
                 return;
