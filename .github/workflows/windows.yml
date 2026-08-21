@@ -85,7 +85,7 @@ jobs:
         shell: bash
         run: |
           for i in 1 2 3; do
-            xmake config --arch=${{ matrix.arch }} --mode=${{ matrix.mode }} --yes && exit 0
+            xmake config --plat=windows --arch=${{ matrix.arch }} --mode=${{ matrix.mode }} --yes && exit 0
             echo "xmake config failed (attempt $i) - retrying in 30s"
             sleep 30
           done
