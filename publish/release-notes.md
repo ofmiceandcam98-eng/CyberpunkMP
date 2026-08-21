@@ -4,6 +4,10 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.85
+
+- **If your launcher grabbed the wrong v0.3.84, this gets you the right one.** Two v0.3.84 builds were published minutes apart tonight; one of them re-broke the fallback-launch fix (arguments wrapped in quotes the game ignores - the "multiplayer dials your own PC" bug). v0.3.85 exists so every launcher, whichever 84 it got, updates to a build where the fix is definitely in. Nothing else changes.
+
 ## What changed — v0.3.84
 
 - **Remote players move.** This is the one. You could see another player's body at the spot they spawned and nothing after that, while they were walking around on their end — and every diagnostic said the connection was healthy, because it was. The client held render time in a 32-bit float. Ticks are milliseconds since the epoch, around 1,787,000,000,000, and a float that large can only count in steps of 131,072 — about two minutes. So the 100ms interpolation delay rounded away to nothing, every buffered movement sample compared as "already in the past", and the code that positions the puppet hit a guard and returned without moving anything, every frame, forever. The body stayed where it was last put: its spawn point. Ticks are now kept as whole numbers, and only the differences between them — a few milliseconds — are allowed to be fractional.
@@ -14,6 +18,8 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 - **Quitting saves your character.** Leaving through the pause menu — EXIT GAME or EXIT TO MAIN MENU, which is how people actually leave — never triggered a save, so you could lose up to ninety seconds of shopping and looting. It saves first now. Alt-F4 still cannot be caught; that is what the ninety-second timer is for.
 - **The launcher credits Tilted Phoques SRL**, who created CyberpunkMP, in the About panel with a link to the original project. The separators that showed as "Â·" are fixed too.
 - **The server keeps a ledger.** Money transfers and any character save whose balance disagrees with the server's are now recorded to `config/audit.log`. Nothing changes for players — this is the groundwork for making money properly server-owned, and the first thing that can actually show where the "my eddies went back to an old number" bug happens.
+- **The EACCES fallback launch delivers your connection settings.** When Windows refuses the direct game start and the launcher retries through the shell (added in v0.3.79), it was wrapping every argument in quotes the game's parser doesn't strip - so the game launched fine but ignored ALL of them, connected to your own PC, and looked exactly like "not launched from the launcher". Six sessions of one tester's night, fully explained by his new launch trail in one read. Verified with a live probe before shipping.
+
 ## What changed — v0.3.83
 
 - **The launcher keeps a trail of its own actions** - JACK IN pressed, every launch check's verdict, what was passed to the game (credentials never written, presence only), and the game's exit code - and ships it to the server with the client logs, including when a launch is refused. "The button does nothing" is now a thing we read, not a thing we debate.

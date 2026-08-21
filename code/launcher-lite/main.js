@@ -2449,7 +2449,15 @@ async function launchGame () {
       // its own quoting rules and Node's default escaping garbles them. The empty ""
       // is start's window-title slot - without it, start would treat the quoted exe
       // path as the title and run nothing.
-      const line = ['/c', 'start', '""', `"${exe}"`, ...args.map((a) => `"${a}"`)].join(' ')
+      //
+      // The ARGUMENTS are NOT quoted. They contain no spaces, and the game's own
+      // command-line parser does not strip quotes - a quoted token never matches
+      // "--ip=", so a quoted argument is an IGNORED argument. That was phonix's whole
+      // night, 2026-08-21: JACK IN worked, EACCES sent him through this path, and the
+      // game launched cleanly with every argument eaten - "not launched from the
+      // launcher", dialing 127.0.0.1, six sessions straight. Only the exe path keeps
+      // quotes; it is the one token with spaces, and cmd - not the game - consumes it.
+      const line = ['/c', 'start', '""', `"${exe}"`, ...args].join(' ')
       const retry = spawn('cmd.exe', [line], {
         detached: true,
         stdio: 'ignore',
