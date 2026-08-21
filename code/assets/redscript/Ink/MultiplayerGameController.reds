@@ -7,6 +7,14 @@ import CyberpunkMP.Plugins.*
 
 // based on NewHudPhoneGameController and PauseMenuBackgroundGameController
 public class MultiplayerGameController extends inkGameController {
+    // Voice, kept here rather than on NetworkWorldSystem: that is a NATIVE class whose
+    // layout is fixed in C++, and adding a field to one fails with a constant-pool error
+    // that names nothing useful. This controller is also where the input already arrives,
+    // and it is torn down with the world - which is the right lifetime, since a voice
+    // state that outlived the session would come back latched on.
+    private let m_voiceTransmitting: Bool = false;
+    private let m_voiceMode: MpVoiceMode = MpVoiceMode.PushToTalk;
+
     public let m_audioSystem: wref<AudioSystem>;
     public let m_uiSystem: wref<UISystem>;
     public let m_repeatingScrollActionEnabled: Bool = false;
@@ -76,6 +84,14 @@ public class MultiplayerGameController extends inkGameController {
         // this.bbListener = this.psmBB.RegisterListenerInt(GetAllBlackboardDefs().PlayerStateMachine.Vehicle, this, n"OnPlayerEnteredVehicle", true);
 
         this.m_player.RegisterInputListener(this, n"UIConnectToServer");
+
+        // Registered here rather than on connect, so holding the voice key reacts even
+        // before joining - that is how somebody confirms their binding works before it
+        // matters. Registered exactly once, in OnInitialize: RegisterInputListener does
+        // NOT deduplicate, and the note further down this file records what a duplicate
+        // registration already cost once.
+        this.m_player.RegisterInputListener(this, n"VoicePushToTalk");
+
         // this.m_player.RegisterInputListener(this, n"UIDisconnectFromServer");
         this.UpdateInputHints();
 
@@ -1001,11 +1017,91 @@ public class MultiplayerGameController extends inkGameController {
         this.m_player.UnregisterInputListener(this, n"UIShop");
     }
 
+    /**
+     * Start or stop transmitting, according to the mode.
+     *
+     * HOLD: down transmits, up stops.
+     * TOGGLE: down flips, up is ignored - so holding the key does not switch on and
+     *         straight back off, which is what a naive toggle does to anyone who does not
+     *         tap it cleanly.
+     *
+     * Voice activation ignores the key entirely; its trigger is the input level, which
+     * needs the capture layer that does not exist yet.
+     *
+     * NOTHING HERE KNOWS WHICH KEY IT IS. The caller matched on the VoicePushToTalk
+     * ACTION, and the binding for that lives in Inputs\CyberpunkMP.xml where IK_V is only
+     * a starting value. Rebinding to Mouse4 or Caps Lock changes nothing in this method.
+     */
+    public func MpVoiceKey(down: Bool) -> Void {
+        if Equals(this.m_voiceMode, MpVoiceMode.VoiceActivation) {
+            return;
+        }
+
+        if Equals(this.m_voiceMode, MpVoiceMode.Toggle) {
+            if down {
+                this.m_voiceTransmitting = !this.m_voiceTransmitting;
+                FTLog(s"[Voice] toggle -> \(this.m_voiceTransmitting)");
+            }
+            return;
+        }
+
+        if NotEquals(this.m_voiceTransmitting, down) {
+            this.m_voiceTransmitting = down;
+            FTLog(s"[Voice] push-to-talk -> \(down)");
+        }
+    }
+
+    // Stop transmitting whatever the mode and whatever the key is doing.
+    //
+    // Toggle is why this exists: it latches, so without an explicit stop a player who
+    // toggled on and then left would return still transmitting, with no key held down to
+    // explain why.
+    public func MpVoiceStop() -> Void {
+        if this.m_voiceTransmitting {
+            this.m_voiceTransmitting = false;
+            FTLog(s"[Voice] stopped");
+        }
+    }
+
+    public func MpVoiceSetMode(mode: MpVoiceMode) -> Void {
+        // Changing mode always stops. Leaving toggle while latched on would otherwise
+        // leave the microphone open with the new mode's rules never closing it.
+        this.MpVoiceStop();
+
+        this.m_voiceMode = mode;
+        FTLog(s"[Voice] mode -> \(EnumInt(mode))");
+    }
+
+    public func MpVoiceTransmitting() -> Bool {
+        return this.m_voiceTransmitting;
+    }
+
 // Actions
 
     protected cb func OnAction(action: ListenerAction, consumer: ListenerActionConsumer) -> Bool {
         let actionName: CName = ListenerAction.GetName(action);
         let actionType: gameinputActionType = ListenerAction.GetType(action);
+
+        // Voice, before anything else and regardless of connection state.
+        //
+        // Handled by ACTION NAME, never by key. The binding lives in the input XML where
+        // IK_V is only a starting value, so a player who rebinds this to Mouse4 or Caps
+        // Lock changes nothing here - which is the point of not writing `if V pressed`.
+        //
+        // Not consumed: push-to-talk should not swallow whatever else the key does. If
+        // somebody binds it to a key the game already uses, both still happen, which is
+        // usually what they wanted when they chose it.
+        if Equals(actionName, n"VoicePushToTalk") {
+            if Equals(actionType, gameinputActionType.BUTTON_PRESSED) {
+                this.MpVoiceKey(true);
+            } else {
+                if Equals(actionType, gameinputActionType.BUTTON_RELEASED) {
+                    this.MpVoiceKey(false);
+                }
+            }
+
+            return false;
+        }
         if !this.m_connectedToServer {
             if !this.m_serverListOpen {
                 if Equals(actionName, n"UIConnectToServer") && Equals(actionType, gameinputActionType.BUTTON_HOLD_COMPLETE) {

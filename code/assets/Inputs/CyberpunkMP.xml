@@ -29,6 +29,16 @@
 		<button id="IK_Slash" />
     </mapping>
 
+	<!-- Voice push-to-talk.
+	     IK_V is a STARTING VALUE, not the key. The voice system asks whether the
+	     VoicePushToTalk action is active and never asks which key that is, so a player
+	     rebinding it changes nothing downstream.
+	     Both press and release are accepted below: hold-to-talk needs the release to know
+	     when to stop, and toggle needs only the press. Same action serves both modes. -->
+	<mapping name="VoicePushToTalk_Button" type="Button" >
+		<button id="IK_V" />
+    </mapping>
+
 	<mapping name="UIEnterChatMessage_Button" type="Button" >
 		<button id="IK_Semicolon" />
     </mapping>
@@ -125,7 +135,13 @@
 		<event name="BUTTON_RELEASED" />
 	</acceptedEvents>
 
+	<acceptedEvents action="VoicePushToTalk">
+		<event name="BUTTON_PRESSED" />
+		<event name="BUTTON_RELEASED" />
+	</acceptedEvents>
+
     <context name="UIBase" append="true">
+        <action name="VoicePushToTalk" map="VoicePushToTalk_Button" />
         <action name="UIConnectToServer" map="UIConnectToServer_Button" />
         <action name="UIDisconnectFromServer" map="UIDisconnectFromServer_Button" />
         <action name="UIEnterChatMessage" map="UIEnterChatMessage_Button" />
