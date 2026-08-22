@@ -486,7 +486,12 @@
      parallelogram between two others doing the same thing ("the restart looks
      asymmetrical", zeldfep, 2026-08-21). All four corners cut equally reads as one
      deliberate industrial cluster, and each button is symmetric on both axes. */
-  .start, .restart, .stop {
+  /* button.action, not bare class names - the base rule is button.action (0,1,1) and a
+     bare .restart (0,1,0) LOSES to it, so two shipped "fixes" for this row were valid
+     CSS that never rendered: v0.3.101's symmetric cuts and v0.3.102's smaller type both
+     sat beneath the base rule while the launcher kept showing the kit notch slicing
+     RESTART. Specificity, not the values, was the bug. */
+  button.action.start, button.action.restart, button.action.stop {
     clip-path: polygon(9px 0, calc(100% - 9px) 0, 100% 9px, 100% calc(100% - 9px),
                        calc(100% - 9px) 100%, 9px 100%, 0 calc(100% - 9px), 0 9px);
     /* Sized so the lettering can never reach the diagonals. At the launcher's default

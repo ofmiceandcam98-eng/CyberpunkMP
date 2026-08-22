@@ -4,6 +4,12 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.103
+
+- **The launcher stops telling members to join the Discord they are already in.** A Discord rate limit (HTTP 429) on the membership check was being read as "not a member" — shown live to the person who owns the server. Only Discord's two definitive answers change the verdict now (in the server, or 404 not in it); a rate limit or outage stands on the last definitive answer, exactly like the role lookup has since v0.3.87. The real membership check still happens server-side on connect, where it cannot be patched out.
+- **Far fewer Discord calls, so the rate limit stops happening at all.** The role lookup was being refreshed on every mods-list render; it now remembers its answer for ten minutes — the same staleness the role map itself already accepts.
+- **The Restart button fix that actually renders this time.** Two shipped "fixes" for the sliced RESTART lettering were valid CSS that lost a specificity fight to the base button rule and never applied. The corrected rule wins the cascade: corner cuts on all four corners, and lettering sized so display scaling can never push it into the diagonals — verified by computed style, not by eye.
+
 ## What changed — v0.3.102
 
 - **The Restart button stops eating its own letters.** Under Windows display scaling the server buttons shrink until RESTART crossed its corner cuts and the clip sliced the glyphs. The cut shape stays; the lettering on Start/Restart/Stop now sizes itself so it can never reach the diagonals.
