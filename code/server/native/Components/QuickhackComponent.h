@@ -95,12 +95,21 @@ struct QuickhackRule
     // is already here with this note attached.
     float Damage{0.f};
 
-    // A FLOOR on how often this hack may be used, not the game's cooldown.
+    // A SECURITY FALLBACK, not Cyberpunk's cooldown - and labelled as one deliberately.
     //
-    // Same reasoning as the ceiling above, and the same shape as the weapon fire-rate floor:
-    // the real cooldown is stat-modified and varies per player, so this is not it. What it
-    // does is separate a fast netrunner from a script sending requests every frame, which is
-    // the attack worth stopping.
+    // Unlike RAM cost, a real base cooldown DOES exist: ObjectAction_Record.Cooldown()
+    // returns a Cooldown_Record with Duration() and Modifiable(). If Modifiable() is false
+    // for quickhacks, that duration is authoritative and this field should be replaced by
+    // it - the server could then enforce the game's actual cooldown exactly.
+    //
+    // That question is answered by a live dump, not by reasoning, and until it is answered
+    // this stays a floor: enough to separate a fast netrunner from a script sending requests
+    // every frame, and honest about being nothing more. The same shape as the weapon
+    // fire-rate floor, for the same reason.
+    //
+    // DO NOT tune these to feel like real cooldowns. Either they are replaced by
+    // Duration(), or they remain an anti-spam bound. Tuning them turns a bound into a
+    // guessed game rule, which is the thing to avoid.
     uint64_t MinIntervalMs{3000};
 };
 
