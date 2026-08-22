@@ -223,6 +223,68 @@ message UpdateAppearanceRequest {
 message DeleteCharacterRequest {
 }
 
+// Something happened that should hurt somebody.
+//
+// THE ATTACKER IS NOT IN THIS MESSAGE, deliberately, exactly as UpdateAppearanceRequest
+// has no id field. The authenticated connection decides who is attacking, so "I shot them"
+// cannot be spelled "they shot them". Impersonation is not something a server should have
+// to detect - it should be unsayable.
+//
+// reported_damage is a CLAIM, not a result. The client is the only thing that can see what
+// the local engine calculated, so it is worth sending; the server is free to clamp it,
+// recompute it, or refuse it outright. Nothing here is applied to anybody's health until
+// the server says so in NotifyDamageResult.
+//
+// One message for every kind of attack. A bullet, a katana and an Overheat all arrive
+// here, because a combat system with three parallel pipelines drifts into three different
+// answers to the same question - see the brief's own note about not building
+// PlayerCombatSystem and NPCCombatSystem separately.
+message CombatEventRequest {
+    // Ours, so the result can be matched back to the event that caused it. Client-scoped;
+    // the server pairs it with the connection to make it unique.
+    uint64 event_id = 1;
+
+    // Server entity id of whoever is being hit. A puppet, which is what players AND
+    // server-declared NPCs both are - one target space, per the brief's Combatant idea.
+    uint64 target_id = 2;
+
+    // 0 weapon, 1 melee, 2 quickhack, 3 grenade, 4 vehicle, 5 environment.
+    uint32 source_type = 3;
+
+    // 0 ranged, 1 melee, 2 quickhack, 3 explosion, 4 status effect.
+    uint32 attack_type = 4;
+
+    // TweakDB id of the weapon or the quickhack - whichever applies. Zero when neither
+    // does, rather than a second field nobody fills in.
+    uint64 source_id = 5;
+
+    // gamedataDamageType: physical, thermal, chemical, electrical.
+    uint32 damage_type = 6;
+
+    // Which part was hit, for the reaction the receiver plays.
+    uint32 hit_zone = 7;
+
+    common.Vector3 hit_position = 8;
+
+    // Attacker to target. Enough for the receiving client to pick a front/left/back
+    // reaction without shipping animation internals.
+    common.Vector3 hit_direction = 9;
+
+    // What the local engine calculated, before the server has an opinion.
+    float reported_damage = 10;
+
+    bool critical = 11;
+    bool headshot = 12;
+
+    // The client's own clock, so the server can reject events that are stale or
+    // impossible. Same clock movement is stamped with.
+    uint64 client_tick = 13;
+
+    // Rises per attacker. Duplicate or out-of-order events are dropped rather than
+    // applied twice - the difference between a burst and a replayed packet.
+    uint32 sequence = 14;
+}
+
 // One encoded slice of somebody talking.
 //
 // Opus at 48kHz mono in 20ms frames - the codec's own default, and small enough that a
@@ -265,5 +327,6 @@ message Protocol {
         UpdateAppearanceRequest update_appearance_request = 10;
         DeleteCharacterRequest delete_character_request = 11;
         VoiceFrameRequest voice_frame_request = 12;
+        CombatEventRequest combat_event_request = 13;
     }
 }

@@ -10,6 +10,7 @@
 #include <Components/VehicleComponent.h>
 #include <Components/AuthorityComponent.h>
 #include <Components/NpcComponent.h>
+#include <Components/HealthComponent.h>
 
 #include "GameServer.h"
 #include "World.h"
@@ -57,6 +58,7 @@ Level::Level(World* apWorld) noexcept
     GServer->RegisterHandler<&Level::HandleExitVehicleRequest>(this);
     GServer->RegisterHandler<&Level::HandleUpdateAppearanceRequest>(this);
     GServer->RegisterHandler<&Level::HandleVoiceFrameRequest>(this);
+    GServer->RegisterHandler<&Level::HandleCombatEventRequest>(this);
 
     m_updateSystem = m_pWorld->system<const LevelActorTag>("Level Update")
         .each([this](flecs::entity aEntity, const LevelActorTag&)
@@ -581,7 +583,12 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
     pComponent->Puppet = GetWorld()->entity()
         .child_of(player)
         .set<MovementComponent>({pos, rot, {}})
-        .set<AppearanceComponent>({equipment, appearance});
+        .set<AppearanceComponent>({equipment, appearance})
+
+        // Everyone arrives whole. Defaults live in the component rather than here so a
+        // server-declared NPC gets the same treatment without a second spawn path - one
+        // Combatant, per the brief.
+        .set<HealthComponent>({});
 
     // The one line that says a person actually arrived in the world. Vehicle spawns log
     // similar-sounding lines and have been misread as player spawns during diagnosis;
@@ -939,6 +946,175 @@ void Level::BroadcastAppearance(flecs::entity aPuppet) noexcept
 
             GServer->Send(aPlayerComponent.Connection, message);
         });
+}
+
+void Level::BroadcastCombatState(flecs::entity aPuppet) noexcept
+{
+    if (!aPuppet || !aPuppet.is_alive())
+        return;
+
+    const auto* pHealth = aPuppet.get<HealthComponent>();
+    if (!pHealth)
+        return;
+
+    server::NotifyCombatState message;
+    message.set_id(aPuppet.id());
+    message.set_health(pHealth->Health);
+    message.set_max_health(pHealth->MaxHealth);
+    message.set_life_state(pHealth->LifeState);
+
+    // Everyone, including the owner. Unlike appearance - where echoing a change back to the
+    // person who made it invites a re-apply loop - health is decided HERE, so the owner is
+    // exactly who most needs telling. Their own client only ever proposed a number.
+    GetWorld()->get_world().each([&message](flecs::entity, const PlayerComponent& aPlayerComponent)
+                                 { GServer->Send(aPlayerComponent.Connection, message); });
+}
+
+void Level::HandleCombatEventRequest(PacketEvent<client::CombatEventRequest>& aMessage) noexcept
+{
+    auto* pPlayerManager = GetWorld()->get_mut<PlayerManager>();
+
+    // The attacker is the CONNECTION. See CombatEventRequest - there is no attacker field
+    // to forge.
+    const auto attacker = pPlayerManager->GetByConnectionId(aMessage.ConnectionId);
+    if (!attacker)
+        return;
+
+    auto* pAttackerComponent = attacker.get_mut<PlayerComponent>();
+    if (!pAttackerComponent || !pAttackerComponent->Puppet || !pAttackerComponent->Puppet.is_alive())
+        return;
+
+    const auto attackerPuppet = pAttackerComponent->Puppet;
+
+    auto* pAttackerHealth = attackerPuppet.get_mut<HealthComponent>();
+    if (!pAttackerHealth)
+        return;
+
+    // A corpse cannot shoot. Checked before anything else because every rule below assumes
+    // the attacker is a participant.
+    if (pAttackerHealth->LifeState != 0)
+        return;
+
+    // Replay and duplicate rejection. A burst of fire is a rising sequence; a replayed
+    // packet is not. Compared as a difference so wrap-around does not silently drop
+    // everything for a full cycle.
+    if (pAttackerHealth->HasCombatSequence)
+    {
+        const int32_t age = static_cast<int32_t>(aMessage.get_sequence() - pAttackerHealth->LastCombatSequence);
+
+        if (age <= 0)
+        {
+            spdlog::warn("Dropped a stale or duplicate combat event from {} (sequence {})",
+                         pAttackerComponent->Username, aMessage.get_sequence());
+            return;
+        }
+    }
+
+    flecs::entity target(GetWorld()->get_world(), aMessage.get_target_id());
+
+    if (!target || !target.is_alive())
+        return;
+
+    auto* pTargetHealth = target.get_mut<HealthComponent>();
+    if (!pTargetHealth)
+        return;
+
+    // Already down. Refusing rather than clamping to zero, so a body cannot be farmed for
+    // events and so "killed" is reported exactly once.
+    if (pTargetHealth->LifeState != 0)
+        return;
+
+    // Range. The cheapest physical-plausibility check there is, and the one that catches
+    // the most: an attack from across the district is not a hit however well-formed the
+    // packet is. Deliberately generous - this is an outer bound on what any weapon in the
+    // game can reach, not a per-weapon range, which needs weapon state the server does not
+    // own yet.
+    constexpr float kMaxAttackRange = 250.f;
+
+    const auto* pAttackerMovement = attackerPuppet.get<MovementComponent>();
+    const auto* pTargetMovement = target.get<MovementComponent>();
+
+    if (pAttackerMovement && pTargetMovement)
+    {
+        const auto delta = pTargetMovement->Position - pAttackerMovement->Position;
+
+        if (glm::dot(delta, delta) > kMaxAttackRange * kMaxAttackRange)
+        {
+            spdlog::warn("Refused a combat event from {} - target is {:.0f}m away", pAttackerComponent->Username,
+                         std::sqrt(glm::dot(delta, delta)));
+            return;
+        }
+    }
+
+    // What the client claimed, clamped to something a single hit can plausibly be.
+    //
+    // The engine's own numbers are trusted only as far as this: the client is the only
+    // thing that can see what Cyberpunk calculated, so throwing its figure away would mean
+    // reimplementing every weapon, mod and resistance in the game on the server. Clamping
+    // is the compromise - a wrong number costs a fraction of a health bar, where an
+    // unclamped one is an instant kill from anywhere.
+    //
+    // 100 is a full health pool, so this permits a one-shot kill (a sniper headshot is
+    // one) while refusing the 999999 the brief calls out.
+    constexpr float kMaxSingleHit = 100.f;
+
+    float damage = aMessage.get_reported_damage();
+
+    if (!std::isfinite(damage) || damage < 0.f)
+        return;
+
+    if (damage > kMaxSingleHit)
+    {
+        spdlog::warn("Clamped a combat event from {} - claimed {:.0f} damage", pAttackerComponent->Username, damage);
+        damage = kMaxSingleHit;
+    }
+
+    pAttackerHealth->LastCombatSequence = aMessage.get_sequence();
+    pAttackerHealth->HasCombatSequence = true;
+
+    const float before = pTargetHealth->Health;
+    const float after = std::max(0.f, before - damage);
+
+    pTargetHealth->Health = after;
+
+    // Downed, not dead. The client currently cannot die at all - Death.reds applies the
+    // engine's Immortal flag so the death menu never opens - and a server that declared
+    // people dead while their game refused to let them be would be the worst of both. Down
+    // is the state both halves can agree on today.
+    const bool downed = after <= 0.f;
+
+    if (downed)
+        pTargetHealth->LifeState = 1;
+
+    server::NotifyDamageResult result;
+    result.set_event_id(aMessage.get_event_id());
+    result.set_attacker_id(attackerPuppet.id());
+    result.set_target_id(target.id());
+    result.set_source_type(aMessage.get_source_type());
+    result.set_damage_type(aMessage.get_damage_type());
+    result.set_hit_zone(aMessage.get_hit_zone());
+    result.set_raw_damage(aMessage.get_reported_damage());
+    result.set_final_damage(before - after);
+    result.set_target_health_after(after);
+    result.set_target_max_health(pTargetHealth->MaxHealth);
+    result.set_critical(aMessage.get_critical());
+    result.set_headshot(aMessage.get_headshot());
+    result.set_killed(false);
+    result.set_knocked_down(downed);
+    result.set_hit_position(aMessage.get_hit_position());
+    result.set_hit_direction(aMessage.get_hit_direction());
+
+    // Everyone gets the event, not just the two involved - a bystander has to see the hit
+    // reaction and hear the impact, and giving them only a health number would leave them
+    // inventing a reason for it.
+    GetWorld()->get_world().each([&result](flecs::entity, const PlayerComponent& aPlayerComponent)
+                                 { GServer->Send(aPlayerComponent.Connection, result); });
+
+    if (downed)
+    {
+        spdlog::info("{} downed entity {}", pAttackerComponent->Username, target.id());
+        BroadcastCombatState(target);
+    }
 }
 
 void Level::HandleVoiceFrameRequest(PacketEvent<client::VoiceFrameRequest>& aMessage) noexcept

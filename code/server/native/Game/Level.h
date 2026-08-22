@@ -67,6 +67,17 @@ protected:
     // The frame is never decoded here - see NotifyVoiceFrame in server.proto.
     void HandleVoiceFrameRequest(PacketEvent<client::VoiceFrameRequest>& aMessage) noexcept;
 
+    // Somebody attacked somebody. Validated here, applied here, and broadcast as a result -
+    // nothing a client sends is ever applied directly. See CombatEventRequest.
+    void HandleCombatEventRequest(PacketEvent<client::CombatEventRequest>& aMessage) noexcept;
+
+public:
+    // Tell everyone who can see this combatant what its health and life state now are.
+    // Quiet state, not an event - see NotifyCombatState.
+    void BroadcastCombatState(flecs::entity aPuppet) noexcept;
+
+private:
+
 public:
     // Tell everyone except the owner that this puppet looks different now.
     //

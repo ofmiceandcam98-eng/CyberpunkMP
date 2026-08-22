@@ -399,6 +399,68 @@ message NotifyCharacterList {
     string error = 2;
 }
 
+// What actually happened, decided here.
+//
+// Sent to the attacker, the target, and everyone close enough to see it - so all three
+// render the same event rather than each deciding independently. That is the whole point:
+// a hit reaction, a blood effect and a health bar that disagree are three symptoms of the
+// same missing message.
+//
+// This is NOT a health broadcast. Health after the hit is included so nobody has to
+// accumulate their own running total, but the EVENT is the payload - who hit whom, with
+// what, where, and how hard. Replicating only health would leave every client to invent
+// its own reason for the number changing.
+message NotifyDamageResult {
+    // Echoes CombatEventRequest.event_id back to the attacker, so a client can retire the
+    // prediction it made when it fired.
+    uint64 event_id = 1;
+
+    uint64 attacker_id = 2;
+    uint64 target_id = 3;
+
+    uint32 source_type = 4;
+    uint32 damage_type = 5;
+    uint32 hit_zone = 6;
+
+    // What was asked for, and what the server allowed. Both, because they differ whenever
+    // mitigation or a clamp applied, and a client that only sees the final number cannot
+    // show armour doing its job.
+    float raw_damage = 7;
+    float final_damage = 8;
+
+    float target_health_after = 9;
+    float target_max_health = 10;
+
+    bool critical = 11;
+    bool headshot = 12;
+
+    // The two outcomes that change what a client must do rather than just draw.
+    bool killed = 13;
+    bool knocked_down = 14;
+
+    common.Vector3 hit_position = 15;
+    common.Vector3 hit_direction = 16;
+}
+
+// Somebody's health or life state changed without a hit causing it - a spawn, a revive, a
+// heal, or a correction after the server and a client disagreed.
+//
+// Separate from NotifyDamageResult on purpose. A damage result is an EVENT and should be
+// rendered with reactions and effects; this is a STATE and should be applied quietly. Using
+// one message for both is how a player ends up playing a hit reaction because they
+// respawned.
+message NotifyCombatState {
+    uint64 id = 1;
+
+    float health = 2;
+    float max_health = 3;
+
+    // 0 alive, 1 downed, 2 dead, 3 reviving. The brief's section 25 - and the reason the
+    // client's Immortal flag can eventually be retired: being downed becomes a state the
+    // server owns rather than a death the client has to prevent.
+    uint32 life_state = 4;
+}
+
 // Somebody near you said something.
 //
 // The server relays frames verbatim - it never decodes them. That keeps the mixing cost on
@@ -441,5 +503,7 @@ message Protocol {
         NotifyAppearanceUpdate notify_appearance_update = 22;
         NotifyCharacterList notify_character_list = 23;
         NotifyVoiceFrame notify_voice_frame = 24;
+        NotifyDamageResult notify_damage_result = 25;
+        NotifyCombatState notify_combat_state = 26;
     }
 }
