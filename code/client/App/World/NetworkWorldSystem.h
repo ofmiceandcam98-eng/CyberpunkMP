@@ -236,6 +236,9 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // How many people are audible right now, for the speaking indicator.
     uint32_t VoiceActiveSpeakerCount() const;
 
+    // Whether --hackable-puppets was passed. See Hackable.reds.
+    bool HackablePuppetsEnabled() const;
+
     // Why the last request was refused, empty when nothing was. The selector shows this
     // instead of appearing to ignore the button.
     Red::CString GetCharacterError() const { return Red::CString(m_characterError.c_str()); }
@@ -524,6 +527,7 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(VoiceSetMicVolume);
     RTTI_METHOD(VoiceSetPlaybackVolume);
     RTTI_METHOD(VoiceActiveSpeakerCount);
+    RTTI_METHOD(HackablePuppetsEnabled);
     RTTI_METHOD(GetCharacterError);
     RTTI_METHOD(GetDenialMessage);
     RTTI_METHOD(GetDenialCode);

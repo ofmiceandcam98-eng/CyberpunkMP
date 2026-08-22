@@ -183,6 +183,10 @@ public native class NetworkWorldSystem extends IGameSystem {
 
     // How many people are audible right now, for the speaking indicator.
     public native func VoiceActiveSpeakerCount() -> Uint32;
+
+    // Whether --hackable-puppets was passed. See Hackable.reds for what it turns on and
+    // why it is off by default.
+    public native func HackablePuppetsEnabled() -> Bool;
     public native func GetEntityIdByServerId(serverId: Uint64) -> EntityID;
     public native func GetAppearanceSystem() -> ref<AppearanceSystem>;
     public native func GetChatSystem() -> ref<ChatSystem>;

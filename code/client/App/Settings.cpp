@@ -135,6 +135,9 @@ void Settings::Load()
     if (launchParameters.Get("-puppet-driver-all"))
         settings.puppetDriverAll = true;
 
+    if (launchParameters.Get("-hackable-puppets"))
+        settings.hackablePuppets = true;
+
     if (const auto record = launchParameters.Get("-puppet-record-female"); record)
     {
         if (record->size > 0)

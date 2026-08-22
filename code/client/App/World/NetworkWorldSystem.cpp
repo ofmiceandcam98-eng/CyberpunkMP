@@ -1358,6 +1358,11 @@ uint32_t NetworkWorldSystem::VoiceActiveSpeakerCount() const
     return static_cast<uint32_t>(m_voiceClient.GetActiveSpeakers().size());
 }
 
+bool NetworkWorldSystem::HackablePuppetsEnabled() const
+{
+    return Settings::Get().hackablePuppets;
+}
+
 void NetworkWorldSystem::HandleAppearanceUpdate(const PacketEvent<server::NotifyAppearanceUpdate>& aMessage)
 {
     const auto entity = GetEntityByServerId(aMessage.get_id());

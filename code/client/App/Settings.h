@@ -123,6 +123,16 @@ struct Settings
     // transform, animation by feature writes) instead of only player-record puppets.
     // The A/B lever for retiring the legacy idle-controller hijack.
     bool puppetDriverAll = false;
+
+    // Apply the GameplayRestriction.FistFight status effect to remote puppets, which is
+    // what ScriptedPuppet.IsAggressive() reads first - one of the two remaining obstacles
+    // to a remote player being a legitimate quickhack target. See Hackable.reds.
+    //
+    // A flag rather than simply on, because FistFight is the brawl restriction and the game
+    // consults it in melee stim handling as well. On a server-driven puppet that never
+    // swings at anything it should be inert; "should be" is not "is", and this way turning
+    // it off is a relaunch instead of a rebuild.
+    bool hackablePuppets = false;
     Vector<fs::path> mods = {};
     bool enabled = false;
     bool RpcOnly = false;

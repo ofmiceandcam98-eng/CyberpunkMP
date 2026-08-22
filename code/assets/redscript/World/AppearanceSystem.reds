@@ -248,6 +248,8 @@ public native class AppearanceSystem extends IScriptable {
             // might need to adjust up a bit?
             mappinSystem.RegisterMappinWithObject(mappinData, entity, n"Nameplate");
 
+            MpTryMakeHackable(entity);
+
             // this.SetMorphWeights(entity);
         } else {
             // LogChannel(n"DEBUG", s"[AppearanceSystem] not our muppet");
