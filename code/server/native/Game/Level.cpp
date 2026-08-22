@@ -993,29 +993,40 @@ static const std::unordered_map<uint64_t, QuickhackRule>& QuickhackRules()
         // once with a made-up figure. The bug was not that the values were wrong; it was
         // that they existed at all.
         //
-        // What the server still owns is everything the client must not: RAM, cooldown, and
-        // whether the hack is permitted. Damage comes from the game, through the same
-        // validated path a rifle uses.
-        {TweakDBIDFromName("QuickHack.BaseOverheatHack"), {6.f, 0.f, 12000}},
-        {TweakDBIDFromName("QuickHack.BrainMeltBaseHack"), {8.f, 0.f, 20000}},
-        {TweakDBIDFromName("QuickHack.OverloadBaseHack"), {7.f, 0.f, 15000}},
-        {TweakDBIDFromName("QuickHack.BaseContagionHack"), {8.f, 0.f, 18000}},
-        {TweakDBIDFromName("QuickHack.SystemCollapseHackBase"), {16.f, 0.f, 60000}},
-        {TweakDBIDFromName("QuickHack.SuicideHackBase"), {18.f, 0.f, 60000}},
+        // THE FIRST NUMBER IS A CEILING, NOT A PRICE, and it is the same for every hack
+        // deliberately. RAM cost is computed per use from the attacker's deck and perks, so
+        // no per-hack figure here could be right - and a ceiling set to a guessed price
+        // would silently UNDERCHARGE, clamping a legitimate expensive hack down to it.
+        //
+        // One generous bound does the only job a bound can do: refuse absurd values. The
+        // pool is what actually limits hacking, and the pool is ours.
+        //
+        // The second number is always zero - see above. The third is a rate floor, not the
+        // game's cooldown.
+        //
+        // What the server still owns is everything the client must not: the RAM pool,
+        // whether a hack may run at all, and how often. Damage comes from the game, through
+        // the same validated path a rifle uses.
+        {TweakDBIDFromName("QuickHack.BaseOverheatHack"), {40.f, 0.f, 12000}},
+        {TweakDBIDFromName("QuickHack.BrainMeltBaseHack"), {40.f, 0.f, 20000}},
+        {TweakDBIDFromName("QuickHack.OverloadBaseHack"), {40.f, 0.f, 15000}},
+        {TweakDBIDFromName("QuickHack.BaseContagionHack"), {40.f, 0.f, 18000}},
+        {TweakDBIDFromName("QuickHack.SystemCollapseHackBase"), {40.f, 0.f, 60000}},
+        {TweakDBIDFromName("QuickHack.SuicideHackBase"), {40.f, 0.f, 60000}},
 
         // Control and disruption. No direct damage - the effect IS the point.
-        {TweakDBIDFromName("QuickHack.BaseBlindHack"), {4.f, 0.f, 10000}},
-        {TweakDBIDFromName("QuickHack.BaseWeaponMalfunctionHack"), {5.f, 0.f, 12000}},
-        {TweakDBIDFromName("QuickHack.BaseLocomotionMalfunctionHack"), {5.f, 0.f, 12000}},
-        {TweakDBIDFromName("QuickHack.BaseCyberwareMalfunctionHack"), {6.f, 0.f, 15000}},
-        {TweakDBIDFromName("QuickHack.BaseMemoryWipeHack"), {6.f, 0.f, 20000}},
-        {TweakDBIDFromName("QuickHack.MadnessHackBase"), {12.f, 0.f, 30000}},
+        {TweakDBIDFromName("QuickHack.BaseBlindHack"), {40.f, 0.f, 10000}},
+        {TweakDBIDFromName("QuickHack.BaseWeaponMalfunctionHack"), {40.f, 0.f, 12000}},
+        {TweakDBIDFromName("QuickHack.BaseLocomotionMalfunctionHack"), {40.f, 0.f, 12000}},
+        {TweakDBIDFromName("QuickHack.BaseCyberwareMalfunctionHack"), {40.f, 0.f, 15000}},
+        {TweakDBIDFromName("QuickHack.BaseMemoryWipeHack"), {40.f, 0.f, 20000}},
+        {TweakDBIDFromName("QuickHack.MadnessHackBase"), {40.f, 0.f, 30000}},
 
         // Cheap utility.
-        {TweakDBIDFromName("QuickHack.BasePingHack"), {1.f, 0.f, 3000}},
-        {TweakDBIDFromName("QuickHack.BaseWhistleHack"), {2.f, 0.f, 6000}},
-        {TweakDBIDFromName("QuickHack.BaseCommsCallInHack"), {3.f, 0.f, 8000}},
-        {TweakDBIDFromName("QuickHack.BaseCommsNoiseHack"), {3.f, 0.f, 8000}},
+        {TweakDBIDFromName("QuickHack.BasePingHack"), {40.f, 0.f, 3000}},
+        {TweakDBIDFromName("QuickHack.BaseWhistleHack"), {40.f, 0.f, 6000}},
+        {TweakDBIDFromName("QuickHack.BaseCommsCallInHack"), {40.f, 0.f, 8000}},
+        {TweakDBIDFromName("QuickHack.BaseCommsNoiseHack"), {40.f, 0.f, 8000}},
     };
 
     return rules;
@@ -1127,23 +1138,53 @@ void Level::HandleQuickhackRequest(PacketEvent<client::QuickhackRequest>& aMessa
         }
     }
 
-    // Cooldown, per hack.
+    // Rate floor, per hack. Not the game's cooldown - see MinIntervalMs.
     if (const auto last = pQuickhack->LastUsedMs.find(aMessage.get_quickhack_id());
-        last != pQuickhack->LastUsedMs.end() && now - last->second < rule->second.CooldownMs)
+        last != pQuickhack->LastUsedMs.end() && now - last->second < rule->second.MinIntervalMs)
     {
         refuse(kOnCooldown);
         return;
     }
 
-    // RAM. The reason this component exists: if the client owns this number, quickhacking
-    // stops being a decision.
-    if (pQuickhack->Ram < rule->second.RamCost)
+    // Regenerate the pool lazily, from however long has passed since it was last touched.
+    if (pQuickhack->RamStampMs != 0 && now > pQuickhack->RamStampMs)
+    {
+        const auto elapsedSeconds = static_cast<float>(now - pQuickhack->RamStampMs) / 1000.f;
+
+        pQuickhack->Ram =
+            std::min(pQuickhack->MaxRam, pQuickhack->Ram + elapsedSeconds * QuickhackComponent::kRamRegenPerSecond);
+    }
+
+    pQuickhack->RamStampMs = now;
+
+    // THE POOL IS OURS, THE PRICE IS THE GAME'S.
+    //
+    // The client reports what its own game charged, because that figure is computed from
+    // the attacker's deck, perks and the target - there is no correct number the server
+    // could hold. What the server refuses to accept is a price outside sane bounds, and
+    // more importantly a spend the pool cannot cover.
+    //
+    // That is the same arrangement ammunition has: the game decides how fast a weapon
+    // fires, the server decides how many rounds exist. A client can lie about the cost
+    // within the ceiling and gain very little; it cannot refill, and it cannot overspend.
+    float cost = aMessage.get_ram_cost();
+
+    if (!std::isfinite(cost) || cost < 0.f)
+        return;
+
+    // A floor as well as a ceiling. Zero-cost hacks are how "the client reports the price"
+    // becomes "the client hacks for free".
+    constexpr float kMinRamCost = 1.f;
+
+    cost = std::clamp(cost, kMinRamCost, rule->second.MaxRamCost);
+
+    if (pQuickhack->Ram < cost)
     {
         refuse(kNoRam);
         return;
     }
 
-    pQuickhack->Ram -= rule->second.RamCost;
+    pQuickhack->Ram -= cost;
     pQuickhack->LastUsedMs[aMessage.get_quickhack_id()] = now;
 
     server::NotifyQuickhackResult result;
@@ -1157,10 +1198,10 @@ void Level::HandleQuickhackRequest(PacketEvent<client::QuickhackRequest>& aMessa
     GetWorld()->get_world().each([&result](flecs::entity, const PlayerComponent& aPlayerComponent)
                                  { GServer->Send(aPlayerComponent.Connection, result); });
 
-    spdlog::info("[QUICKHACK] request {} | source {} ({}) | target {} | hack {} | validated TRUE | ram cost {:.0f} | "
+    spdlog::info("[QUICKHACK] request {} | source {} ({}) | target {} | hack {} | validated TRUE | ram cost {:.1f} | "
                  "ram after {:.0f} | damage {:.0f}",
                  aMessage.get_sequence(), attackerPuppet.id(), pAttacker->Username, target.id(),
-                 aMessage.get_quickhack_id(), rule->second.RamCost, pQuickhack->Ram, rule->second.Damage);
+                 aMessage.get_quickhack_id(), rule->second.MaxRamCost, pQuickhack->Ram, rule->second.Damage);
 
     // Damage, if this hack does any - through the SAME path a bullet takes, so a quickhack
     // and a rifle reach a health bar identically. One damage pipeline, per the brief.

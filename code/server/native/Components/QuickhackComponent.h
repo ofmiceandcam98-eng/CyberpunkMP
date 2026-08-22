@@ -26,6 +26,24 @@ struct QuickhackComponent
     float Ram{100.f};
     float MaxRam{100.f};
 
+    // When the pool was last recomputed, so regeneration can be applied lazily.
+    //
+    // Lazily rather than on a tick: RAM only matters at the instant somebody spends it, so
+    // a per-frame system updating every player's pool would be work nobody observes. The
+    // elapsed time since this stamp is what regenerates.
+    uint64_t RamStampMs{0};
+
+    // Per second. Cyberpunk's own regeneration is a stat-modified curve that pauses in
+    // combat and differs per deck - not something reproducible here. This is a deliberately
+    // CONSERVATIVE flat rate: slower than the game's, so the server's pool is the tighter of
+    // the two and a player is limited by their own game rather than by us.
+    //
+    // The consequence to be aware of: somebody with a heavily upgraded deck will occasionally
+    // be refused a hack their own game would allow. That is the right direction to be wrong
+    // in - the alternative is a pool that refills faster than the game's, which is free
+    // hacking with extra steps.
+    static constexpr float kRamRegenPerSecond = 2.f;
+
     // Server time each quickhack was last accepted from this player, keyed by TweakDBID.
     //
     // Per hack rather than one global cooldown, because that is how the game works - firing
@@ -52,12 +70,17 @@ struct QuickhackComponent
 // problem rather than a security one.
 struct QuickhackRule
 {
-    // RAM COST AND COOLDOWN are development placeholders, and are marked as such until they
-    // are read from TweakDB the way the object actions were. The real figures vary by
-    // cyberdeck, perks and hack tier; these are plausible stand-ins so the authority works
-    // today. A wrong cost is a balance problem. A client that OWNS the cost is a security
-    // one, and this fixes the second while being honest about the first.
-    float RamCost{4.f};
+    // A CEILING on what this hack may charge, not its price.
+    //
+    // The price cannot live here. GetCost() computes it per use from stat modifiers against
+    // the attacker's deck and perks, so it differs between two players using the same hack -
+    // there is no correct number to store. The client reports what the game charged and this
+    // bounds it, which is what stops a client claiming an Overheat cost it 0.1 RAM.
+    //
+    // Generous on purpose. A ceiling that is too tight refuses legitimate expensive hacks
+    // from a heavily-modified deck; one that is merely sane still makes free hacking
+    // impossible, which is the actual objective.
+    float MaxRamCost{40.f};
 
     // ORDER MATTERS. The rule table uses braced initialisers - {ram, damage, cooldown} -
     // so moving these silently reassigns every entry rather than failing to compile.
@@ -72,7 +95,13 @@ struct QuickhackRule
     // is already here with this note attached.
     float Damage{0.f};
 
-    uint64_t CooldownMs{8000};
+    // A FLOOR on how often this hack may be used, not the game's cooldown.
+    //
+    // Same reasoning as the ceiling above, and the same shape as the weapon fire-rate floor:
+    // the real cooldown is stat-modified and varies per player, so this is not it. What it
+    // does is separate a fast netrunner from a script sending requests every frame, which is
+    // the attack worth stopping.
+    uint64_t MinIntervalMs{3000};
 };
 
 /**

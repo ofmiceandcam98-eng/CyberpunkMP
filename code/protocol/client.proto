@@ -240,7 +240,20 @@ message QuickhackRequest {
     // TweakDBID of the quickhack. The only thing about it the client gets to choose.
     uint64 quickhack_id = 2;
 
-    uint32 sequence = 3;
+    // What the game charged for it.
+    //
+    // Reported rather than decided here, and that is a deliberate limit rather than a gap.
+    // RAM cost is not a stored number: ScriptableDeviceAction.GetCost() computes it per use
+    // via RPGManager.CalculateStatModifiers, against the attacker's deck and perks, the
+    // target, hack category, distance and overclock state. Two players pay different
+    // amounts for the same hack, so no table the server could hold would be correct.
+    //
+    // The server owns the POOL and bounds this figure; it does not set the price. Exactly
+    // the arrangement ammunition uses - the server knows how many rounds you have, the game
+    // decides how fast the weapon fires.
+    float ram_cost = 3;
+
+    uint32 sequence = 4;
 }
 
 // A quickhack is being uploaded to somebody, or has finished.
