@@ -14,6 +14,12 @@ Last full revision: 2026-08-22, after v0.3.103.
 ## 1. THE LEDGER
 
 ### Needs a live session (built, never validated with humans)
+- **Player combat (Cam, v0.3.104 in prep)**: PvP damage server-decided, quickhacks on
+  players, server-owned RAM/cooldowns/ammo, hack-warning telegraphs, wanted-level clear
+  on down, scan shows real names. His own notes say none of it has seen a proper
+  multi-player test. ANOTHER protocol flag-day when it ships - client and server move
+  together; test builds cut before his ship are dead against a post-combat server.
+  Also rides along: the v0.3.100 voice-playback fix (communications-device fallback).
 - **Late-join vehicles** (885f252): join while someone drives → you must see the car,
   and parked cars. Test server has it; pair with pre-release **v0.3.100-worldstate-test.14**
   (post-voice protocol `0x602ef720946cb1b8` / `0x88ae7e552943e8f2`; test.13 is dead).
