@@ -46,6 +46,21 @@ public func MpReportHit(target: ref<ScriptedPuppet>, evt: ref<gameHitEvent>) -> 
         return;
     }
 
+    // HIT SHAPE NAMES, logged for ANY target including ordinary NPCs.
+    //
+    // Deliberately before every guard below. The body-part vocabulary lives in a
+    // gameHitShapeBVH asset that cannot be read statically, so the only way to learn it is
+    // from a live hit - and putting this after the "is it one of ours" check would mean it
+    // could only ever be learned with a second player online. Shooting any NPC in Night City
+    // answers it alone.
+    //
+    // Costs one log line per hit and nothing else; it is removed once the names are known.
+    if ArraySize(evt.hitRepresentationResult.hitShapes) > 0 {
+        let probe = evt.hitRepresentationResult.hitShapes[0];
+
+        FTLog(s"[HitShape] '\(NameToString(probe.hitShapeName))' material '\(NameToString(probe.physicsMaterial))'");
+    }
+
     let network = GameInstance.GetNetworkWorldSystem();
     if !IsDefined(network) || !network.IsConnected() {
         return;
@@ -108,10 +123,6 @@ public func MpReportHit(target: ref<ScriptedPuppet>, evt: ref<gameHitEvent>) -> 
 
     if ArraySize(evt.hitRepresentationResult.hitShapes) > 0 {
         let shape = evt.hitRepresentationResult.hitShapes[0];
-
-        // Logged every hit while the vocabulary is unknown. Noisy on purpose and easy to
-        // find: this is the line that answers "what does the game call a headshot".
-        FTLog(s"[Combat] hit shape '\(NameToString(shape.hitShapeName))' material '\(NameToString(shape.physicsMaterial))'");
 
         // Truncated to 32 bits. A CName is a 64-bit hash and the field is Uint32, so this
         // is a lossy identifier - fine for "which of a handful of body parts", and it is
