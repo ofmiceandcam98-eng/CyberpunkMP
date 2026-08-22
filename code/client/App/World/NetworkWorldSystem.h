@@ -406,6 +406,9 @@ private:
     // Wraps deliberately - only differences between neighbours are ever compared.
     uint32_t m_voiceSequence{0};
 
+    // Paces the voice diagnostic line so it appears every ten seconds rather than 60/s.
+    uint32_t m_voiceStatsTicks{0};
+
     // For measuring our own speed from how far we actually moved - see
     // UpdatePlayerLocation. Mutable because that function is const and only reports.
     mutable glm::vec3 m_lastPosition{};

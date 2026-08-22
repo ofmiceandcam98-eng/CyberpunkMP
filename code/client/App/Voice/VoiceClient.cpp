@@ -281,6 +281,7 @@ void VoiceClient::OnCaptured(const float* apSamples, size_t aFrames, uint32_t aC
                 m_outgoing.erase(m_outgoing.begin());
 
             m_outgoing.emplace_back(reinterpret_cast<const char*>(encoded), static_cast<size_t>(written));
+            m_framesEncoded.fetch_add(1, std::memory_order_relaxed);
         }
 
         m_captureAccum.erase(m_captureAccum.begin(), m_captureAccum.begin() + kFrameSamples);
@@ -313,6 +314,8 @@ void VoiceClient::OnFrameReceived(uint64_t aSpeakerId, const uint8_t* apData, si
 
     m_incoming.push_back(
         IncomingFrame{aSpeakerId, aSequence, std::string(reinterpret_cast<const char*>(apData), aSize)});
+
+    m_framesReceived.fetch_add(1, std::memory_order_relaxed);
 }
 
 std::vector<uint64_t> VoiceClient::GetActiveSpeakers() const
@@ -340,16 +343,19 @@ void VoiceClient::RenderThread(std::string aDeviceId)
         return;
     }
 
+    // Resolving the output device, in order of preference and NEVER giving up early.
+    //
+    // The first version asked for eRender/eCommunications and quit if that was null, which
+    // killed playback outright for anybody without a communications device configured -
+    // "[Voice] running" immediately followed by "those speakers are not available", the
+    // render thread exiting, and nobody able to hear a thing. eCommunications is a SEPARATE
+    // Windows default from the ordinary playback device and is very often simply unset.
+    //
+    // A saved device id that is no longer plugged in has the same shape: a specific choice
+    // that cannot be honoured must fall back to something that works, not to silence.
     IMMDevice* pDevice = nullptr;
 
-    if (aDeviceId.empty())
-    {
-        // eRender, never eCapture - see the header note in VoiceAudioManager. eCommunications
-        // is the endpoint Windows itself routes voice chat to, which is what somebody means
-        // by "my headset".
-        pEnumerator->GetDefaultAudioEndpoint(eRender, eCommunications, &pDevice);
-    }
-    else
+    if (!aDeviceId.empty())
     {
         const int wide = MultiByteToWideChar(CP_UTF8, 0, aDeviceId.c_str(), -1, nullptr, 0);
         std::wstring id(static_cast<size_t>(wide > 0 ? wide - 1 : 0), L'\0');
@@ -359,11 +365,23 @@ void VoiceClient::RenderThread(std::string aDeviceId)
 
         if (FAILED(pEnumerator->GetDevice(id.c_str(), &pDevice)))
             pDevice = nullptr;
+
+        if (!pDevice)
+            spdlog::warn("[Voice] the chosen output device is not connected - using the Windows default");
     }
+
+    // eCommunications is what Windows routes voice chat to when it is set...
+    if (!pDevice && FAILED(pEnumerator->GetDefaultAudioEndpoint(eRender, eCommunications, &pDevice)))
+        pDevice = nullptr;
+
+    // ...and eConsole is the ordinary "default playback device", which every working system
+    // has. This is the line whose absence made voice inaudible.
+    if (!pDevice && FAILED(pEnumerator->GetDefaultAudioEndpoint(eRender, eConsole, &pDevice)))
+        pDevice = nullptr;
 
     if (!pDevice)
     {
-        SetError("those speakers are not available");
+        SetError("no working playback device - you will not hear anyone");
         pEnumerator->Release();
         return;
     }
@@ -451,6 +469,8 @@ void VoiceClient::RenderThread(std::string aDeviceId)
 
     std::vector<float> mixed;
 
+    m_playbackAlive.store(true, std::memory_order_relaxed);
+
     while (!m_stopRequested.load(std::memory_order_relaxed))
     {
         // Everything that arrived since last time, decoded into its speaker's queue.
@@ -504,6 +524,7 @@ void VoiceClient::RenderThread(std::string aDeviceId)
             speaker.LastHeardMs = now;
 
             speaker.Pending.insert(speaker.Pending.end(), decoded, decoded + samples);
+            m_framesDecoded.fetch_add(1, std::memory_order_relaxed);
 
             // A queue this deep means the sound card is not draining. Keep the newest.
             while (speaker.Pending.size() > kMaxPendingSamples)
@@ -617,6 +638,8 @@ void VoiceClient::RenderThread(std::string aDeviceId)
         // runs dry between wakeups.
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
+
+    m_playbackAlive.store(false, std::memory_order_relaxed);
 
     pClient->Stop();
     pRender->Release();

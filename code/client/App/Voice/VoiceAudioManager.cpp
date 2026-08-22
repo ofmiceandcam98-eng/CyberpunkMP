@@ -303,7 +303,16 @@ void VoiceAudioManager::CaptureThread(std::string aDeviceId)
     {
         // No explicit choice means follow Windows. eCommunications is the default Windows
         // itself uses for voice chat, which is what somebody means by "my headset mic".
-        pEnumerator->GetDefaultAudioEndpoint(eCapture, eCommunications, &pDevice);
+        //
+        // Falling back to eConsole when that is unset. eCommunications is a SEPARATE default
+        // from the ordinary recording device and is frequently not configured at all - the
+        // render side of this had the identical bug and it made voice completely inaudible,
+        // so the same hole is closed here before somebody finds it with a microphone.
+        if (FAILED(pEnumerator->GetDefaultAudioEndpoint(eCapture, eCommunications, &pDevice)))
+            pDevice = nullptr;
+
+        if (!pDevice && FAILED(pEnumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &pDevice)))
+            pDevice = nullptr;
     }
     else
     {

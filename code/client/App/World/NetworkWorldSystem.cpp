@@ -238,6 +238,21 @@ void NetworkWorldSystem::Update(uint64_t aTick)
     // sounding bad. The queue between the two is what makes that safe - see VoiceClient.h.
     if (m_voiceClient.IsRunning())
     {
+        // Say what voice is actually doing, every ten seconds.
+        //
+        // "Voice does not work" was diagnosed last time by reading a WASAPI error that
+        // happened to be logged; there was no way to tell whether a single frame had ever
+        // been encoded, sent, or received. These four numbers answer that outright - see
+        // VoiceStats for what each zero means.
+        if (++m_voiceStatsTicks % 600 == 0)
+        {
+            const auto stats = m_voiceClient.GetStats();
+
+            spdlog::info("[Voice] mic {} / speakers {} - encoded {}, sent {}, received {}, decoded {}",
+                         stats.CaptureAlive ? "ok" : "NOT CAPTURING", stats.PlaybackAlive ? "ok" : "NOT PLAYING",
+                         stats.Encoded, m_voiceSequence, stats.Received, stats.Decoded);
+        }
+
         auto frames = m_voiceClient.TakeOutgoing();
 
         if (!frames.empty())

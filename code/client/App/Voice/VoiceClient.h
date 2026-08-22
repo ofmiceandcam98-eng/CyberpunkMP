@@ -140,6 +140,37 @@ public:
 
     std::string GetLastError() const;
 
+    /**
+     * Counters, so "voice does not work" is answerable from a log instead of by experiment.
+     *
+     * Which number is zero says exactly where the path is broken:
+     *   encoded 0            - the microphone is not producing, or nobody pressed talk
+     *   encoded >0, sent 0   - frames are made but never leave (game thread not draining)
+     *   sent >0, received 0  - the server is not relaying them back to anyone in range
+     *   received >0, played 0 - decode or playback is failing
+     *
+     * The previous round of this cost an evening precisely because none of these existed.
+     */
+    struct VoiceStats
+    {
+        uint64_t Encoded{0};
+        uint64_t Received{0};
+        uint64_t Decoded{0};
+        bool PlaybackAlive{false};
+        bool CaptureAlive{false};
+    };
+
+    VoiceStats GetStats() const
+    {
+        VoiceStats stats;
+        stats.Encoded = m_framesEncoded.load(std::memory_order_relaxed);
+        stats.Received = m_framesReceived.load(std::memory_order_relaxed);
+        stats.Decoded = m_framesDecoded.load(std::memory_order_relaxed);
+        stats.PlaybackAlive = m_playbackAlive.load(std::memory_order_relaxed);
+        stats.CaptureAlive = m_audio.IsCapturing();
+        return stats;
+    }
+
 private:
     // Capture thread. Downmixes, resamples, accumulates whole frames, encodes, queues.
     void OnCaptured(const float* apSamples, size_t aFrames, uint32_t aChannels, uint32_t aSampleRate);
@@ -205,6 +236,16 @@ private:
 
     mutable std::mutex m_speakerStateLock;
     std::vector<uint64_t> m_activeSpeakers;
+
+    // Diagnostics - see GetStats.
+    std::atomic<uint64_t> m_framesEncoded{0};
+    std::atomic<uint64_t> m_framesReceived{0};
+    std::atomic<uint64_t> m_framesDecoded{0};
+
+    // True only while the render thread is actually inside its loop. Distinguishes "the
+    // playback device never opened" from "it opened and is producing silence", which are
+    // very different problems that look identical from outside.
+    std::atomic<bool> m_playbackAlive{false};
 
     mutable std::mutex m_errorLock;
     std::string m_lastError;
