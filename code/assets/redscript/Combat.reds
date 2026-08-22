@@ -304,6 +304,79 @@ public func MpReportUpload(target: ref<ScriptedPuppet>, evt: ref<UploadProgramPr
     let state: Uint32 = Equals(evt.state, EUploadProgramState.STARTED) ? 0u : 1u;
 
     network.SendQuickhackUpload(targetId, state, 0ul, evt.duration);
+
+    // THE AUTHORITY REQUEST, on start.
+    //
+    // Separate from the presentation event above and deliberately so - that one only makes
+    // people flicker, this one spends RAM and starts a cooldown. Sent on STARTED rather than
+    // COMPLETED because the resource is committed when the upload begins; charging on
+    // completion would let somebody start ten hacks and cancel nine for free.
+    //
+    // Without this the entire RAM pool, cooldown and permission layer on the server was
+    // unreachable - built, validated, and never once invoked.
+    if Equals(state, 0u) {
+        let player = GetPlayer(GetGameInstance());
+
+        if IsDefined(player) {
+            // What the game charged us. The server cannot compute this - GetCost() runs
+            // against the local StatsSystem with our deck and perks - so it bounds the
+            // figure and owns the pool instead. See QuickhackRequest in client.proto.
+            let cost = MpCurrentQuickhackCost(player);
+
+            network.SendQuickhackRequest(targetId, MpUploadQuickhackId(evt), cost);
+        }
+    }
+}
+
+/**
+ * What the local game says the last quickhack cost, in RAM.
+ *
+ * Read from the Memory pool rather than from the action, because the action's cost is only
+ * available on the ScriptableDeviceAction that ran it and the upload event does not carry
+ * one. The difference in the pool across the upload IS what it cost, from the only authority
+ * that can compute it.
+ *
+ * Falls back to a nominal figure when the pool cannot be read, which the server clamps to
+ * its floor - erring towards charging something rather than nothing.
+ */
+public func MpCurrentQuickhackCost(player: ref<GameObject>) -> Float {
+    let pools = GameInstance.GetStatPoolsSystem(GetGameInstance());
+    let current = pools.GetStatPoolValue(Cast<StatsObjectID>(player.GetEntityID()), gamedataStatPoolType.Memory, false);
+
+    let puppet = player as PlayerPuppet;
+
+    if !IsDefined(puppet) {
+        return 4.0;
+    }
+
+    // The drop since the last reading. Recorded every upload, so consecutive hacks each
+    // measure their own cost rather than accumulating.
+    let spent = puppet.m_mpLastRam - current;
+    puppet.m_mpLastRam = current;
+
+    if spent <= 0.0 {
+        return 4.0;
+    }
+
+    return spent;
+}
+
+@addField(PlayerPuppet)
+public let m_mpLastRam: Float;
+
+/**
+ * Which quickhack an upload is for.
+ *
+ * UploadProgramProgressEvent carries `action`, but reading a TweakDBID off it needs the
+ * action's own record and the event exposes it only as a weak handle whose type varies by
+ * context. Returning zero rather than guessing: the server refuses an unknown hack, which is
+ * the correct outcome for "we could not tell which one this was" and is visibly different
+ * from silently charging the wrong thing.
+ *
+ * TODO once the CET dump confirms the action's concrete type - see ANTIGRAVITY_NOTES.
+ */
+public func MpUploadQuickhackId(evt: ref<UploadProgramProgressEvent>) -> Uint64 {
+    return 0ul;
 }
 
 /**
@@ -341,6 +414,117 @@ public func MpApplyIncomingUploads(network: ref<NetworkWorldSystem>) -> Void {
 
         target = network.ConsumeIncomingUploadTarget();
     }
+}
+
+/**
+ * Stages 4 and 5 - the weapon half, reported by watching state rather than hooking events.
+ *
+ * The server has owned ammunition since stage 4 and never received a single event, because
+ * nothing on this side sent one. The magazine was never decremented, no shot was ever
+ * rate-checked and no reload was ever validated - the whole WeaponComponent was unreachable.
+ * This is what connects it.
+ *
+ * WHY A POLL AND NOT HOOKS. Cyberpunk has no clean script-side "weapon fired" event to wrap -
+ * the shoot path runs through projectile and animation systems rather than one overridable
+ * method. What it does expose is the state itself: GameObject.GetActiveWeapon and
+ * WeaponObject.GetMagazineAmmoCount, both static and both cheap.
+ *
+ * Diffing that state is strictly more reliable than hooking for this purpose. A missed event
+ * loses a bullet permanently and the server's count drifts from the player's forever; a
+ * missed poll tick is corrected by the next one, because the reading is absolute rather than
+ * incremental. For ammunition authority - which is the point - that property matters more
+ * than knowing the exact instant a trigger was pulled.
+ *
+ * Four times a second. Fast enough that a burst is reported as it happens, slow enough to
+ * cost nothing.
+ */
+public class MpWeaponPoll extends DelayCallback {
+    public func Call() -> Void {
+        let network = GameInstance.GetNetworkWorldSystem();
+
+        if IsDefined(network) && network.IsConnected() {
+            MpPollWeapon(network);
+        }
+
+        // Rearmed unconditionally, so the poll survives a reconnect.
+        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(new MpWeaponPoll(), 0.25, false);
+    }
+}
+
+// Last seen, so a change can be recognised. On the controller rather than in a global
+// because redscript has no module state that survives a reload cleanly.
+@addField(PlayerPuppet)
+public let m_mpLastWeapon: Uint64;
+
+@addField(PlayerPuppet)
+public let m_mpLastAmmo: Uint32;
+
+@addField(PlayerPuppet)
+public let m_mpWeaponSeen: Bool;
+
+public func MpPollWeapon(network: ref<NetworkWorldSystem>) -> Void {
+    let player = GetPlayer(GetGameInstance()) as PlayerPuppet;
+    if !IsDefined(player) {
+        return;
+    }
+
+    let weapon = GameObject.GetActiveWeapon(player);
+
+    // Empty-handed. Reported once, so other clients holster.
+    if !IsDefined(weapon) {
+        if player.m_mpWeaponSeen && NotEquals(player.m_mpLastWeapon, 0ul) {
+            network.SendWeaponEvent(1u, 0ul, 0u, 0u);   // unequip
+            player.m_mpLastWeapon = 0ul;
+            player.m_mpLastAmmo = 0u;
+        }
+
+        player.m_mpWeaponSeen = true;
+        return;
+    }
+
+    let record = weapon.GetWeaponRecord();
+    if !IsDefined(record) {
+        return;
+    }
+
+    let id = TDBID.ToNumber(record.GetID());
+    let ammo = WeaponObject.GetMagazineAmmoCount(weapon);
+
+    // First sighting of the session, or a different weapon in hand.
+    if !player.m_mpWeaponSeen || NotEquals(player.m_mpLastWeapon, id) {
+        network.SendWeaponEvent(0u, id, ammo, 0u);   // equip
+
+        player.m_mpWeaponSeen = true;
+        player.m_mpLastWeapon = id;
+        player.m_mpLastAmmo = ammo;
+        return;
+    }
+
+    if Equals(ammo, player.m_mpLastAmmo) {
+        return;
+    }
+
+    if ammo < player.m_mpLastAmmo {
+        // Rounds left the magazine. One event per round, so the server's fire-rate floor and
+        // its count both see every shot rather than one lump that hides a burst.
+        // Uint32 throughout - GetMagazineAmmoCount returns Uint32, and mixing it with Int32
+        // is what NO_MATCHING_OVERLOAD was complaining about.
+        let fired: Uint32 = player.m_mpLastAmmo - ammo;
+        let i: Uint32 = 0u;
+
+        while i < fired {
+            network.SendWeaponEvent(2u, id, ammo, 0u);   // fire
+            i += 1u;
+        }
+    } else {
+        // The magazine grew, which only a reload does. Start and complete together: the poll
+        // cannot see the moment it began, and the server validates the pair by the interval
+        // between them rather than by trusting either alone.
+        network.SendWeaponEvent(3u, id, player.m_mpLastAmmo, 0u);   // reload start
+        network.SendWeaponEvent(4u, id, ammo, 0u);                  // reload complete
+    }
+
+    player.m_mpLastAmmo = ammo;
 }
 
 /**

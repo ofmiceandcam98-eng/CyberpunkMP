@@ -257,6 +257,13 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // has no other way of learning about it - the effect was applied to a puppet here.
     void SendStatusEffect(uint64_t aTargetServerId, uint64_t aEffectId, uint32_t aStacks, uint64_t aSourceId);
 
+    // Weapon equip/fire/reload, reported by polling state - see MpPollWeapon.
+    void SendWeaponEvent(uint32_t aKind, uint64_t aWeaponId, uint32_t aMagazine, uint32_t aReserve);
+
+    // The authoritative quickhack request. Spends RAM and starts a cooldown, unlike the
+    // upload notification which is presentation only.
+    void SendQuickhackRequest(uint64_t aTargetServerId, uint64_t aQuickhackId, float aRamCost);
+
     // A quickhack upload started or finished on a remote player, so everyone watching can
     // see it rather than only the attacker.
     void SendQuickhackUpload(uint64_t aTargetServerId, uint32_t aState, uint64_t aQuickhackId, float aDuration);
@@ -478,6 +485,11 @@ private:
     uint64_t m_combatEventId{0};
     uint32_t m_combatSequence{0};
 
+    // Separate sequences per stream, so a burst of fire and a burst of hits cannot
+    // invalidate each other's replay rejection.
+    uint32_t m_weaponSequence{0};
+    uint32_t m_quickhackSequence{0};
+
     // Status effects the server says landed on US, waiting for script to apply them.
     // A queue rather than one value: two hacks can land inside a frame.
     Vector<uint64_t> m_incomingStatusEffects;
@@ -617,6 +629,8 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(SendQuickhackUpload);
     RTTI_METHOD(ConsumeIncomingUploadTarget);
     RTTI_METHOD(GetIncomingUploadState);
+    RTTI_METHOD(SendWeaponEvent);
+    RTTI_METHOD(SendQuickhackRequest);
     RTTI_METHOD(GetCharacterError);
     RTTI_METHOD(GetDenialMessage);
     RTTI_METHOD(GetDenialCode);

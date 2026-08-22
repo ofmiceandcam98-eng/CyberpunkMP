@@ -1295,6 +1295,42 @@ void NetworkWorldSystem::HandleVehicleControlAssigned(const PacketEvent<server::
     Red::CallVirtual(Red::GetGameSystem<NetworkWorldSystem>(), "TakeDriverSeat", pEntityComponent->Id);
 }
 
+void NetworkWorldSystem::SendWeaponEvent(uint32_t aKind, uint64_t aWeaponId, uint32_t aMagazine, uint32_t aReserve)
+{
+    const auto pNetworkService = Core::Container::Get<NetworkService>();
+
+    if (!pNetworkService || !pNetworkService->IsConnected())
+        return;
+
+    client::WeaponEventRequest request;
+    request.set_kind(aKind);
+    request.set_weapon_id(aWeaponId);
+    request.set_magazine_ammo(aMagazine);
+    request.set_reserve_ammo(aReserve);
+    request.set_sequence(++m_weaponSequence);
+    request.set_client_tick(GetTick());
+
+    pNetworkService->Send(request);
+}
+
+void NetworkWorldSystem::SendQuickhackRequest(uint64_t aTargetServerId, uint64_t aQuickhackId, float aRamCost)
+{
+    const auto pNetworkService = Core::Container::Get<NetworkService>();
+
+    if (!pNetworkService || !pNetworkService->IsConnected() || aTargetServerId == 0)
+        return;
+
+    client::QuickhackRequest request;
+    request.set_target_id(aTargetServerId);
+    request.set_quickhack_id(aQuickhackId);
+    request.set_ram_cost(aRamCost);
+    request.set_sequence(++m_quickhackSequence);
+
+    pNetworkService->Send(request);
+
+    spdlog::info("[Combat] quickhack request on entity {} - reported cost {:.1f}", aTargetServerId, aRamCost);
+}
+
 void NetworkWorldSystem::SendStatusEffect(uint64_t aTargetServerId, uint64_t aEffectId, uint32_t aStacks,
                                           uint64_t aSourceId)
 {

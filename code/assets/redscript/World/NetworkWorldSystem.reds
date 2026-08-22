@@ -207,6 +207,8 @@ public native class NetworkWorldSystem extends IGameSystem {
     // Quickhack upload visibility - see Combat.reds. State is read separately because
     // redscript cannot receive a pair from one native call without a struct.
     public native func SendQuickhackUpload(targetId: Uint64, state: Uint32, quickhackId: Uint64, duration: Float) -> Void;
+    public native func SendWeaponEvent(kind: Uint32, weaponId: Uint64, magazine: Uint32, reserve: Uint32) -> Void;
+    public native func SendQuickhackRequest(targetId: Uint64, quickhackId: Uint64, ramCost: Float) -> Void;
     public native func ConsumeIncomingUploadTarget() -> Uint64;
     public native func GetIncomingUploadState() -> Uint32;
     public native func GetEntityIdByServerId(serverId: Uint64) -> EntityID;
@@ -315,6 +317,7 @@ public native class NetworkWorldSystem extends IGameSystem {
         // Start draining quickhacks aimed at us. Effects arrive on the network thread into
         // a native queue; this is the script side visiting it. See Combat.reds.
         GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(new MpStatusEffectPoll(), 0.25, false);
+        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(new MpWeaponPoll(), 0.25, false);
 
         // The usual order is player-attaches-then-connects, so this is where the
         // no-flatline machinery actually takes effect - see Death.reds. Arming it in
