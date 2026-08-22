@@ -399,6 +399,43 @@ message NotifyCharacterList {
     string error = 2;
 }
 
+// Somebody near you fired, reloaded, or changed weapon.
+//
+// The presentation half of combat: muzzle flash, firing animation, reload animation, the
+// right weapon appearing in the right hand. Sent to everyone who can see the shooter,
+// INCLUDING the shooter - their own client predicted it locally, and the echo is what
+// confirms the server agreed.
+//
+// Notably this does NOT say whether anything was hit. That is NotifyDamageResult's job, and
+// keeping them apart is deliberate: a client that decided hits from watching muzzle flashes
+// would reach a different answer from the server, which is the whole class of bug this
+// architecture exists to prevent.
+message NotifyWeaponEvent {
+    // The shooter's puppet.
+    uint64 id = 1;
+
+    uint32 kind = 2;
+    uint64 weapon_id = 3;
+
+    // Authoritative, not the claim. This is the server's count.
+    uint32 magazine_ammo = 4;
+
+    common.Vector3 position = 5;
+    common.Vector3 direction = 6;
+}
+
+// Your weapon, as the server understands it.
+//
+// Sent only to the owner, and only when the server's count and theirs disagree - on a
+// refused fire, a refused reload, or a correction after packet loss. Everyone else learns
+// about ammo through NotifyWeaponEvent, because ammo is only interesting to the person
+// holding the gun.
+message NotifyWeaponState {
+    uint64 weapon_id = 1;
+    uint32 magazine_ammo = 2;
+    uint32 reserve_ammo = 3;
+}
+
 // What actually happened, decided here.
 //
 // Sent to the attacker, the target, and everyone close enough to see it - so all three
@@ -505,5 +542,7 @@ message Protocol {
         NotifyVoiceFrame notify_voice_frame = 24;
         NotifyDamageResult notify_damage_result = 25;
         NotifyCombatState notify_combat_state = 26;
+        NotifyWeaponEvent notify_weapon_event = 27;
+        NotifyWeaponState notify_weapon_state = 28;
     }
 }

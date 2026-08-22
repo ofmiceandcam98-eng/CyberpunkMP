@@ -11,6 +11,7 @@
 #include <Components/AuthorityComponent.h>
 #include <Components/NpcComponent.h>
 #include <Components/HealthComponent.h>
+#include <Components/WeaponComponent.h>
 
 #include "GameServer.h"
 #include "World.h"
@@ -59,6 +60,7 @@ Level::Level(World* apWorld) noexcept
     GServer->RegisterHandler<&Level::HandleUpdateAppearanceRequest>(this);
     GServer->RegisterHandler<&Level::HandleVoiceFrameRequest>(this);
     GServer->RegisterHandler<&Level::HandleCombatEventRequest>(this);
+    GServer->RegisterHandler<&Level::HandleWeaponEventRequest>(this);
 
     m_updateSystem = m_pWorld->system<const LevelActorTag>("Level Update")
         .each([this](flecs::entity aEntity, const LevelActorTag&)
@@ -588,7 +590,11 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
         // Everyone arrives whole. Defaults live in the component rather than here so a
         // server-declared NPC gets the same treatment without a second spawn path - one
         // Combatant, per the brief.
-        .set<HealthComponent>({});
+        .set<HealthComponent>({})
+
+        // Empty-handed until their client says otherwise. Present from the start so the
+        // weapon path never has to ask whether the component exists.
+        .set<WeaponComponent>({});
 
     // The one line that says a person actually arrived in the world. Vehicle spawns log
     // similar-sounding lines and have been misread as player spawns during diagnosis;
@@ -946,6 +952,190 @@ void Level::BroadcastAppearance(flecs::entity aPuppet) noexcept
 
             GServer->Send(aPlayerComponent.Connection, message);
         });
+}
+
+void Level::HandleWeaponEventRequest(PacketEvent<client::WeaponEventRequest>& aMessage) noexcept
+{
+    auto* pPlayerManager = GetWorld()->get_mut<PlayerManager>();
+
+    const auto player = pPlayerManager->GetByConnectionId(aMessage.ConnectionId);
+    if (!player)
+        return;
+
+    auto* pPlayerComponent = player.get_mut<PlayerComponent>();
+    if (!pPlayerComponent || !pPlayerComponent->Puppet || !pPlayerComponent->Puppet.is_alive())
+        return;
+
+    const auto puppet = pPlayerComponent->Puppet;
+
+    // A downed combatant is not firing. Checked here as well as in the damage path, because
+    // the two arrive independently and a client that stopped sending one would otherwise
+    // keep the other.
+    if (const auto* pHealth = puppet.get<HealthComponent>(); pHealth && pHealth->LifeState != 0)
+        return;
+
+    auto* pWeapon = puppet.get_mut<WeaponComponent>();
+    if (!pWeapon)
+        return;
+
+    if (pWeapon->HasSequence)
+    {
+        const int32_t age = static_cast<int32_t>(aMessage.get_sequence() - pWeapon->LastSequence);
+
+        if (age <= 0)
+            return;
+    }
+
+    pWeapon->LastSequence = aMessage.get_sequence();
+    pWeapon->HasSequence = true;
+
+    const auto now = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
+            .count());
+
+    enum : uint32_t
+    {
+        kEquip = 0,
+        kUnequip = 1,
+        kFire = 2,
+        kReloadStart = 3,
+        kReloadComplete = 4,
+        kSwitchStart = 5,
+        kSwitchComplete = 6,
+        kMeleeSwing = 7,
+        kThrow = 8
+    };
+
+    const auto kind = aMessage.get_kind();
+    bool correctClient = false;
+
+    switch (kind)
+    {
+    case kEquip:
+    case kSwitchComplete:
+    {
+        // The server learns what somebody is holding from them, because it has no inventory
+        // to check against - that is a real gap and is noted as one. What it does NOT accept
+        // is the ammunition that comes with it, because that is the number worth forging.
+        //
+        // Taken on trust the first time a weapon is seen and defended from then on: a
+        // re-equip cannot be used to top the magazine back up.
+        if (pWeapon->WeaponId != aMessage.get_weapon_id())
+        {
+            pWeapon->WeaponId = aMessage.get_weapon_id();
+            pWeapon->MagazineAmmo = aMessage.get_magazine_ammo();
+            pWeapon->ReserveAmmo = aMessage.get_reserve_ammo();
+        }
+
+        pWeapon->Reloading = false;
+        break;
+    }
+
+    case kUnequip:
+        pWeapon->WeaponId = 0;
+        pWeapon->Reloading = false;
+        break;
+
+    case kFire:
+    {
+        // Nothing in the magazine, nothing leaves the barrel. The single most valuable check
+        // here, because infinite ammunition is the cheapest cheat to write.
+        if (pWeapon->MagazineAmmo == 0)
+        {
+            correctClient = true;
+            break;
+        }
+
+        // A floor on how fast anybody can fire. Not a per-weapon rate - the server does not
+        // model weapons - but enough to separate a fast weapon from a script firing every
+        // frame. 40ms is 1500 rounds a minute, above anything the game ships.
+        constexpr uint64_t kMinShotIntervalMs = 40;
+
+        if (pWeapon->LastShotMs != 0 && now - pWeapon->LastShotMs < kMinShotIntervalMs)
+        {
+            spdlog::warn("Refused a shot from {} - {}ms since the last one", pPlayerComponent->Username,
+                         now - pWeapon->LastShotMs);
+            correctClient = true;
+            break;
+        }
+
+        pWeapon->MagazineAmmo -= 1;
+        pWeapon->LastShotMs = now;
+        break;
+    }
+
+    case kReloadStart:
+        if (pWeapon->ReserveAmmo == 0)
+        {
+            correctClient = true;
+            break;
+        }
+
+        pWeapon->Reloading = true;
+        pWeapon->ReloadStartedMs = now;
+        break;
+
+    case kReloadComplete:
+    {
+        // A completion with no start is a client refilling instantly. Refused, and the real
+        // state sent back so the refusal is visible rather than silent.
+        constexpr uint64_t kMinReloadMs = 500;
+
+        if (!pWeapon->Reloading || now - pWeapon->ReloadStartedMs < kMinReloadMs)
+        {
+            spdlog::warn("Refused a reload from {}", pPlayerComponent->Username);
+            correctClient = true;
+            break;
+        }
+
+        // How big the magazine is comes from the client, for the same reason the weapon does:
+        // there is no weapon table here. What the server enforces is CONSERVATION - rounds
+        // come out of the reserve it is tracking, so a reload cannot create ammunition.
+        const uint32_t wanted = aMessage.get_magazine_ammo() > pWeapon->MagazineAmmo
+                                    ? aMessage.get_magazine_ammo() - pWeapon->MagazineAmmo
+                                    : 0;
+
+        const uint32_t moved = std::min(wanted, pWeapon->ReserveAmmo);
+
+        pWeapon->MagazineAmmo += moved;
+        pWeapon->ReserveAmmo -= moved;
+        pWeapon->Reloading = false;
+
+        if (moved != wanted)
+            correctClient = true;
+
+        break;
+    }
+
+    default:
+        // Switch start, melee swing, throw: presentation only. Relayed so other people see
+        // the animation, with no state to defend.
+        break;
+    }
+
+    if (correctClient)
+    {
+        server::NotifyWeaponState state;
+        state.set_weapon_id(pWeapon->WeaponId);
+        state.set_magazine_ammo(pWeapon->MagazineAmmo);
+        state.set_reserve_ammo(pWeapon->ReserveAmmo);
+
+        GServer->Send(pPlayerComponent->Connection, state);
+        return;
+    }
+
+    server::NotifyWeaponEvent event;
+    event.set_id(puppet.id());
+    event.set_kind(kind);
+    event.set_weapon_id(aMessage.get_weapon_id());
+    event.set_magazine_ammo(pWeapon->MagazineAmmo);
+    event.set_position(aMessage.get_position());
+    event.set_direction(aMessage.get_direction());
+
+    // Everyone, the shooter included - their client predicted this locally and the echo is
+    // what confirms the server agreed.
+    GetWorld()->get_world().each([&event](flecs::entity, const PlayerComponent& aPlayerComponent)
+                                 { GServer->Send(aPlayerComponent.Connection, event); });
 }
 
 void Level::BroadcastCombatState(flecs::entity aPuppet) noexcept

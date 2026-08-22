@@ -71,6 +71,10 @@ protected:
     // nothing a client sends is ever applied directly. See CombatEventRequest.
     void HandleCombatEventRequest(PacketEvent<client::CombatEventRequest>& aMessage) noexcept;
 
+    // Somebody fired, reloaded or changed weapon. Ammunition is decided here, never
+    // accepted from the client - see WeaponComponent.
+    void HandleWeaponEventRequest(PacketEvent<client::WeaponEventRequest>& aMessage) noexcept;
+
 public:
     // Tell everyone who can see this combatant what its health and life state now are.
     // Quiet state, not an event - see NotifyCombatState.

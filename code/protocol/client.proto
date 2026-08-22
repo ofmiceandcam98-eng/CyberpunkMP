@@ -223,6 +223,40 @@ message UpdateAppearanceRequest {
 message DeleteCharacterRequest {
 }
 
+// A weapon did something worth showing other people.
+//
+// Events, not state. A magazine is not replicated as a number that ticks down thirty times
+// a second - "fired" is sent once and every receiver decrements its own copy, which is both
+// smaller and how the receiving client knows to play a muzzle flash. State replication
+// would tell them the number changed and leave them guessing why.
+//
+// Whose weapon this is comes from the CONNECTION, like every other combat message here.
+message WeaponEventRequest {
+    // 0 equip, 1 unequip, 2 fire, 3 reload start, 4 reload complete, 5 switch start,
+    // 6 switch complete, 7 melee swing, 8 throw.
+    //
+    // One message rather than eight, because every one of them carries the same "who, which
+    // weapon, when" and differs only in what the receiver draws.
+    uint32 kind = 1;
+
+    // TweakDB id of the weapon record.
+    uint64 weapon_id = 2;
+
+    // What the client believes it has left AFTER this event. A claim, like reported_damage:
+    // the server keeps its own count and corrects with NotifyWeaponState when they diverge.
+    uint32 magazine_ammo = 3;
+    uint32 reserve_ammo = 4;
+
+    // Where the shot came from and where it went. Only meaningful for fire and throw; a
+    // reload does not have a direction, and sending zeroes for one is honest.
+    common.Vector3 position = 5;
+    common.Vector3 direction = 6;
+
+    // Rises per attacker, same rejection rule as combat events.
+    uint32 sequence = 7;
+    uint64 client_tick = 8;
+}
+
 // Something happened that should hurt somebody.
 //
 // THE ATTACKER IS NOT IN THIS MESSAGE, deliberately, exactly as UpdateAppearanceRequest
@@ -328,5 +362,6 @@ message Protocol {
         DeleteCharacterRequest delete_character_request = 11;
         VoiceFrameRequest voice_frame_request = 12;
         CombatEventRequest combat_event_request = 13;
+        WeaponEventRequest weapon_event_request = 14;
     }
 }
