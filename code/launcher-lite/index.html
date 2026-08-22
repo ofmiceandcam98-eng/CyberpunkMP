@@ -168,11 +168,12 @@
     width: 100%; height: 100%;
     object-fit: cover;
     /* Lit only once a key is actually held, so the mark answers "can this thing
-       install mods" at a glance rather than just decorating the corner. */
+       install mods" at a glance rather than just decorating the corner. The color
+       shift alone carries the state - an accent ring on top of it read as a red
+       alert on the healthiest state in the header (zeldfep, 2026-08-21). */
     filter: grayscale(1) opacity(.45);
     transition: filter 150ms ease;
   }
-  .nexus-mark.on { border-color: var(--accent); }
   .nexus-mark.on img { filter: none; }
 
   .account { display: none; align-items: center; gap: .75rem; }
@@ -264,6 +265,16 @@
     height: 100%;
     background: linear-gradient(90deg, var(--accent), var(--accent-2, #7a1016));
     transition: width .3s ease;
+  }
+  /* No length from Nexus, or extraction - progress is real but unmeasurable, and a bar
+     frozen at 0% reads as hung. A sweep says "working" without claiming a number. */
+  .qbar.indet > div {
+    width: 35%;
+    animation: qsweep 1.1s ease-in-out infinite alternate;
+  }
+  @keyframes qsweep { from { margin-left: 0; } to { margin-left: 65%; } }
+  @media (prefers-reduced-motion: reduce) {
+    .qbar.indet > div { animation: none; width: 100%; opacity: .4; }
   }
 
   .mod {
@@ -478,6 +489,12 @@
   .start, .restart, .stop {
     clip-path: polygon(9px 0, calc(100% - 9px) 0, 100% 9px, 100% calc(100% - 9px),
                        calc(100% - 9px) 100%, 9px 100%, 0 calc(100% - 9px), 0 9px);
+    /* Sized so the lettering can never reach the diagonals. At the launcher's default
+       width the old size fit; under Windows display scaling the buttons shrink until
+       RESTART crossed the corner cuts and the clip sliced the glyphs (zeldfep's screen,
+       live on v0.3.101). Option E from the mock: the shape stays, the type yields. */
+    font-size: .7rem;
+    letter-spacing: .03em;
   }
   .admin-note {
     font-family: var(--mono); font-size: .64rem; color: #5c616c;
@@ -1421,12 +1438,36 @@
 
         <div class="modlist" id="modList"></div>
 
+        <!-- The one active install, whichever door it came through - queue, nxm://
+             click, Add mod, repair or update. Every install path holds one global
+             lock, so this strip is bound to exactly one download at a time by
+             construction; it cannot show two installs braided together. -->
+        <div class="modqueue" id="installStrip" style="display:none">
+          <div class="modqueue-head">/// INSTALLING ///</div>
+          <div class="queue-row downloading">
+            <span class="dot busy"></span>
+            <span class="qname" id="installName"></span>
+            <div class="qbar" id="installBar"><div id="installFill"></div></div>
+            <span class="qdetail" id="installDetail"></span>
+          </div>
+        </div>
+
         <!-- The download queue: one mod at a time, in load order, frameworks first.
              Hidden until Install missing starts one. Strictly serial on purpose - what
              broke installs was never speed, it was a mod landing before its framework. -->
         <div class="modqueue" id="modQueue" style="display:none">
           <div class="modqueue-head">/// DOWNLOAD QUEUE — one at a time, load order ///</div>
           <div id="modQueueRows"></div>
+        </div>
+
+        <!-- Install anything from Nexus without a second mod manager: paste the mod's
+             page link (or just its number) and it lands here, recorded file by file
+             like everything else, listed under YOUR MODS above. -->
+        <div class="btn-row" style="margin-top:.5rem">
+          <input type="text" id="addModInput" placeholder="Nexus mod link or number..."
+                 style="flex:1;min-width:0;background:var(--bg,#111);color:inherit;border:1px solid rgba(255,255,255,.2);border-radius:0;padding:6px 10px;font:inherit"
+                 spellcheck="false">
+          <button class="action ghost" id="addModBtn" style="flex:0 0 auto">Add mod</button>
         </div>
 
         <div class="field-hint" id="modHint" style="margin-top:.5rem"></div>
@@ -3352,6 +3393,7 @@
   // --- mod list ---------------------------------------------------------------
 
   let modState = []
+  let personalState = []
   let modsSignedIn = null
 
   function renderMods () {
@@ -3428,6 +3470,15 @@
       }
 
       if (mod.state === 'installed') {
+        // The approved version first: for listed mods that is the server's pin, and the
+        // button only appears when the recorded install differs from it.
+        if (mod.updateAvailable) {
+          badge.className = 'mod-badge missing'
+          badge.textContent = 'UPDATE'
+          badge.title = mod.reason || 'A different version is expected'
+          row.appendChild(makeUpdateButton(mod))
+        }
+
         const remove = document.createElement('button')
         remove.className = 'mod-btn danger'
         remove.textContent = '🗑'
@@ -3446,15 +3497,84 @@
 
       list.appendChild(row)
     }
+
+    // The player's own installs - anything added by link, number, or a Nexus "Mod
+    // Manager Download" click that was never on the server's list. Same records, same
+    // verify/repair/removal; this section is what makes the launcher a mod manager
+    // rather than a checklist, so nobody needs a second one.
+    if (personalState.length > 0) {
+      const head = document.createElement('div')
+      head.className = 'modqueue-head'
+      head.style.marginTop = '.6rem'
+      head.textContent = '/// YOUR MODS — not on the server’s list ///'
+      list.appendChild(head)
+
+      for (const mod of personalState) {
+        const row = document.createElement('div')
+        row.className = 'mod'
+
+        const name = document.createElement('span')
+        name.className = 'mod-name'
+        name.textContent = mod.name
+        name.title = (mod.author ? 'by ' + mod.author + ' · ' : '') + mod.files + ' file(s)'
+        row.appendChild(name)
+
+        const badge = document.createElement('span')
+        if (mod.state === 'broken') {
+          badge.className = 'mod-badge bad'
+          badge.textContent = 'FILES MISSING'
+        } else if (mod.updateAvailable) {
+          badge.className = 'mod-badge missing'
+          badge.textContent = 'UPDATE'
+          badge.title = mod.reason || ''
+        } else {
+          badge.className = 'mod-badge ok'
+          badge.textContent = '✓ INSTALLED'
+        }
+        row.appendChild(badge)
+
+        if (mod.updateAvailable && mod.state === 'installed') row.appendChild(makeUpdateButton(mod))
+
+        const remove = document.createElement('button')
+        remove.className = 'mod-btn danger'
+        remove.textContent = '🗑'
+        remove.title = 'Remove this mod'
+        remove.addEventListener('click', async () => {
+          const result = await window.launcher.deleteMod(mod.id)
+          if (result.ok) { setStatus('Removed ' + mod.name + '.', 'ok'); await refreshMods() }
+          else if (result.error) setStatus(result.error, 'error')
+        })
+        row.appendChild(remove)
+
+        list.appendChild(row)
+      }
+    }
+  }
+
+  function makeUpdateButton (mod) {
+    const update = document.createElement('button')
+    update.className = 'mod-btn'
+    update.textContent = 'Update'
+    update.title = mod.reason || 'Install the expected version'
+    update.addEventListener('click', async () => {
+      update.disabled = true
+      const result = await window.launcher.updateMod(mod.id)
+      if (result.ok) setStatus(result.message, result.needsWebsite ? 'error' : 'ok')
+      else setStatus(result.error || 'Update failed.', 'error')
+      await refreshMods()
+    })
+    return update
   }
 
   async function refreshMods () {
     const result = await window.launcher.listMods()
     if (result.ok) {
       modState = result.mods
+      personalState = result.personal || []
       modsSignedIn = result.signedIn
     } else {
       modState = []
+      personalState = []
       $('modHint').textContent = result.error
     }
     renderMods()
@@ -3574,19 +3694,84 @@
   })
 
   window.launcher.onModProgress((info) => {
-    const mod = modState.find((m) => m.id === String(info.modId))
-    if (!mod) return
-
+    // Installs land for PERSONAL mods too (any nxm:// click, Add mod) - those are not
+    // in modState, and the old early-return meant the list never learned about them.
     if (info.state === 'installed') {
-      setStatus('Installed ' + (info.name || mod.name) + '.', 'ok')
+      setStatus('Installed ' + (info.name || 'mod ' + info.modId) + '.', 'ok')
       refreshMods()
       return
     }
 
+    // A failure is a failure whoever it belongs to. This used to bail first when the
+    // mod was not on the server's list - so a personal install that failed showed
+    // NOTHING, which reads as "the launcher ignored my click" ("my launcher is not
+    // opening the nexus mods", zeldfep, live). The reason always renders now.
+    if (info.state === 'failed') setStatus(info.error || ('Install of mod ' + info.modId + ' failed.'), 'error')
+
+    const mod = modState.find((m) => m.id === String(info.modId))
+    if (!mod) return
+
     mod.state = info.state
-    if (info.state === 'failed') setStatus(info.error, 'error')
     renderMods()
   })
+
+  // The single install strip. Bound to one install by construction (the main process
+  // serializes them), so this only ever renders the one thing actually happening.
+  let installStripTimer = null
+  window.launcher.onInstallStatus((status) => {
+    const strip = $('installStrip')
+    const bar = $('installBar')
+    const fill = $('installFill')
+
+    if (installStripTimer) { clearTimeout(installStripTimer); installStripTimer = null }
+
+    const showing = ['starting', 'downloading', 'extracting'].includes(status.phase)
+    const finished = status.phase === 'done'
+
+    if (!showing && !finished) { strip.style.display = 'none'; return }
+    strip.style.display = 'block'
+    $('installName').textContent = status.name || ('Mod ' + status.modId)
+
+    const mb = (n) => (n / (1024 * 1024)).toFixed(1)
+
+    if (status.phase === 'downloading' && typeof status.percent === 'number') {
+      bar.classList.remove('indet')
+      fill.style.width = status.percent + '%'
+      $('installDetail').textContent = status.percent + '%' +
+        (status.totalBytes ? ' — ' + mb(status.receivedBytes) + ' / ' + mb(status.totalBytes) + ' MB' : '')
+    } else if (finished) {
+      bar.classList.remove('indet')
+      fill.style.width = '100%'
+      $('installDetail').textContent = '✓ installed'
+      // Long enough to register, short enough that the strip never squats over the
+      // panel after the work is over.
+      installStripTimer = setTimeout(() => { strip.style.display = 'none' }, 1800)
+    } else {
+      bar.classList.add('indet')
+      fill.style.width = ''
+      $('installDetail').textContent =
+        status.phase === 'extracting' ? 'extracting...' :
+        status.phase === 'downloading' ? 'downloading...' : 'contacting Nexus...'
+    }
+  })
+
+  $('addModBtn').addEventListener('click', async () => {
+    const input = $('addModInput')
+    const btn = $('addModBtn')
+    if (!input.value.trim()) { setStatus('Paste a Nexus mod link or its number first.', 'error'); return }
+
+    btn.disabled = true
+    const result = await window.launcher.addModFromNexus(input.value)
+    btn.disabled = false
+
+    if (result.ok) {
+      setStatus(result.message, result.needsWebsite ? 'error' : 'ok')
+      if (!result.needsWebsite) { input.value = ''; await refreshMods() }
+    } else {
+      setStatus(result.error, 'error')
+    }
+  })
+  $('addModInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('addModBtn').click() })
 
   $('openInstallDir').addEventListener('click', () => window.launcher.openInstallDir())
 

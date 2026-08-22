@@ -150,12 +150,12 @@ async function installNexusMod (modId, options = {}) {
 
   const headers = { apikey: apiKey, 'User-Agent': 'NightCityOnline-Launcher/1.0' }
 
-  // resolveMainFile filters category MAIN and takes the newest by upload time - the
-  // same choice the mod page's own download button makes. Taking files[0] unfiltered
-  // (as this path originally did) picks whatever Nexus happens to list first, which
-  // for mods with optional patches is not the mod.
-  const main = await resolveMainFile(modId)
-  const fileId = main?.fileId
+  // An explicit target (a server pin, an update landing on a specific file) wins;
+  // otherwise resolveMainFile filters category MAIN and takes the newest by upload
+  // time - the same choice the mod page's own download button makes. Taking files[0]
+  // unfiltered (as this path originally did) picks whatever Nexus happens to list
+  // first, which for mods with optional patches is not the mod.
+  const fileId = options.fileId ?? (await resolveMainFile(modId))?.fileId
   if (!fileId) return { needsWebsite: true, reason: 'no main file listed' }
 
   let url = null
@@ -174,19 +174,25 @@ async function installNexusMod (modId, options = {}) {
   const file = await axios.get(url, {
     responseType: 'arraybuffer',
     timeout: 300000,
-    // Byte progress for the queue row. Nexus does not always send a length; a null
-    // percent renders as plain "downloading" rather than a bar frozen at 0.
+    // Byte progress for whoever is watching. Nexus does not always send a length; a
+    // null percent renders as an indeterminate bar rather than one frozen at 0.
     onDownloadProgress: options.onProgress
-      ? (e) => options.onProgress(e.total ? Math.round((e.loaded / e.total) * 100) : null)
+      ? (e) => options.onProgress(e.total ? Math.round((e.loaded / e.total) * 100) : null, e.loaded, e.total ?? null)
       : undefined
   })
+
+  // Extraction is seconds of real work on a big archive, and a bar parked at 100%
+  // reads as hung. Named so the display can say what is actually happening.
+  options.onPhase?.('extracting')
+
   const result = await installModArchive(modId, Buffer.from(file.data), { servedFileId: fileId })
   return { ok: true, ...result }
 }
 
 async function ensureFastLaunch () {
   try {
-    const result = await installNexusMod(FAST_LAUNCH_MOD_ID)
+    const result = await withInstallLock({ modId: FAST_LAUNCH_MOD_ID, name: 'Fast Launch', silent: true }, (ctx) =>
+      installNexusMod(FAST_LAUNCH_MOD_ID, { onProgress: ctx.onProgress, onPhase: ctx.setPhase }))
     if (result.ok && !result.already)
       launcherLog('boot policy: Fast Launch auto-installed - intro videos are gone from the next boot')
     else if (result.needsWebsite)
@@ -195,6 +201,67 @@ async function ensureFastLaunch () {
     // Never a blocker and never a nag; the policy converges when it can.
     launcherLog(`boot policy: Fast Launch auto-install skipped (${err.response?.status || err.message})`)
   }
+}
+
+// ---------------------------------------------------------------------------
+// ONE install at a time, across EVERY path - and one progress instance bound to it.
+//
+// The queue was already serial, but it was not the only door: an nxm:// click, the
+// Add-mod row, a repair, an update and the Fast Launch auto-install could all run WHILE
+// a queue item downloaded, and any progress display would have been showing two
+// installs' bytes braided together (Cam's requirement, 2026-08-21: the progress stays
+// linked to one install per progress instance). So every install acquires this lock,
+// and the 'install-status' channel only ever describes the single active holder -
+// there is nothing else it COULD describe.
+// ---------------------------------------------------------------------------
+let installLockTail = Promise.resolve()
+let activeInstall = null
+
+function emitInstallStatus (phase, extra = {}) {
+  if (!activeInstall || activeInstall.silent) return
+  Object.assign(activeInstall, extra, { phase })
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('install-status', { ...activeInstall })
+  }
+}
+
+function withInstallLock (meta, fn) {
+  const turn = installLockTail.then(async () => {
+    activeInstall = {
+      modId: String(meta.modId ?? ''),
+      name: meta.name || `Mod ${meta.modId}`,
+      phase: 'starting',
+      percent: null,
+      receivedBytes: 0,
+      totalBytes: null,
+      // The boot-policy auto-install runs at launch with the player's mind on the
+      // game, not the mods panel - it takes the lock (order still matters) but
+      // draws nothing.
+      silent: Boolean(meta.silent)
+    }
+    emitInstallStatus('starting')
+
+    try {
+      const result = await fn({
+        onProgress: (percent, loaded, total) =>
+          emitInstallStatus('downloading', { percent, receivedBytes: loaded ?? 0, totalBytes: total ?? null }),
+        setPhase: (phase) => emitInstallStatus(phase)
+      })
+
+      if (result?.name) activeInstall.name = result.name
+      emitInstallStatus(result?.ok && !result.already ? 'done' : result?.needsWebsite ? 'handoff' : 'idle')
+      return result
+    } catch (err) {
+      emitInstallStatus('failed', { error: err.message })
+      throw err
+    } finally {
+      activeInstall = null
+    }
+  })
+
+  // A failed install must not jam the lock for every install after it.
+  installLockTail = turn.catch(() => {})
+  return turn
 }
 
 // ---------------------------------------------------------------------------
@@ -242,9 +309,17 @@ async function runModQueue () {
       queueSet(entry.modId, 'downloading', { detail: null, percent: null })
 
       try {
-        const result = await installNexusMod(entry.modId, {
-          onProgress: (percent) => queueSet(entry.modId, 'downloading', { percent })
-        })
+        // Through the global lock like every other path - a stray nxm:// click or an
+        // Add-mod press during a queue run waits its turn instead of braiding two
+        // downloads through one progress display.
+        const result = await withInstallLock({ modId: entry.modId, name: entry.name }, (ctx) =>
+          installNexusMod(entry.modId, {
+            onProgress: (percent, loaded, total) => {
+              queueSet(entry.modId, 'downloading', { percent })
+              ctx.onProgress(percent, loaded, total)
+            },
+            onPhase: ctx.setPhase
+          }))
 
         if (result.already) {
           queueSet(entry.modId, 'installed', { detail: 'was already installed' })
@@ -4028,7 +4103,13 @@ async function fetchModInfo (modId) {
  * optional patches and translations, and grabbing the newest of everything would install
  * a Portuguese translation as if it were the mod.
  */
+// Cached like fetchModInfo and for the same reason: update detection asks this once per
+// installed mod per refresh, against an API with a daily budget.
+const mainFileCache = new Map()
+
 async function resolveMainFile (modId) {
+  if (mainFileCache.has(String(modId))) return mainFileCache.get(String(modId))
+
   const apiKey = loadNexusKey()
   if (!apiKey) return null
 
@@ -4042,10 +4123,37 @@ async function resolveMainFile (modId) {
     const main = files.filter((f) => f.category_name === 'MAIN')
     const pick = (main.length > 0 ? main : files).sort((a, b) => (b.uploaded_timestamp || 0) - (a.uploaded_timestamp || 0))[0]
 
-    return pick ? { fileId: pick.file_id, version: pick.version, name: pick.file_name } : null
+    const resolved = pick ? { fileId: pick.file_id, version: pick.version, name: pick.file_name } : null
+    mainFileCache.set(String(modId), resolved)
+    return resolved
   } catch {
     return null
   }
+}
+
+/**
+ * Whether a newer file exists for an installed mod - and which file an update should
+ * land on. The two questions differ for server-listed mods: a pinned nexusFileId IS
+ * the approved version (spec: the manifest decides, not Nexus's newest), so "update
+ * available" means "you are not on the pin", never "Nexus has something newer".
+ * Unpinned and personal mods track Nexus's main file. Null when it cannot be known -
+ * no key, no recorded fileId (pre-bookkeeping installs), or Nexus unreachable.
+ */
+async function describeUpdate (modId, record, listEntry) {
+  if (!record?.fileId) return null
+
+  if (listEntry?.nexusFileId) {
+    return Number(record.fileId) === Number(listEntry.nexusFileId)
+      ? { updateAvailable: false }
+      : { updateAvailable: true, targetFileId: listEntry.nexusFileId, reason: 'server-approved version' }
+  }
+
+  const latest = await resolveMainFile(modId)
+  if (!latest?.fileId) return null
+
+  return Number(record.fileId) === Number(latest.fileId)
+    ? { updateAvailable: false }
+    : { updateAvailable: true, targetFileId: latest.fileId, version: latest.version, reason: 'newer on Nexus' }
 }
 
 /**
@@ -4178,9 +4286,56 @@ ipcMain.handle('mods:list', async () => {
       info.set(String(mod.nexusModId), await fetchModInfo(mod.nexusModId))
     }))
 
+    // Everything the launcher installed that the server's list does not carry - the
+    // half that makes this a mod manager rather than a checklist. These are the
+    // player's own installs (any nxm:// click, Add-from-Nexus), managed with the same
+    // records, verify, repair and per-file removal as the listed ones.
+    const listIds = new Set(all.map((m) => String(m.nexusModId)))
+    const personal = []
+    for (const [recordId, record] of Object.entries(installed)) {
+      if (listIds.has(String(recordId))) continue
+
+      const paths = recordPaths(record)
+      const present = paths.length > 0 && paths.every((rel) => existsSync(path.join(gameDir, rel)))
+      const nexus = await fetchModInfo(recordId)
+
+      personal.push({
+        id: String(recordId),
+        name: nexus?.name || record.name || `Nexus mod ${recordId}`,
+        author: nexus?.author || null,
+        version: record.version || null,
+        files: paths.length,
+        state: present ? 'installed' : 'broken',
+        nexusUrl: `https://www.nexusmods.com/cyberpunk2077/mods/${recordId}`
+      })
+    }
+
+    // Update detection, for every installed mod that recorded which file it actually
+    // got. Server-listed mods answer against the pin when one exists (the approved
+    // version, never Nexus's newest); everything else tracks the main file.
+    const updates = new Map()
+    await Promise.all([...states.entries()]
+      .filter(([, state]) => state.state === 'installed')
+      .map(async ([id]) => {
+        const listEntry = all.find((m) => String(m.nexusModId) === id)
+        const update = await describeUpdate(id, installed[id], listEntry)
+        if (update) updates.set(id, update)
+      })
+      .concat(personal
+        .filter((p) => p.state === 'installed')
+        .map(async (p) => {
+          const update = await describeUpdate(p.id, installed[p.id], null)
+          if (update) updates.set(p.id, update)
+        })))
+
+    for (const entry of personal) {
+      Object.assign(entry, updates.get(entry.id) || {})
+    }
+
     return {
       ok: true,
       signedIn: Boolean(loadNexusKey()),
+      personal,
       mods: mods.map((mod) => {
         // Named, not numbered. "Needs mod 107" tells nobody anything.
         const missing = (mod.requires || [])
@@ -4200,7 +4355,8 @@ ipcMain.handle('mods:list', async () => {
           devOnly: Boolean(mod.devOnly),
           blockedBy: missing,
           nexusUrl: `https://www.nexusmods.com/cyberpunk2077/mods/${mod.nexusModId}`,
-          ...states.get(String(mod.nexusModId))
+          ...states.get(String(mod.nexusModId)),
+          ...(updates.get(String(mod.nexusModId)) || {})
         }
       })
     }
@@ -4208,6 +4364,70 @@ ipcMain.handle('mods:list', async () => {
     // An unreachable list must not stop anyone playing - they may already have every
     // mod installed. Report it and let the rest of the launcher carry on.
     return { ok: false, error: `Could not read the mod list: ${err.message}` }
+  }
+})
+
+/**
+ * Install any Nexus mod by its page URL or bare id - the "I do not want a second mod
+ * manager" path. The premium route downloads directly; a free account gets the page
+ * opened and the nxm:// hand-off finishes it, exactly like the curated list. What lands
+ * is recorded file by file, so verify, repair, conflict-guarding and removal all cover
+ * personal mods from the moment they arrive.
+ */
+ipcMain.handle('mods:addById', async (_event, input) => {
+  const text = String(input || '').trim()
+  const match = /nexusmods\.com\/cyberpunk2077\/mods\/(\d+)/i.exec(text) || /^(\d+)$/.exec(text)
+
+  if (!match) {
+    return { ok: false, error: 'Paste a Cyberpunk 2077 Nexus mod link (or its mod number).' }
+  }
+  const modId = Number(match[1])
+
+  try {
+    const result = await withInstallLock({ modId, name: `Mod ${modId}` }, (ctx) =>
+      installNexusMod(modId, { onProgress: ctx.onProgress, onPhase: ctx.setPhase }))
+    if (result.already) return { ok: true, message: 'Already installed.' }
+    if (result.ok) return { ok: true, message: `Installed ${result.name} (${result.count} files).` }
+    if (result.needsWebsite) {
+      await shell.openExternal(`https://www.nexusmods.com/cyberpunk2077/mods/${modId}?tab=files`)
+      return { ok: true, needsWebsite: true, message: 'Press "Mod Manager Download" on the page that just opened - it lands back here.' }
+    }
+    return { ok: false, error: 'Nexus did not offer a downloadable file.' }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
+/**
+ * Update one installed mod to its target file - the server's pin when the list has one,
+ * Nexus's current main file otherwise. Same mechanics as repair: drop the record so the
+ * installer is willing, install the target, and a failure leaves the old files standing.
+ */
+ipcMain.handle('mods:update', async (_event, modId) => {
+  const installed = loadInstalledMods()
+  const record = installed[String(modId)]
+  if (!record) return { ok: false, error: 'That mod is not recorded as installed.' }
+
+  const mods = await fetchModList().catch(() => [])
+  const listEntry = mods.find((m) => String(m.nexusModId) === String(modId))
+  const update = await describeUpdate(String(modId), record, listEntry)
+
+  if (!update?.updateAvailable) return { ok: true, message: 'Already on the right version.' }
+
+  delete installed[String(modId)]
+  saveInstalledMods(installed)
+
+  try {
+    const result = await withInstallLock({ modId, name: record.name || `Mod ${modId}` }, (ctx) =>
+      installNexusMod(Number(modId), { fileId: update.targetFileId, onProgress: ctx.onProgress, onPhase: ctx.setPhase }))
+    if (result.ok) return { ok: true, message: `Updated ${result.name || record.name}.` }
+    if (result.needsWebsite) {
+      await shell.openExternal(`https://www.nexusmods.com/cyberpunk2077/mods/${modId}?tab=files&file_id=${update.targetFileId}`)
+      return { ok: true, needsWebsite: true, message: 'Press "Mod Manager Download" on the page that just opened.' }
+    }
+    return { ok: false, error: 'Nexus did not offer the file.' }
+  } catch (err) {
+    return { ok: false, error: err.message }
   }
 })
 
@@ -4319,7 +4539,8 @@ ipcMain.handle('mods:repair', async (_event, modId) => {
   saveInstalledMods(installed)
 
   try {
-    const result = await installNexusMod(Number(modId))
+    const result = await withInstallLock({ modId, name: record.name || `Mod ${modId}` }, (ctx) =>
+      installNexusMod(Number(modId), { onProgress: ctx.onProgress, onPhase: ctx.setPhase }))
     if (result?.needsWebsite) {
       const mods = await fetchModList().catch(() => [])
       const mod = mods.find((m) => String(m.nexusModId) === String(modId))
@@ -5589,6 +5810,14 @@ async function installModArchive (modId, buffer, options = {}) {
  */
 async function handleNxmLink (url) {
   const match = /^nxm:\/\/([^/]+)\/mods\/(\d+)\/files\/(\d+)/i.exec(url)
+
+  // Arrival is the fact that keeps being needed and was never recorded: "nothing
+  // happens when I press Mod Manager Download" cannot be diagnosed from a trail with
+  // no line for the hand-off. Ids only - the link's query carries a live download key.
+  launcherLog(match
+    ? `nxm arrived: mod ${match[2]} file ${match[3]} (${match[1]})`
+    : `nxm arrived but did not parse: ${String(url).split('?')[0]}`)
+
   if (!match) return
 
   const [, game, modId, fileId] = match
@@ -5623,8 +5852,20 @@ async function handleNxmLink (url) {
     const downloadUrl = linkResponse.data?.[0]?.URI
     if (!downloadUrl) throw new Error('Nexus did not return a download link.')
 
-    const file = await axios.get(downloadUrl, { responseType: 'arraybuffer', timeout: 300000 })
-    const result = await installModArchive(modId, Buffer.from(file.data), { servedFileId: Number(fileId) })
+    // Under the same lock as every other install. The link's key expires, but its
+    // lifetime is minutes and a queue item's download is seconds - waiting a turn is
+    // fine; interleaving two downloads through one progress display is not.
+    const result = await withInstallLock({ modId, name: `Mod ${modId}` }, async (ctx) => {
+      const file = await axios.get(downloadUrl, {
+        responseType: 'arraybuffer',
+        timeout: 300000,
+        onDownloadProgress: (e) => ctx.onProgress(e.total ? Math.round((e.loaded / e.total) * 100) : null, e.loaded, e.total ?? null)
+      })
+
+      ctx.setPhase('extracting')
+      const install = await installModArchive(modId, Buffer.from(file.data), { servedFileId: Number(fileId) })
+      return { ok: true, ...install }
+    })
 
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('mod-progress', { modId, state: 'installed', ...result })
@@ -5634,6 +5875,7 @@ async function handleNxmLink (url) {
     // the person pressed the button, the download landed here), move it along.
     queueNotifyInstalled(modId, result)
   } catch (err) {
+    launcherLog(`nxm install failed for mod ${modId}: ${err.message}`)
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('mod-progress', { modId, state: 'failed', error: err.message })
     }
@@ -5666,9 +5908,14 @@ app.whenReady().then(() => {
   // the association away without warning, and the symptom is downloads silently opening
   // the wrong program.
   try {
-    app.setAsDefaultProtocolClient('nxm')
+    // The return value and the read-back both go in the trail: "registered" claimed by
+    // us and "is default" answered by Windows are different facts, and the gap between
+    // them is exactly where "Mod Manager Download does nothing" lives.
+    const claimed = app.setAsDefaultProtocolClient('nxm')
+    launcherLog(`nxm handler: registration ${claimed ? 'accepted' : 'REFUSED'}, ` +
+                `Windows says default=${app.isDefaultProtocolClient('nxm')}`)
   } catch (err) {
-    console.error('[mods] could not register nxm:// handler:', err.message)
+    launcherLog(`nxm handler registration threw: ${err.message}`)
   }
 
   createWindow()

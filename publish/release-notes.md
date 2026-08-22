@@ -4,6 +4,18 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.102
+
+- **The Restart button stops eating its own letters.** Under Windows display scaling the server buttons shrink until RESTART crossed its corner cuts and the clip sliced the glyphs. The cut shape stays; the lettering on Start/Restart/Stop now sizes itself so it can never reach the diagonals.
+- **"Mod Manager Download did nothing" is diagnosable now.** Every nxm:// hand-off is recorded in the launcher's trail (ids only — the link carries a live key), the launcher logs what Windows actually answered when it claimed the nxm handler at startup, and a failed install of a mod that is not on the server's list finally shows its reason instead of showing nothing — which read exactly like the click being ignored.
+
+## What changed — v0.3.101
+
+- **The launcher is a mod manager now.** A **YOUR MODS** section lists everything you installed that is not on the server's list — any "Mod Manager Download" click lands there — with the same verify, repair and per-file removal the server's mods get. And the new **Add mod** row takes any Cyberpunk mod's Nexus link (or just its number): premium keys install it directly, free accounts get the page opened and one press of Mod Manager Download finishes the job. No second mod manager, ever.
+- **Updates land on the right version, not the newest one.** Every install records exactly which file it actually got. Server-listed mods offer an Update only when you are not on the server-approved version; your own mods track Nexus's current main file. One press installs exactly that target.
+- **One install at a time, with a real progress bar.** Every way a mod can install — the download queue, a Nexus click, Add mod, a repair, an update — now takes a single turn, and one INSTALLING strip shows the active download: percent and megabytes when Nexus says how big the file is, a sweep while it extracts. The bar cannot show two installs braided together, because two installs can no longer run at once.
+- **The Nexus mark lost its red ring.** Grey until a key is held, full colour once one is — the colour is the signal, and a red ring on the healthiest state in the header read as an alert.
+
 ## What changed — v0.3.100
 
 **Voice chat.** Hold your talk key and the people around you hear you.

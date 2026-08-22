@@ -98,6 +98,12 @@ contextBridge.exposeInMainWorld('launcher', {
     ipcRenderer.on('mod-queue', (_e, queue) => callback(queue))
   },
 
+  // The ONE active install, whichever door it came through - every install path holds a
+  // global lock, so this channel can never describe two downloads at once.
+  onInstallStatus: (callback) => {
+    ipcRenderer.on('install-status', (_e, status) => callback(status))
+  },
+
   nexusSsoLogin: () => ipcRenderer.invoke('nexus:ssoLogin'),
   nexusSignIn: (key) => ipcRenderer.invoke('nexus:signIn', key),
   getVoiceSettings: () => ipcRenderer.invoke('voice:get'),
@@ -124,6 +130,12 @@ contextBridge.exposeInMainWorld('launcher', {
   // page only ever sees summaries.
   manifestStatus: (force) => ipcRenderer.invoke('manifest:status', force),
   repairMod: (id) => ipcRenderer.invoke('mods:repair', id),
+
+  // The mod-manager half: install anything from Nexus by link or number, and move an
+  // installed mod to its approved version (the server's pin when listed, Nexus's
+  // current main file otherwise).
+  addModFromNexus: (input) => ipcRenderer.invoke('mods:addById', input),
+  updateMod: (id) => ipcRenderer.invoke('mods:update', id),
 
   // The launcher updating itself: progress reports in, restart request out.
   onLauncherUpdate: (callback) => {
