@@ -1295,6 +1295,55 @@ void NetworkWorldSystem::HandleVehicleControlAssigned(const PacketEvent<server::
     Red::CallVirtual(Red::GetGameSystem<NetworkWorldSystem>(), "TakeDriverSeat", pEntityComponent->Id);
 }
 
+void NetworkWorldSystem::SendStatusEffect(uint64_t aTargetServerId, uint64_t aEffectId, uint32_t aStacks,
+                                          uint64_t aSourceId)
+{
+    const auto pNetworkService = Core::Container::Get<NetworkService>();
+
+    if (!pNetworkService || !pNetworkService->IsConnected() || aTargetServerId == 0 || aEffectId == 0)
+        return;
+
+    client::StatusEffectRequest request;
+    request.set_target_id(aTargetServerId);
+    request.set_effect_id(aEffectId);
+    request.set_stacks(aStacks);
+    request.set_source_id(aSourceId);
+    request.set_sequence(++m_combatSequence);
+
+    pNetworkService->Send(request);
+
+    spdlog::info("[Combat] reported status effect {} on entity {}", aEffectId, aTargetServerId);
+}
+
+void NetworkWorldSystem::HandleStatusEffect(const PacketEvent<server::NotifyStatusEffect>& aMessage)
+{
+    // Is this about US? Everyone in range receives it, because a bystander may want to
+    // render something; only the target actually applies it.
+    const auto self = GetRemotePlayerId();
+
+    if (!self || *self != aMessage.get_target_id())
+        return;
+
+    // Queued rather than applied here. Applying a status effect is a script-side API, and
+    // this runs on the network thread - the same reason voice frames are queued rather than
+    // decoded where they arrive.
+    m_incomingStatusEffects.push_back(aMessage.get_effect_id());
+
+    spdlog::info("[Combat] status effect {} landed on us from entity {}", aMessage.get_effect_id(),
+                 aMessage.get_source_id());
+}
+
+uint64_t NetworkWorldSystem::ConsumeIncomingStatusEffect()
+{
+    if (m_incomingStatusEffects.empty())
+        return 0;
+
+    const auto effect = m_incomingStatusEffects.front();
+    m_incomingStatusEffects.erase(m_incomingStatusEffects.begin());
+
+    return effect;
+}
+
 void NetworkWorldSystem::HandleVoiceFrame(const PacketEvent<server::NotifyVoiceFrame>& aMessage)
 {
     // Straight into the queue. This runs on the network thread, and decoding here would put
@@ -1908,6 +1957,7 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleInteraction>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleAppearanceUpdate>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleVoiceFrame>(this);
+    pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleStatusEffect>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleVehicleControlAssigned>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleCharacterList>(this);
 

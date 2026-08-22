@@ -193,6 +193,11 @@ public native class NetworkWorldSystem extends IGameSystem {
     public native func GetServerIdByEntity(entityId: EntityID) -> Uint64;
 
     public native func SendCombatEvent(targetId: Uint64, sourceType: Uint32, attackType: Uint32, sourceId: Uint64, damageType: Uint32, hitZone: Uint32, damage: Float, position: Vector4, direction: Vector4, critical: Bool, headshot: Bool) -> Void;
+
+    // Quickhack status effects. Outbound when we cause one on a remote player; inbound
+    // when one lands on us - see Combat.reds.
+    public native func SendStatusEffect(targetId: Uint64, effectId: Uint64, stacks: Uint32, sourceId: Uint64) -> Void;
+    public native func ConsumeIncomingStatusEffect() -> Uint64;
     public native func GetEntityIdByServerId(serverId: Uint64) -> EntityID;
     public native func GetAppearanceSystem() -> ref<AppearanceSystem>;
     public native func GetChatSystem() -> ref<ChatSystem>;
@@ -295,6 +300,10 @@ public native class NetworkWorldSystem extends IGameSystem {
         let blackboardSystem: ref<BlackboardSystem> = GameInstance.GetBlackboardSystem(GetGameInstance());
         let blackboard: ref<IBlackboard> = blackboardSystem.Get(GetAllBlackboardDefs().UIGameData);
         blackboard.SetBool(GetAllBlackboardDefs().UIGameData.UIMultiplayerConnectedToServer, true, true);
+
+        // Start draining quickhacks aimed at us. Effects arrive on the network thread into
+        // a native queue; this is the script side visiting it. See Combat.reds.
+        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(new MpStatusEffectPoll(), 0.25, false);
 
         // The usual order is player-attaches-then-connects, so this is where the
         // no-flatline machinery actually takes effect - see Death.reds. Arming it in

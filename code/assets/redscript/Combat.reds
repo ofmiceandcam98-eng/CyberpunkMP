@@ -122,6 +122,96 @@ public func MpReportHit(target: ref<ScriptedPuppet>, evt: ref<gameHitEvent>) -> 
         false);                  // headshot
 }
 
+/**
+ * Stage 10 - quickhack status effects, in both directions.
+ *
+ * Quickhack DAMAGE needs nothing extra: an Overheat burns health through Cyberpunk's
+ * ordinary hit pipeline, so the hook above already reports it. What does not travel is the
+ * EFFECT - blindness, a weapon glitch, crippled movement. Those are applied to the PUPPET
+ * standing on the attacker's machine, and the person actually being hacked never finds out.
+ *
+ * OUTBOUND: notice an effect landing on one of our puppets and tell the server.
+ */
+@wrapMethod(ScriptedPuppet)
+protected cb func OnStatusEffectApplied(evt: ref<ApplyStatusEffectEvent>) -> Bool {
+    MpReportStatusEffect(this, evt);
+    return wrappedMethod(evt);
+}
+
+public func MpReportStatusEffect(target: ref<ScriptedPuppet>, evt: ref<ApplyStatusEffectEvent>) -> Void {
+    if !IsDefined(target) || !IsDefined(evt) || !IsDefined(evt.staticData) {
+        return;
+    }
+
+    let network = GameInstance.GetNetworkWorldSystem();
+    if !IsDefined(network) || !network.IsConnected() {
+        return;
+    }
+
+    let targetId = network.GetServerIdByEntity(target.GetEntityID());
+    if Equals(targetId, 0ul) {
+        return;
+    }
+
+    // Only what WE caused. Every client has these puppets, and without this every observer
+    // would report the same hack - and the victim would receive it several times over.
+    let player = GetPlayer(GetGameInstance());
+    if !IsDefined(player) {
+        return;
+    }
+
+    if NotEquals(evt.instigatorEntityID, player.GetEntityID()) {
+        return;
+    }
+
+    network.SendStatusEffect(
+        targetId,
+        TDBID.ToNumber(evt.staticData.GetID()),
+        evt.stackCount,
+        0ul);
+}
+
+/**
+ * INBOUND: apply what the server says landed on us.
+ *
+ * On the local PLAYER, not on a puppet - a status effect on a puppet is a status effect on
+ * a puppet. This is the only place the hack can actually do anything to the person it was
+ * aimed at.
+ *
+ * Drained on a timer rather than an event because the arrival happens on the network
+ * thread; the queue is native, and this is script visiting it.
+ */
+public class MpStatusEffectPoll extends DelayCallback {
+    public func Call() -> Void {
+        let network = GameInstance.GetNetworkWorldSystem();
+
+        if !IsDefined(network) {
+            return;
+        }
+
+        if network.IsConnected() {
+            let player = GetPlayer(GetGameInstance());
+
+            if IsDefined(player) {
+                // Everything waiting, not just one - two hacks can land inside a frame, and
+                // draining one per poll would spread them over half a second.
+                let effect = network.ConsumeIncomingStatusEffect();
+
+                while NotEquals(effect, 0ul) {
+                    StatusEffectHelper.ApplyStatusEffect(player, network.TdbidFromNumber(effect));
+                    FTLog(s"[Combat] a quickhack landed on us: \(effect)");
+
+                    effect = network.ConsumeIncomingStatusEffect();
+                }
+            }
+        }
+
+        // Rearmed unconditionally, including while disconnected - the poll has to survive a
+        // reconnect, and a callback that stops on the first quiet tick never comes back.
+        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(new MpStatusEffectPoll(), 0.25, false);
+    }
+}
+
 // HIT ZONE, CRIT AND HEADSHOT are sent as zero/false deliberately, rather than guessed.
 //
 // gameHitEvent carries hitComponent and hitRepresentationResult, which is where the body

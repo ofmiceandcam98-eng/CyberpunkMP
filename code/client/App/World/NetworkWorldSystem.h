@@ -253,6 +253,17 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
                          uint32_t aDamageType, uint32_t aHitZone, float aDamage, const Red::Vector4& aPosition,
                          const Red::Vector4& aDirection, bool aCritical, bool aHeadshot);
 
+    // A quickhack put a status effect on a remote player. Reported because their own game
+    // has no other way of learning about it - the effect was applied to a puppet here.
+    void SendStatusEffect(uint64_t aTargetServerId, uint64_t aEffectId, uint32_t aStacks, uint64_t aSourceId);
+
+    // Effects the server says landed on US, one at a time. Zero when none are waiting.
+    //
+    // Drained by script rather than applied in C++: applying a status effect is a script
+    // API (StatusEffectHelper), and reaching for it from native would mean marshalling a
+    // TweakDBID through RTTI for no benefit.
+    uint64_t ConsumeIncomingStatusEffect();
+
     // Whether --hackable-puppets was passed. See Hackable.reds.
     bool HackablePuppetsEnabled() const;
 
@@ -312,6 +323,9 @@ protected:
     // Somebody near us said something. Queues the frame and returns - decoding happens on
     // the voice render thread, never here. See VoiceClient.h.
     void HandleVoiceFrame(const PacketEvent<server::NotifyVoiceFrame>& aMessage);
+
+    // A quickhack landed on somebody. Applied to OUR player when we are the target.
+    void HandleStatusEffect(const PacketEvent<server::NotifyStatusEffect>& aMessage);
 
     // The account's characters changed - a delete landed, or one was refused.
     void HandleCharacterList(const PacketEvent<server::NotifyCharacterList>& aMessage);
@@ -434,6 +448,10 @@ private:
     uint64_t m_combatEventId{0};
     uint32_t m_combatSequence{0};
 
+    // Status effects the server says landed on US, waiting for script to apply them.
+    // A queue rather than one value: two hacks can land inside a frame.
+    Vector<uint64_t> m_incomingStatusEffects;
+
     // For measuring our own speed from how far we actually moved - see
     // UpdatePlayerLocation. Mutable because that function is const and only reports.
     mutable glm::vec3 m_lastPosition{};
@@ -552,6 +570,8 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(HackablePuppetsEnabled);
     RTTI_METHOD(GetServerIdByEntity);
     RTTI_METHOD(SendCombatEvent);
+    RTTI_METHOD(SendStatusEffect);
+    RTTI_METHOD(ConsumeIncomingStatusEffect);
     RTTI_METHOD(GetCharacterError);
     RTTI_METHOD(GetDenialMessage);
     RTTI_METHOD(GetDenialCode);

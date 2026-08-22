@@ -75,6 +75,10 @@ protected:
     // accepted from the client - see WeaponComponent.
     void HandleWeaponEventRequest(PacketEvent<client::WeaponEventRequest>& aMessage) noexcept;
 
+    // A quickhack landed a status effect on somebody. Relayed above all to the person it
+    // happened TO - their own game has no other way of knowing.
+    void HandleStatusEffectRequest(PacketEvent<client::StatusEffectRequest>& aMessage) noexcept;
+
 public:
     // Tell everyone who can see this combatant what its health and life state now are.
     // Quiet state, not an event - see NotifyCombatState.

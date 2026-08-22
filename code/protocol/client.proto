@@ -223,6 +223,37 @@ message UpdateAppearanceRequest {
 message DeleteCharacterRequest {
 }
 
+// A quickhack landed a status effect on somebody.
+//
+// SEPARATE FROM DAMAGE, because they arrive by different routes. A quickhack's damage runs
+// through Cyberpunk's ordinary hit pipeline and is already reported by the hit hook - an
+// Overheat burns health through gameHitEvent like anything else. What does NOT travel is
+// the EFFECT: blindness, a weapon glitch, crippled movement. Those are applied to the
+// puppet on the attacker's machine, and the person actually being hacked never learns of
+// them.
+//
+// This is the message that tells them. The victim's own game then applies the effect to
+// their real player, which is the only way it can affect anything - a status effect on a
+// puppet is a status effect on a puppet.
+//
+// The attacker comes from the connection, like every other combat message here.
+message StatusEffectRequest {
+    // Whose puppet caught it.
+    uint64 target_id = 1;
+
+    // TweakDBID of the StatusEffect record. Sent as the game's own id rather than a name
+    // we invent, so the receiver applies exactly what was applied here.
+    uint64 effect_id = 2;
+
+    uint32 stacks = 3;
+
+    // Which quickhack caused it, when one did. Zero otherwise - a status effect is not
+    // always a quickhack, and pretending it is would lie in the log.
+    uint64 source_id = 4;
+
+    uint32 sequence = 5;
+}
+
 // A weapon did something worth showing other people.
 //
 // Events, not state. A magazine is not replicated as a number that ticks down thirty times
@@ -363,5 +394,6 @@ message Protocol {
         VoiceFrameRequest voice_frame_request = 12;
         CombatEventRequest combat_event_request = 13;
         WeaponEventRequest weapon_event_request = 14;
+        StatusEffectRequest status_effect_request = 15;
     }
 }

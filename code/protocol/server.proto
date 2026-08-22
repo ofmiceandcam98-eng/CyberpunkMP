@@ -399,6 +399,20 @@ message NotifyCharacterList {
     string error = 2;
 }
 
+// A quickhack put a status effect on somebody - blindness, a weapon glitch, crippled
+// movement.
+//
+// Sent to everyone who can see the target, INCLUDING the target, who is the one person it
+// actually has to reach: the effect was applied to their puppet on somebody else's machine,
+// and until this arrives their own game has no idea. Their client applies it to their real
+// player, which is the only place it can do anything.
+message NotifyStatusEffect {
+    uint64 target_id = 1;
+    uint64 source_id = 2;
+    uint64 effect_id = 3;
+    uint32 stacks = 4;
+}
+
 // Somebody near you fired, reloaded, or changed weapon.
 //
 // The presentation half of combat: muzzle flash, firing animation, reload animation, the
@@ -544,5 +558,6 @@ message Protocol {
         NotifyCombatState notify_combat_state = 26;
         NotifyWeaponEvent notify_weapon_event = 27;
         NotifyWeaponState notify_weapon_state = 28;
+        NotifyStatusEffect notify_status_effect = 29;
     }
 }

@@ -61,6 +61,7 @@ Level::Level(World* apWorld) noexcept
     GServer->RegisterHandler<&Level::HandleVoiceFrameRequest>(this);
     GServer->RegisterHandler<&Level::HandleCombatEventRequest>(this);
     GServer->RegisterHandler<&Level::HandleWeaponEventRequest>(this);
+    GServer->RegisterHandler<&Level::HandleStatusEffectRequest>(this);
 
     m_updateSystem = m_pWorld->system<const LevelActorTag>("Level Update")
         .each([this](flecs::entity aEntity, const LevelActorTag&)
@@ -952,6 +953,63 @@ void Level::BroadcastAppearance(flecs::entity aPuppet) noexcept
 
             GServer->Send(aPlayerComponent.Connection, message);
         });
+}
+
+void Level::HandleStatusEffectRequest(PacketEvent<client::StatusEffectRequest>& aMessage) noexcept
+{
+    auto* pPlayerManager = GetWorld()->get_mut<PlayerManager>();
+
+    const auto attacker = pPlayerManager->GetByConnectionId(aMessage.ConnectionId);
+    if (!attacker)
+        return;
+
+    const auto* pAttacker = attacker.get<PlayerComponent>();
+    if (!pAttacker || !pAttacker->Puppet || !pAttacker->Puppet.is_alive())
+        return;
+
+    // A downed player is not hacking anybody.
+    if (const auto* pHealth = pAttacker->Puppet.get<HealthComponent>(); pHealth && pHealth->LifeState != 0)
+        return;
+
+    flecs::entity target(GetWorld()->get_world(), aMessage.get_target_id());
+
+    if (!target || !target.is_alive())
+        return;
+
+    if (aMessage.get_effect_id() == 0)
+        return;
+
+    // Range, same outer bound the damage path uses. A quickhack has a real range in the
+    // game's own rules; this is not that, it is the sanity check that stops an effect being
+    // applied from across the city. Per-hack ranges need quickhack data the server does not
+    // hold, and is noted as a gap rather than pretended away.
+    constexpr float kMaxHackRange = 250.f;
+
+    const auto* pAttackerMovement = pAttacker->Puppet.get<MovementComponent>();
+    const auto* pTargetMovement = target.get<MovementComponent>();
+
+    if (pAttackerMovement && pTargetMovement)
+    {
+        const auto delta = pTargetMovement->Position - pAttackerMovement->Position;
+
+        if (glm::dot(delta, delta) > kMaxHackRange * kMaxHackRange)
+            return;
+    }
+
+    server::NotifyStatusEffect message;
+    message.set_target_id(target.id());
+    message.set_source_id(pAttacker->Puppet.id());
+    message.set_effect_id(aMessage.get_effect_id());
+    message.set_stacks(aMessage.get_stacks());
+
+    // Everyone who can see it, and crucially the TARGET - they are the one person for whom
+    // this is not cosmetic. The effect was applied to their puppet on somebody else's
+    // machine; this is what makes it happen to them.
+    GetWorld()->get_world().each([&message](flecs::entity, const PlayerComponent& aPlayerComponent)
+                                 { GServer->Send(aPlayerComponent.Connection, message); });
+
+    spdlog::info("{} applied status effect {} to entity {}", pAttacker->Username, aMessage.get_effect_id(),
+                 target.id());
 }
 
 void Level::HandleWeaponEventRequest(PacketEvent<client::WeaponEventRequest>& aMessage) noexcept
