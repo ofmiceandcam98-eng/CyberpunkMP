@@ -1,47 +1,59 @@
 # The world template
 
 This is the save every multiplayer player loads. It is **not anybody's character** — it is
-the world, in a known-good state, with the story already out of the way.
+the world, in a known-good state, with Dogtown already open.
 
-Rescued from `AutoSave-0` on 2026-08-14. It was an autosave, which the game overwrites, so
-the original is already gone or will be shortly. This copy is the one that matters.
+Replaced on 2026-08-20. The previous template sat at `get_to_combat_zone` — the opening of
+Phantom Liberty — which meant every player arrived with Songbird calling them, Dog Eat Dog
+tracked, and the Dogtown gate shut in their face.
 
 ## What is in it
 
 | | |
 |---|---|
-| Level / street cred | 15 / 15 |
-| Act 1 | finished — 63 quests done |
-| Position | Night City, told to head for Dogtown |
-| Lifepath | Corporate, female body |
-| Game version | 2310 (patch 2.31) |
+| Level / street cred | 34 / 44 — **overridden to 15/15 by the server**, see below |
+| Body / lifepath | Female, Street Kid |
+| Position | Dogtown, on a minor-quest objective |
+| Game version | 2300 (patch 2.3) |
 | Modded | **no** |
+| Dogtown | **open, gate working both ways** |
 
-## Why this one
+## Why the level does not matter
 
-Three other saves matched "level 15 and past Act 1" and all of them were unusable:
+The server clamps a new character to level 15 on its first capture. The template's own level
+is an accident of which save happened to be usable, and letting it decide everyone's
+starting power would mean that swapping the template for world-state reasons silently moves
+the whole server's difficulty. Level and street cred are both proficiencies, so one clamp
+covers both.
 
-- **`isModded: true`.** A save made with mods can refuse to load, or load wrong, on a
-  machine that does not have them. This one goes to *every* player, so it has to be clean.
-- **Older game versions** (2.1, 2.12). The game migrates an older save on load, which is a
-  risk taken once per player for no benefit when a matching-version save exists.
+## Why patch 2300 rather than 2310
 
-This one is unmodded and built on the exact patch the mod targets.
+There was no choice. Every unmodded save past the Phantom Liberty intro is on 2300; the only
+2310 saves are at `get_to_combat_zone`, which is the problem being fixed. 2.3 to 2.31 is a
+single point release rather than the 2.1/2.12 gaps rejected previously, and the migration
+was **tested** on 2026-08-20: the save loads, Dogtown streams, and the gate works.
 
-## Why the tracked quest does not matter much
+## Why not just unlock the gate
 
-`get_to_combat_zone` is an open-world objective — "go to Dogtown" — not a scripted scene.
-V is standing free in Night City and can walk away from it. That is the important property:
-saves taken mid-mission drop players into an elevator or a cutscene, which is how a template
-breaks the game's own systems.
+Traced from the game files first. The obvious lever was `ep1_standalone`, and it is read by
+**69 quest phases** — the root quest graph, Act 1, the metro, open-world activities,
+apartments, the lifepath quests, and `ep1_community.questphase`, which is Dogtown's own NPC
+population. Clearing it would have depopulated the district it was meant to open.
 
-## What still has to happen to it
+The crossing facts (`by_car_dogtown_crossed` and friends) are genuinely local to one file,
+and setting them still did not work: while `q301_border` is active it owns the gate devices,
+so the open-world checkpoint logic never gets a say. Forcing the doors with `ForceOpen`
+would have produced a gate that opens without working — turrets hostile, guards alerted.
 
-Nothing here removes the singleplayer story or grants a loadout — that is the
-initialisation step, and it runs per character on first spawn rather than being baked in.
-Baking it in would mean every change to the starting loadout needed a new template.
+A save where the story already handed the gate back is the only route that leaves the
+checkpoint functioning as a checkpoint.
 
-## Replacing it
+## Tested 2026-08-20
 
-Any save works as long as it is: **unmodded**, on the **current game patch**, **past Act 1**,
-and **not mid-mission**. Drop the three files in and keep the folder name.
+Loads clean, drove out of Dogtown through the gate, drove back in. Both directions.
+
+## The male template
+
+`../character-template-male` is still on the old `get_to_combat_zone` state, so male players
+still meet a locked Dogtown. Body gender cannot be changed in game, so the fix is a male
+playthrough to the same point — not a conversion of this one.

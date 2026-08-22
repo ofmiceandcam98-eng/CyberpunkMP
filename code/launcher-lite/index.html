@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy"
-      content="default-src 'none'; img-src 'self' https://cdn.discordapp.com; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src 'self';">
+      content="default-src 'none'; img-src 'self' data: https://cdn.discordapp.com; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src 'self';">
 <title>Night City Online</title>
 <style>
   /* The display face for LARGE text only (brand, modal title, JACK IN). Orbitron,
@@ -100,6 +100,82 @@
   .brand span { color: var(--accent); }
 
   /* --- account chip in the header, shown once signed in --- */
+  /* The two identities travel together. Without this the header's space-between
+     scatters brand / Discord / Nexus / gear evenly across the bar, which reads as four
+     unrelated things rather than one account row. */
+  /* Device pickers. Full width because audio device names are long - "Microphone
+     (2- Focusrite USB Audio)" truncated to "Microphone (2- Foc..." tells nobody which
+     interface they picked, which is the one thing this control exists to answer. */
+  .voice-select {
+    width: 100%;
+    margin-top: .45rem;
+    padding: .4rem .5rem;
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    font-family: inherit;
+    font-size: .82rem;
+  }
+  .voice-select:disabled { color: var(--ink-dim); }
+
+  .voice-range { width: 100%; margin-top: .45rem; accent-color: var(--accent); }
+
+  /* The input meter. Segmented rather than a smooth bar so movement is obvious at a
+     glance - a continuous fill creeping by a few pixels is hard to distinguish from a
+     microphone doing nothing, which is the exact question this control exists to answer. */
+  .voice-meter {
+    height: 14px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .voice-meter-fill {
+    height: 100%;
+    width: 0%;
+    background: repeating-linear-gradient(
+      90deg, var(--accent) 0 6px, transparent 6px 9px);
+    transition: width .05s linear;
+  }
+  /* Red once it is clipping. Somebody whose interface gain is too high needs to SEE it,
+     not read about it afterwards. */
+  .voice-meter-fill.hot { background: repeating-linear-gradient(
+      90deg, #e05555 0 6px, transparent 6px 9px); }
+
+  /* While waiting for a key. The button has to look like it is listening, or a press that
+     did not register is indistinguishable from one that did. */
+  .action.listening {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .accounts { display: flex; align-items: center; gap: 1.5rem; }
+
+  /* Nexus has no avatar to show - the API returns a name, not a picture - so the slot
+     is filled with a mark of the same size, keeping both rows the same height whether
+     or not anyone is signed in. */
+  .nexus-mark {
+    width: 34px; height: 34px; border-radius: 50%;
+    display: grid; place-items: center;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    overflow: hidden;
+  }
+  /* The actual Nexus Mods mark (their favicon art, shipped alongside this file) - a
+     lone letter N in a circle read as a certain streaming service, not as Nexus. */
+  .nexus-mark img {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    /* Lit only once a key is actually held, so the mark answers "can this thing
+       install mods" at a glance rather than just decorating the corner. The color
+       shift alone carries the state - an accent ring on top of it read as a red
+       alert on the healthiest state in the header (zeldfep, 2026-08-21). */
+    filter: grayscale(1) opacity(.45);
+    transition: filter 150ms ease;
+  }
+  .nexus-mark.on img { filter: none; }
+
   .account { display: none; align-items: center; gap: .75rem; }
   .account.visible { display: flex; }
   .account img { width: 34px; height: 34px; border-radius: 50%; background: var(--surface); }
@@ -151,6 +227,54 @@
     flex-direction: column;
     gap: .4rem;
     padding-right: .25rem;
+  }
+
+  /* --- the download queue, under the mod list --- */
+  .modqueue {
+    margin-top: .5rem;
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    background: rgba(255, 42, 50, .04);
+    padding: .45rem .6rem .5rem;
+  }
+  .modqueue-head {
+    font-size: .62rem;
+    letter-spacing: .14em;
+    color: var(--dim);
+    margin-bottom: .35rem;
+  }
+  .queue-row {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    padding: .22rem 0;
+    font-size: .8rem;
+  }
+  .queue-row .qname { min-width: 9rem; }
+  .queue-row .qdetail { color: var(--dim); font-size: .72rem; flex: 1; }
+  .queue-row.failed .qdetail { color: var(--accent); }
+  .queue-row.waiting .qdetail { color: var(--hazard); }
+  .qbar {
+    flex: 1;
+    max-width: 10rem;
+    height: 4px;
+    background: #22262e;
+    overflow: hidden;
+  }
+  .qbar > div {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2, #7a1016));
+    transition: width .3s ease;
+  }
+  /* No length from Nexus, or extraction - progress is real but unmeasurable, and a bar
+     frozen at 0% reads as hung. A sweep says "working" without claiming a number. */
+  .qbar.indet > div {
+    width: 35%;
+    animation: qsweep 1.1s ease-in-out infinite alternate;
+  }
+  @keyframes qsweep { from { margin-left: 0; } to { margin-left: 65%; } }
+  @media (prefers-reduced-motion: reduce) {
+    .qbar.indet > div { animation: none; width: 100%; opacity: .4; }
   }
 
   .mod {
@@ -348,9 +472,24 @@
     text-align: center;
     white-space: nowrap;
   }
+  /* Tighter than the launcher-wide .6rem: the corner cuts already put visual air
+     between these three, so the standard gap read as loose ("a tad bit tighter on
+     the horizontal plane"). Scoped to the server card - rows elsewhere keep the
+     default rhythm. */
+  .admin .btn-row { gap: .35rem; }
   .start   { background: #2f7a4c; color: #eafff2; }
   .restart { background: #4a4f59; color: #e7e6df; }
   .stop    { background: #7a2f2f; color: #ffeaea; }
+  /* The lifecycle row wears a symmetric cut instead of the kit's one-sided notch.
+     Three notched buttons side by side made the middle one - Restart - read as
+     sheared: its only cut corners were top-left and bottom-right, so the eye saw a
+     parallelogram between two others doing the same thing ("the restart looks
+     asymmetrical", zeldfep, 2026-08-21). All four corners cut equally reads as one
+     deliberate industrial cluster, and each button is symmetric on both axes. */
+  .start, .restart, .stop {
+    clip-path: polygon(9px 0, calc(100% - 9px) 0, 100% 9px, 100% calc(100% - 9px),
+                       calc(100% - 9px) 100%, 9px 100%, 0 calc(100% - 9px), 0 9px);
+  }
   .admin-note {
     font-family: var(--mono); font-size: .64rem; color: #5c616c;
     word-break: break-all; text-align: center; line-height: 1.4;
@@ -633,6 +772,10 @@
   <header>
     <div class="brand">Night City <span>Online</span></div>
 
+    <!-- Both identities in one group, so the header's space-between keeps them together
+         as a pair instead of scattering four children across the bar. -->
+    <div class="accounts">
+
     <div class="account" id="account">
       <img id="avatar" alt="">
       <div class="who">
@@ -640,6 +783,22 @@
         <div class="id" id="discordId"></div>
       </div>
       <button class="linkbtn" id="logout">Log out</button>
+    </div>
+
+    <!-- The Nexus account, read the same way as the Discord one beside it.
+         Mods come from Nexus, so whether you are signed in there decides whether the
+         mod list can install anything - and that was previously only discoverable by
+         opening Settings and reading a paragraph. Same shape as the block above so it
+         reads as the second half of one identity row, not a new feature. -->
+    <div class="account" id="nexusAccount">
+      <div class="nexus-mark" id="nexusMark" aria-hidden="true"><img src="data:image/webp;base64,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" alt=""></div>
+      <div class="who">
+        <div class="name" id="nexusAccountName">Nexus</div>
+        <div class="id" id="nexusAccountState">not signed in</div>
+      </div>
+      <button class="linkbtn" id="nexusHeaderAction">Sign in</button>
+    </div>
+
     </div>
 
     <button class="gear" id="openSettings" title="Settings" aria-label="Settings">&#9881;</button>
@@ -657,12 +816,132 @@
       <div class="tabs" id="settingsTabs">
         <button data-tab="folders" class="active">Folders</button>
         <button data-tab="tools">Tools</button>
+        <button data-tab="voice">Voice</button>
         <button data-tab="dev" id="tabDev" style="display:none">Dev</button>
         <button data-tab="remove">Remove</button>
         <button data-tab="about">About</button>
       </div>
 
       <div class="modal-body">
+
+        <!-- VOICE
+             Phase 1 of the voice system: find the devices and let someone pick.
+             Nothing captures or transmits yet - this is the part that has to be right
+             first, because every voice problem after it starts with "which microphone".
+
+             Enumerated through the browser engine rather than native WASAPI. Chromium
+             already asks Windows for its audio endpoints and hands back the real device
+             names, which is the same list a native implementation would build - and it
+             works today rather than after a native audio layer lands. -->
+        <section class="panel" data-pane="voice">
+          <h3>Voice</h3>
+
+          <div class="tool">
+            <div style="min-width:0">
+              <div class="tool-name">Audio devices</div>
+              <div class="tool-desc" id="voiceHint">
+                Windows has to allow microphone access before it will tell us device names.
+                Press Find devices - if Windows asks, allow it.
+              </div>
+            </div>
+            <button class="action ghost" id="voiceScan">Find devices</button>
+          </div>
+
+          <div class="tool">
+            <div style="min-width:0">
+              <div class="tool-name">Microphone</div>
+              <div class="tool-desc">What other players hear you through.</div>
+              <select id="voiceInput" class="voice-select" disabled>
+                <option>Press Find devices</option>
+              </select>
+
+              <!-- The meter. Hidden until a test is running: an empty bar sitting there
+                   permanently reads as a microphone that is not working. -->
+              <div id="voiceMeterRow" style="display:none;margin-top:.5rem">
+                <div class="voice-meter"><div class="voice-meter-fill" id="voiceMeterFill"></div></div>
+                <div class="tool-desc" id="voiceMeterText">Say something.</div>
+              </div>
+            </div>
+            <button class="action ghost" id="voiceTest">Test</button>
+          </div>
+
+          <div class="tool">
+            <div style="min-width:0">
+              <div class="tool-name">Voice output</div>
+              <div class="tool-desc">
+                Where you hear other players. Separate from game audio, so voice can go to a
+                headset while the game stays on speakers.
+              </div>
+              <select id="voiceOutput" class="voice-select" disabled>
+                <option>Press Find devices</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="tool">
+            <div style="min-width:0">
+              <div class="tool-name">Push-to-talk key</div>
+              <div class="tool-desc">
+                Held to talk. Any key, or a mouse button - side buttons work.
+              </div>
+            </div>
+            <button class="action ghost" id="voiceBindKey">V</button>
+          </div>
+
+          <div class="tool">
+            <div style="min-width:0">
+              <div class="tool-name">Voice range key</div>
+              <div class="tool-desc">
+                Cycles whisper &rarr; local &rarr; yell. Separate from talking: pressing it
+                changes how far you carry, it does not put you on air.
+              </div>
+            </div>
+            <button class="action ghost" id="voiceBindRangeKey">B</button>
+          </div>
+
+          <div class="tool">
+            <div style="min-width:0">
+              <div class="tool-name">Voice mode</div>
+              <div class="tool-desc">
+                Hold to talk is the default on purpose - voice activation sends whatever
+                your room is doing, and you are the last to know.
+              </div>
+              <select id="voiceMode" class="voice-select">
+                <option value="ptt">Hold to talk</option>
+                <option value="toggle">Toggle on and off</option>
+                <option value="activation">Open when I speak</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="tool">
+            <div style="min-width:0">
+              <div class="tool-name">Microphone volume</div>
+              <div class="tool-desc">How loud you are to everyone else.</div>
+              <input type="range" id="voiceMicVolume" class="voice-range" min="0" max="200" value="100">
+              <div class="tool-desc"><span id="voiceMicVolumeValue">100%</span></div>
+            </div>
+          </div>
+
+          <div class="tool">
+            <div style="min-width:0">
+              <div class="tool-name">Voice chat volume</div>
+              <div class="tool-desc">How loud everyone else is to you.</div>
+              <input type="range" id="voiceChatVolume" class="voice-range" min="0" max="200" value="100">
+              <div class="tool-desc"><span id="voiceChatVolumeValue">100%</span></div>
+            </div>
+          </div>
+
+          <div class="tool">
+            <div style="min-width:0">
+              <div class="tool-name" id="voiceStatusTitle">Saved on this PC</div>
+              <div class="tool-desc" id="voiceStatus">
+                These are passed to the game when you press JACK IN, so change them before
+                launching. Voice capture itself is still being built - nothing transmits yet.
+              </div>
+            </div>
+          </div>
+        </section>
 
         <!-- FOLDERS -->
         <section class="panel pane-active" data-pane="folders">
@@ -1153,6 +1432,38 @@
 
         <div class="modlist" id="modList"></div>
 
+        <!-- The one active install, whichever door it came through - queue, nxm://
+             click, Add mod, repair or update. Every install path holds one global
+             lock, so this strip is bound to exactly one download at a time by
+             construction; it cannot show two installs braided together. -->
+        <div class="modqueue" id="installStrip" style="display:none">
+          <div class="modqueue-head">/// INSTALLING ///</div>
+          <div class="queue-row downloading">
+            <span class="dot busy"></span>
+            <span class="qname" id="installName"></span>
+            <div class="qbar" id="installBar"><div id="installFill"></div></div>
+            <span class="qdetail" id="installDetail"></span>
+          </div>
+        </div>
+
+        <!-- The download queue: one mod at a time, in load order, frameworks first.
+             Hidden until Install missing starts one. Strictly serial on purpose - what
+             broke installs was never speed, it was a mod landing before its framework. -->
+        <div class="modqueue" id="modQueue" style="display:none">
+          <div class="modqueue-head">/// DOWNLOAD QUEUE — one at a time, load order ///</div>
+          <div id="modQueueRows"></div>
+        </div>
+
+        <!-- Install anything from Nexus without a second mod manager: paste the mod's
+             page link (or just its number) and it lands here, recorded file by file
+             like everything else, listed under YOUR MODS above. -->
+        <div class="btn-row" style="margin-top:.5rem">
+          <input type="text" id="addModInput" placeholder="Nexus mod link or number..."
+                 style="flex:1;min-width:0;background:var(--bg,#111);color:inherit;border:1px solid rgba(255,255,255,.2);border-radius:0;padding:6px 10px;font:inherit"
+                 spellcheck="false">
+          <button class="action ghost" id="addModBtn" style="flex:0 0 auto">Add mod</button>
+        </div>
+
         <div class="field-hint" id="modHint" style="margin-top:.5rem"></div>
       </div>
     </div>
@@ -1202,6 +1513,11 @@
   // down would break the very first render.
   let updateState = null
   let serverState = null
+
+  // One short phrase describing the manifest state, rendered after the mod version.
+  // Empty during migration (no manifest published yet) so nothing changes for anyone
+  // until there is something true to say.
+  let manifestSummary = ''
 
   // Set from the main process as the launcher updates itself, not from any check we
   // run here - the updater owns that state and reports on it.
@@ -1413,6 +1729,11 @@
     $('dot').className = 'dot' + (verified ? ' on' : '')
     $('account').className = 'account' + (signedIn ? ' visible' : '')
     loginBtn.style.display = signedIn ? 'none' : 'inline-block'
+
+    // The Nexus chip appears and disappears with the Discord one, since it sits beside it.
+    // Fired here rather than only from Settings so the header is right on first paint -
+    // otherwise it reads "not signed in" until somebody happens to open Settings.
+    refreshNexus()
 
     showAdminPanel(signedIn && user.isAdmin)
 
@@ -1729,7 +2050,10 @@
       dot.className = 'dot on'
       // Says MOD explicitly. This line reports the mod's version, and sat directly above
       // a launcher that showed no version of its own - so it read as the launcher's.
-      text.textContent = 'Mod up to date' + (updateState.version ? ' - ' + updateState.version : '')
+      // The manifest suffix says which APPROVED ENVIRONMENT that version was verified
+      // against - the number the server checks at the door.
+      text.textContent = 'Mod up to date' + (updateState.version ? ' - ' + updateState.version : '') +
+        (manifestSummary ? ' · ' + manifestSummary : '')
       // Nothing to do, so the button is not shown at all. A permanently disabled
       // "Update" button invites people to keep pressing it wondering what is broken.
       updateBtn.style.display = 'none'
@@ -1933,6 +2257,28 @@
 
     const result = await window.launcher.checkUpdate()
     updateState = result.ok ? result : null
+
+    // The manifest state rides the same refresh. 'invalid' is the one state that must
+    // interrupt: a manifest that FAILS signature verification is tampering evidence,
+    // not an outage, and quietly carrying on is exactly what the signature exists to
+    // prevent. Everything else is a suffix on the mod row.
+    try {
+      const m = await window.launcher.manifestStatus()
+      if (m.ok) {
+        if (m.state === 'valid' || m.state === 'cached' || m.state === 'rollback') {
+          manifestSummary = 'manifest ' + m.version
+        } else if (m.state === 'invalid') {
+          manifestSummary = 'MANIFEST UNVERIFIED'
+          setStatus('The server manifest failed signature verification - do not trust this update channel. Report this in the Discord.', 'error')
+        } else if (m.state === 'launcher-too-old') {
+          manifestSummary = 'launcher too old for manifest'
+        } else {
+          manifestSummary = ''
+        }
+        if (m.warning && m.state !== 'invalid') console.warn('[manifest]', m.warning)
+      }
+    } catch { manifestSummary = '' }
+
     renderUpdateState()
     renderLauncherState()
     renderChangelog()
@@ -2239,8 +2585,17 @@
       const button = document.createElement('button')
       button.className = release.active ? 'action stop' : 'action ghost'
       button.textContent = release.active ? 'Uninstall' : 'Install'
-      button.disabled = !release.active && !release.hasDll
-      if (!release.hasDll) button.title = 'No CyberpunkMP.dll attached to this pre-release'
+      // Installable means "has something install can use" - a payload OR a bare DLL.
+      //
+      // This asked for a DLL specifically, from when a test build was one. Install prefers
+      // ModPayload.zip now, so a payload-only build was listed with Install greyed out and
+      // a tooltip claiming nothing was attached, when it was the newer and better of the
+      // two formats. `installable` is computed alongside hasDll rather than replacing it,
+      // because the two answer different questions and hasDll is still worth showing.
+      const usable = release.installable ?? release.hasDll
+
+      button.disabled = !release.active && !usable
+      if (!usable) button.title = 'Nothing installable is attached to this pre-release'
 
       button.addEventListener('click', async () => {
         button.disabled = true
@@ -2294,10 +2649,20 @@
     selectSettingsTab(currentSettingsTab)
     setSettingsStatus('')
     refreshSettings()
+
+    // Voice preferences are meaningful without a device scan, so they are restored on
+    // open. Showing defaults over somebody's saved binding would look like the launcher
+    // had forgotten it.
+    loadVoicePrefs()
   }
 
   function closeSettings () {
     $('settingsModal').style.display = 'none'
+
+    // Never leave the microphone open behind a closed dialog. Windows shows a recording
+    // indicator, and a launcher that appears to be listening after you have walked away
+    // from it is alarming whether or not it is doing anything.
+    stopMicTest()
   }
 
   $('openSettings').addEventListener('click', openSettings)
@@ -2334,6 +2699,606 @@
     $('nexusState').textContent = status.signedIn
       ? '✓ Signed in as ' + (status.name || 'Nexus user')
       : 'Not signed in'
+
+    // The header says the same thing, because that is where people look.
+    //
+    // Whether Nexus is connected decides whether the mod list can install anything, and
+    // that was previously only discoverable by opening Settings and reading a paragraph -
+    // so "Install does nothing" was the first anyone heard of it.
+    renderNexusHeader(status)
+  }
+
+  // Shown next to the Discord account, in the same shape, because they are two halves of
+  // one question: who are you here, and who are you on Nexus.
+  function renderNexusHeader (status) {
+    const account = $('nexusAccount')
+    const mark = $('nexusMark')
+    const action = $('nexusHeaderAction')
+
+    // Only alongside a signed-in Discord account. On the sign-in screen there is no
+    // account row to sit beside, and a lone Nexus chip there would be asking the wrong
+    // question first.
+    const discordVisible = $('account').classList.contains('visible')
+    account.className = 'account' + (discordVisible ? ' visible' : '')
+
+    if (status && status.signedIn) {
+      $('nexusAccountName').textContent = status.name || 'Nexus user'
+      $('nexusAccountState').textContent = 'nexus mods'
+      mark.className = 'nexus-mark on'
+      action.textContent = 'Sign out'
+      action.dataset.mode = 'out'
+    } else {
+      $('nexusAccountName').textContent = 'Nexus'
+      $('nexusAccountState').textContent = 'not signed in'
+      mark.className = 'nexus-mark'
+      action.textContent = 'Sign in'
+      action.dataset.mode = 'in'
+    }
+  }
+
+  /**
+   * The header's Nexus button: one press to connect, one to disconnect.
+   *
+   * Tries the browser sign-in FIRST - the whole point is not having to find and paste an
+   * API key. That flow only works for applications Nexus has approved, so when it is
+   * refused this falls through to opening the key page and pointing at Settings, which is
+   * the path that always works. The person still gets somewhere either way; they do not
+   * get a button that failed and said nothing.
+   */
+  $('nexusHeaderAction').addEventListener('click', async () => {
+    const action = $('nexusHeaderAction')
+
+    if (action.dataset.mode === 'out') {
+      await window.launcher.nexusSignOut()
+      await refreshNexus()
+      setStatus('Signed out of Nexus.', 'ok')
+      return
+    }
+
+    action.disabled = true
+    action.textContent = 'Opening...'
+    setStatus('Approve the sign-in in your browser, then come back.')
+
+    try {
+      const result = await window.launcher.nexusSsoLogin()
+
+      if (result && result.ok) {
+        await refreshNexus()
+        setStatus('Signed in to Nexus as ' + (result.name || 'Nexus user') + '.', 'ok')
+        return
+      }
+
+      // Refused - almost always because this launcher is not an approved Nexus
+      // application. Say so plainly and open the page that does work.
+      await window.launcher.openLink('nexusApi')
+      setStatus('Nexus would not approve the one-click sign-in, so your API key page is open - '
+        + 'copy the key into Settings > Dev.', 'error')
+    } catch (err) {
+      setStatus('Could not reach Nexus: ' + err.message, 'error')
+    } finally {
+      action.disabled = false
+      await refreshNexus()
+    }
+  })
+
+  // ---------------------------------------------------------------------------
+  // VOICE - device discovery
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Names that mean "this is the computer's own output, fed back in".
+   *
+   * Windows exposes these as capture endpoints even though they carry rendered system
+   * audio, so they sit in the microphone list looking like microphones. Picked by
+   * accident, everyone else hears the game, Discord, Spotify and Windows sounds instead
+   * of a voice - the exact failure the voice brief calls out.
+   *
+   * Matched on name because that is the only signal the browser engine exposes; a native
+   * WASAPI layer could ask the endpoint what it is. Flagged rather than hidden: on some
+   * setups a loopback IS deliberately what somebody wants, and silently removing a device
+   * they were looking for is its own bug.
+   */
+  const LOOPBACK_HINTS = [
+    'stereo mix', 'wave out', 'what u hear', 'what you hear',
+    'loopback', 'sum', 'mixed output', 'rec. playback'
+  ]
+
+  function looksLikeLoopback (label) {
+    const l = (label || '').toLowerCase()
+    return LOOPBACK_HINTS.some((h) => l.includes(h))
+  }
+
+  function fillDeviceList (select, devices, savedId) {
+    select.innerHTML = ''
+
+    // "Windows default" first and selected unless something else was saved. Following the
+    // system default is what most people want and what survives plugging a headset in.
+    const def = document.createElement('option')
+    def.value = 'default'
+    def.textContent = 'Windows default'
+    select.appendChild(def)
+
+    for (const d of devices) {
+      const option = document.createElement('option')
+      option.value = d.deviceId
+
+      // An empty label means Windows withheld the name - permission was refused, or the
+      // scan ran before it was granted. Say that rather than showing a blank row.
+      const name = d.label || 'Unnamed device'
+      option.textContent = looksLikeLoopback(name) ? name + '  — SYSTEM AUDIO, not a mic' : name
+
+      select.appendChild(option)
+    }
+
+    select.disabled = false
+
+    // Marks this list as real, so saving knows the value is a device rather than a
+    // placeholder. Without it, a save before any scan stores "Press Find devices" as
+    // somebody's microphone and hands that to the game at launch.
+    select.dataset.populated = '1'
+
+    // The saved choice, if that device is still here. A device that has been unplugged
+    // since falls back to the Windows default rather than selecting nothing - a dropdown
+    // with no selection reads as broken.
+    if (savedId) select.value = savedId
+    if (!select.value) select.value = 'default'
+  }
+
+  async function scanVoiceDevices () {
+    const btn = $('voiceScan')
+    btn.disabled = true
+    btn.textContent = 'Searching...'
+
+    try {
+      // Permission FIRST. enumerateDevices returns entries either way, but the labels are
+      // blank until microphone access is granted - a list of nameless devices is worse
+      // than no list, because it looks like the scan worked.
+      let granted = false
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        stream.getTracks().forEach((t) => t.stop())   // released immediately; nothing is recorded
+        granted = true
+      } catch {
+        granted = false
+      }
+
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const inputs = devices.filter((d) => d.kind === 'audioinput')
+      const outputs = devices.filter((d) => d.kind === 'audiooutput')
+
+      const saved = await window.launcher.getVoiceSettings()
+
+      fillDeviceList($('voiceInput'), inputs, saved?.inputDevice)
+      fillDeviceList($('voiceOutput'), outputs, saved?.outputDevice)
+
+      const loopbacks = inputs.filter((d) => looksLikeLoopback(d.label)).length
+
+      if (!granted) {
+        $('voiceHint').textContent =
+          'Windows did not allow microphone access, so device names are hidden. '
+          + 'Allow the microphone for Night City Online in Windows privacy settings, then search again.'
+      } else {
+        $('voiceHint').textContent =
+          `Found ${inputs.length} microphone${inputs.length === 1 ? '' : 's'} and `
+          + `${outputs.length} output${outputs.length === 1 ? '' : 's'}.`
+          + (loopbacks > 0
+            ? ' One or more are system-audio loopbacks - marked in the list, and not what you want for voice.'
+            : '')
+      }
+    } catch (err) {
+      $('voiceHint').textContent = 'Could not read the audio devices: ' + err.message
+    } finally {
+      btn.disabled = false
+      btn.textContent = 'Find devices'
+    }
+  }
+
+  $('voiceScan').addEventListener('click', scanVoiceDevices)
+
+  /**
+   * Put the saved voice settings back on screen.
+   *
+   * Called when Settings opens rather than only after a scan: the key, mode and volumes
+   * are meaningful without ever pressing Find devices, and a page that showed defaults
+   * over the top of somebody's saved binding would look like it had forgotten it.
+   *
+   * The device dropdowns are deliberately NOT filled here - their options do not exist
+   * until a scan has run, and inventing rows for device ids whose names we cannot read
+   * would show a list of unidentifiable entries.
+   */
+  async function loadVoicePrefs () {
+    const saved = await window.launcher.getVoiceSettings()
+    if (!saved) return
+
+    const key = saved.pushToTalkKey || 'IK_V'
+    $('voiceBindKey').dataset.key = key
+    $('voiceBindKey').textContent = prettyKey(key)
+
+    const rangeKey = saved.cycleRangeKey || 'IK_F12'
+    $('voiceBindRangeKey').dataset.key = rangeKey
+    $('voiceBindRangeKey').textContent = prettyKey(rangeKey)
+
+    $('voiceMode').value = saved.mode || 'ptt'
+
+    $('voiceMicVolume').value = saved.micVolume ?? 100
+    $('voiceChatVolume').value = saved.chatVolume ?? 100
+    $('voiceMicVolumeValue').textContent = $('voiceMicVolume').value + '%'
+    $('voiceChatVolumeValue').textContent = $('voiceChatVolume').value + '%'
+
+    // Show the saved devices by NAME, before any scan has run.
+    //
+    // The dropdowns cannot hold the real list yet - that needs Windows, and asking for it
+    // every time Settings opens would put a microphone permission prompt in front of
+    // somebody who came to look at something else. But showing "Press Find devices" over
+    // a choice they already made reads as the launcher having forgotten it.
+    //
+    // So the saved name is shown as the selected row until a scan replaces it with the
+    // live list, which then re-selects the same device by id.
+    showSavedDevice($('voiceInput'), saved.inputDevice, saved.inputDeviceName)
+    showSavedDevice($('voiceOutput'), saved.outputDevice, saved.outputDeviceName)
+  }
+
+  function showSavedDevice (select, deviceId, deviceName) {
+    // Only while the list is still the placeholder. Once a scan has populated it, the real
+    // options are better than a remembered name.
+    if (select.dataset.populated === '1') return
+
+    select.innerHTML = ''
+
+    const option = document.createElement('option')
+    option.value = deviceId || 'default'
+    option.textContent = deviceName || 'Windows default'
+
+    select.appendChild(option)
+    select.value = option.value
+  }
+
+  // ---------------------------------------------------------------------------
+  // VOICE - microphone test
+  //
+  // Runs entirely here. No server, no game, no native audio - the browser engine can
+  // already open a capture device and measure it, and somebody debugging a silent
+  // microphone should not have to launch Cyberpunk to find out whether Windows hears them.
+  // ---------------------------------------------------------------------------
+
+  let micTest = null
+
+  async function startMicTest () {
+    const deviceId = $('voiceInput').value
+    const btn = $('voiceTest')
+
+    try {
+      // The SELECTED device, not the default - testing something other than the device
+      // about to be used would be worse than not testing at all. `exact` so the browser
+      // fails rather than quietly substituting another microphone.
+      const constraints = (deviceId && deviceId !== 'default')
+        ? { audio: { deviceId: { exact: deviceId } } }
+        : { audio: true }
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints)
+
+      const ctx = new AudioContext()
+      const source = ctx.createMediaStreamSource(stream)
+      const analyser = ctx.createAnalyser()
+
+      // Small window, so the meter reacts at the speed a person expects. A large one
+      // averages away the transients that make a meter look alive.
+      analyser.fftSize = 1024
+
+      source.connect(analyser)
+
+      // Deliberately NOT connected to the destination. Routing a microphone to the
+      // speakers is how a test session becomes a feedback squeal, and on speakers it is
+      // instant.
+      const data = new Float32Array(analyser.fftSize)
+      let clippedRecently = false
+
+      const tick = () => {
+        if (!micTest) return
+
+        analyser.getFloatTimeDomainData(data)
+
+        let peak = 0
+        for (let i = 0; i < data.length; i++) {
+          const v = Math.abs(data[i])
+          if (v > peak) peak = v
+        }
+
+        // Full scale is 1.0. Shown on a curve rather than linearly, because a linear
+        // meter spends most of a normal speaking voice in the bottom fifth and looks
+        // broken.
+        const shown = Math.min(100, Math.round(Math.pow(peak, 0.6) * 100))
+
+        const fill = $('voiceMeterFill')
+        fill.style.width = shown + '%'
+
+        const clipping = peak >= 0.99
+        fill.className = 'voice-meter-fill' + (clipping ? ' hot' : '')
+
+        if (clipping) clippedRecently = true
+
+        $('voiceMeterText').textContent = clipping
+          ? 'Too loud - turn your interface gain or mic level down.'
+          : peak < 0.01
+            ? 'Not hearing anything. Say something, or check the device is the right one.'
+            : clippedRecently
+              ? 'Working. It clipped earlier - worth turning the gain down a little.'
+              : 'Working.'
+
+        micTest.frame = requestAnimationFrame(tick)
+      }
+
+      micTest = { stream, ctx, frame: 0 }
+      $('voiceMeterRow').style.display = ''
+      btn.textContent = 'Stop'
+      btn.classList.add('listening')
+
+      tick()
+    } catch (err) {
+      // Named causes where the browser gives one. "It didn't work" is useless when the
+      // difference is Windows privacy settings versus a device somebody unplugged.
+      const reason = err && err.name === 'NotAllowedError'
+        ? 'Windows is not allowing microphone access - check privacy settings for desktop apps.'
+        : err && err.name === 'NotFoundError'
+          ? 'That microphone is not connected any more. Press Find devices again.'
+          : err && err.name === 'NotReadableError'
+            ? 'Another program is using that microphone exclusively.'
+            : 'Could not open that microphone: ' + (err?.message || 'unknown error')
+
+      setSettingsStatus(reason, 'error')
+    }
+  }
+
+  function stopMicTest () {
+    if (!micTest) return
+
+    cancelAnimationFrame(micTest.frame)
+    micTest.stream.getTracks().forEach((t) => t.stop())
+    micTest.ctx.close()
+    micTest = null
+
+    $('voiceMeterRow').style.display = 'none'
+    $('voiceTest').textContent = 'Test'
+    $('voiceTest').classList.remove('listening')
+  }
+
+  $('voiceTest').addEventListener('click', () => {
+    if (micTest) stopMicTest()
+    else startMicTest()
+  })
+
+  // ---------------------------------------------------------------------------
+  // VOICE - push-to-talk key
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Browser key name -> the game's own key id.
+   *
+   * The game speaks IK_* and the browser speaks KeyboardEvent.code, so somewhere has to
+   * translate. Here, once, rather than in the game: the launcher is where the key is
+   * chosen and it is the only side that ever sees a browser event.
+   *
+   * Letters and digits follow a pattern and are generated. Everything else is listed,
+   * because the two naming schemes agree far less often than they appear to - Escape is
+   * IK_Escape but ControlLeft is IK_LControl, and guessing produces a binding that saves
+   * cleanly and does nothing in game.
+   */
+  const KEY_MAP = (() => {
+    const map = {
+      Escape: 'IK_Escape', Space: 'IK_Space', Enter: 'IK_Enter', Tab: 'IK_Tab',
+      Backspace: 'IK_Backspace', CapsLock: 'IK_CapsLock',
+      ShiftLeft: 'IK_LShift', ShiftRight: 'IK_RShift',
+      ControlLeft: 'IK_LControl', ControlRight: 'IK_RControl',
+      AltLeft: 'IK_LAlt', AltRight: 'IK_RAlt',
+      ArrowUp: 'IK_Up', ArrowDown: 'IK_Down', ArrowLeft: 'IK_Left', ArrowRight: 'IK_Right',
+      Insert: 'IK_Insert', Delete: 'IK_Delete', Home: 'IK_Home', End: 'IK_End',
+      PageUp: 'IK_PageUp', PageDown: 'IK_PageDown',
+      Backquote: 'IK_Tilde', Minus: 'IK_Minus', Equal: 'IK_Equals',
+      BracketLeft: 'IK_LBracket', BracketRight: 'IK_RBracket', Backslash: 'IK_Backslash',
+      Semicolon: 'IK_Semicolon', Quote: 'IK_Apostrophe',
+      Comma: 'IK_Comma', Period: 'IK_Period', Slash: 'IK_Slash'
+    }
+
+    for (let i = 0; i < 26; i++) {
+      const letter = String.fromCharCode(65 + i)
+      map['Key' + letter] = 'IK_' + letter
+    }
+    for (let i = 0; i <= 9; i++) map['Digit' + i] = 'IK_' + i
+    for (let i = 1; i <= 12; i++) map['F' + i] = 'IK_F' + i
+    for (let i = 0; i <= 9; i++) map['Numpad' + i] = 'IK_Pad_' + i
+
+    return map
+  })()
+
+  // Mouse buttons the game understands. Left is deliberately absent - binding voice to
+  // left click makes the game unplayable, and somebody trying it has misunderstood rather
+  // than made a choice worth honouring.
+  const MOUSE_MAP = {
+    1: 'IK_MiddleMouse',
+    2: 'IK_RightMouse',
+    3: 'IK_Mouse4',
+    4: 'IK_Mouse5'
+  }
+
+  // What to SHOW. IK_Mouse4 is what the game wants; "Mouse 4" is what a person recognises.
+  function prettyKey (gameKey) {
+    if (!gameKey) return 'None'
+
+    return gameKey
+      .replace(/^IK_/, '')
+      .replace('LShift', 'Left Shift').replace('RShift', 'Right Shift')
+      .replace('LControl', 'Left Ctrl').replace('RControl', 'Right Ctrl')
+      .replace('LAlt', 'Left Alt').replace('RAlt', 'Right Alt')
+      .replace('MiddleMouse', 'Middle Mouse').replace('RightMouse', 'Right Mouse')
+      .replace('Mouse4', 'Mouse 4').replace('Mouse5', 'Mouse 5')
+      .replace('Pad_', 'Numpad ')
+  }
+
+  let bindingKey = false
+
+  /**
+   * Listen for the next key or mouse button and bind it.
+   *
+   * Captured on the window with capture:true so it is seen before anything else can act on
+   * it - otherwise choosing Escape closes the settings dialog instead of binding, and
+   * choosing Tab moves focus.
+   *
+   * Escape cancels rather than binds. A key that cannot be escaped out of is a trap, and
+   * Escape is the one key everybody presses to get out of a prompt they did not mean to
+   * open.
+   */
+  function beginKeyBind (buttonId) {
+    if (bindingKey) return
+
+    bindingKey = true
+
+    const btn = $(buttonId)
+    const other = $(buttonId === 'voiceBindKey' ? 'voiceBindRangeKey' : 'voiceBindKey')
+    const previous = btn.textContent
+    btn.textContent = 'Press a key...'
+    btn.classList.add('listening')
+
+    const finish = async (gameKey) => {
+      window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('mousedown', onMouse, true)
+      bindingKey = false
+      btn.classList.remove('listening')
+
+      if (!gameKey) {
+        btn.textContent = previous
+        return
+      }
+
+      // Talking and changing range cannot share a key. They are the two controls most
+      // likely to be pressed together, and one key doing both means every range change
+      // also puts you on air.
+      if (other.dataset.key === gameKey) {
+        btn.textContent = previous
+        setSettingsStatus(prettyKey(gameKey) + ' is already your other voice key - '
+          + 'talking and changing range need different keys.', 'error')
+        return
+      }
+
+      // The game's id is what gets saved and passed at launch; the button only ever shows
+      // the readable form, so both have to be carried.
+      btn.dataset.key = gameKey
+      btn.textContent = prettyKey(gameKey)
+
+      await saveVoicePrefs()
+
+      const what = (buttonId === 'voiceBindKey') ? 'Push-to-talk' : 'Voice range'
+      setSettingsStatus(what + ' is now ' + prettyKey(gameKey) + '. Applies next time you launch.')
+    }
+
+    const onKey = (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+
+      if (e.code === 'Escape') return finish(null)
+
+      const mapped = KEY_MAP[e.code]
+      if (!mapped) {
+        setSettingsStatus('That key is not one the game recognises - try another.')
+        return
+      }
+
+      finish(mapped)
+    }
+
+    const onMouse = (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+
+      const mapped = MOUSE_MAP[e.button]
+      if (!mapped) {
+        setSettingsStatus('Left click cannot be used for voice - pick another button.')
+        return
+      }
+
+      finish(mapped)
+    }
+
+    window.addEventListener('keydown', onKey, true)
+    window.addEventListener('mousedown', onMouse, true)
+  }
+
+  $('voiceBindKey').addEventListener('click', () => beginKeyBind('voiceBindKey'))
+  $('voiceBindRangeKey').addEventListener('click', () => beginKeyBind('voiceBindRangeKey'))
+
+  /**
+   * Write every voice choice down.
+   *
+   * The device dropdowns are only read once they have been POPULATED. Before a scan they
+   * hold a placeholder row - "Press Find devices" - and saving that would store the
+   * placeholder as somebody's microphone, then hand it to the game at launch. The
+   * previously saved device is kept instead, which is the correct answer for "they have
+   * not chosen anything new".
+   *
+   * The device NAME is saved beside the id so the choice can be shown again before any
+   * scan has run. An endpoint id is unreadable, and a settings page that shows an
+   * unreadable string looks like it lost the setting.
+   */
+  async function saveVoicePrefs () {
+    const previous = await window.launcher.getVoiceSettings()
+
+    const inputReady = $('voiceInput').dataset.populated === '1'
+    const outputReady = $('voiceOutput').dataset.populated === '1'
+
+    const chosenName = (select) => select.selectedOptions[0]?.textContent || ''
+
+    await window.launcher.saveVoiceSettings({
+      inputDevice: inputReady ? $('voiceInput').value : previous?.inputDevice,
+      inputDeviceName: inputReady ? chosenName($('voiceInput')) : previous?.inputDeviceName,
+
+      outputDevice: outputReady ? $('voiceOutput').value : previous?.outputDevice,
+      outputDeviceName: outputReady ? chosenName($('voiceOutput')) : previous?.outputDeviceName,
+
+      pushToTalkKey: $('voiceBindKey').dataset.key || 'IK_V',
+      cycleRangeKey: $('voiceBindRangeKey').dataset.key || 'IK_F12',
+      mode: $('voiceMode').value,
+      micVolume: Number($('voiceMicVolume').value),
+      chatVolume: Number($('voiceChatVolume').value)
+    })
+  }
+
+  for (const id of ['voiceMicVolume', 'voiceChatVolume']) {
+    $(id).addEventListener('input', () => {
+      $(id + 'Value').textContent = $(id).value + '%'
+    })
+    $(id).addEventListener('change', saveVoicePrefs)
+  }
+
+  $('voiceMode').addEventListener('change', async () => {
+    await saveVoicePrefs()
+
+    // Say what changed, because the modes differ in a way the words alone do not carry.
+    $('voiceStatus').textContent = $('voiceMode').value === 'activation'
+      ? 'Your microphone will open by itself when you speak - and will send whatever else '
+        + 'your room is doing. Hold to talk if anyone has ever heard your keyboard.'
+      : 'Saved. Applies next time you launch.'
+  })
+
+  // Saved on change rather than behind a Save button - a dropdown that needs confirming is
+  // a dropdown people forget to confirm.
+  for (const id of ['voiceInput', 'voiceOutput']) {
+    $(id).addEventListener('change', async () => {
+      // A running test is measuring the device that was just replaced. Stopping is
+      // honest; leaving it would show a meter for one microphone under the name of
+      // another, which is the single most confusing thing this page could do.
+      if (id === 'voiceInput') stopMicTest()
+
+      await window.launcher.saveVoiceSettings({
+        inputDevice: $('voiceInput').value,
+        outputDevice: $('voiceOutput').value
+      })
+
+      const chosen = $(id).selectedOptions[0]?.textContent || ''
+
+      $('voiceStatus').textContent = looksLikeLoopback(chosen)
+        ? 'That device carries your computer\'s own audio. Other players would hear your game, '
+          + 'music and Discord instead of you. Pick a microphone unless you know you want this.'
+        : 'Saved. Voice capture is not built yet - this only chooses the devices it will use.'
+    })
   }
 
   $('nexusGetKey').addEventListener('click', async () => {
@@ -2422,6 +3387,7 @@
   // --- mod list ---------------------------------------------------------------
 
   let modState = []
+  let personalState = []
   let modsSignedIn = null
 
   function renderMods () {
@@ -2498,6 +3464,15 @@
       }
 
       if (mod.state === 'installed') {
+        // The approved version first: for listed mods that is the server's pin, and the
+        // button only appears when the recorded install differs from it.
+        if (mod.updateAvailable) {
+          badge.className = 'mod-badge missing'
+          badge.textContent = 'UPDATE'
+          badge.title = mod.reason || 'A different version is expected'
+          row.appendChild(makeUpdateButton(mod))
+        }
+
         const remove = document.createElement('button')
         remove.className = 'mod-btn danger'
         remove.textContent = '🗑'
@@ -2516,15 +3491,84 @@
 
       list.appendChild(row)
     }
+
+    // The player's own installs - anything added by link, number, or a Nexus "Mod
+    // Manager Download" click that was never on the server's list. Same records, same
+    // verify/repair/removal; this section is what makes the launcher a mod manager
+    // rather than a checklist, so nobody needs a second one.
+    if (personalState.length > 0) {
+      const head = document.createElement('div')
+      head.className = 'modqueue-head'
+      head.style.marginTop = '.6rem'
+      head.textContent = '/// YOUR MODS — not on the server’s list ///'
+      list.appendChild(head)
+
+      for (const mod of personalState) {
+        const row = document.createElement('div')
+        row.className = 'mod'
+
+        const name = document.createElement('span')
+        name.className = 'mod-name'
+        name.textContent = mod.name
+        name.title = (mod.author ? 'by ' + mod.author + ' · ' : '') + mod.files + ' file(s)'
+        row.appendChild(name)
+
+        const badge = document.createElement('span')
+        if (mod.state === 'broken') {
+          badge.className = 'mod-badge bad'
+          badge.textContent = 'FILES MISSING'
+        } else if (mod.updateAvailable) {
+          badge.className = 'mod-badge missing'
+          badge.textContent = 'UPDATE'
+          badge.title = mod.reason || ''
+        } else {
+          badge.className = 'mod-badge ok'
+          badge.textContent = '✓ INSTALLED'
+        }
+        row.appendChild(badge)
+
+        if (mod.updateAvailable && mod.state === 'installed') row.appendChild(makeUpdateButton(mod))
+
+        const remove = document.createElement('button')
+        remove.className = 'mod-btn danger'
+        remove.textContent = '🗑'
+        remove.title = 'Remove this mod'
+        remove.addEventListener('click', async () => {
+          const result = await window.launcher.deleteMod(mod.id)
+          if (result.ok) { setStatus('Removed ' + mod.name + '.', 'ok'); await refreshMods() }
+          else if (result.error) setStatus(result.error, 'error')
+        })
+        row.appendChild(remove)
+
+        list.appendChild(row)
+      }
+    }
+  }
+
+  function makeUpdateButton (mod) {
+    const update = document.createElement('button')
+    update.className = 'mod-btn'
+    update.textContent = 'Update'
+    update.title = mod.reason || 'Install the expected version'
+    update.addEventListener('click', async () => {
+      update.disabled = true
+      const result = await window.launcher.updateMod(mod.id)
+      if (result.ok) setStatus(result.message, result.needsWebsite ? 'error' : 'ok')
+      else setStatus(result.error || 'Update failed.', 'error')
+      await refreshMods()
+    })
+    return update
   }
 
   async function refreshMods () {
     const result = await window.launcher.listMods()
     if (result.ok) {
       modState = result.mods
+      personalState = result.personal || []
       modsSignedIn = result.signedIn
     } else {
       modState = []
+      personalState = []
       $('modHint').textContent = result.error
     }
     renderMods()
@@ -2545,31 +3589,178 @@
 
     await refreshMods()
 
+    // Which environment this was verified against - or exactly why it could not be.
+    const manifestNote = result.manifest
+      ? (result.manifest.version ? ' · manifest ' + result.manifest.version : ' · no manifest (' + result.manifest.state + ')')
+      : ''
+
     if (result.checked === 0) {
-      $('modHint').textContent = 'Nothing installed through the launcher yet.'
-    } else if (result.problems.length === 0) {
-      $('modHint').textContent = '✓ All ' + result.intact + ' installed mod(s) verified.'
+      $('modHint').textContent = 'Nothing installed through the launcher yet.' + manifestNote
+    } else if (result.problems.length === 0 && (result.retired || []).length === 0) {
+      $('modHint').textContent = '✓ All ' + result.intact + ' installed mod(s) verified.' + manifestNote
     } else {
       // Names the broken ones. "3 problems found" leaves someone to work out which.
-      $('modHint').textContent = result.problems.length + ' problem(s): ' +
-        result.problems.map((p) => p.name + ' (' + p.detail + ')').join(', ')
+      const parts = []
+      if (result.problems.length) {
+        parts.push(result.problems.length + ' problem(s): ' +
+          result.problems.map((p) => p.name + ' (' + p.detail + ')').join(', '))
+      }
+      if ((result.retired || []).length) {
+        parts.push('no longer on the server\'s list: ' + result.retired.map((r) => r.name).join(', ') +
+          ' - remove ' + (result.retired.length === 1 ? 'it' : 'them') + ' from the list below')
+      }
+      $('modHint').textContent = parts.join(' /// ') + manifestNote
+
+      // Repair is one press because the diagnosis already happened - re-download exactly
+      // what failed, through the same channel that installed it.
+      const repairable = result.problems.filter((p) => p.repairable)
+      if (repairable.length > 0) {
+        const first = repairable[0]
+        setStatus('Repair available for ' + first.name + ' - press Verify again after it lands.', 'error')
+        for (const problem of repairable) {
+          window.launcher.repairMod(problem.id).then((r) => {
+            if (r.ok) setStatus((r.needsWebsite ? problem.name + ': ' + r.message : 'Repaired ' + problem.name + '.'), r.needsWebsite ? 'error' : 'ok')
+            else setStatus('Could not repair ' + problem.name + ': ' + (r.error || 'unknown'), 'error')
+          })
+        }
+      }
+    }
+  })
+
+  // The download queue, under the mod list. A full snapshot arrives on every change;
+  // rendering is a rebuild, not a patch - at this row count there is nothing to win by
+  // being clever, and snapshots cannot drift out of sync.
+  window.launcher.onModQueue((queue) => {
+    const box = $('modQueue')
+    const rows = $('modQueueRows')
+
+    if (!queue || queue.length === 0) {
+      box.style.display = 'none'
+      return
+    }
+    box.style.display = 'block'
+    rows.textContent = ''
+
+    for (const entry of queue) {
+      const row = document.createElement('div')
+      row.className = 'queue-row ' + entry.state
+
+      const dot = document.createElement('span')
+      // The same state language as everything else in the launcher: green = done,
+      // spinning ring = working, plain = waiting its turn.
+      dot.className = 'dot' +
+        (entry.state === 'installed' ? ' on' : '') +
+        (entry.state === 'downloading' ? ' busy' : '')
+      row.appendChild(dot)
+
+      const name = document.createElement('span')
+      name.className = 'qname'
+      name.textContent = entry.name
+      row.appendChild(name)
+
+      if (entry.state === 'downloading' && typeof entry.percent === 'number') {
+        const bar = document.createElement('div')
+        bar.className = 'qbar'
+        const fill = document.createElement('div')
+        fill.style.width = entry.percent + '%'
+        bar.appendChild(fill)
+        row.appendChild(bar)
+      }
+
+      const detail = document.createElement('span')
+      detail.className = 'qdetail'
+      detail.textContent =
+        entry.state === 'queued' ? 'queued' :
+        entry.state === 'downloading' ? (typeof entry.percent === 'number' ? entry.percent + '%' : 'downloading...') :
+        entry.state === 'waiting' ? (entry.detail || 'waiting for your click on Nexus') :
+        entry.state === 'failed' ? ('✗ ' + (entry.detail || 'failed')) :
+        ('✓ installed' + (entry.detail ? ' — ' + entry.detail : ''))
+      row.appendChild(detail)
+
+      rows.appendChild(row)
+    }
+
+    // Refresh the list's install states when the queue finishes its last row, so ✓s in
+    // the queue and "Installed" in the list can never tell two different stories.
+    if (queue.every((q) => q.state === 'installed' || q.state === 'failed')) {
+      refreshMods()
     }
   })
 
   window.launcher.onModProgress((info) => {
-    const mod = modState.find((m) => m.id === String(info.modId))
-    if (!mod) return
-
+    // Installs land for PERSONAL mods too (any nxm:// click, Add mod) - those are not
+    // in modState, and the old early-return meant the list never learned about them.
     if (info.state === 'installed') {
-      setStatus('Installed ' + (info.name || mod.name) + '.', 'ok')
+      setStatus('Installed ' + (info.name || 'mod ' + info.modId) + '.', 'ok')
       refreshMods()
       return
     }
+
+    const mod = modState.find((m) => m.id === String(info.modId))
+    if (!mod) return
 
     mod.state = info.state
     if (info.state === 'failed') setStatus(info.error, 'error')
     renderMods()
   })
+
+  // The single install strip. Bound to one install by construction (the main process
+  // serializes them), so this only ever renders the one thing actually happening.
+  let installStripTimer = null
+  window.launcher.onInstallStatus((status) => {
+    const strip = $('installStrip')
+    const bar = $('installBar')
+    const fill = $('installFill')
+
+    if (installStripTimer) { clearTimeout(installStripTimer); installStripTimer = null }
+
+    const showing = ['starting', 'downloading', 'extracting'].includes(status.phase)
+    const finished = status.phase === 'done'
+
+    if (!showing && !finished) { strip.style.display = 'none'; return }
+    strip.style.display = 'block'
+    $('installName').textContent = status.name || ('Mod ' + status.modId)
+
+    const mb = (n) => (n / (1024 * 1024)).toFixed(1)
+
+    if (status.phase === 'downloading' && typeof status.percent === 'number') {
+      bar.classList.remove('indet')
+      fill.style.width = status.percent + '%'
+      $('installDetail').textContent = status.percent + '%' +
+        (status.totalBytes ? ' — ' + mb(status.receivedBytes) + ' / ' + mb(status.totalBytes) + ' MB' : '')
+    } else if (finished) {
+      bar.classList.remove('indet')
+      fill.style.width = '100%'
+      $('installDetail').textContent = '✓ installed'
+      // Long enough to register, short enough that the strip never squats over the
+      // panel after the work is over.
+      installStripTimer = setTimeout(() => { strip.style.display = 'none' }, 1800)
+    } else {
+      bar.classList.add('indet')
+      fill.style.width = ''
+      $('installDetail').textContent =
+        status.phase === 'extracting' ? 'extracting...' :
+        status.phase === 'downloading' ? 'downloading...' : 'contacting Nexus...'
+    }
+  })
+
+  $('addModBtn').addEventListener('click', async () => {
+    const input = $('addModInput')
+    const btn = $('addModBtn')
+    if (!input.value.trim()) { setStatus('Paste a Nexus mod link or its number first.', 'error'); return }
+
+    btn.disabled = true
+    const result = await window.launcher.addModFromNexus(input.value)
+    btn.disabled = false
+
+    if (result.ok) {
+      setStatus(result.message, result.needsWebsite ? 'error' : 'ok')
+      if (!result.needsWebsite) { input.value = ''; await refreshMods() }
+    } else {
+      setStatus(result.error, 'error')
+    }
+  })
+  $('addModInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('addModBtn').click() })
 
   $('openInstallDir').addEventListener('click', () => window.launcher.openInstallDir())
 

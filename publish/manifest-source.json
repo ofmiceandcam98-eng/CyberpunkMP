@@ -1,0 +1,257 @@
+{
+  "_comment": [
+    "The curated half of server-manifest.json. Humans decide what is in here;",
+    "tools/manifest/generate-manifest.cjs measures everything else at ship time -",
+    "payload file hashes from the staged tree, prerequisite zip hashes from",
+    "fullinstall-base/prerequisites, install_order from the dependency graph, and",
+    "the manifestVersion serial. Never write hashes or an install_order rule into",
+    "this file: hand-edited hashes are wrong hashes, and the generator refuses a",
+    "hand-written install_order outright (docs/MANIFEST-ARCHITECTURE.md, 9.1).",
+    "",
+    "Two modlist entries are EXCLUDED pending identification, per the doc (3.2):",
+    "nexusModId 4198 (suspected duplicate ArchiveXL install over the pinned",
+    "prerequisite - if confirmed, it gets removed, not named) and nexusModId 22114",
+    "(name unconfirmed). Components get ids only once someone has read the Nexus",
+    "page and confirmed what the thing actually is.",
+    "",
+    "Nexus components here are seeds awaiting their curation pass (doc 3.3, 5):",
+    "the scanner install records version, fileId, archive sha256 and per-file",
+    "hashes. Until then they carry only the identity fields a human can vouch for.",
+    "'types': [\"resource\"] on a nexus entry marks a loading mechanism that has",
+    "not been classified yet - the scanner replaces it with the real one.",
+    "Authors marked 'see Nexus page' are likewise awaiting that same pass."
+  ],
+
+  "game": {
+    "id": "cyberpunk2077",
+    "supportedVersion": "2.31",
+    "enforce": "warn"
+  },
+
+  "components": [
+    {
+      "id": "cyberpunk_multiplayer",
+      "name": "CyberpunkMP",
+      "types": ["red4ext_plugin", "redscript", "archive", "tweak", "input"],
+      "class": "payload",
+      "required": true,
+      "networkImpact": "critical",
+      "audience": "all",
+      "author": "Tilted Phoques SRL, forked by the Night City Online crew",
+      "source": "https://github.com/ofmiceandcam98-eng/CyberpunkMP",
+      "license": "Tilted Phoques License Agreement (LICENSE.md)",
+      "dependencies": [
+        { "id": "red4ext" },
+        { "id": "redscript" },
+        { "id": "codeware" },
+        { "id": "archive_xl" },
+        { "id": "tweak_xl" },
+        { "id": "input_loader" }
+      ]
+    },
+    {
+      "id": "red4ext",
+      "name": "RED4ext",
+      "types": ["native_dll"],
+      "class": "bundled",
+      "version": "1.29.1",
+      "required": true,
+      "networkImpact": "critical",
+      "audience": "all",
+      "author": "WopsS",
+      "source": "https://github.com/WopsS/RED4ext",
+      "license": "MIT",
+      "archive": { "name": "RED4ext-1.29.1.zip" }
+    },
+    {
+      "id": "redscript",
+      "name": "redscript",
+      "types": ["redscript"],
+      "class": "bundled",
+      "version": "0.5.31",
+      "required": true,
+      "networkImpact": "critical",
+      "audience": "all",
+      "author": "jac3km4",
+      "source": "https://github.com/jac3km4/redscript",
+      "license": "MIT",
+      "archive": { "name": "redscript-0.5.31.zip" }
+    },
+    {
+      "id": "codeware",
+      "name": "Codeware",
+      "types": ["red4ext_plugin", "redscript"],
+      "class": "bundled",
+      "version": "1.18.0",
+      "required": true,
+      "networkImpact": "critical",
+      "audience": "all",
+      "author": "psiberx",
+      "source": "https://github.com/psiberx/cp2077-codeware",
+      "license": "MIT",
+      "archive": { "name": "Codeware-1.18.0.zip" },
+      "dependencies": [
+        { "id": "red4ext", "version": ">=1.29.0" }
+      ]
+    },
+    {
+      "id": "archive_xl",
+      "name": "ArchiveXL",
+      "types": ["red4ext_plugin"],
+      "class": "bundled",
+      "version": "1.26.0",
+      "required": true,
+      "networkImpact": "critical",
+      "audience": "all",
+      "author": "psiberx",
+      "source": "https://github.com/psiberx/cp2077-archive-xl",
+      "license": "MIT",
+      "archive": { "name": "ArchiveXL-1.26.0.zip" },
+      "dependencies": [
+        { "id": "red4ext", "version": ">=1.29.0" }
+      ]
+    },
+    {
+      "id": "tweak_xl",
+      "name": "TweakXL",
+      "types": ["red4ext_plugin"],
+      "class": "bundled",
+      "version": "1.11.1",
+      "required": true,
+      "networkImpact": "critical",
+      "audience": "all",
+      "author": "psiberx",
+      "source": "https://github.com/psiberx/cp2077-tweak-xl",
+      "license": "MIT",
+      "archive": { "name": "TweakXL-1.11.1.zip" },
+      "dependencies": [
+        { "id": "red4ext", "version": ">=1.29.0" }
+      ]
+    },
+    {
+      "id": "input_loader",
+      "name": "Input Loader",
+      "types": ["red4ext_plugin", "input"],
+      "class": "bundled",
+      "version": "0.2.3",
+      "required": true,
+      "networkImpact": "critical",
+      "audience": "all",
+      "author": "jac3km4",
+      "source": "https://github.com/jac3km4/cp2077-input-loader",
+      "license": "MIT",
+      "archive": { "name": "InputLoader-0.2.3.zip" },
+      "dependencies": [
+        { "id": "red4ext" }
+      ]
+    },
+    {
+      "id": "fast_launch",
+      "name": "Fast Launch",
+      "types": ["resource"],
+      "class": "nexus",
+      "required": false,
+      "networkImpact": "none",
+      "audience": "all",
+      "author": "see Nexus page",
+      "source": "https://www.nexusmods.com/cyberpunk2077/mods/5186",
+      "license": "see Nexus page",
+      "nexus": { "modId": 5186 }
+    },
+    {
+      "id": "native_settings_ui",
+      "name": "Native Settings UI",
+      "types": ["resource"],
+      "class": "nexus",
+      "required": false,
+      "networkImpact": "none",
+      "audience": "dev",
+      "author": "justarandomguyintheinternet",
+      "source": "https://www.nexusmods.com/cyberpunk2077/mods/3518",
+      "license": "see Nexus page",
+      "nexus": { "modId": 3518 }
+    },
+    {
+      "id": "dlc_call_off",
+      "name": "DLC Call Off",
+      "types": ["resource"],
+      "class": "nexus",
+      "required": false,
+      "networkImpact": "none",
+      "audience": "all",
+      "author": "see Nexus page",
+      "source": "https://www.nexusmods.com/cyberpunk2077/mods/21528",
+      "license": "see Nexus page",
+      "nexus": { "modId": 21528 }
+    },
+    {
+      "id": "audioware",
+      "name": "Audioware",
+      "types": ["red4ext_plugin", "redscript"],
+      "class": "nexus",
+      "required": false,
+      "networkImpact": "medium",
+      "audience": "all",
+      "author": "Roms1383",
+      "source": "https://www.nexusmods.com/cyberpunk2077/mods/12001",
+      "license": "see Nexus page",
+      "nexus": { "modId": 12001 },
+      "dependencies": [
+        { "id": "red_data", "version": ">=0.9.0" }
+      ]
+    },
+    {
+      "id": "red_data",
+      "name": "RedData",
+      "types": ["red4ext_plugin", "redscript"],
+      "class": "nexus",
+      "required": false,
+      "networkImpact": "medium",
+      "audience": "all",
+      "author": "Rayshader",
+      "source": "https://www.nexusmods.com/cyberpunk2077/mods/14139",
+      "license": "see Nexus page",
+      "nexus": { "modId": 14139 }
+    }
+  ],
+
+  "loadRules": [
+    {
+      "rule": "folder_sorts_after",
+      "mechanism": "red4ext_plugin",
+      "subject": "zzzCyberpunkMP",
+      "after": ["ArchiveXL", "Codeware", "TweakXL", "input_loader"],
+      "severity": "critical",
+      "reason": "RED4ext loads plugin folders alphabetically; the mod must load after the frameworks it binds at load time."
+    },
+    {
+      "rule": "compilation_unit",
+      "mechanism": "redscript",
+      "severity": "critical",
+      "reason": "One broken .reds aborts the entire modded compilation - the game boots with no scripts at all."
+    }
+  ],
+
+  "compatibility": {
+    "entries": [
+      {
+        "a": { "id": "cyberpunk_multiplayer" },
+        "b": { "id": "cyber_engine_tweaks" },
+        "status": "known_incompatible",
+        "severity": "critical",
+        "reason": "Running CET alongside caused a GPU hard-lock (INSTALL.txt §0); the mod ships its own ImGui backend for exactly this reason (ImGuiService.cpp:29-32).",
+        "action": "Disable or remove CET before playing.",
+        "detection": {
+          "anyOf": [
+            "bin/x64/version.dll",
+            "bin/x64/plugins/cyber_engine_tweaks/"
+          ]
+        }
+      }
+    ]
+  },
+
+  "policy": {
+    "unknownMods": "warn"
+  }
+}

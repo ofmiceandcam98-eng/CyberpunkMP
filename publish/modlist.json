@@ -43,23 +43,44 @@
   "mods": [
     {
       "nexusModId": 5186,
+      "name": "Fast Launch",
       "required": false,
       "note": "Fast Launch - skips every startup video straight to the main menu. HARDCODED BOOT POLICY (crew decree 2026-08-21): the launcher auto-installs this whenever it is missing and a Nexus key allows it (ensureFastLaunch in main.js), pairing with -skipStartScreen for a straight-to-menu boot. Deliberately NOT required=true - required blocks Play and nobody gets locked out over a cosmetic. Do not remove this entry or the policy."
     },
     {
       "nexusModId": 3518,
+      "name": "Native Settings UI",
       "required": false,
       "devOnly": true,
       "note": "Cam: lock this to devs."
     },
     {
       "nexusModId": 4198,
-      "required": false
+      "required": false,
+      "note": "NAME UNCONFIRMED - left without one deliberately rather than guessed. Worth checking whether this is ArchiveXL: TweakXL is 4197 and the two are siblings by the same author, and ArchiveXL already ships as prerequisite 4 of 6 in FullInstall.zip. If it is, this entry is a duplicate install over a pinned version and should be removed, not named."
     },
     {
       "nexusModId": 22114,
       "required": false,
-      "note": "Cam: good for police and prison RP."
+      "note": "Cam: good for police and prison RP. NAME UNCONFIRMED - not guessed."
+    },
+    {
+      "nexusModId": 21528,
+      "name": "DLC Call Off",
+      "required": false,
+      "note": "Cam, 2026-08-21."
+    },
+    {
+      "nexusModId": 12001,
+      "name": "Audioware",
+      "required": false,
+      "note": "Cam, 2026-08-21. An audio framework - check whether it needs RedData (14139) listed in requires; not guessed here, and a framework installed after the mod that needs it fails silently rather than loudly."
+    },
+    {
+      "nexusModId": 14139,
+      "name": "RedData",
+      "required": false,
+      "note": "Cam, 2026-08-21."
     }
   ]
 }

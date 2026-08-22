@@ -4,6 +4,80 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.101
+
+- **The launcher is a mod manager now.** A **YOUR MODS** section lists everything you installed that is not on the server's list — any "Mod Manager Download" click lands there — with the same verify, repair and per-file removal the server's mods get. And the new **Add mod** row takes any Cyberpunk mod's Nexus link (or just its number): premium keys install it directly, free accounts get the page opened and one press of Mod Manager Download finishes the job. No second mod manager, ever.
+- **Updates land on the right version, not the newest one.** Every install records exactly which file it actually got. Server-listed mods offer an Update only when you are not on the server-approved version; your own mods track Nexus's current main file. One press installs exactly that target.
+- **One install at a time, with a real progress bar.** Every way a mod can install — the download queue, a Nexus click, Add mod, a repair, an update — now takes a single turn, and one INSTALLING strip shows the active download: percent and megabytes when Nexus says how big the file is, a sweep while it extracts. The bar cannot show two installs braided together, because two installs can no longer run at once.
+- **The Nexus mark lost its red ring.** Grey until a key is held, full colour once one is — the colour is the signal, and a red ring on the healthiest state in the header read as an alert.
+
+## What changed — v0.3.100
+
+**Voice chat.** Hold your talk key and the people around you hear you.
+
+- **Proximity, three ranges.** Whisper carries about six metres, normal speech twenty-five, and yelling sixty — cycle them with your range key (F12 by default). How far each one reaches is decided by the server, not by your game, so nobody can arrange to be heard across the city.
+- **Your first word actually arrives.** Everyone starts a word slightly before the key is fully down, so the moment before you press is kept and sent with it. Without that the first syllable is simply gone, which is the thing that makes push-to-talk feel broken in other games.
+- **A small indicator, bottom left**, while your microphone is open — because the one moment it has to be unmissable is when you are transmitting and do not realise it.
+- **Your launcher settings are used**: the microphone and output you picked, both volumes, and both keybinds. Change them before you press JACK IN.
+- **Nothing is transmitted unless you press the key.** Your microphone is opened when you join, so there is no delay when you talk, but audio only leaves your machine while you are holding it.
+
+**This release and this server move together.** Voice needed new messages between the game and the server, which changes what the two expect from each other, so older builds are refused with a reason rather than a silent disconnect. Open the launcher and let it update.
+
+## What changed — v0.3.99
+
+- **Cars stop multiplying.** Getting into a car spawned a second copy of it on top of the first, every time — real vehicles with their own physics, stacked in the same space. The server sends a "load this vehicle" alongside every enter, and nothing was checking whether that car already existed locally. The extra copies were orphaned as well: only the newest one was recorded, so the others could never be moved, entered or cleaned up because no message could name them.
+- **Remote players no longer freeze at the point they spawned.** A player who had joined but not yet taken a step was broadcast with a timestamp of zero. Zero is not a time — the receiving game read it as a position report from fifty-seven years ago, anchored to it, and never played anything newer. The result was somebody standing perfectly still at their spawn point while, on their own screen, they were walking around and driving. This is the "I can see them but they never move" that has been reported since remote players first appeared.
+
+Known and not fixed in this build: voice chat still does not transmit, rear seats of four-seaters, and the crash some people hit when entering a car another player is in. Those are being worked on separately.
+
+## What changed — v0.3.98
+
+- **Fixes v0.3.97, which would not open.** That build failed immediately with "A JavaScript error occurred in the main process — Cannot find module 'manifest.js'". The manifest code added in v0.3.97 was imported by the launcher but never included in the packaged application, so it shipped importing a file that was not inside it. **If you are stuck on that error the launcher cannot update itself** — the updater lives inside the launcher that will not start. Download and run the installer from this release manually, once; it will update normally after that.
+- **Why the checks missed it.** The launcher's packaging list is an allowlist naming each file individually, and a new source file that nobody adds to it is silently left out. Every existing check passed: the code parses, every dependency is installed, and the start-up test runs against the source folder — where the file exists — rather than the packaged build that ships. Packaging now verifies that every file the launcher imports is actually inside the package.
+
+## What changed — v0.3.97
+
+**The launcher becomes the compatibility authority.** This release and this server move together — older builds are refused with a reason instead of a silent disconnect. Full design: docs/MANIFEST-ARCHITECTURE.md.
+
+- **The server finally tells you WHY it said no.** A denied join used to be a bare disconnect with the reason buried in a log file — "the mod loads but does not connect" was a recurring mystery. Denials are now an on-screen message with the server's own words: wrong protocol, out-of-date installation, wrong password, server full (yes, the player cap is actually enforced now — it never was), banned, or Discord trouble. Manifest denials name the exact version to update to.
+- **Every release now carries a signed manifest** — one file stating exactly which mod build, frameworks and files this environment approves, signed with keys that never leave the owners' machines. The launcher verifies your installation against it before Play, refuses a manifest whose signature fails (that's tampering evidence, not an outage), keeps the last good one for offline play, and attests what it verified when the game connects. No manifest published yet = everything behaves exactly as before.
+- **Verify now actually verifies.** Installed mods are hash-checked file by file, not just "does a file with that name exist" — corrupted, half-written and game-update-overwritten files are all caught, and a Repair pass re-downloads exactly what failed through the same channel that installed it. New installs record what Nexus actually served, and no install will silently overwrite another mod's files again.
+- **Downloads are checked before they touch your game.** Fresh installs and updates verify the payload against the signed manifest before extracting; a bad download is refused with your working install left alone.
+- **Mods that leave the server's list get flagged for removal** — by the launcher's own per-file records, never by deleting folders, and never touching anything it didn't install.
+- **Dependency order is enforced everywhere** — installing a mod before its framework is refused with the framework's name, on every install path including the browser hand-off.
+
+## What changed — v0.3.96
+
+- **Test your microphone before you play.** Pick your mic in Settings → Voice, press **Test**, and speak — a live meter shows whether Windows can actually hear you. It turns red and tells you to lower your gain if you're clipping, which is the usual problem on an XLR interface. It runs entirely in the launcher: no server, no game, nothing to join first. Your mic is released the moment you stop, change device, or close Settings.
+- **Your voice settings are remembered properly now.** Microphone, output device, both volumes, both keybinds and your voice mode all persist. Previously the device dropdowns showed "Press Find devices" again on reopening, which looked like the launcher had forgotten your choice — it now shows what you picked by name until you rescan.
+- **Voice range key is F12 by default** (whisper → local → yell), and rebindable like everything else. **Note for Steam users:** Steam's overlay uses F12 for screenshots, so change one of the two or you'll collect screenshots every time you cycle.
+
+## What changed — v0.3.95
+
+**Voice chat groundwork.** Nothing transmits yet — this is the part that has to be right before anything else works, and it's all in **Settings → Voice**.
+
+- **Find your microphone and speakers.** Press Find devices and it lists what Windows actually has — every mic, headset and audio interface, by the name your sound settings use. Separate choices for your microphone and where you hear other players, so voice can go to a headset while the game stays on speakers.
+- **Devices that are secretly your own system audio are marked.** Windows lists things like Stereo Mix as if they were microphones; pick one and everyone hears your game and Discord instead of you. They're flagged rather than hidden, in case you actually want one.
+- **Set your push-to-talk key by pressing it.** Any key, or a mouse side button. No files to edit. Escape cancels, and left click is refused because binding voice to it makes the game unplayable.
+- **Hold to talk, toggle, or open-when-I-speak**, plus microphone and voice chat volume. Volume goes to 200% because a quiet mic on a proper audio interface is normal and you shouldn't have to go change your hardware gain.
+
+These are handed to the game when you press JACK IN, so **change them before launching** — adjusting a slider mid-session won't do anything until next time.
+
+Under the hood this uses Windows' own audio system rather than special-casing brands, so a Focusrite, an Apollo, a USB headset and a laptop mic all work the same way — including hardware nobody's bought yet.
+
+## What changed — v0.3.94
+
+- **Fixes v0.3.93, which would not start.** That build opened with "A JavaScript error occurred in the main process — Cannot find package '7zip-bin'" and went no further. The archive-extraction libraries added in v0.3.91 were listed correctly but never actually installed before the build was packaged, so the launcher shipped importing code that wasn't inside it. If you're stuck on that error, this release is the fix — the updater still works, so reopening should pull it.
+- **This can't ship again.** Packaging now refuses outright if any declared dependency is missing from the build machine. Every existing check passed v0.3.93 — the code parsed, every button resolved, and the "does it start?" test was fooled because Windows keeps a crashed Electron app alive behind its error dialog. A missing folder is not ambiguous, so that's what's checked now.
+
+## What changed — v0.3.93
+
+- **Your Nexus account shows in the header, next to Discord.** Whether Nexus is connected decides whether the mod list can install anything, and until now that was only visible if you opened Settings and read a paragraph about API keys — so "Install does nothing" was usually the first anyone heard of it. It now sits beside your Discord account as the second half of one identity row, lit when a key is held. Sign in and sign out from there; the button tries the one-press browser sign-in first and, if Nexus refuses it, opens your API key page and says so rather than failing quietly. (Nexus only allows one-press sign-in for mod managers they've approved — that's their policy, not a bug.)
+- **The mod list has real names.** Every row read "Nexus mod 5186". The launcher asks Nexus for names, which needs an API key — so without one, every mod showed as its ID number. Names now come from the list itself and show for everyone, with or without a key.
+- **Three mods added**: DLC Call Off, Audioware and RedData. Two entries are still listed by number because their names couldn't be confirmed — they'll get names once someone checks rather than guesses.
+- **Find your microphone and speakers**, under Settings → Voice. Press Find devices and it lists what Windows actually has — every mic, headset and audio interface — with separate choices for your microphone and where you hear other players. Devices that are secretly your own system audio (Stereo Mix and friends) are marked as such, because picking one means everyone hears your game and Discord instead of you. Voice itself isn't built yet; this is the part every voice problem starts with, so it comes first.
+- **The multiplayer menu is back to how it was.** v0.3.89 quietly changed what MULTIPLAYER does — it signed in and waited for the server before loading. That was groundwork for a character selector that has never actually been run in a live session, and the main menu is the worst possible place to find out something is wrong. It's been taken back out; the work is kept for a test build.
+
 ## What changed — v0.3.92
 
 - **RAR mods install now.** v0.3.91 taught the installer .7z - and the very first mod turned out to be a .rar, the one format the bundled extractor genuinely cannot read ("7-Zip exit 2"). RAR now extracts in-memory through a proper unrar engine; same install loop, same per-file record, same uninstall sweep. Third format's the charm.

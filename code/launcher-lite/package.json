@@ -1,7 +1,7 @@
 {
   "name": "nightcity-launcher",
   "productName": "Night City Online",
-  "version": "0.3.92",
+  "version": "0.3.100",
   "description": "Lightweight launcher with Discord login verification",
   "main": "main.js",
   "type": "module",
@@ -21,7 +21,8 @@
     "adm-zip": "^0.6.0",
     "axios": "^1.7.9",
     "electron-updater": "^6.8.9",
-    "node-unrar-js": "^2.0.2"
+    "node-unrar-js": "^2.0.2",
+    "tweetnacl": "^1.0.3"
   },
   "build": {
     "appId": "com.nightcityonline.launcher",
@@ -41,6 +42,7 @@
     "files": [
       "fonts/**",
       "main.js",
+      "manifest.js",
       "preload.mjs",
       "index.html",
       "package.json"
