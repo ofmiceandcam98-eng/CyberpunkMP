@@ -4,6 +4,22 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.104
+
+**Players can shoot each other.** Until now another player was scenery: you could see them, walk into them, and nothing else. The game itself refused to accept them as a target — you could not aim at one, and a quickhack menu never appeared. That is fixed at the engine level, and combat is built on top of it.
+
+- **You can aim at people, and hit them.** Damage is decided by the server, not by whoever pulled the trigger, so both of you end up agreeing on the result. What your game calculated — armour, resistances, the weapon you were holding — is what gets reported; the server checks it is possible and says what actually happened.
+- **You can quickhack other players.** Scan someone and the hack menu is there, the same as for any NPC. Overheat, Short Circuit, Blind, Weapon Glitch, Cripple Movement, Memory Wipe, Ping and the rest.
+- **Being hacked is something you can see coming.** The person being hacked gets the game's own "being hacked" warning while the upload runs, and so does anyone nearby — so there is a moment to react instead of an effect arriving out of nowhere.
+- **RAM, cooldowns and ammunition are the server's.** Your magazine, your reserve, your RAM and every cooldown live on the server. A modified game cannot mint bullets, fire faster than a weapon allows, reload without reloading, or run free quickhacks.
+- **Voice chat actually works now.** v0.3.100 shipped voice that could not be heard by anyone: it asked Windows for a "communications" speaker, and on systems where that is not set — which is most of them — playback stopped one millisecond after starting while everything else looked healthy. It now falls back properly, and a device you chose that is no longer plugged in falls back instead of going silent.
+- **Being downed clears your wanted level.** Getting back up used to leave you at whatever heat put you down, standing where it happened, with police still inbound — so you were fed straight back into the same fight until you logged out.
+- **Scanning a player shows their name.** It used to show a random NPC name, and a different one depending on who was scanning, because the name your game invented for a nameless character was never replaced by the real one.
+
+**This release and this server move together.** Combat needed a lot of new messages between the game and the server, so older builds are refused with a reason rather than a silent disconnect. Open the launcher and let it update.
+
+Not yet: NPCs still do not fight, and none of the combat above has been through a proper multi-player test — expect rough edges and please report them.
+
 ## What changed — v0.3.103
 
 - **The launcher stops telling members to join the Discord they are already in.** A Discord rate limit (HTTP 429) on the membership check was being read as "not a member" — shown live to the person who owns the server. Only Discord's two definitive answers change the verdict now (in the server, or 404 not in it); a rate limit or outage stands on the last definitive answer, exactly like the role lookup has since v0.3.87. The real membership check still happens server-side on connect, where it cannot be patched out.
