@@ -4,6 +4,11 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.98
+
+- **Fixes v0.3.97, which would not open.** That build failed immediately with "A JavaScript error occurred in the main process — Cannot find module 'manifest.js'". The manifest code added in v0.3.97 was imported by the launcher but never included in the packaged application, so it shipped importing a file that was not inside it. **If you are stuck on that error the launcher cannot update itself** — the updater lives inside the launcher that will not start. Download and run the installer from this release manually, once; it will update normally after that.
+- **Why the checks missed it.** The launcher's packaging list is an allowlist naming each file individually, and a new source file that nobody adds to it is silently left out. Every existing check passed: the code parses, every dependency is installed, and the start-up test runs against the source folder — where the file exists — rather than the packaged build that ships. Packaging now verifies that every file the launcher imports is actually inside the package.
+
 ## What changed — v0.3.97
 
 **The launcher becomes the compatibility authority.** This release and this server move together — older builds are refused with a reason instead of a silent disconnect. Full design: docs/MANIFEST-ARCHITECTURE.md.

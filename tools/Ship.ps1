@@ -427,6 +427,59 @@ if ($Launcher) {
 
     Ok "every declared dependency is installed"
 
+    # The same failure as the check above, one layer over: a file the launcher imports that
+    # is not IN the package.
+    #
+    # v0.3.97 shipped importing './manifest.js' and did not include it, so it died on
+    # start with "Cannot find module manifest.js" for everybody who updated - and because
+    # the updater lives inside the launcher, nobody could update out of it. The manifest
+    # work landed with the import wired up correctly; what nobody touched was the
+    # electron-builder "files" list, which is an ALLOWLIST naming each file individually.
+    # Add a source file and forget that list and it is silently left out of the build.
+    #
+    # Every gate passed again, for the same reason as v0.3.93: the javascript parses, the
+    # dependencies are installed, and the start-up test runs the SOURCE folder, where the
+    # file is present. Only the packaged artifact is missing it, and nothing looked there.
+    #
+    # Transitive, because manifest.js may import something too - following only main.js
+    # would move the same hole one file deeper.
+    $allow = @($pkgJson.build.files)
+    $pending = [System.Collections.Generic.Queue[string]]::new()
+    $seen = @{}
+    $notPackaged = @()
+
+    foreach ($f in $allow) { if ($f -match '\.(js|mjs)$') { $pending.Enqueue($f) } }
+
+    while ($pending.Count -gt 0) {
+        $file = $pending.Dequeue()
+        if ($seen.ContainsKey($file)) { continue }
+        $seen[$file] = $true
+
+        $full = Join-Path $LauncherDir $file
+        if (-not (Test-Path $full)) { continue }
+
+        foreach ($m in [regex]::Matches((Get-Content $full -Raw), "['""](\./[^'""]+)['""]")) {
+            $imported = $m.Groups[1].Value -replace '^\./', ''
+
+            # Covered by a literal entry, or by a directory glob like "fonts/**".
+            $covered = $false
+            foreach ($entry in $allow) {
+                if ($entry -eq $imported) { $covered = $true; break }
+                if ($entry -match '^(.+?)/\*\*$' -and $imported.StartsWith($Matches[1] + '/')) { $covered = $true; break }
+            }
+
+            if (-not $covered) { $notPackaged += "$imported (imported by $file)" }
+            elseif ($imported -match '\.(js|mjs)$') { $pending.Enqueue($imported) }
+        }
+    }
+
+    if ($notPackaged.Count -gt 0) {
+        Pop-Location
+        Die ("the launcher imports files that the build does not package: {0}. Add them to build.files in {1}\package.json - packaging now would ship a launcher that cannot start, and cannot update itself out of it." -f (($notPackaged | Sort-Object -Unique) -join ', '), $LauncherDir)
+    }
+
+    Ok "every imported file is inside the package"
+
     # Every id the script reaches for must exist in the markup. Getting this wrong
     # produces a dead button and no error at all.
     $html = Get-Content "index.html" -Raw
