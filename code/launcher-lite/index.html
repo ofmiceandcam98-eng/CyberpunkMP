@@ -2453,8 +2453,17 @@
       const button = document.createElement('button')
       button.className = release.active ? 'action stop' : 'action ghost'
       button.textContent = release.active ? 'Uninstall' : 'Install'
-      button.disabled = !release.active && !release.hasDll
-      if (!release.hasDll) button.title = 'No CyberpunkMP.dll attached to this pre-release'
+      // Installable means "has something install can use" - a payload OR a bare DLL.
+      //
+      // This asked for a DLL specifically, from when a test build was one. Install prefers
+      // ModPayload.zip now, so a payload-only build was listed with Install greyed out and
+      // a tooltip claiming nothing was attached, when it was the newer and better of the
+      // two formats. `installable` is computed alongside hasDll rather than replacing it,
+      // because the two answer different questions and hasDll is still worth showing.
+      const usable = release.installable ?? release.hasDll
+
+      button.disabled = !release.active && !usable
+      if (!usable) button.title = 'Nothing installable is attached to this pre-release'
 
       button.addEventListener('click', async () => {
         button.disabled = true

@@ -4477,6 +4477,16 @@ ipcMain.handle('prerelease:list', async () => {
         name: r.name || r.tag_name,
         publishedAt: r.published_at,
         hasDll: (r.assets || []).some((a) => a.name === 'CyberpunkMP.dll'),
+
+        // Whether install can actually do anything with this build.
+        //
+        // Used to be "does it have a DLL", from when a test build WAS a bare DLL. Install
+        // now prefers ModPayload.zip - it carries the scripts too, which is the whole
+        // reason it was changed - but this check was not updated with it, so a
+        // payload-only build listed with its Install button greyed out and a tooltip
+        // saying no DLL was attached. Correct once, wrong now, and it hid a build that
+        // would have installed perfectly.
+        installable: (r.assets || []).some((a) => a.name === 'ModPayload.zip' || a.name === 'CyberpunkMP.dll'),
         notesUrl: r.html_url,
         active: r.tag_name === activeTag
       }))
