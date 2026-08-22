@@ -98,6 +98,12 @@ contextBridge.exposeInMainWorld('launcher', {
     ipcRenderer.on('mod-queue', (_e, queue) => callback(queue))
   },
 
+  // The ONE active install, whichever door it came through - every install path holds a
+  // global lock, so this channel can never describe two downloads at once.
+  onInstallStatus: (callback) => {
+    ipcRenderer.on('install-status', (_e, status) => callback(status))
+  },
+
   nexusSsoLogin: () => ipcRenderer.invoke('nexus:ssoLogin'),
   nexusSignIn: (key) => ipcRenderer.invoke('nexus:signIn', key),
   getVoiceSettings: () => ipcRenderer.invoke('voice:get'),

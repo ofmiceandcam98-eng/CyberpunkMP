@@ -174,19 +174,25 @@ async function installNexusMod (modId, options = {}) {
   const file = await axios.get(url, {
     responseType: 'arraybuffer',
     timeout: 300000,
-    // Byte progress for the queue row. Nexus does not always send a length; a null
-    // percent renders as plain "downloading" rather than a bar frozen at 0.
+    // Byte progress for whoever is watching. Nexus does not always send a length; a
+    // null percent renders as an indeterminate bar rather than one frozen at 0.
     onDownloadProgress: options.onProgress
-      ? (e) => options.onProgress(e.total ? Math.round((e.loaded / e.total) * 100) : null)
+      ? (e) => options.onProgress(e.total ? Math.round((e.loaded / e.total) * 100) : null, e.loaded, e.total ?? null)
       : undefined
   })
+
+  // Extraction is seconds of real work on a big archive, and a bar parked at 100%
+  // reads as hung. Named so the display can say what is actually happening.
+  options.onPhase?.('extracting')
+
   const result = await installModArchive(modId, Buffer.from(file.data), { servedFileId: fileId })
   return { ok: true, ...result }
 }
 
 async function ensureFastLaunch () {
   try {
-    const result = await installNexusMod(FAST_LAUNCH_MOD_ID)
+    const result = await withInstallLock({ modId: FAST_LAUNCH_MOD_ID, name: 'Fast Launch', silent: true }, (ctx) =>
+      installNexusMod(FAST_LAUNCH_MOD_ID, { onProgress: ctx.onProgress, onPhase: ctx.setPhase }))
     if (result.ok && !result.already)
       launcherLog('boot policy: Fast Launch auto-installed - intro videos are gone from the next boot')
     else if (result.needsWebsite)
@@ -195,6 +201,67 @@ async function ensureFastLaunch () {
     // Never a blocker and never a nag; the policy converges when it can.
     launcherLog(`boot policy: Fast Launch auto-install skipped (${err.response?.status || err.message})`)
   }
+}
+
+// ---------------------------------------------------------------------------
+// ONE install at a time, across EVERY path - and one progress instance bound to it.
+//
+// The queue was already serial, but it was not the only door: an nxm:// click, the
+// Add-mod row, a repair, an update and the Fast Launch auto-install could all run WHILE
+// a queue item downloaded, and any progress display would have been showing two
+// installs' bytes braided together (Cam's requirement, 2026-08-21: the progress stays
+// linked to one install per progress instance). So every install acquires this lock,
+// and the 'install-status' channel only ever describes the single active holder -
+// there is nothing else it COULD describe.
+// ---------------------------------------------------------------------------
+let installLockTail = Promise.resolve()
+let activeInstall = null
+
+function emitInstallStatus (phase, extra = {}) {
+  if (!activeInstall || activeInstall.silent) return
+  Object.assign(activeInstall, extra, { phase })
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('install-status', { ...activeInstall })
+  }
+}
+
+function withInstallLock (meta, fn) {
+  const turn = installLockTail.then(async () => {
+    activeInstall = {
+      modId: String(meta.modId ?? ''),
+      name: meta.name || `Mod ${meta.modId}`,
+      phase: 'starting',
+      percent: null,
+      receivedBytes: 0,
+      totalBytes: null,
+      // The boot-policy auto-install runs at launch with the player's mind on the
+      // game, not the mods panel - it takes the lock (order still matters) but
+      // draws nothing.
+      silent: Boolean(meta.silent)
+    }
+    emitInstallStatus('starting')
+
+    try {
+      const result = await fn({
+        onProgress: (percent, loaded, total) =>
+          emitInstallStatus('downloading', { percent, receivedBytes: loaded ?? 0, totalBytes: total ?? null }),
+        setPhase: (phase) => emitInstallStatus(phase)
+      })
+
+      if (result?.name) activeInstall.name = result.name
+      emitInstallStatus(result?.ok && !result.already ? 'done' : result?.needsWebsite ? 'handoff' : 'idle')
+      return result
+    } catch (err) {
+      emitInstallStatus('failed', { error: err.message })
+      throw err
+    } finally {
+      activeInstall = null
+    }
+  })
+
+  // A failed install must not jam the lock for every install after it.
+  installLockTail = turn.catch(() => {})
+  return turn
 }
 
 // ---------------------------------------------------------------------------
@@ -242,9 +309,17 @@ async function runModQueue () {
       queueSet(entry.modId, 'downloading', { detail: null, percent: null })
 
       try {
-        const result = await installNexusMod(entry.modId, {
-          onProgress: (percent) => queueSet(entry.modId, 'downloading', { percent })
-        })
+        // Through the global lock like every other path - a stray nxm:// click or an
+        // Add-mod press during a queue run waits its turn instead of braiding two
+        // downloads through one progress display.
+        const result = await withInstallLock({ modId: entry.modId, name: entry.name }, (ctx) =>
+          installNexusMod(entry.modId, {
+            onProgress: (percent, loaded, total) => {
+              queueSet(entry.modId, 'downloading', { percent })
+              ctx.onProgress(percent, loaded, total)
+            },
+            onPhase: ctx.setPhase
+          }))
 
         if (result.already) {
           queueSet(entry.modId, 'installed', { detail: 'was already installed' })
@@ -4309,7 +4384,8 @@ ipcMain.handle('mods:addById', async (_event, input) => {
   const modId = Number(match[1])
 
   try {
-    const result = await installNexusMod(modId)
+    const result = await withInstallLock({ modId, name: `Mod ${modId}` }, (ctx) =>
+      installNexusMod(modId, { onProgress: ctx.onProgress, onPhase: ctx.setPhase }))
     if (result.already) return { ok: true, message: 'Already installed.' }
     if (result.ok) return { ok: true, message: `Installed ${result.name} (${result.count} files).` }
     if (result.needsWebsite) {
@@ -4342,7 +4418,8 @@ ipcMain.handle('mods:update', async (_event, modId) => {
   saveInstalledMods(installed)
 
   try {
-    const result = await installNexusMod(Number(modId), { fileId: update.targetFileId })
+    const result = await withInstallLock({ modId, name: record.name || `Mod ${modId}` }, (ctx) =>
+      installNexusMod(Number(modId), { fileId: update.targetFileId, onProgress: ctx.onProgress, onPhase: ctx.setPhase }))
     if (result.ok) return { ok: true, message: `Updated ${result.name || record.name}.` }
     if (result.needsWebsite) {
       await shell.openExternal(`https://www.nexusmods.com/cyberpunk2077/mods/${modId}?tab=files&file_id=${update.targetFileId}`)
@@ -4462,7 +4539,8 @@ ipcMain.handle('mods:repair', async (_event, modId) => {
   saveInstalledMods(installed)
 
   try {
-    const result = await installNexusMod(Number(modId))
+    const result = await withInstallLock({ modId, name: record.name || `Mod ${modId}` }, (ctx) =>
+      installNexusMod(Number(modId), { onProgress: ctx.onProgress, onPhase: ctx.setPhase }))
     if (result?.needsWebsite) {
       const mods = await fetchModList().catch(() => [])
       const mod = mods.find((m) => String(m.nexusModId) === String(modId))
@@ -5766,8 +5844,20 @@ async function handleNxmLink (url) {
     const downloadUrl = linkResponse.data?.[0]?.URI
     if (!downloadUrl) throw new Error('Nexus did not return a download link.')
 
-    const file = await axios.get(downloadUrl, { responseType: 'arraybuffer', timeout: 300000 })
-    const result = await installModArchive(modId, Buffer.from(file.data), { servedFileId: Number(fileId) })
+    // Under the same lock as every other install. The link's key expires, but its
+    // lifetime is minutes and a queue item's download is seconds - waiting a turn is
+    // fine; interleaving two downloads through one progress display is not.
+    const result = await withInstallLock({ modId, name: `Mod ${modId}` }, async (ctx) => {
+      const file = await axios.get(downloadUrl, {
+        responseType: 'arraybuffer',
+        timeout: 300000,
+        onDownloadProgress: (e) => ctx.onProgress(e.total ? Math.round((e.loaded / e.total) * 100) : null, e.loaded, e.total ?? null)
+      })
+
+      ctx.setPhase('extracting')
+      const install = await installModArchive(modId, Buffer.from(file.data), { servedFileId: Number(fileId) })
+      return { ok: true, ...install }
+    })
 
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('mod-progress', { modId, state: 'installed', ...result })
