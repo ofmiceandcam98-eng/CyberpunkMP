@@ -4,6 +4,19 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.105
+
+- **Quickhacks no longer hit twice.** v0.3.104 shipped a bug: Cyberpunk already applies quickhack damage through its ordinary hit pipeline, and the server was adding a second figure of its own on top. Every damaging quickhack did roughly double what it should. The server's damage table is gone — the game's own number is the only one now.
+- **RAM is the server's.** Your RAM pool lives on the server and regenerates there, so a modified game cannot refill it or spend what it does not have. What a hack *costs* still comes from your own game, because Cyberpunk computes that from your cyberdeck and perks and no two players pay the same.
+- **Hit locations are read from the game**, not invented. Where a shot lands now travels with it, using Cyberpunk's own body-part identity rather than a numbering scheme of our own.
+- **Scanning a player shows their name** — it used to show a random NPC name, and a different one depending on who was scanning.
+- **Being downed clears your wanted level**, so getting back up no longer feeds you straight back into the fight that put you down.
+- **Voice chat playback fix** carried forward from v0.3.104.
+
+**This release and this server move together.** Open the launcher and let it update.
+
+Still not tested with two players — the combat system has never carried a real event between two machines. Expect rough edges and please report them.
+
 ## What changed — v0.3.104
 
 **Players can shoot each other.** Until now another player was scenery: you could see them, walk into them, and nothing else. The game itself refused to accept them as a target — you could not aim at one, and a quickhack menu never appeared. That is fixed at the engine level, and combat is built on top of it.
