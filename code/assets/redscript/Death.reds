@@ -137,6 +137,42 @@ public func MpShowFlatlinedMessage() -> Void {
         .SetVariant(GetAllBlackboardDefs().UI_Notifications.WarningMessage, ToVariant(message), true);
 }
 
+/**
+ * Drop the wanted level to zero and send the police home.
+ *
+ * Being downed has to actually END the fight. Without this, getting back up leaves you at
+ * whatever heat killed you, standing where it happened, with MaxTac still inbound - so the
+ * revive just feeds you back into the same encounter until you log out. On a roleplay
+ * server that is not a difficulty curve, it is a player being unable to leave a bad minute.
+ *
+ * HOW, because the obvious route is closed. PreventionSystem's own reset lives in a PRIVATE
+ * function (execInstructionSafe), so a mod cannot call it. What IS reachable is the request
+ * that ends up there: PreventionBlinkingStatusRequest is a ScriptableSystemRequest, and its
+ * handler calls exactly that reset - dropping heat to Heat_0, despawning police, clearing
+ * the crime score, wiping the security blacklist and neutralising agent attitude.
+ *
+ * The telemetry string is not decoration. DespawnAllPolice() checks it for
+ * "ResetOnPlayerChoice" specifically, and that is the branch that actually removes the
+ * police already spawned rather than only stopping new ones.
+ *
+ * Queued through the DelaySystem the same way the game queues it itself, rather than
+ * reaching into the system directly. Written against the game's own source at
+ * core/systems/preventionSystem.script for patch 2.31.
+ */
+public func MpClearWantedLevel() -> Void {
+    let game = GetGameInstance();
+
+    let request = new PreventionBlinkingStatusRequest();
+    request.m_lockPreventionSystemWhileBlinking = false;
+    request.m_telemetryInfo = "ResetOnPlayerChoice";
+
+    // A short delay rather than zero: this runs from inside a revive, and the prevention
+    // system is mid-update with a player it still believes is being shot at.
+    GameInstance.GetDelaySystem(game).DelayScriptableSystemRequest(n"PreventionSystem", request, 0.2);
+
+    FTLog(s"[Death] wanted level cleared - police stood down");
+}
+
 public class MpDeathGuard extends ScriptStatPoolsListener {
     public let player: wref<PlayerPuppet>;
 
@@ -157,6 +193,7 @@ public class MpDeathGuard extends ScriptStatPoolsListener {
 
         MpShowFlatlinedMessage();
         system.RevivePlayer();
+        MpClearWantedLevel();
 
         // Re-arm. The limit that just fired is spent, and without this the next death is
         // an ordinary one.
@@ -206,6 +243,7 @@ protected cb func OnInitialize() -> Bool {
 
         MpShowFlatlinedMessage();
         system.RevivePlayer();
+        MpClearWantedLevel();
 
         // Immortality should mean nothing ever gets here. If it did, something walked past
         // the engine's own death check and I want to know which build and which player -
