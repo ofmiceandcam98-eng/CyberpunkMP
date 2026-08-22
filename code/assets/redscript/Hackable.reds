@@ -3,46 +3,47 @@ module CyberpunkMP
 import CyberpunkMP.World.*
 
 /**
- * HALF of what a remote player needs to be a legitimate quickhack target.
+ * Makes a remote player a legitimate Cyberpunk combatant - shootable and hackable.
  *
- * WHAT THE GAME ACTUALLY REQUIRES, read from its own source rather than guessed.
- * ScriptedPuppet.IsQuickHackAble() (cyberpunk/puppet/scriptedPuppet.script:4045) is the
- * only gate, and it is seven conditions:
+ * THE TWO GATES, both read from the game's own source and both since confirmed live.
  *
- *   1. IsActive()                              - alive, not defeated/unconscious/off
- *   2. not (IsCrowd() and not IsPrevention())  - crowd NPCs are excluded
- *   3. IsAggressive()                          <- THIS FILE
- *   4. not blocked by a scene
- *   5. GetRecord().GetObjectActionsCount() > 0 <- still missing, see below
- *   6. the ATTACKER has a cyberdeck equipped   - their problem, not ours
- *   7. at least one action of type PuppetQuickHack <- still missing, see below
+ * Weapon targeting, TSF_EnemyNPC (core/gameplay/targetingSearchFilter.script:79):
  *
- * IsAggressive() (same file, :2008) has four routes to true, and only one of them belongs
- * on a roleplay server:
+ *     All(Obj_Puppet | Att_Hostile | St_Alive) AND Not(Obj_Player)
  *
- *   - the GameplayRestriction.FistFight status effect   <- what this uses
- *   - the reaction preset being aggressive              - ours is NoReaction, deliberately
- *   - ReactionSystem.IsRegisteredAsAggressive()         - registers them with the AI
- *   - attitude toward the local player being Hostile    - makes everyone hostile to everyone
+ * Quickhacking, ScriptedPuppet.IsQuickHackAble (cyberpunk/puppet/scriptedPuppet.script:4045):
  *
- * The status effect is the only one that does not change how the puppet behaves or how the
- * world feels about it. It is a flag the aggression check happens to read first.
+ *     IsActive, not crowd, IsAggressive, not scene-blocked,
+ *     record has objectActions, one of them PuppetQuickHack,
+ *     and the attacker holds a cyberdeck
  *
- * WHAT THIS DOES NOT DO. Conditions 5 and 7 need `objectActions` on the Character record
- * carrying at least one PuppetQuickHack, and those record names live in TweakDB, which is
- * not readable as text. The obvious-looking candidates in the game's scripts
- * (QuickHack.BlindHack and friends) appear there in a DEVICE context - ScriptableDeviceAction
- * on a screen - so shipping them as puppet actions would be a guess wearing evidence's
- * clothes. They have to come from a TweakDB browser looking at a real hackable NPC.
+ * They look like separate problems and turn out to share one answer.
  *
- * So this alone will NOT make anybody hackable yet. It removes one of the two remaining
- * obstacles, and it is the one that can be verified from source.
+ * WHAT ACTUALLY DOES IT: a hostile attitude toward the other player.
  *
- * OFF BY DEFAULT. FistFight is the brawl restriction and the game reads it in melee stim
- * handling too - see scriptedPuppet.script:3106 and :3743. Applied to a server-driven
- * puppet that never swings at anything it should be inert, but "should be" is why this is
- * behind a flag rather than simply on: --hackable-puppets turns it on, and turning it off
- * is a relaunch rather than a rebuild.
+ * Hostility satisfies Att_Hostile for the weapon filter directly, and it is also the fourth
+ * route to IsAggressive() - so it clears the quickhack gate at the same time. Measured
+ * before and after on a live muppet:
+ *
+ *     before hostile:  IsQuickHackAble false   IsAggressive false   cannot aim
+ *     after  hostile:  IsQuickHackAble true    IsAggressive true    can aim
+ *
+ * The other half is the record: MaMuppet and WaMuppet carry objectActions now (see
+ * CyberpunkMP.tweak). Attitude alone is not enough - a puppet with no object actions fails
+ * condition 5 whatever its attitude.
+ *
+ * WHAT WAS TRIED AND DISCARDED. The GameplayRestriction.FistFight status effect is the
+ * first branch of IsAggressive() and looked like the least invasive route - no AI change,
+ * no hostility. It did not work: IsAggressive stayed false after applying it, and it does
+ * nothing for weapon targeting either, which needs Att_Hostile specifically rather than
+ * aggression. Attitude replaced it.
+ *
+ * THE COST, and it is a real one. Hostility is what police, prevention and NPC AI react to.
+ * Every player becoming an enemy NPC in every other player's game is what makes native
+ * combat work, and it may also make bystanders and the prevention system treat them as
+ * threats. Scoped as narrowly as the API allows - hostility is set toward the LOCAL PLAYER
+ * only, per puppet, not by changing anyone's faction - but that is a narrowing, not an
+ * elimination. This stays behind a flag until it has been played with rather than tested.
  */
 public func MpTryMakeHackable(entity: ref<GameObject>) -> Void {
     if !IsDefined(entity) {
@@ -54,16 +55,29 @@ public func MpTryMakeHackable(entity: ref<GameObject>) -> Void {
         return;
     }
 
-    // Only puppets. The tag is what the spawn path sets, and anything else reaching here
-    // would be a mistake worth not compounding.
+    // Only our puppets. Anything else reaching here is a mistake not worth compounding by
+    // making a random NPC hostile.
     if !entity.HasTag(n"CyberpunkMP.Puppet") {
         return;
     }
 
-    StatusEffectHelper.ApplyStatusEffect(entity, t"GameplayRestriction.FistFight");
+    let player = GetPlayer(GetGameInstance());
+    if !IsDefined(player) {
+        return;
+    }
 
-    // Says what it did and what is still missing, so a test that shows nothing has an
-    // explanation on screen rather than requiring this comment to be found.
-    FTLog(s"[Hackable] aggression flag applied to \(EntityID.GetHash(entity.GetEntityID())) - " +
-          s"still needs objectActions/PuppetQuickHack on the record before it is hackable");
+    let theirs = entity.GetAttitudeAgent();
+    let mine = player.GetAttitudeAgent();
+
+    if !IsDefined(theirs) || !IsDefined(mine) {
+        FTLogWarning(s"[Hackable] no attitude agent on \(EntityID.GetHash(entity.GetEntityID())) - it will not be targetable");
+        return;
+    }
+
+    // Toward the local player specifically, rather than a faction or group change. This is
+    // the narrowest form the API offers: it makes this one puppet a valid target for this
+    // one player, and says nothing about how the rest of the world should feel about them.
+    theirs.SetAttitudeTowards(mine, EAIAttitude.AIA_Hostile);
+
+    FTLog(s"[Hackable] \(EntityID.GetHash(entity.GetEntityID())) is now a valid combat and quickhack target");
 }
