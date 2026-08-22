@@ -168,11 +168,12 @@
     width: 100%; height: 100%;
     object-fit: cover;
     /* Lit only once a key is actually held, so the mark answers "can this thing
-       install mods" at a glance rather than just decorating the corner. */
+       install mods" at a glance rather than just decorating the corner. The color
+       shift alone carries the state - an accent ring on top of it read as a red
+       alert on the healthiest state in the header (zeldfep, 2026-08-21). */
     filter: grayscale(1) opacity(.45);
     transition: filter 150ms ease;
   }
-  .nexus-mark.on { border-color: var(--accent); }
   .nexus-mark.on img { filter: none; }
 
   .account { display: none; align-items: center; gap: .75rem; }
