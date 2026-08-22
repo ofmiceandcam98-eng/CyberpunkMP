@@ -264,6 +264,16 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // TweakDBID through RTTI for no benefit.
     uint64_t ConsumeIncomingStatusEffect();
 
+    // The health the server says WE should be on, or -1 when it has not said anything new.
+    //
+    // A value rather than a delta, deliberately. Deltas accumulate error and diverge the
+    // moment one is dropped; an absolute figure from the authority cannot drift, and the
+    // server is the only thing that knows what armour and resistances actually did.
+    float ConsumeIncomingHealth();
+
+    // Whether the server has us down. Script reads it to stop treating us as upright.
+    bool IsDowned() const { return m_downed; }
+
     // Whether --hackable-puppets was passed. See Hackable.reds.
     bool HackablePuppetsEnabled() const;
 
@@ -326,6 +336,13 @@ protected:
 
     // A quickhack landed on somebody. Applied to OUR player when we are the target.
     void HandleStatusEffect(const PacketEvent<server::NotifyStatusEffect>& aMessage);
+
+    // The server's verdict on a hit. THE half that makes damage real - without it the
+    // whole pipeline detects, validates, broadcasts, and nothing happens to anybody.
+    void HandleDamageResult(const PacketEvent<server::NotifyDamageResult>& aMessage);
+
+    // Health and life state changing without a hit - a spawn, a revive, a correction.
+    void HandleCombatState(const PacketEvent<server::NotifyCombatState>& aMessage);
 
     // The account's characters changed - a delete landed, or one was refused.
     void HandleCharacterList(const PacketEvent<server::NotifyCharacterList>& aMessage);
@@ -452,6 +469,11 @@ private:
     // A queue rather than one value: two hacks can land inside a frame.
     Vector<uint64_t> m_incomingStatusEffects;
 
+    // The health the server last told US to be on, and whether it has us down. -1 means
+    // nothing new since script last looked.
+    float m_incomingHealth{-1.f};
+    bool m_downed{false};
+
     // For measuring our own speed from how far we actually moved - see
     // UpdatePlayerLocation. Mutable because that function is const and only reports.
     mutable glm::vec3 m_lastPosition{};
@@ -572,6 +594,8 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(SendCombatEvent);
     RTTI_METHOD(SendStatusEffect);
     RTTI_METHOD(ConsumeIncomingStatusEffect);
+    RTTI_METHOD(ConsumeIncomingHealth);
+    RTTI_METHOD(IsDowned);
     RTTI_METHOD(GetCharacterError);
     RTTI_METHOD(GetDenialMessage);
     RTTI_METHOD(GetDenialCode);

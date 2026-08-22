@@ -1333,6 +1333,50 @@ void NetworkWorldSystem::HandleStatusEffect(const PacketEvent<server::NotifyStat
                  aMessage.get_source_id());
 }
 
+void NetworkWorldSystem::HandleDamageResult(const PacketEvent<server::NotifyDamageResult>& aMessage)
+{
+    const auto self = GetRemotePlayerId();
+
+    // Everyone in range receives this so bystanders can render the hit. Only the person it
+    // happened to changes their own health from it.
+    if (!self || *self != aMessage.get_target_id())
+        return;
+
+    // Absolute, not a delta. A dropped delta diverges forever; an absolute figure from the
+    // authority cannot, and the server is the only thing that knows what armour actually
+    // did to the number.
+    m_incomingHealth = aMessage.get_target_health_after();
+
+    if (aMessage.get_knocked_down())
+        m_downed = true;
+
+    spdlog::info("[Combat] we took {:.1f} damage from entity {} - health now {:.1f}{}",
+                 aMessage.get_final_damage(), aMessage.get_attacker_id(), aMessage.get_target_health_after(),
+                 aMessage.get_knocked_down() ? " (DOWNED)" : "");
+}
+
+void NetworkWorldSystem::HandleCombatState(const PacketEvent<server::NotifyCombatState>& aMessage)
+{
+    const auto self = GetRemotePlayerId();
+
+    if (!self || *self != aMessage.get_id())
+        return;
+
+    m_incomingHealth = aMessage.get_health();
+    m_downed = aMessage.get_life_state() != 0;
+
+    spdlog::info("[Combat] server set our health to {:.1f} (state {})", aMessage.get_health(),
+                 aMessage.get_life_state());
+}
+
+float NetworkWorldSystem::ConsumeIncomingHealth()
+{
+    const auto health = m_incomingHealth;
+    m_incomingHealth = -1.f;
+
+    return health;
+}
+
 uint64_t NetworkWorldSystem::ConsumeIncomingStatusEffect()
 {
     if (m_incomingStatusEffects.empty())
@@ -1958,6 +2002,8 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleAppearanceUpdate>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleVoiceFrame>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleStatusEffect>(this);
+    pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleDamageResult>(this);
+    pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleCombatState>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleVehicleControlAssigned>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleCharacterList>(this);
 

@@ -203,6 +203,8 @@ public class MpStatusEffectPoll extends DelayCallback {
 
                     effect = network.ConsumeIncomingStatusEffect();
                 }
+
+                MpApplyServerHealth(player, network);
             }
         }
 
@@ -210,6 +212,48 @@ public class MpStatusEffectPoll extends DelayCallback {
         // reconnect, and a callback that stops on the first quiet tick never comes back.
         GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(new MpStatusEffectPoll(), 0.25, false);
     }
+}
+
+/**
+ * Put the server's verdict on our own health pool.
+ *
+ * THE HALF THAT MAKES DAMAGE REAL. Everything before this detected hits, validated them,
+ * and broadcast a result that nothing applied - the pipeline ran end to end and nobody ever
+ * lost a hit point.
+ *
+ * SET, never subtract. The server sends the health it says we should be on, and applying it
+ * absolutely means a dropped packet cannot leave two machines permanently disagreeing.
+ * Subtracting a damage figure would also mean recomputing armour locally, which is the
+ * thing the whole architecture exists to avoid.
+ *
+ * Interacts deliberately with Death.reds. The player is Immortal with a floor under their
+ * health so the death menu can never open, and that stays true: this writes a value, it
+ * does not kill anybody. When the server says we are down, the existing revive machinery is
+ * what handles it - the server owns the fact, the client owns the presentation.
+ */
+public func MpApplyServerHealth(player: ref<PlayerPuppet>, network: ref<NetworkWorldSystem>) -> Void {
+    if !IsDefined(player) || !IsDefined(network) {
+        return;
+    }
+
+    // -1 means the server has said nothing new. Health genuinely reaching zero arrives as
+    // a downed state, not as a value we would confuse with "no news".
+    let health = network.ConsumeIncomingHealth();
+    if health < 0.0 {
+        return;
+    }
+
+    let pools = GameInstance.GetStatPoolsSystem(player.GetGame());
+    let id = Cast<StatsObjectID>(player.GetEntityID());
+
+    // The floor from Death.reds, so a server figure of zero does not fight the immortality
+    // that keeps the death menu shut. Being downed is a STATE the server owns; it is not
+    // expressed by driving a health pool to nothing.
+    let target = MaxF(health, MpDeathFloor());
+
+    pools.RequestSettingStatPoolValue(id, gamedataStatPoolType.Health, target, player, false);
+
+    FTLog(s"[Combat] server set our health to \(target)");
 }
 
 // HIT ZONE, CRIT AND HEADSHOT are sent as zero/false deliberately, rather than guessed.

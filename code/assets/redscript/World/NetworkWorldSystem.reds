@@ -198,6 +198,11 @@ public native class NetworkWorldSystem extends IGameSystem {
     // when one lands on us - see Combat.reds.
     public native func SendStatusEffect(targetId: Uint64, effectId: Uint64, stacks: Uint32, sourceId: Uint64) -> Void;
     public native func ConsumeIncomingStatusEffect() -> Uint64;
+
+    // The health the server says we should be on, or -1 when nothing new. Absolute, never
+    // a delta - see MpApplyServerHealth.
+    public native func ConsumeIncomingHealth() -> Float;
+    public native func IsDowned() -> Bool;
     public native func GetEntityIdByServerId(serverId: Uint64) -> EntityID;
     public native func GetAppearanceSystem() -> ref<AppearanceSystem>;
     public native func GetChatSystem() -> ref<ChatSystem>;
