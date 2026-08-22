@@ -21,6 +21,26 @@ concept NetworkMessage = requires(T a, Buffer::Writer writer, Buffer::Reader rea
 };
 
 
+// Why a join was refused, carried as AuthenticationResponse.denial_code so the client
+// can ACT on the reason (open the launcher, update, sign in again) instead of
+// pattern-matching an English sentence. The numeric values are wire format - the client
+// and the .proto comment both reference them - so entries are only ever appended.
+enum class EDenialCode : uint32_t
+{
+    kNone = 0,
+    kProtocolMismatch = 1,
+    kClientOutdated = 2,
+    kManifestMismatch = 3,
+    kDigestMismatch = 4,
+    kDiscordExpired = 5,
+    kNotAMember = 6,
+    kDiscordUnreachable = 7,
+    kBanned = 8,
+    kServerFull = 9,
+    kUnmanagedBlocked = 10,
+    kWrongPassword = 11
+};
+
 struct GameServer final : Server
 {
     TP_NOCOPYMOVE(GameServer);
@@ -103,6 +123,23 @@ private:
     void AdmitPlayer(ConnectionId aConnectionId, const std::string& acUsername,
                      const std::string& acDiscordId, EPermissionLevel aLevel,
                      const std::string& acToken);
+
+    // The one shape every refusal takes: reason string, denial code, the manifest the
+    // server wanted (when that is the answer), then the kick. Game thread only.
+    void Deny(ConnectionId aConnectionId, EDenialCode aCode, const std::string& acReason,
+              bool aIncludeRequiredManifest = false);
+
+    // True (and denies with kServerFull) when the server is at MaxPlayer. Checked twice
+    // per join on the Discord path: once before spending two HTTPS calls on a player who
+    // cannot fit, and again when the verdict lands - the count can grow while Discord
+    // answers.
+    bool DenyIfFull(ConnectionId aConnectionId);
+
+    // Reads config/server-manifest.json - the same signed file the launcher verifies
+    // against, copied beside the server config by the deploy. Absent file = manifest
+    // checks disabled, which is the migration state, not an error. See
+    // docs/MANIFEST-ARCHITECTURE.md sections 7.2-7.3 for what is checked and why.
+    void LoadServerManifest(const std::filesystem::path& acPath);
 
     // Connections whose join verification is out with Discord. Game-thread only - written
     // by HandleAuthentication, erased by the completion task and by OnDisconnection, all
@@ -228,6 +265,15 @@ private:
     AuditLog m_audit;
     std::chrono::steady_clock::time_point m_lastPlayerSave;
     std::chrono::steady_clock::time_point m_lastJailCheck;
+
+    // Loaded from config/server-manifest.json at boot. Empty manifestVersion means no
+    // manifest was present and every manifest check is skipped (migration state). The
+    // digest is computed ONCE here from manifest-declared fields only - the exact
+    // canonical string is documented at the computation site and must stay byte-identical
+    // to computeInstallDigest in code/launcher-lite/manifest.js.
+    std::string m_manifestVersion;
+    std::string m_expectedDigest;
+    std::string m_unknownModPolicy{"warn"};
 
     glm::vec3 m_respawnPosition{};
     float m_respawnYaw{0.f};

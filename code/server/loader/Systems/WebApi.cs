@@ -204,11 +204,44 @@ namespace Server.Loader.Systems
             {
                 Players = players,
                 Uptime = (int)(DateTime.UtcNow - StartedAtUtc).TotalSeconds,
-                State = "running"
+                State = "running",
+
+                // Which environment this deploy runs, so the launcher can see client/server
+                // skew BEFORE the game boots and the protocol gate kicks. Empty strings when
+                // no manifest is deployed (migration) - absence of the fields would make old
+                // launchers' field-presence server-age heuristic misfire.
+                ManifestVersion,
+                Release
             });
         }
 
         private static readonly DateTime StartedAtUtc = DateTime.UtcNow;
+
+        /// <summary>
+        /// Read once at startup from the same config/server-manifest.json the native
+        /// server enforces at the door. This side only REPORTS it; enforcement lives in
+        /// GameServer.cpp. A malformed or missing file reports empty, never throws -
+        /// status must stay boring.
+        /// </summary>
+        private static readonly string ManifestVersion = ReadManifestField("manifestVersion");
+        private static readonly string Release = ReadManifestField("release");
+
+        private static string ReadManifestField(string field)
+        {
+            try
+            {
+                var path = Path.Combine(AppContext.BaseDirectory, "config", "server-manifest.json");
+                if (!File.Exists(path))
+                    return "";
+
+                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(path));
+                return doc.RootElement.TryGetProperty(field, out var value) ? value.GetString() ?? "" : "";
+            }
+            catch
+            {
+                return "";
+            }
+        }
 
         private const int MaxLogUploadBytes = 4 * 1024 * 1024;
         private const int LogsKeptPerPlayer = 10;

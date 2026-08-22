@@ -85,6 +85,40 @@ void Settings::Load()
             settings.discordName = (*name)[0].c_str();
     }
 
+    // The manifest attestation trio - see Settings.h. Carried, never computed here.
+    if (const auto manifest = launchParameters.Get("-manifest-version"); manifest && manifest->size > 0)
+        settings.manifestVersion = (*manifest)[0].c_str();
+
+    if (const auto digest = launchParameters.Get("-install-digest"); digest && digest->size > 0)
+        settings.installDigest = (*digest)[0].c_str();
+
+    if (const auto unmanaged = launchParameters.Get("-unmanaged"); unmanaged && unmanaged->size > 0)
+    {
+        // One comma-joined argument rather than a repeated flag, because the launcher
+        // builds one argv and the list is small (the launcher caps it before sending).
+        const std::string joined = (*unmanaged)[0].c_str();
+        size_t start = 0;
+        while (start < joined.size())
+        {
+            auto end = joined.find(',', start);
+            if (end == std::string::npos)
+                end = joined.size();
+            if (end > start)
+                settings.unmanaged.push_back(String(joined.substr(start, end - start).c_str()));
+            start = end + 1;
+        }
+    }
+
+    if (const auto password = launchParameters.Get("-server-password"); password && password->size > 0)
+        settings.serverPassword = (*password)[0].c_str();
+
+    spdlog::info("Manifest: {}", settings.manifestVersion.empty()
+                                     ? "none - launched without the launcher, or pre-manifest launcher"
+                                     : fmt::format("{} (digest {}, {} unmanaged reported)",
+                                                   settings.manifestVersion.c_str(),
+                                                   settings.installDigest.empty() ? "MISSING" : "present",
+                                                   settings.unmanaged.size()));
+
     // Which record remote players are built from. See Settings.h - this exists so the
     // record can be changed between launches instead of between releases, because
     // finding one that is both stable and targetable is trial and error that costs two

@@ -140,6 +140,9 @@ bool Client::Connect(const SteamNetworkingIPAddr& acEndpoint) noexcept
 {
     Close();
 
+    // A refusal explains the disconnect it arrived with, not the next one.
+    m_lastRefusalCode = 0;
+
     SteamNetworkingConfigValue_t opt = {};
     opt.SetPtr(k_ESteamNetworkingConfig_Callback_ConnectionStatusChanged, reinterpret_cast<void*>(&SteamNetConnectionStatusChangedCallback));
     m_connection = m_pInterface->ConnectByIPAddress(acEndpoint, 1, &opt);
@@ -281,6 +284,12 @@ void Client::OnSteamNetConnectionStatusChanged(SteamNetConnectionStatusChangedCa
     case k_ESteamNetworkingConnectionState_ClosedByPeer:
     case k_ESteamNetworkingConnectionState_ProblemDetectedLocally:
     {
+        // The server's parting message - a refusal code, an authentication denial with
+        // its reason - can arrive in the same tick as this close. Read it out BEFORE
+        // invalidating the connection, or the one message that explains the disconnect
+        // is destroyed unread and the player gets a bare "connection lost".
+        DrainPendingMessages();
+
         m_pInterface->CloseConnection(m_connection, 0, nullptr, false);
         m_connection = k_HSteamNetConnection_Invalid;
 
@@ -335,9 +344,39 @@ void Client::HandleMessage(const void* apData, uint32_t aSize) noexcept
     case kCompressedPayload:
         HandleCompressedPayload(pData, aSize);
         break;
+    case kRefused:
+        HandleRefused(pData, aSize);
+        break;
     default:
         assert(false);
         break;
+    }
+}
+
+void Client::HandleRefused(const void* apData, const uint32_t aSize) noexcept
+{
+    if (aSize < 1)
+        return;
+
+    // Kept rather than acted on: the kick that follows this packet is the action, and it
+    // arrives through the normal close path. This just makes sure that when it does, the
+    // layer above can say WHY instead of shrugging.
+    m_lastRefusalCode = static_cast<const uint8_t*>(apData)[0];
+}
+
+void Client::DrainPendingMessages() noexcept
+{
+    if (m_connection == k_HSteamNetConnection_Invalid)
+        return;
+
+    while (true)
+    {
+        ISteamNetworkingMessage* pIncomingMsg = nullptr;
+        if (m_pInterface->ReceiveMessagesOnConnection(m_connection, &pIncomingMsg, 1) <= 0 || pIncomingMsg == nullptr)
+            break;
+
+        HandleMessage(pIncomingMsg->GetData(), pIncomingMsg->GetSize());
+        pIncomingMsg->Release();
     }
 }
 

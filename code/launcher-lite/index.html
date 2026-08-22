@@ -222,6 +222,44 @@
     padding-right: .25rem;
   }
 
+  /* --- the download queue, under the mod list --- */
+  .modqueue {
+    margin-top: .5rem;
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    background: rgba(255, 42, 50, .04);
+    padding: .45rem .6rem .5rem;
+  }
+  .modqueue-head {
+    font-size: .62rem;
+    letter-spacing: .14em;
+    color: var(--dim);
+    margin-bottom: .35rem;
+  }
+  .queue-row {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    padding: .22rem 0;
+    font-size: .8rem;
+  }
+  .queue-row .qname { min-width: 9rem; }
+  .queue-row .qdetail { color: var(--dim); font-size: .72rem; flex: 1; }
+  .queue-row.failed .qdetail { color: var(--accent); }
+  .queue-row.waiting .qdetail { color: var(--hazard); }
+  .qbar {
+    flex: 1;
+    max-width: 10rem;
+    height: 4px;
+    background: #22262e;
+    overflow: hidden;
+  }
+  .qbar > div {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2, #7a1016));
+    transition: width .3s ease;
+  }
+
   .mod {
     display: flex;
     align-items: center;
@@ -1362,6 +1400,14 @@
 
         <div class="modlist" id="modList"></div>
 
+        <!-- The download queue: one mod at a time, in load order, frameworks first.
+             Hidden until Install missing starts one. Strictly serial on purpose - what
+             broke installs was never speed, it was a mod landing before its framework. -->
+        <div class="modqueue" id="modQueue" style="display:none">
+          <div class="modqueue-head">/// DOWNLOAD QUEUE — one at a time, load order ///</div>
+          <div id="modQueueRows"></div>
+        </div>
+
         <div class="field-hint" id="modHint" style="margin-top:.5rem"></div>
       </div>
     </div>
@@ -1411,6 +1457,11 @@
   // down would break the very first render.
   let updateState = null
   let serverState = null
+
+  // One short phrase describing the manifest state, rendered after the mod version.
+  // Empty during migration (no manifest published yet) so nothing changes for anyone
+  // until there is something true to say.
+  let manifestSummary = ''
 
   // Set from the main process as the launcher updates itself, not from any check we
   // run here - the updater owns that state and reports on it.
@@ -1943,7 +1994,10 @@
       dot.className = 'dot on'
       // Says MOD explicitly. This line reports the mod's version, and sat directly above
       // a launcher that showed no version of its own - so it read as the launcher's.
-      text.textContent = 'Mod up to date' + (updateState.version ? ' - ' + updateState.version : '')
+      // The manifest suffix says which APPROVED ENVIRONMENT that version was verified
+      // against - the number the server checks at the door.
+      text.textContent = 'Mod up to date' + (updateState.version ? ' - ' + updateState.version : '') +
+        (manifestSummary ? ' · ' + manifestSummary : '')
       // Nothing to do, so the button is not shown at all. A permanently disabled
       // "Update" button invites people to keep pressing it wondering what is broken.
       updateBtn.style.display = 'none'
@@ -2147,6 +2201,28 @@
 
     const result = await window.launcher.checkUpdate()
     updateState = result.ok ? result : null
+
+    // The manifest state rides the same refresh. 'invalid' is the one state that must
+    // interrupt: a manifest that FAILS signature verification is tampering evidence,
+    // not an outage, and quietly carrying on is exactly what the signature exists to
+    // prevent. Everything else is a suffix on the mod row.
+    try {
+      const m = await window.launcher.manifestStatus()
+      if (m.ok) {
+        if (m.state === 'valid' || m.state === 'cached' || m.state === 'rollback') {
+          manifestSummary = 'manifest ' + m.version
+        } else if (m.state === 'invalid') {
+          manifestSummary = 'MANIFEST UNVERIFIED'
+          setStatus('The server manifest failed signature verification - do not trust this update channel. Report this in the Discord.', 'error')
+        } else if (m.state === 'launcher-too-old') {
+          manifestSummary = 'launcher too old for manifest'
+        } else {
+          manifestSummary = ''
+        }
+        if (m.warning && m.state !== 'invalid') console.warn('[manifest]', m.warning)
+      }
+    } catch { manifestSummary = '' }
+
     renderUpdateState()
     renderLauncherState()
     renderChangelog()
@@ -3378,14 +3454,101 @@
 
     await refreshMods()
 
+    // Which environment this was verified against - or exactly why it could not be.
+    const manifestNote = result.manifest
+      ? (result.manifest.version ? ' · manifest ' + result.manifest.version : ' · no manifest (' + result.manifest.state + ')')
+      : ''
+
     if (result.checked === 0) {
-      $('modHint').textContent = 'Nothing installed through the launcher yet.'
-    } else if (result.problems.length === 0) {
-      $('modHint').textContent = '✓ All ' + result.intact + ' installed mod(s) verified.'
+      $('modHint').textContent = 'Nothing installed through the launcher yet.' + manifestNote
+    } else if (result.problems.length === 0 && (result.retired || []).length === 0) {
+      $('modHint').textContent = '✓ All ' + result.intact + ' installed mod(s) verified.' + manifestNote
     } else {
       // Names the broken ones. "3 problems found" leaves someone to work out which.
-      $('modHint').textContent = result.problems.length + ' problem(s): ' +
-        result.problems.map((p) => p.name + ' (' + p.detail + ')').join(', ')
+      const parts = []
+      if (result.problems.length) {
+        parts.push(result.problems.length + ' problem(s): ' +
+          result.problems.map((p) => p.name + ' (' + p.detail + ')').join(', '))
+      }
+      if ((result.retired || []).length) {
+        parts.push('no longer on the server\'s list: ' + result.retired.map((r) => r.name).join(', ') +
+          ' - remove ' + (result.retired.length === 1 ? 'it' : 'them') + ' from the list below')
+      }
+      $('modHint').textContent = parts.join(' /// ') + manifestNote
+
+      // Repair is one press because the diagnosis already happened - re-download exactly
+      // what failed, through the same channel that installed it.
+      const repairable = result.problems.filter((p) => p.repairable)
+      if (repairable.length > 0) {
+        const first = repairable[0]
+        setStatus('Repair available for ' + first.name + ' - press Verify again after it lands.', 'error')
+        for (const problem of repairable) {
+          window.launcher.repairMod(problem.id).then((r) => {
+            if (r.ok) setStatus((r.needsWebsite ? problem.name + ': ' + r.message : 'Repaired ' + problem.name + '.'), r.needsWebsite ? 'error' : 'ok')
+            else setStatus('Could not repair ' + problem.name + ': ' + (r.error || 'unknown'), 'error')
+          })
+        }
+      }
+    }
+  })
+
+  // The download queue, under the mod list. A full snapshot arrives on every change;
+  // rendering is a rebuild, not a patch - at this row count there is nothing to win by
+  // being clever, and snapshots cannot drift out of sync.
+  window.launcher.onModQueue((queue) => {
+    const box = $('modQueue')
+    const rows = $('modQueueRows')
+
+    if (!queue || queue.length === 0) {
+      box.style.display = 'none'
+      return
+    }
+    box.style.display = 'block'
+    rows.textContent = ''
+
+    for (const entry of queue) {
+      const row = document.createElement('div')
+      row.className = 'queue-row ' + entry.state
+
+      const dot = document.createElement('span')
+      // The same state language as everything else in the launcher: green = done,
+      // spinning ring = working, plain = waiting its turn.
+      dot.className = 'dot' +
+        (entry.state === 'installed' ? ' on' : '') +
+        (entry.state === 'downloading' ? ' busy' : '')
+      row.appendChild(dot)
+
+      const name = document.createElement('span')
+      name.className = 'qname'
+      name.textContent = entry.name
+      row.appendChild(name)
+
+      if (entry.state === 'downloading' && typeof entry.percent === 'number') {
+        const bar = document.createElement('div')
+        bar.className = 'qbar'
+        const fill = document.createElement('div')
+        fill.style.width = entry.percent + '%'
+        bar.appendChild(fill)
+        row.appendChild(bar)
+      }
+
+      const detail = document.createElement('span')
+      detail.className = 'qdetail'
+      detail.textContent =
+        entry.state === 'queued' ? 'queued' :
+        entry.state === 'downloading' ? (typeof entry.percent === 'number' ? entry.percent + '%' : 'downloading...') :
+        entry.state === 'waiting' ? (entry.detail || 'waiting for your click on Nexus') :
+        entry.state === 'failed' ? ('✗ ' + (entry.detail || 'failed')) :
+        ('✓ installed' + (entry.detail ? ' — ' + entry.detail : ''))
+      row.appendChild(detail)
+
+      rows.appendChild(row)
+    }
+
+    // Refresh the list's install states when the queue finishes its last row, so ✓s in
+    // the queue and "Installed" in the list can never tell two different stories.
+    if (queue.every((q) => q.state === 'installed' || q.state === 'failed')) {
+      refreshMods()
     }
   })
 

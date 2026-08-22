@@ -1748,7 +1748,25 @@ void NetworkWorldSystem::Connect()
     // defaults (127.0.0.1:11778) and the connection times out against your own PC.
     spdlog::info("Connecting to {}", address);
 
+    // A denial describes the attempt it refused, never the one about to be made.
+    ClearConnectionDenial();
+
     Core::Container::Get<NetworkService>()->Connect(address);
+}
+
+void NetworkWorldSystem::SetConnectionDenial(const uint32_t aCode, const std::string& acMessage,
+                                             const std::string& acRequiredManifest)
+{
+    m_denialCode = aCode;
+    m_denialMessage = acMessage;
+    m_requiredManifest = acRequiredManifest;
+}
+
+void NetworkWorldSystem::ClearConnectionDenial()
+{
+    m_denialCode = 0;
+    m_denialMessage.clear();
+    m_requiredManifest.clear();
 }
 
 void NetworkWorldSystem::Disconnect()

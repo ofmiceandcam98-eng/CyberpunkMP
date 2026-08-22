@@ -9,6 +9,33 @@ message AuthenticationRequest {
     string token = 2;
     uint64 client_protocol = 3;
     uint64 server_protocol = 4;
+
+    // Which build this DLL actually is - the git commit baked in at compile time.
+    // The protocol hashes above say "same wire shape"; this says WHICH build, so a
+    // denial can finally name the stale side instead of "Invalid protocol version!".
+    string build_stamp = 5;
+
+    // What the launcher verified this installation against, passed through the game's
+    // launch arguments. Empty when the client was started without the launcher - the
+    // server decides what that means (during migration: nothing).
+    string manifest_version = 6;
+
+    // The launcher's attestation that every required component matched the manifest -
+    // 64 lowercase hex chars of SHA-256 over manifest-declared identities only (the
+    // canonical string is defined in docs/MANIFEST-ARCHITECTURE.md 7.2). An accident
+    // detector, not proof: a hostile client can echo it, a half-updated one cannot.
+    string install_digest = 7;
+
+    // Unmanaged things the launcher found, type-prefixed ("plugin:FlightControl",
+    // "archive:weather.archive", "script:foo.reds", "marker:cyber_engine_tweaks").
+    // Client-supplied and therefore advisory - it exists to stop accidents, never
+    // adversaries, and the server policy that reads it says so.
+    repeated string unmanaged = 8;
+
+    // Checked only when the server config sets one. Carried here rather than in a
+    // second round trip because the connection is refused before a player entity
+    // exists either way.
+    string password = 9;
 }
 
 message SpawnCharacterRequest {

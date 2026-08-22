@@ -210,6 +210,21 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // instead of appearing to ignore the button.
     Red::CString GetCharacterError() const { return Red::CString(m_characterError.c_str()); }
 
+    // ---------------------------------------------------------------------------
+    // Why the last CONNECTION was refused. Before this existed, a denied join was an
+    // spdlog line and a bare disconnect - the reason reached the log file and never the
+    // player ("the mod loads but does not connect", every protocol bump). Written by
+    // NetworkService when a denial arrives (an AuthenticationResponse with a code, or a
+    // transport-level kRefused), read by script when OnDisconnected fires, cleared when
+    // the next connect attempt starts so it can never describe the wrong session.
+    // ---------------------------------------------------------------------------
+    void SetConnectionDenial(uint32_t aCode, const std::string& acMessage, const std::string& acRequiredManifest);
+    void ClearConnectionDenial();
+
+    Red::CString GetDenialMessage() const { return Red::CString(m_denialMessage.c_str()); }
+    uint32_t GetDenialCode() const { return m_denialCode; }
+    Red::CString GetRequiredManifest() const { return Red::CString(m_requiredManifest.c_str()); }
+
     // Called from redscript when the local player is downed - see Death.reds.
     void RequestRespawn();
 
@@ -338,6 +353,11 @@ private:
     bool m_characterSpawnedBefore{false};
     std::string m_characterError;
 
+    // The last connection denial - see SetConnectionDenial.
+    uint32_t m_denialCode{0};
+    std::string m_denialMessage;
+    std::string m_requiredManifest;
+
     // Owned here so its lifetime matches the system's - the destructor stops the capture
     // thread, so a world teardown cannot leave a microphone open.
     VoiceAudioManager m_voice;
@@ -450,6 +470,9 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(VoiceInputLevel);
     RTTI_METHOD(VoiceLastError);
     RTTI_METHOD(GetCharacterError);
+    RTTI_METHOD(GetDenialMessage);
+    RTTI_METHOD(GetDenialCode);
+    RTTI_METHOD(GetRequiredManifest);
     RTTI_METHOD(RequestRespawn);
     RTTI_METHOD(SaveCharacterAppearance);
     RTTI_METHOD(IsConnected);

@@ -107,6 +107,15 @@ public native class NetworkWorldSystem extends IGameSystem {
     // than swallowed - a button that appears to do nothing is the worst outcome here.
     public native func GetCharacterError() -> String;
 
+    // Why the last CONNECTION was refused - the server's own sentence, plus the code
+    // (EDenialCode in GameServer.h) and, on manifest denials, the version the server
+    // wanted. Empty/zero when the last disconnect was nobody refusing anything. This is
+    // what OnDisconnected turns into the on-screen popup; before it existed a denied
+    // join was a bare disconnect with the reason in a log file.
+    public native func GetDenialMessage() -> String;
+    public native func GetDenialCode() -> Uint32;
+    public native func GetRequiredManifest() -> String;
+
     // ---------------------------------------------------------------------------
     // Voice devices and capture, from Windows' own audio endpoints.
     //
@@ -261,10 +270,32 @@ public native class NetworkWorldSystem extends IGameSystem {
         // let evt: ref<ConnectedToServer>;
         // evt.m_connected = true;
         // GameInstance.GetUISystem(GetGameInstance()).QueueEvent(evt);
-        
+
         let blackboardSystem: ref<BlackboardSystem> = GameInstance.GetBlackboardSystem(GetGameInstance());
         let blackboard: ref<IBlackboard> = blackboardSystem.Get(GetAllBlackboardDefs().UIGameData);
         blackboard.SetBool(GetAllBlackboardDefs().UIGameData.UIMultiplayerConnectedToServer, false, true);
+
+        // Say WHY, on screen, when the server said why. Every denied join used to be a
+        // bare disconnect with the reason sitting in a log file - "the mod loads but does
+        // not connect" was a recurring live mystery that this single popup retires. The
+        // message is the server's own sentence (or the transport refusal translated), so
+        // it already says what to do about it.
+        let denial = this.GetDenialMessage();
+        if NotEquals(denial, "") {
+            let required = this.GetRequiredManifest();
+            if NotEquals(required, "") {
+                denial = s"\(denial) (server wants \(required))";
+            }
+
+            let msg: SimpleScreenMessage;
+            msg.isShown = true;
+            msg.duration = 10.0;
+            msg.message = denial;
+            blackboard = blackboardSystem.Get(GetAllBlackboardDefs().UI_Notifications);
+            blackboard.SetVariant(GetAllBlackboardDefs().UI_Notifications.WarningMessage, ToVariant(msg), true);
+
+            this.ScriptLog(s"connection denied (code \(this.GetDenialCode())): \(denial)");
+        }
 
         // Give death back. Someone who leaves the server and carries on playing their own
         // save should be able to die in it.

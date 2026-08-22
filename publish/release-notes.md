@@ -4,6 +4,17 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.97
+
+**The launcher becomes the compatibility authority.** This release and this server move together — older builds are refused with a reason instead of a silent disconnect. Full design: docs/MANIFEST-ARCHITECTURE.md.
+
+- **The server finally tells you WHY it said no.** A denied join used to be a bare disconnect with the reason buried in a log file — "the mod loads but does not connect" was a recurring mystery. Denials are now an on-screen message with the server's own words: wrong protocol, out-of-date installation, wrong password, server full (yes, the player cap is actually enforced now — it never was), banned, or Discord trouble. Manifest denials name the exact version to update to.
+- **Every release now carries a signed manifest** — one file stating exactly which mod build, frameworks and files this environment approves, signed with keys that never leave the owners' machines. The launcher verifies your installation against it before Play, refuses a manifest whose signature fails (that's tampering evidence, not an outage), keeps the last good one for offline play, and attests what it verified when the game connects. No manifest published yet = everything behaves exactly as before.
+- **Verify now actually verifies.** Installed mods are hash-checked file by file, not just "does a file with that name exist" — corrupted, half-written and game-update-overwritten files are all caught, and a Repair pass re-downloads exactly what failed through the same channel that installed it. New installs record what Nexus actually served, and no install will silently overwrite another mod's files again.
+- **Downloads are checked before they touch your game.** Fresh installs and updates verify the payload against the signed manifest before extracting; a bad download is refused with your working install left alone.
+- **Mods that leave the server's list get flagged for removal** — by the launcher's own per-file records, never by deleting folders, and never touching anything it didn't install.
+- **Dependency order is enforced everywhere** — installing a mod before its framework is refused with the framework's name, on every install path including the browser hand-off.
+
 ## What changed — v0.3.96
 
 - **Test your microphone before you play.** Pick your mic in Settings → Voice, press **Test**, and speak — a live meter shows whether Windows can actually hear you. It turns red and tells you to lower your gain if you're clipping, which is the usual problem on an XLR interface. It runs entirely in the launcher: no server, no game, nothing to join first. Your mic is released the moment you stop, change device, or close Settings.

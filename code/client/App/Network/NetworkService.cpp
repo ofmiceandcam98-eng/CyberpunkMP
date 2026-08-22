@@ -8,6 +8,8 @@
 #include "App/World/AppearanceSystem.h"
 #include "Game/CharacterCustomizationSystem.h"
 
+#include <BuildInfo.h> // BUILD_COMMIT - generated at the build root, stamps every request
+
 NetworkService::NetworkService()
     : Client(client::kIdentifier, server::kIdentifier)
     , m_lastUpdate(std::chrono::steady_clock::now())
@@ -52,13 +54,51 @@ void NetworkService::OnConnected()
     request.set_client_protocol(client::kIdentifier);
     request.set_server_protocol(server::kIdentifier);
 
+    // Which build this DLL actually is, so a protocol denial names the stale side in
+    // both logs instead of two hex hashes nobody can map to a release.
+    request.set_build_stamp(BUILD_COMMIT);
+
+    // The launcher's attestation, carried verbatim from the launch arguments. The client
+    // computes none of it - see Settings.h. Empty fields mean "started without the
+    // launcher"; the server decides what that is worth.
+    const auto& settings = Settings::Get();
+    request.set_manifest_version(settings.manifestVersion);
+    request.set_install_digest(settings.installDigest);
+    request.set_password(settings.serverPassword);
+
+    if (!settings.unmanaged.empty())
+    {
+        Vector<String> unmanaged;
+        for (const auto& entry : settings.unmanaged)
+            unmanaged.push_back(entry);
+        request.set_unmanaged(unmanaged);
+    }
+
     Send(request);
 }
 
 void NetworkService::OnDisconnected(EDisconnectReason aReason)
 {
     spdlog::info("Disconnected from server {}", static_cast<uint32_t>(aReason));
-    Red::GetGameSystem<NetworkWorldSystem>()->OnDisconnected(aReason);
+
+    // A transport-level refusal (kRefused, sent just before a handshake kick) closes the
+    // connection before authentication ever runs, so no AuthenticationResponse carried a
+    // reason. The one-byte code is all there is - turn it into a sentence here rather
+    // than showing the player a bare disconnect. Only when authentication did not
+    // already record something better: its denial carries the server's own words.
+    auto* pWorldSystem = Red::GetGameSystem<NetworkWorldSystem>();
+    if (const auto refusal = GetLastRefusalCode(); refusal != 0 && pWorldSystem->GetDenialCode() == 0)
+    {
+        // Code 1 (protocol mismatch) is the only one the transport sends today; anything
+        // else is a future server being more specific than this build understands.
+        const std::string message =
+            refusal == 1 ? "Your mod is built against a different protocol than this server. Open the launcher and update."
+                         : fmt::format("The server refused the connection (code {}). Open the launcher and update.", refusal);
+
+        pWorldSystem->SetConnectionDenial(refusal, message, {});
+    }
+
+    pWorldSystem->OnDisconnected(aReason);
 
     m_authenticated = false;
 }
@@ -152,7 +192,16 @@ void NetworkService::HandleAuthentication(const PacketEvent<server::Authenticati
 {
     if (!aResponse.get_success())
     {
-        spdlog::error("Authentication failed: {}", aResponse.get_error());
+        spdlog::error("Authentication failed ({}): {}", aResponse.get_denial_code(), aResponse.get_error());
+
+        // Kept where script can read it BEFORE Close() triggers OnDisconnected - the
+        // popup that finally tells the player why fires from there. Logging alone was
+        // the old behavior, and it produced "the mod loads but does not connect" as a
+        // recurring live mystery.
+        Red::GetGameSystem<NetworkWorldSystem>()->SetConnectionDenial(
+            aResponse.get_denial_code(), aResponse.get_error().c_str(),
+            aResponse.get_required_manifest().c_str());
+
         Close();
         return;
     }

@@ -92,6 +92,12 @@ contextBridge.exposeInMainWorld('launcher', {
     ipcRenderer.on('mod-progress', (_e, info) => callback(info))
   },
 
+  // The download queue - a full snapshot on every change, so the renderer never has to
+  // reconstruct state from a stream of deltas it may have missed.
+  onModQueue: (callback) => {
+    ipcRenderer.on('mod-queue', (_e, queue) => callback(queue))
+  },
+
   nexusSsoLogin: () => ipcRenderer.invoke('nexus:ssoLogin'),
   nexusSignIn: (key) => ipcRenderer.invoke('nexus:signIn', key),
   getVoiceSettings: () => ipcRenderer.invoke('voice:get'),
@@ -112,6 +118,12 @@ contextBridge.exposeInMainWorld('launcher', {
   uninstallLauncher: () => ipcRenderer.invoke('launcher:uninstall'),
   deepClean: () => ipcRenderer.invoke('repair:run'),
   installMissingMods: () => ipcRenderer.invoke('mods:installMissing'),
+
+  // The signed manifest's state (verified / cached / absent / INVALID...), and repair
+  // for a mod whose files fail hash verification. Both live in the main process; the
+  // page only ever sees summaries.
+  manifestStatus: (force) => ipcRenderer.invoke('manifest:status', force),
+  repairMod: (id) => ipcRenderer.invoke('mods:repair', id),
 
   // The launcher updating itself: progress reports in, restart request out.
   onLauncherUpdate: (callback) => {
