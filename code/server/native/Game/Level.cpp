@@ -236,6 +236,48 @@ void Level::AddPlayer(flecs::entity aEntity) noexcept
 
             GServer->Send(pPlayerComponent->Connection, Serialize(aEntity));
         });
+
+    // Replay the rolling stock. Vehicle spawns and seat entries replicate through
+    // observers (VehicleComponent.cpp, AttachmentComponent.cpp) - which by definition
+    // only reach players PRESENT when they fire. A late joiner missed all of them, so
+    // they got the characters (replayed above) and none of the cars: anyone already
+    // driving appeared standing in the road, gliding along at highway speed, and every
+    // parked car simply did not exist. Cars before seats, both after the characters -
+    // the client queues a mount until its local copy of the vehicle is ready, but the
+    // character being seated has to exist before the mount can name them.
+    GetWorld()->each(
+        [pPlayerComponent](flecs::entity aVehicle, const VehicleComponent& aVehicleComponent,
+                           const MovementComponent& aMovementComponent)
+        {
+            common::Vector3 pos;
+            pos.set_x(aMovementComponent.Position.x);
+            pos.set_y(aMovementComponent.Position.y);
+            pos.set_z(aMovementComponent.Position.z);
+
+            server::NotifyVehicleLoad load;
+            load.set_position(pos);
+            load.set_id(aVehicle);
+            load.set_rotation(aMovementComponent.Rotation.z);
+            load.set_tweak_id(aVehicleComponent.TweakDBID);
+
+            GServer->Send(pPlayerComponent->Connection, load);
+        });
+
+    GetWorld()->each(
+        [player = aEntity, pPlayerComponent](flecs::entity aOccupant, const AttachmentComponent& aAttachment)
+        {
+            // Nothing of the joiner's can be seated this early; the guard keeps the
+            // symmetry every other replication loop here has.
+            if (aOccupant.parent() == player)
+                return;
+
+            server::NotifyVehicleEnter enter;
+            enter.set_vehicle_id(aAttachment.Parent);
+            enter.set_character_id(aOccupant);
+            enter.set_sit_id(aAttachment.SlotId);
+
+            GServer->Send(pPlayerComponent->Connection, enter);
+        });
 }
 
 void Level::RemovePlayer(flecs::entity aEntity) noexcept
