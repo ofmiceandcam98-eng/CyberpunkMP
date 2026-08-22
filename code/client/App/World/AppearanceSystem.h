@@ -29,6 +29,18 @@ struct AppearanceSystem : RED4ext::IScriptable
     // not a player - server-spawned characters have no Discord account behind them.
     void SetEntityName(Red::EntityID entityID, const std::string& acName);
     std::string GetEntityName(Red::EntityID entityID) const;
+
+    // The same lookup, in the one type redscript can actually receive.
+    //
+    // std::string does not marshal across RTTI, which is why the name has been sitting in
+    // this map unreachable from script since it was added. The scanner needs it: with the
+    // display name blanked on Character.Muppet (it inherits Panam's otherwise), the game
+    // falls back to generating a NAME OF ITS OWN for a nameless NPC - seeded per client,
+    // so every player saw a different random name for the same person.
+    Red::CString GetNetworkPlayerName(Red::EntityID aEntityId) const
+    {
+        return Red::CString(GetEntityName(aEntityId).c_str());
+    }
     Vector<uint64_t> GetPlayerItems(Red::Handle<Red::GameObject> player);
     bool ApplyAppearance(Red::Handle<Red::GameObject> object);
 
@@ -52,4 +64,5 @@ RTTI_DEFINE_CLASS(AppearanceSystem, {
     RTTI_ALIAS("CyberpunkMP.World.AppearanceSystem");
     RTTI_METHOD(GetEntityItems);
     RTTI_METHOD(ApplyAppearance);
+    RTTI_METHOD(GetNetworkPlayerName);
 });

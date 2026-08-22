@@ -48,6 +48,9 @@ public native class AppearanceSystem extends IScriptable {
     //public native func SetMorphWeights(player: ref<GameObject>) -> Void;
     public native func ApplyAppearance(player: ref<GameObject>) -> Bool;
 
+    // Who this puppet belongs to. Empty for anything that is not a network player.
+    public native func GetNetworkPlayerName(entityID: EntityID) -> String;
+
     private let m_callbackSystem: wref<CallbackSystem>;
     public let m_entities: array<wref<GameObject>>;
     public let m_controller: wref<MultiplayerGameController>;
