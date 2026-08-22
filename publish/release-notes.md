@@ -4,6 +4,25 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.100
+
+**Voice chat.** Hold your talk key and the people around you hear you.
+
+- **Proximity, three ranges.** Whisper carries about six metres, normal speech twenty-five, and yelling sixty — cycle them with your range key (F12 by default). How far each one reaches is decided by the server, not by your game, so nobody can arrange to be heard across the city.
+- **Your first word actually arrives.** Everyone starts a word slightly before the key is fully down, so the moment before you press is kept and sent with it. Without that the first syllable is simply gone, which is the thing that makes push-to-talk feel broken in other games.
+- **A small indicator, bottom left**, while your microphone is open — because the one moment it has to be unmissable is when you are transmitting and do not realise it.
+- **Your launcher settings are used**: the microphone and output you picked, both volumes, and both keybinds. Change them before you press JACK IN.
+- **Nothing is transmitted unless you press the key.** Your microphone is opened when you join, so there is no delay when you talk, but audio only leaves your machine while you are holding it.
+
+**This release and this server move together.** Voice needed new messages between the game and the server, which changes what the two expect from each other, so older builds are refused with a reason rather than a silent disconnect. Open the launcher and let it update.
+
+## What changed — v0.3.99
+
+- **Cars stop multiplying.** Getting into a car spawned a second copy of it on top of the first, every time — real vehicles with their own physics, stacked in the same space. The server sends a "load this vehicle" alongside every enter, and nothing was checking whether that car already existed locally. The extra copies were orphaned as well: only the newest one was recorded, so the others could never be moved, entered or cleaned up because no message could name them.
+- **Remote players no longer freeze at the point they spawned.** A player who had joined but not yet taken a step was broadcast with a timestamp of zero. Zero is not a time — the receiving game read it as a position report from fifty-seven years ago, anchored to it, and never played anything newer. The result was somebody standing perfectly still at their spawn point while, on their own screen, they were walking around and driving. This is the "I can see them but they never move" that has been reported since remote players first appeared.
+
+Known and not fixed in this build: voice chat still does not transmit, rear seats of four-seaters, and the crash some people hit when entering a car another player is in. Those are being worked on separately.
+
 ## What changed — v0.3.98
 
 - **Fixes v0.3.97, which would not open.** That build failed immediately with "A JavaScript error occurred in the main process — Cannot find module 'manifest.js'". The manifest code added in v0.3.97 was imported by the launcher but never included in the packaged application, so it shipped importing a file that was not inside it. **If you are stuck on that error the launcher cannot update itself** — the updater lives inside the launcher that will not start. Download and run the installer from this release manually, once; it will update normally after that.
