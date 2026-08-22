@@ -4,6 +4,11 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.102
+
+- **The Restart button stops eating its own letters.** Under Windows display scaling the server buttons shrink until RESTART crossed its corner cuts and the clip sliced the glyphs. The cut shape stays; the lettering on Start/Restart/Stop now sizes itself so it can never reach the diagonals.
+- **"Mod Manager Download did nothing" is diagnosable now.** Every nxm:// hand-off is recorded in the launcher's trail (ids only — the link carries a live key), the launcher logs what Windows actually answered when it claimed the nxm handler at startup, and a failed install of a mod that is not on the server's list finally shows its reason instead of showing nothing — which read exactly like the click being ignored.
+
 ## What changed — v0.3.101
 
 - **The launcher is a mod manager now.** A **YOUR MODS** section lists everything you installed that is not on the server's list — any "Mod Manager Download" click lands there — with the same verify, repair and per-file removal the server's mods get. And the new **Add mod** row takes any Cyberpunk mod's Nexus link (or just its number): premium keys install it directly, free accounts get the page opened and one press of Mod Manager Download finishes the job. No second mod manager, ever.

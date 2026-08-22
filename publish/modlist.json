@@ -69,18 +69,16 @@
       "name": "DLC Call Off",
       "required": false,
       "note": "Cam, 2026-08-21."
-    },
-    {
-      "nexusModId": 12001,
-      "name": "Audioware",
-      "required": false,
-      "note": "Cam, 2026-08-21. An audio framework - check whether it needs RedData (14139) listed in requires; not guessed here, and a framework installed after the mod that needs it fails silently rather than loudly."
-    },
-    {
-      "nexusModId": 14139,
-      "name": "RedData",
-      "required": false,
-      "note": "Cam, 2026-08-21."
     }
+  ],
+
+  "_pulled": [
+    "Audioware (12001) and RedData (14139) - PULLED 2026-08-22 after a live boot-block:",
+    "their r6/scripts land but the native halves do not load, and RED4ext then refuses to",
+    "start the game at all ('scripts contain invalid native definitions', hit live by Cam).",
+    "Do NOT re-add until someone has verified on a test install which RED4ext/Codeware",
+    "versions their DLLs actually need against our pinned prerequisites, and encoded the",
+    "12001 -> 14139 dependency in requires. A mod that stops the game from BOOTING is the",
+    "one kind of optional mod the list must never hand out."
   ]
 }
