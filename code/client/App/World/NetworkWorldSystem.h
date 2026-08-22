@@ -236,6 +236,23 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // How many people are audible right now, for the speaking indicator.
     uint32_t VoiceActiveSpeakerCount() const;
 
+    // ---------------------------------------------------------------------------
+    // Combat, reported from the game's own damage pipeline.
+    //
+    // The client detects; the SERVER decides. Nothing here applies damage to anybody -
+    // these only describe what the local engine just did, and the authoritative answer
+    // comes back as NotifyDamageResult. See CombatEventRequest in client.proto.
+    // ---------------------------------------------------------------------------
+
+    // Which server entity a local engine entity is. Zero when it is not one of ours -
+    // an ordinary NPC, a prop, the local player.
+    uint64_t GetServerIdByEntity(Red::EntityID aEntityId) const;
+
+    // Report that the local player just hit something. A CLAIM, not a result.
+    void SendCombatEvent(uint64_t aTargetServerId, uint32_t aSourceType, uint32_t aAttackType, uint64_t aSourceId,
+                         uint32_t aDamageType, uint32_t aHitZone, float aDamage, const Red::Vector4& aPosition,
+                         const Red::Vector4& aDirection, bool aCritical, bool aHeadshot);
+
     // Whether --hackable-puppets was passed. See Hackable.reds.
     bool HackablePuppetsEnabled() const;
 
@@ -412,6 +429,11 @@ private:
     // Paces the voice diagnostic line so it appears every ten seconds rather than 60/s.
     uint32_t m_voiceStatsTicks{0};
 
+    // Numbers our combat events so the server can reject replays and duplicates, and so a
+    // result can be matched back to the event that caused it.
+    uint64_t m_combatEventId{0};
+    uint32_t m_combatSequence{0};
+
     // For measuring our own speed from how far we actually moved - see
     // UpdatePlayerLocation. Mutable because that function is const and only reports.
     mutable glm::vec3 m_lastPosition{};
@@ -528,6 +550,8 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(VoiceSetPlaybackVolume);
     RTTI_METHOD(VoiceActiveSpeakerCount);
     RTTI_METHOD(HackablePuppetsEnabled);
+    RTTI_METHOD(GetServerIdByEntity);
+    RTTI_METHOD(SendCombatEvent);
     RTTI_METHOD(GetCharacterError);
     RTTI_METHOD(GetDenialMessage);
     RTTI_METHOD(GetDenialCode);

@@ -1363,6 +1363,67 @@ bool NetworkWorldSystem::HackablePuppetsEnabled() const
     return Settings::Get().hackablePuppets;
 }
 
+uint64_t NetworkWorldSystem::GetServerIdByEntity(Red::EntityID aEntityId) const
+{
+    const auto entity = FindEntity(aEntityId);
+
+    // Zero rather than an error. Most things hit in this game are ordinary NPCs, props and
+    // scenery, and the hit hook runs for all of them - "not one of ours" is the common
+    // case, not a failure.
+    if (!entity || !entity.is_alive())
+        return 0;
+
+    return entity.id();
+}
+
+void NetworkWorldSystem::SendCombatEvent(uint64_t aTargetServerId, uint32_t aSourceType, uint32_t aAttackType,
+                                         uint64_t aSourceId, uint32_t aDamageType, uint32_t aHitZone, float aDamage,
+                                         const Red::Vector4& aPosition, const Red::Vector4& aDirection, bool aCritical,
+                                         bool aHeadshot)
+{
+    const auto pNetworkService = Core::Container::Get<NetworkService>();
+
+    if (!pNetworkService || !pNetworkService->IsConnected() || aTargetServerId == 0)
+        return;
+
+    client::CombatEventRequest request;
+
+    // Ours, so the result can be matched back. Connection-scoped - the server pairs it with
+    // the connection, so it does not have to be globally unique.
+    request.set_event_id(++m_combatEventId);
+
+    request.set_target_id(aTargetServerId);
+    request.set_source_type(aSourceType);
+    request.set_attack_type(aAttackType);
+    request.set_source_id(aSourceId);
+    request.set_damage_type(aDamageType);
+    request.set_hit_zone(aHitZone);
+    request.set_reported_damage(aDamage);
+    request.set_critical(aCritical);
+    request.set_headshot(aHeadshot);
+    request.set_client_tick(GetTick());
+    request.set_sequence(++m_combatSequence);
+
+    common::Vector3 position;
+    position.set_x(aPosition.X);
+    position.set_y(aPosition.Y);
+    position.set_z(aPosition.Z);
+    request.set_hit_position(position);
+
+    common::Vector3 direction;
+    direction.set_x(aDirection.X);
+    direction.set_y(aDirection.Y);
+    direction.set_z(aDirection.Z);
+    request.set_hit_direction(direction);
+
+    // Reliable, unlike movement and voice. A lost hit is a shot that did nothing, which
+    // players notice immediately and cannot explain - and unlike a voice frame, a late one
+    // is still correct.
+    pNetworkService->Send(request);
+
+    spdlog::info("[Combat] reported {:.1f} damage to entity {} (zone {})", aDamage, aTargetServerId, aHitZone);
+}
+
 void NetworkWorldSystem::HandleAppearanceUpdate(const PacketEvent<server::NotifyAppearanceUpdate>& aMessage)
 {
     const auto entity = GetEntityByServerId(aMessage.get_id());

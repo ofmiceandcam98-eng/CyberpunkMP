@@ -187,6 +187,12 @@ public native class NetworkWorldSystem extends IGameSystem {
     // Whether --hackable-puppets was passed. See Hackable.reds for what it turns on and
     // why it is off by default.
     public native func HackablePuppetsEnabled() -> Bool;
+
+    // Combat, reported from the game's own damage pipeline. The client detects; the SERVER
+    // decides. Neither of these applies damage to anybody - see Combat.reds.
+    public native func GetServerIdByEntity(entityId: EntityID) -> Uint64;
+
+    public native func SendCombatEvent(targetId: Uint64, sourceType: Uint32, attackType: Uint32, sourceId: Uint64, damageType: Uint32, hitZone: Uint32, damage: Float, position: Vector4, direction: Vector4, critical: Bool, headshot: Bool) -> Void;
     public native func GetEntityIdByServerId(serverId: Uint64) -> EntityID;
     public native func GetAppearanceSystem() -> ref<AppearanceSystem>;
     public native func GetChatSystem() -> ref<ChatSystem>;
