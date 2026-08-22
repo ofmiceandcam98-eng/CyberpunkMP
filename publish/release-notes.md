@@ -4,6 +4,15 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.106
+
+- **Ammunition is now genuinely the server's.** v0.3.105 shipped the whole server side of this — magazine and reserve counts, fire-rate checks, reload validation — and the game never told it anything, so none of it ever ran. Your shots, reloads and weapon switches now actually reach it. A modified game cannot fire on an empty magazine, fire faster than a weapon allows, or refill without reloading.
+- **Groundwork for RAM and quickhack cooldowns**, wired the same way. Quickhacks work exactly as they did in v0.3.105; what is new is that the server now hears about them at all. Charging RAM and enforcing cooldowns needs one more piece — identifying *which* hack was used — and until that lands the server declines to charge rather than guess and charge the wrong thing.
+
+Nothing else changes. This is the release that connects work already shipped, so if v0.3.105 felt fine, this will too.
+
+Still not tested with two players.
+
 ## What changed — v0.3.105
 
 - **Quickhacks no longer hit twice.** v0.3.104 shipped a bug: Cyberpunk already applies quickhack damage through its ordinary hit pipeline, and the server was adding a second figure of its own on top. Every damaging quickhack did roughly double what it should. The server's damage table is gone — the game's own number is the only one now.
