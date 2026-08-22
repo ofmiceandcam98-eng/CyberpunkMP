@@ -150,12 +150,12 @@ async function installNexusMod (modId, options = {}) {
 
   const headers = { apikey: apiKey, 'User-Agent': 'NightCityOnline-Launcher/1.0' }
 
-  // resolveMainFile filters category MAIN and takes the newest by upload time - the
-  // same choice the mod page's own download button makes. Taking files[0] unfiltered
-  // (as this path originally did) picks whatever Nexus happens to list first, which
-  // for mods with optional patches is not the mod.
-  const main = await resolveMainFile(modId)
-  const fileId = main?.fileId
+  // An explicit target (a server pin, an update landing on a specific file) wins;
+  // otherwise resolveMainFile filters category MAIN and takes the newest by upload
+  // time - the same choice the mod page's own download button makes. Taking files[0]
+  // unfiltered (as this path originally did) picks whatever Nexus happens to list
+  // first, which for mods with optional patches is not the mod.
+  const fileId = options.fileId ?? (await resolveMainFile(modId))?.fileId
   if (!fileId) return { needsWebsite: true, reason: 'no main file listed' }
 
   let url = null
@@ -4028,7 +4028,13 @@ async function fetchModInfo (modId) {
  * optional patches and translations, and grabbing the newest of everything would install
  * a Portuguese translation as if it were the mod.
  */
+// Cached like fetchModInfo and for the same reason: update detection asks this once per
+// installed mod per refresh, against an API with a daily budget.
+const mainFileCache = new Map()
+
 async function resolveMainFile (modId) {
+  if (mainFileCache.has(String(modId))) return mainFileCache.get(String(modId))
+
   const apiKey = loadNexusKey()
   if (!apiKey) return null
 
@@ -4042,10 +4048,37 @@ async function resolveMainFile (modId) {
     const main = files.filter((f) => f.category_name === 'MAIN')
     const pick = (main.length > 0 ? main : files).sort((a, b) => (b.uploaded_timestamp || 0) - (a.uploaded_timestamp || 0))[0]
 
-    return pick ? { fileId: pick.file_id, version: pick.version, name: pick.file_name } : null
+    const resolved = pick ? { fileId: pick.file_id, version: pick.version, name: pick.file_name } : null
+    mainFileCache.set(String(modId), resolved)
+    return resolved
   } catch {
     return null
   }
+}
+
+/**
+ * Whether a newer file exists for an installed mod - and which file an update should
+ * land on. The two questions differ for server-listed mods: a pinned nexusFileId IS
+ * the approved version (spec: the manifest decides, not Nexus's newest), so "update
+ * available" means "you are not on the pin", never "Nexus has something newer".
+ * Unpinned and personal mods track Nexus's main file. Null when it cannot be known -
+ * no key, no recorded fileId (pre-bookkeeping installs), or Nexus unreachable.
+ */
+async function describeUpdate (modId, record, listEntry) {
+  if (!record?.fileId) return null
+
+  if (listEntry?.nexusFileId) {
+    return Number(record.fileId) === Number(listEntry.nexusFileId)
+      ? { updateAvailable: false }
+      : { updateAvailable: true, targetFileId: listEntry.nexusFileId, reason: 'server-approved version' }
+  }
+
+  const latest = await resolveMainFile(modId)
+  if (!latest?.fileId) return null
+
+  return Number(record.fileId) === Number(latest.fileId)
+    ? { updateAvailable: false }
+    : { updateAvailable: true, targetFileId: latest.fileId, version: latest.version, reason: 'newer on Nexus' }
 }
 
 /**
@@ -4178,9 +4211,56 @@ ipcMain.handle('mods:list', async () => {
       info.set(String(mod.nexusModId), await fetchModInfo(mod.nexusModId))
     }))
 
+    // Everything the launcher installed that the server's list does not carry - the
+    // half that makes this a mod manager rather than a checklist. These are the
+    // player's own installs (any nxm:// click, Add-from-Nexus), managed with the same
+    // records, verify, repair and per-file removal as the listed ones.
+    const listIds = new Set(all.map((m) => String(m.nexusModId)))
+    const personal = []
+    for (const [recordId, record] of Object.entries(installed)) {
+      if (listIds.has(String(recordId))) continue
+
+      const paths = recordPaths(record)
+      const present = paths.length > 0 && paths.every((rel) => existsSync(path.join(gameDir, rel)))
+      const nexus = await fetchModInfo(recordId)
+
+      personal.push({
+        id: String(recordId),
+        name: nexus?.name || record.name || `Nexus mod ${recordId}`,
+        author: nexus?.author || null,
+        version: record.version || null,
+        files: paths.length,
+        state: present ? 'installed' : 'broken',
+        nexusUrl: `https://www.nexusmods.com/cyberpunk2077/mods/${recordId}`
+      })
+    }
+
+    // Update detection, for every installed mod that recorded which file it actually
+    // got. Server-listed mods answer against the pin when one exists (the approved
+    // version, never Nexus's newest); everything else tracks the main file.
+    const updates = new Map()
+    await Promise.all([...states.entries()]
+      .filter(([, state]) => state.state === 'installed')
+      .map(async ([id]) => {
+        const listEntry = all.find((m) => String(m.nexusModId) === id)
+        const update = await describeUpdate(id, installed[id], listEntry)
+        if (update) updates.set(id, update)
+      })
+      .concat(personal
+        .filter((p) => p.state === 'installed')
+        .map(async (p) => {
+          const update = await describeUpdate(p.id, installed[p.id], null)
+          if (update) updates.set(p.id, update)
+        })))
+
+    for (const entry of personal) {
+      Object.assign(entry, updates.get(entry.id) || {})
+    }
+
     return {
       ok: true,
       signedIn: Boolean(loadNexusKey()),
+      personal,
       mods: mods.map((mod) => {
         // Named, not numbered. "Needs mod 107" tells nobody anything.
         const missing = (mod.requires || [])
@@ -4200,7 +4280,8 @@ ipcMain.handle('mods:list', async () => {
           devOnly: Boolean(mod.devOnly),
           blockedBy: missing,
           nexusUrl: `https://www.nexusmods.com/cyberpunk2077/mods/${mod.nexusModId}`,
-          ...states.get(String(mod.nexusModId))
+          ...states.get(String(mod.nexusModId)),
+          ...(updates.get(String(mod.nexusModId)) || {})
         }
       })
     }
@@ -4208,6 +4289,68 @@ ipcMain.handle('mods:list', async () => {
     // An unreachable list must not stop anyone playing - they may already have every
     // mod installed. Report it and let the rest of the launcher carry on.
     return { ok: false, error: `Could not read the mod list: ${err.message}` }
+  }
+})
+
+/**
+ * Install any Nexus mod by its page URL or bare id - the "I do not want a second mod
+ * manager" path. The premium route downloads directly; a free account gets the page
+ * opened and the nxm:// hand-off finishes it, exactly like the curated list. What lands
+ * is recorded file by file, so verify, repair, conflict-guarding and removal all cover
+ * personal mods from the moment they arrive.
+ */
+ipcMain.handle('mods:addById', async (_event, input) => {
+  const text = String(input || '').trim()
+  const match = /nexusmods\.com\/cyberpunk2077\/mods\/(\d+)/i.exec(text) || /^(\d+)$/.exec(text)
+
+  if (!match) {
+    return { ok: false, error: 'Paste a Cyberpunk 2077 Nexus mod link (or its mod number).' }
+  }
+  const modId = Number(match[1])
+
+  try {
+    const result = await installNexusMod(modId)
+    if (result.already) return { ok: true, message: 'Already installed.' }
+    if (result.ok) return { ok: true, message: `Installed ${result.name} (${result.count} files).` }
+    if (result.needsWebsite) {
+      await shell.openExternal(`https://www.nexusmods.com/cyberpunk2077/mods/${modId}?tab=files`)
+      return { ok: true, needsWebsite: true, message: 'Press "Mod Manager Download" on the page that just opened - it lands back here.' }
+    }
+    return { ok: false, error: 'Nexus did not offer a downloadable file.' }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
+/**
+ * Update one installed mod to its target file - the server's pin when the list has one,
+ * Nexus's current main file otherwise. Same mechanics as repair: drop the record so the
+ * installer is willing, install the target, and a failure leaves the old files standing.
+ */
+ipcMain.handle('mods:update', async (_event, modId) => {
+  const installed = loadInstalledMods()
+  const record = installed[String(modId)]
+  if (!record) return { ok: false, error: 'That mod is not recorded as installed.' }
+
+  const mods = await fetchModList().catch(() => [])
+  const listEntry = mods.find((m) => String(m.nexusModId) === String(modId))
+  const update = await describeUpdate(String(modId), record, listEntry)
+
+  if (!update?.updateAvailable) return { ok: true, message: 'Already on the right version.' }
+
+  delete installed[String(modId)]
+  saveInstalledMods(installed)
+
+  try {
+    const result = await installNexusMod(Number(modId), { fileId: update.targetFileId })
+    if (result.ok) return { ok: true, message: `Updated ${result.name || record.name}.` }
+    if (result.needsWebsite) {
+      await shell.openExternal(`https://www.nexusmods.com/cyberpunk2077/mods/${modId}?tab=files&file_id=${update.targetFileId}`)
+      return { ok: true, needsWebsite: true, message: 'Press "Mod Manager Download" on the page that just opened.' }
+    }
+    return { ok: false, error: 'Nexus did not offer the file.' }
+  } catch (err) {
+    return { ok: false, error: err.message }
   }
 })
 

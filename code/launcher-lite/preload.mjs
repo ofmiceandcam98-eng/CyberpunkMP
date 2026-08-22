@@ -125,6 +125,12 @@ contextBridge.exposeInMainWorld('launcher', {
   manifestStatus: (force) => ipcRenderer.invoke('manifest:status', force),
   repairMod: (id) => ipcRenderer.invoke('mods:repair', id),
 
+  // The mod-manager half: install anything from Nexus by link or number, and move an
+  // installed mod to its approved version (the server's pin when listed, Nexus's
+  // current main file otherwise).
+  addModFromNexus: (input) => ipcRenderer.invoke('mods:addById', input),
+  updateMod: (id) => ipcRenderer.invoke('mods:update', id),
+
   // The launcher updating itself: progress reports in, restart request out.
   onLauncherUpdate: (callback) => {
     ipcRenderer.on('launcher-update', (_e, info) => callback(info))

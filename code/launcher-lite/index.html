@@ -1430,6 +1430,16 @@
           <div id="modQueueRows"></div>
         </div>
 
+        <!-- Install anything from Nexus without a second mod manager: paste the mod's
+             page link (or just its number) and it lands here, recorded file by file
+             like everything else, listed under YOUR MODS above. -->
+        <div class="btn-row" style="margin-top:.5rem">
+          <input type="text" id="addModInput" placeholder="Nexus mod link or number..."
+                 style="flex:1;min-width:0;background:var(--bg,#111);color:inherit;border:1px solid rgba(255,255,255,.2);border-radius:0;padding:6px 10px;font:inherit"
+                 spellcheck="false">
+          <button class="action ghost" id="addModBtn" style="flex:0 0 auto">Add mod</button>
+        </div>
+
         <div class="field-hint" id="modHint" style="margin-top:.5rem"></div>
       </div>
     </div>
@@ -3353,6 +3363,7 @@
   // --- mod list ---------------------------------------------------------------
 
   let modState = []
+  let personalState = []
   let modsSignedIn = null
 
   function renderMods () {
@@ -3429,6 +3440,15 @@
       }
 
       if (mod.state === 'installed') {
+        // The approved version first: for listed mods that is the server's pin, and the
+        // button only appears when the recorded install differs from it.
+        if (mod.updateAvailable) {
+          badge.className = 'mod-badge missing'
+          badge.textContent = 'UPDATE'
+          badge.title = mod.reason || 'A different version is expected'
+          row.appendChild(makeUpdateButton(mod))
+        }
+
         const remove = document.createElement('button')
         remove.className = 'mod-btn danger'
         remove.textContent = '🗑'
@@ -3447,15 +3467,84 @@
 
       list.appendChild(row)
     }
+
+    // The player's own installs - anything added by link, number, or a Nexus "Mod
+    // Manager Download" click that was never on the server's list. Same records, same
+    // verify/repair/removal; this section is what makes the launcher a mod manager
+    // rather than a checklist, so nobody needs a second one.
+    if (personalState.length > 0) {
+      const head = document.createElement('div')
+      head.className = 'modqueue-head'
+      head.style.marginTop = '.6rem'
+      head.textContent = '/// YOUR MODS — not on the server’s list ///'
+      list.appendChild(head)
+
+      for (const mod of personalState) {
+        const row = document.createElement('div')
+        row.className = 'mod'
+
+        const name = document.createElement('span')
+        name.className = 'mod-name'
+        name.textContent = mod.name
+        name.title = (mod.author ? 'by ' + mod.author + ' · ' : '') + mod.files + ' file(s)'
+        row.appendChild(name)
+
+        const badge = document.createElement('span')
+        if (mod.state === 'broken') {
+          badge.className = 'mod-badge bad'
+          badge.textContent = 'FILES MISSING'
+        } else if (mod.updateAvailable) {
+          badge.className = 'mod-badge missing'
+          badge.textContent = 'UPDATE'
+          badge.title = mod.reason || ''
+        } else {
+          badge.className = 'mod-badge ok'
+          badge.textContent = '✓ INSTALLED'
+        }
+        row.appendChild(badge)
+
+        if (mod.updateAvailable && mod.state === 'installed') row.appendChild(makeUpdateButton(mod))
+
+        const remove = document.createElement('button')
+        remove.className = 'mod-btn danger'
+        remove.textContent = '🗑'
+        remove.title = 'Remove this mod'
+        remove.addEventListener('click', async () => {
+          const result = await window.launcher.deleteMod(mod.id)
+          if (result.ok) { setStatus('Removed ' + mod.name + '.', 'ok'); await refreshMods() }
+          else if (result.error) setStatus(result.error, 'error')
+        })
+        row.appendChild(remove)
+
+        list.appendChild(row)
+      }
+    }
+  }
+
+  function makeUpdateButton (mod) {
+    const update = document.createElement('button')
+    update.className = 'mod-btn'
+    update.textContent = 'Update'
+    update.title = mod.reason || 'Install the expected version'
+    update.addEventListener('click', async () => {
+      update.disabled = true
+      const result = await window.launcher.updateMod(mod.id)
+      if (result.ok) setStatus(result.message, result.needsWebsite ? 'error' : 'ok')
+      else setStatus(result.error || 'Update failed.', 'error')
+      await refreshMods()
+    })
+    return update
   }
 
   async function refreshMods () {
     const result = await window.launcher.listMods()
     if (result.ok) {
       modState = result.mods
+      personalState = result.personal || []
       modsSignedIn = result.signedIn
     } else {
       modState = []
+      personalState = []
       $('modHint').textContent = result.error
     }
     renderMods()
@@ -3575,19 +3664,39 @@
   })
 
   window.launcher.onModProgress((info) => {
-    const mod = modState.find((m) => m.id === String(info.modId))
-    if (!mod) return
-
+    // Installs land for PERSONAL mods too (any nxm:// click, Add mod) - those are not
+    // in modState, and the old early-return meant the list never learned about them.
     if (info.state === 'installed') {
-      setStatus('Installed ' + (info.name || mod.name) + '.', 'ok')
+      setStatus('Installed ' + (info.name || 'mod ' + info.modId) + '.', 'ok')
       refreshMods()
       return
     }
+
+    const mod = modState.find((m) => m.id === String(info.modId))
+    if (!mod) return
 
     mod.state = info.state
     if (info.state === 'failed') setStatus(info.error, 'error')
     renderMods()
   })
+
+  $('addModBtn').addEventListener('click', async () => {
+    const input = $('addModInput')
+    const btn = $('addModBtn')
+    if (!input.value.trim()) { setStatus('Paste a Nexus mod link or its number first.', 'error'); return }
+
+    btn.disabled = true
+    const result = await window.launcher.addModFromNexus(input.value)
+    btn.disabled = false
+
+    if (result.ok) {
+      setStatus(result.message, result.needsWebsite ? 'error' : 'ok')
+      if (!result.needsWebsite) { input.value = ''; await refreshMods() }
+    } else {
+      setStatus(result.error, 'error')
+    }
+  })
+  $('addModInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('addModBtn').click() })
 
   $('openInstallDir').addEventListener('click', () => window.launcher.openInstallDir())
 
