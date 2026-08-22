@@ -5810,6 +5810,14 @@ async function installModArchive (modId, buffer, options = {}) {
  */
 async function handleNxmLink (url) {
   const match = /^nxm:\/\/([^/]+)\/mods\/(\d+)\/files\/(\d+)/i.exec(url)
+
+  // Arrival is the fact that keeps being needed and was never recorded: "nothing
+  // happens when I press Mod Manager Download" cannot be diagnosed from a trail with
+  // no line for the hand-off. Ids only - the link's query carries a live download key.
+  launcherLog(match
+    ? `nxm arrived: mod ${match[2]} file ${match[3]} (${match[1]})`
+    : `nxm arrived but did not parse: ${String(url).split('?')[0]}`)
+
   if (!match) return
 
   const [, game, modId, fileId] = match
@@ -5867,6 +5875,7 @@ async function handleNxmLink (url) {
     // the person pressed the button, the download landed here), move it along.
     queueNotifyInstalled(modId, result)
   } catch (err) {
+    launcherLog(`nxm install failed for mod ${modId}: ${err.message}`)
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('mod-progress', { modId, state: 'failed', error: err.message })
     }
@@ -5899,9 +5908,14 @@ app.whenReady().then(() => {
   // the association away without warning, and the symptom is downloads silently opening
   // the wrong program.
   try {
-    app.setAsDefaultProtocolClient('nxm')
+    // The return value and the read-back both go in the trail: "registered" claimed by
+    // us and "is default" answered by Windows are different facts, and the gap between
+    // them is exactly where "Mod Manager Download does nothing" lives.
+    const claimed = app.setAsDefaultProtocolClient('nxm')
+    launcherLog(`nxm handler: registration ${claimed ? 'accepted' : 'REFUSED'}, ` +
+                `Windows says default=${app.isDefaultProtocolClient('nxm')}`)
   } catch (err) {
-    console.error('[mods] could not register nxm:// handler:', err.message)
+    launcherLog(`nxm handler registration threw: ${err.message}`)
   }
 
   createWindow()

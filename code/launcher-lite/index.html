@@ -3696,11 +3696,16 @@
       return
     }
 
+    // A failure is a failure whoever it belongs to. This used to bail first when the
+    // mod was not on the server's list - so a personal install that failed showed
+    // NOTHING, which reads as "the launcher ignored my click" ("my launcher is not
+    // opening the nexus mods", zeldfep, live). The reason always renders now.
+    if (info.state === 'failed') setStatus(info.error || ('Install of mod ' + info.modId + ' failed.'), 'error')
+
     const mod = modState.find((m) => m.id === String(info.modId))
     if (!mod) return
 
     mod.state = info.state
-    if (info.state === 'failed') setStatus(info.error, 'error')
     renderMods()
   })
 
