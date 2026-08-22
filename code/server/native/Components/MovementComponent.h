@@ -2,10 +2,17 @@
 
 struct MovementComponent
 {
-    glm::vec3 Position;
-    glm::vec3 Rotation;
-    float Velocity;
-    uint64_t Tick;
+    // All four were uninitialised, and Tick is only ever assigned when a movement message
+    // arrives (Level.cpp). A player who has spawned but not yet moved was therefore
+    // replicated with Tick = 0, which every receiving client read as a timestamp fifty-odd
+    // years in the past - the remote player froze at their spawn point and never appeared
+    // to move or to enter a vehicle. The client now ignores a zero tick as well; this is
+    // the other half, so the value is at least deterministic rather than whatever the
+    // allocation happened to contain.
+    glm::vec3 Position{0.f, 0.f, 0.f};
+    glm::vec3 Rotation{0.f, 0.f, 0.f};
+    float Velocity{0.f};
+    uint64_t Tick{0};
 
     // The mover's PlayerStateMachine states (gamePSMLocomotionStates /
     // gamePSMUpperBodyStates), relayed verbatim so receivers animate what the sender

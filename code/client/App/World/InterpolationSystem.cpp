@@ -420,6 +420,27 @@ void InterpolationSystem::HandleNotifyEntityMove(const PacketEvent<server::Notif
         return;
     }
 
+    // Tick 0 is not a timestamp - it means "this player has not moved yet".
+    //
+    // MovementComponent::Tick is uninitialised on the server and only ever assigned when a
+    // movement message arrives (Level.cpp). Between spawning and taking their first step, a
+    // player is therefore replicated with Tick = 0, and that sample reaches everybody who
+    // can see them.
+    //
+    // Downstream it is catastrophic rather than merely wrong. Our clock is milliseconds
+    // since the epoch - about 1.787e12 - so a zero tick is a sample roughly fifty-seven
+    // YEARS in the past. It anchors the interpolation buffer there, every subsequent real
+    // sample is newer by an amount no smoothing can absorb, and the puppet stays where it
+    // spawned. Kozzi's log shows exactly this: "their tick 0 ... DIFFERENT CLOCKS - this is
+    // the freeze" on the first sample, then "same clock - fine" on every one after, and a
+    // remote player who never appeared to move or to get into a car.
+    //
+    // Dropped rather than clamped. There is genuinely nothing to interpolate towards for
+    // somebody who has not moved - they are already drawn at their spawn point - and the
+    // first real sample arrives the moment they do.
+    if (aMessage.get_tick() == 0)
+        return;
+
     // Is the sender's clock the same clock we interpolate against?
     //
     // This is the one difference between a real remote player and the test dummy that has
