@@ -223,6 +223,26 @@ message UpdateAppearanceRequest {
 message DeleteCharacterRequest {
 }
 
+// "I want to run this quickhack on this person."
+//
+// AUTHORITATIVE, unlike QuickhackUploadRequest which is presentation. This one asks; the
+// server decides. Note what it does NOT contain: no damage, no RAM cost, no duration.
+// Naming those would be the client deciding them, and a client that can say "Overheat does
+// 999999" has already won.
+//
+// The server looks up what the named hack costs and does, checks the player can afford it
+// and is off cooldown, deducts the RAM itself, and only then produces a DamageResult. The
+// client's own game will have played the whole animation locally either way - that is
+// prediction, and it is fine, because none of it touched anybody's health.
+message QuickhackRequest {
+    uint64 target_id = 1;
+
+    // TweakDBID of the quickhack. The only thing about it the client gets to choose.
+    uint64 quickhack_id = 2;
+
+    uint32 sequence = 3;
+}
+
 // A quickhack is being uploaded to somebody, or has finished.
 //
 // The part everyone WATCHING needs. A hack currently happens in silence: the attacker sees
@@ -424,5 +444,6 @@ message Protocol {
         WeaponEventRequest weapon_event_request = 14;
         StatusEffectRequest status_effect_request = 15;
         QuickhackUploadRequest quickhack_upload_request = 16;
+        QuickhackRequest quickhack_request = 17;
     }
 }

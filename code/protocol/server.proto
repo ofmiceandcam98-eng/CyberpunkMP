@@ -399,6 +399,29 @@ message NotifyCharacterList {
     string error = 2;
 }
 
+// What a quickhack actually did, decided by the server.
+//
+// Distinct from NotifyQuickhackUpload, which is presentation. This is the gameplay result:
+// accepted or refused, what it cost, and what it did. Damage rides the ordinary
+// NotifyDamageResult so a quickhack and a bullet reach a health bar the same way - one
+// damage path, per the brief.
+message NotifyQuickhackResult {
+    uint64 source_id = 1;
+    uint64 target_id = 2;
+    uint64 quickhack_id = 3;
+
+    bool accepted = 4;
+
+    // Why not, when refused: 0 accepted, 1 not enough RAM, 2 on cooldown, 3 target
+    // invalid, 4 out of range, 5 unknown quickhack. Sent so a client can say what went
+    // wrong instead of appearing to ignore the press.
+    uint32 reason = 5;
+
+    // The RAM the server says the attacker now has. Their own game spent it locally when
+    // it played the animation; this is what the amount actually is.
+    float ram_after = 6;
+}
+
 // Somebody near you is being quickhacked, or has stopped being.
 //
 // Sent to everyone who can see the target, the target included. Each client runs the game's
@@ -573,5 +596,6 @@ message Protocol {
         NotifyWeaponState notify_weapon_state = 28;
         NotifyStatusEffect notify_status_effect = 29;
         NotifyQuickhackUpload notify_quickhack_upload = 30;
+        NotifyQuickhackResult notify_quickhack_result = 31;
     }
 }

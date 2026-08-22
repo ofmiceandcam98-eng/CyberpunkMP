@@ -12,6 +12,7 @@
 #include <Components/NpcComponent.h>
 #include <Components/HealthComponent.h>
 #include <Components/WeaponComponent.h>
+#include <Components/QuickhackComponent.h>
 
 #include "GameServer.h"
 #include "World.h"
@@ -62,6 +63,7 @@ Level::Level(World* apWorld) noexcept
     GServer->RegisterHandler<&Level::HandleCombatEventRequest>(this);
     GServer->RegisterHandler<&Level::HandleWeaponEventRequest>(this);
     GServer->RegisterHandler<&Level::HandleStatusEffectRequest>(this);
+    GServer->RegisterHandler<&Level::HandleQuickhackRequest>(this);
     GServer->RegisterHandler<&Level::HandleQuickhackUploadRequest>(this);
 
     m_updateSystem = m_pWorld->system<const LevelActorTag>("Level Update")
@@ -596,7 +598,11 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
 
         // Empty-handed until their client says otherwise. Present from the start so the
         // weapon path never has to ask whether the component exists.
-        .set<WeaponComponent>({});
+        .set<WeaponComponent>({})
+
+        // A full deck on arrival. RAM regeneration is the game's own curve and is not
+        // modelled here - see QuickhackComponent.
+        .set<QuickhackComponent>({});
 
     // The one line that says a person actually arrived in the world. Vehicle spawns log
     // similar-sounding lines and have been misread as player spawns during diagnosis;
@@ -954,6 +960,229 @@ void Level::BroadcastAppearance(flecs::entity aPuppet) noexcept
 
             GServer->Send(aPlayerComponent.Connection, message);
         });
+}
+
+// What each quickhack costs and does. THE SERVER'S OPINION, not the client's.
+//
+// A request names which hack; every number about it comes from here. That is the whole
+// difference between "the client asked for Overheat" and "the client says Overheat does
+// 999999 damage".
+//
+// These are deliberately placeholder values rather than Cyberpunk's real ones, which live
+// in TweakDB and vary by cyberdeck, perks and hack tier. Getting them exactly right needs
+// the same live-dump treatment the objectActions needed. Getting them ROUGHLY right makes
+// the authority real today, and a wrong damage figure is a balance problem rather than a
+// security one - which is the correct order to solve them in.
+//
+// Anything not listed is refused rather than given a default: an unknown hack is either a
+// game update we have not looked at or a client inventing one, and both deserve a no.
+static const std::unordered_map<uint64_t, QuickhackRule>& QuickhackRules()
+{
+    static const std::unordered_map<uint64_t, QuickhackRule> rules = {
+        // Damaging hacks. Overheat and Short Circuit burn health directly.
+        {TweakDBIDFromName("QuickHack.BaseOverheatHack"), {6.f, 25.f, 12000}},
+        {TweakDBIDFromName("QuickHack.BrainMeltBaseHack"), {8.f, 30.f, 20000}},
+        {TweakDBIDFromName("QuickHack.OverloadBaseHack"), {7.f, 20.f, 15000}},
+        {TweakDBIDFromName("QuickHack.BaseContagionHack"), {8.f, 18.f, 18000}},
+        {TweakDBIDFromName("QuickHack.SystemCollapseHackBase"), {16.f, 60.f, 60000}},
+        {TweakDBIDFromName("QuickHack.SuicideHackBase"), {18.f, 70.f, 60000}},
+
+        // Control and disruption. No direct damage - the effect IS the point.
+        {TweakDBIDFromName("QuickHack.BaseBlindHack"), {4.f, 0.f, 10000}},
+        {TweakDBIDFromName("QuickHack.BaseWeaponMalfunctionHack"), {5.f, 0.f, 12000}},
+        {TweakDBIDFromName("QuickHack.BaseLocomotionMalfunctionHack"), {5.f, 0.f, 12000}},
+        {TweakDBIDFromName("QuickHack.BaseCyberwareMalfunctionHack"), {6.f, 0.f, 15000}},
+        {TweakDBIDFromName("QuickHack.BaseMemoryWipeHack"), {6.f, 0.f, 20000}},
+        {TweakDBIDFromName("QuickHack.MadnessHackBase"), {12.f, 0.f, 30000}},
+
+        // Cheap utility.
+        {TweakDBIDFromName("QuickHack.BasePingHack"), {1.f, 0.f, 3000}},
+        {TweakDBIDFromName("QuickHack.BaseWhistleHack"), {2.f, 0.f, 6000}},
+        {TweakDBIDFromName("QuickHack.BaseCommsCallInHack"), {3.f, 0.f, 8000}},
+        {TweakDBIDFromName("QuickHack.BaseCommsNoiseHack"), {3.f, 0.f, 8000}},
+    };
+
+    return rules;
+}
+
+void Level::HandleQuickhackRequest(PacketEvent<client::QuickhackRequest>& aMessage) noexcept
+{
+    enum : uint32_t
+    {
+        kAccepted = 0,
+        kNoRam = 1,
+        kOnCooldown = 2,
+        kBadTarget = 3,
+        kOutOfRange = 4,
+        kUnknownHack = 5
+    };
+
+    auto* pPlayerManager = GetWorld()->get_mut<PlayerManager>();
+
+    const auto attacker = pPlayerManager->GetByConnectionId(aMessage.ConnectionId);
+    if (!attacker)
+        return;
+
+    auto* pAttacker = attacker.get_mut<PlayerComponent>();
+    if (!pAttacker || !pAttacker->Puppet || !pAttacker->Puppet.is_alive())
+        return;
+
+    const auto attackerPuppet = pAttacker->Puppet;
+
+    auto* pQuickhack = attackerPuppet.get_mut<QuickhackComponent>();
+    if (!pQuickhack)
+        return;
+
+    // Replay rejection, same rule as everywhere else.
+    if (pQuickhack->HasSequence)
+    {
+        const int32_t age = static_cast<int32_t>(aMessage.get_sequence() - pQuickhack->LastSequence);
+
+        if (age <= 0)
+            return;
+    }
+
+    pQuickhack->LastSequence = aMessage.get_sequence();
+    pQuickhack->HasSequence = true;
+
+    const auto now = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
+            .count());
+
+    auto refuse = [&](uint32_t aReason)
+    {
+        server::NotifyQuickhackResult result;
+        result.set_source_id(attackerPuppet.id());
+        result.set_target_id(aMessage.get_target_id());
+        result.set_quickhack_id(aMessage.get_quickhack_id());
+        result.set_accepted(false);
+        result.set_reason(aReason);
+        result.set_ram_after(pQuickhack->Ram);
+
+        // Only the person who asked. A refusal is not news to anybody else.
+        GServer->Send(pAttacker->Connection, result);
+
+        spdlog::info("[QUICKHACK] refused {} from {} - reason {}", aMessage.get_quickhack_id(), pAttacker->Username,
+                     aReason);
+    };
+
+    // A hack we do not have a rule for. Refused rather than defaulted - see QuickhackRules.
+    const auto& rules = QuickhackRules();
+    const auto rule = rules.find(aMessage.get_quickhack_id());
+
+    if (rule == rules.end())
+    {
+        refuse(kUnknownHack);
+        return;
+    }
+
+    flecs::entity target(GetWorld()->get_world(), aMessage.get_target_id());
+
+    if (!target || !target.is_alive())
+    {
+        refuse(kBadTarget);
+        return;
+    }
+
+    auto* pTargetHealth = target.get_mut<HealthComponent>();
+
+    if (!pTargetHealth || pTargetHealth->LifeState != 0)
+    {
+        refuse(kBadTarget);
+        return;
+    }
+
+    // Range. Quickhacks have per-hack ranges in the game's own rules; this is the outer
+    // bound that stops one being run from across the city, and is noted as coarser than
+    // the real thing rather than pretended to be it.
+    constexpr float kMaxHackRange = 100.f;
+
+    const auto* pAttackerMovement = attackerPuppet.get<MovementComponent>();
+    const auto* pTargetMovement = target.get<MovementComponent>();
+
+    if (pAttackerMovement && pTargetMovement)
+    {
+        const auto delta = pTargetMovement->Position - pAttackerMovement->Position;
+
+        if (glm::dot(delta, delta) > kMaxHackRange * kMaxHackRange)
+        {
+            refuse(kOutOfRange);
+            return;
+        }
+    }
+
+    // Cooldown, per hack.
+    if (const auto last = pQuickhack->LastUsedMs.find(aMessage.get_quickhack_id());
+        last != pQuickhack->LastUsedMs.end() && now - last->second < rule->second.CooldownMs)
+    {
+        refuse(kOnCooldown);
+        return;
+    }
+
+    // RAM. The reason this component exists: if the client owns this number, quickhacking
+    // stops being a decision.
+    if (pQuickhack->Ram < rule->second.RamCost)
+    {
+        refuse(kNoRam);
+        return;
+    }
+
+    pQuickhack->Ram -= rule->second.RamCost;
+    pQuickhack->LastUsedMs[aMessage.get_quickhack_id()] = now;
+
+    server::NotifyQuickhackResult result;
+    result.set_source_id(attackerPuppet.id());
+    result.set_target_id(target.id());
+    result.set_quickhack_id(aMessage.get_quickhack_id());
+    result.set_accepted(true);
+    result.set_reason(kAccepted);
+    result.set_ram_after(pQuickhack->Ram);
+
+    GetWorld()->get_world().each([&result](flecs::entity, const PlayerComponent& aPlayerComponent)
+                                 { GServer->Send(aPlayerComponent.Connection, result); });
+
+    spdlog::info("[QUICKHACK] request {} | source {} ({}) | target {} | hack {} | validated TRUE | ram cost {:.0f} | "
+                 "ram after {:.0f} | damage {:.0f}",
+                 aMessage.get_sequence(), attackerPuppet.id(), pAttacker->Username, target.id(),
+                 aMessage.get_quickhack_id(), rule->second.RamCost, pQuickhack->Ram, rule->second.Damage);
+
+    // Damage, if this hack does any - through the SAME path a bullet takes, so a quickhack
+    // and a rifle reach a health bar identically. One damage pipeline, per the brief.
+    if (rule->second.Damage <= 0.f)
+        return;
+
+    const float before = pTargetHealth->Health;
+    const float after = std::max(0.f, before - rule->second.Damage);
+
+    pTargetHealth->Health = after;
+
+    const bool downed = after <= 0.f;
+
+    if (downed)
+        pTargetHealth->LifeState = 1;
+
+    server::NotifyDamageResult damage;
+    damage.set_event_id(0);
+    damage.set_attacker_id(attackerPuppet.id());
+    damage.set_target_id(target.id());
+    damage.set_source_type(2); // quickhack
+    damage.set_damage_type(0);
+    damage.set_hit_zone(0);
+
+    // Raw and final are the same figure here, and both are OURS. There is no client claim
+    // to clamp because the request never carried one.
+    damage.set_raw_damage(rule->second.Damage);
+    damage.set_final_damage(before - after);
+    damage.set_target_health_after(after);
+    damage.set_target_max_health(pTargetHealth->MaxHealth);
+    damage.set_killed(false);
+    damage.set_knocked_down(downed);
+
+    GetWorld()->get_world().each([&damage](flecs::entity, const PlayerComponent& aPlayerComponent)
+                                 { GServer->Send(aPlayerComponent.Connection, damage); });
+
+    if (downed)
+        BroadcastCombatState(target);
 }
 
 void Level::HandleQuickhackUploadRequest(PacketEvent<client::QuickhackUploadRequest>& aMessage) noexcept
@@ -1371,6 +1600,24 @@ void Level::HandleCombatEventRequest(PacketEvent<client::CombatEventRequest>& aM
 
     if (downed)
         pTargetHealth->LifeState = 1;
+
+    // The combat trace. One line per validated event, with everything needed to compare
+    // three machines afterwards.
+    //
+    // A two-client test without this produces "the damage looked wrong", which is a
+    // starting point for an argument rather than a diagnosis. With it, the server's view is
+    // written down: who, whom, how much was claimed, how much was allowed, and what the
+    // target is on now. Any disagreement with either client is then a specific number that
+    // differs, and the side that is wrong is obvious.
+    //
+    // Always on, unlike the ImGui overlay. It is one line per hit - a burst of automatic
+    // fire is thirty lines a second at worst - and the moment it would be useful is
+    // precisely the moment nobody thought to enable it first.
+    spdlog::info("[COMBAT] event {} | attacker {} ({}) | target {} | src {} | claimed {:.1f} | allowed {:.1f} | "
+                 "health {:.1f} -> {:.1f} | {}",
+                 aMessage.get_event_id(), attackerPuppet.id(), pAttackerComponent->Username, target.id(),
+                 aMessage.get_source_type(), aMessage.get_reported_damage(), before - after, before, after,
+                 downed ? "DOWNED" : "validated");
 
     server::NotifyDamageResult result;
     result.set_event_id(aMessage.get_event_id());

@@ -81,6 +81,10 @@ protected:
 
     // A quickhack upload started or finished. Relayed so the people around it can see it
     // happening - see QuickhackUploadRequest.
+    // 'Run this hack on this person.' AUTHORITATIVE - the server owns RAM, cooldown and
+    // what the hack does. The request names which hack and nothing else.
+    void HandleQuickhackRequest(PacketEvent<client::QuickhackRequest>& aMessage) noexcept;
+
     void HandleQuickhackUploadRequest(PacketEvent<client::QuickhackUploadRequest>& aMessage) noexcept;
 
 public:
