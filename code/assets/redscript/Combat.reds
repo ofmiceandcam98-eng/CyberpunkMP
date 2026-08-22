@@ -89,6 +89,40 @@ public func MpReportHit(target: ref<ScriptedPuppet>, evt: ref<gameHitEvent>) -> 
         return;
     }
 
+    // HIT ZONE, read from the game rather than invented.
+    //
+    // gameHitEvent carries hitRepresentationResult.hitShapes, and each HitShapeData has a
+    // hitShapeName CName - which IS the body part. That is the native representation; there
+    // is no enum to map onto and no numbering of our own to invent.
+    //
+    // The names themselves live in the entity's hit-representation asset (a gameHitShapeBVH
+    // the .ent only references), so they cannot be read out of the template - the .ent
+    // stores "None" placeholders. They CAN be read off a live hit, which is what this line
+    // is for: shoot a native NPC, read the name out of the log, and the real vocabulary is
+    // known rather than guessed.
+    //
+    // Until then the zone travels as the CName's own hash, which is lossless. A receiver
+    // that does not recognise a hash plays a generic reaction, which is exactly the current
+    // behaviour - so this is strictly better than zero and involves no guessing.
+    let hitZone: Uint32 = 0u;
+
+    if ArraySize(evt.hitRepresentationResult.hitShapes) > 0 {
+        let shape = evt.hitRepresentationResult.hitShapes[0];
+
+        // Logged every hit while the vocabulary is unknown. Noisy on purpose and easy to
+        // find: this is the line that answers "what does the game call a headshot".
+        FTLog(s"[Combat] hit shape '\(NameToString(shape.hitShapeName))' material '\(NameToString(shape.physicsMaterial))'");
+
+        // Truncated to 32 bits. A CName is a 64-bit hash and the field is Uint32, so this
+        // is a lossy identifier - fine for "which of a handful of body parts", and it is
+        // the same value on every machine, which is what matters.
+        // 4294967295, not 0xFFFFFFFF - redscript has no hex literals, and the hex form is a
+        // syntax error that takes EVERY script in the mod down with it rather than failing
+        // locally. That is what the "REDScript compilation has failed - Combat.reds" dialog
+        // was.
+        hitZone = Cast<Uint32>(NameToHash(shape.hitShapeName) & 4294967295ul);
+    }
+
     // Ranged unless the attack data says otherwise. The distinction that matters to the
     // receiver is which reaction to play, and melee reads differently from a bullet.
     let sourceType: Uint32 = 0u;
@@ -114,7 +148,7 @@ public func MpReportHit(target: ref<ScriptedPuppet>, evt: ref<gameHitEvent>) -> 
         attackType,
         sourceId,
         Cast<Uint32>(damageType),
-        0u,                      // hit zone - see the note below
+        hitZone,
         damage,
         evt.hitPosition,
         evt.hitDirection,
@@ -340,15 +374,3 @@ public func MpApplyServerHealth(player: ref<PlayerPuppet>, network: ref<NetworkW
     FTLog(s"[Combat] server set our health to \(target)");
 }
 
-// HIT ZONE, CRIT AND HEADSHOT are sent as zero/false deliberately, rather than guessed.
-//
-// gameHitEvent carries hitComponent and hitRepresentationResult, which is where the body
-// part lives - but turning those into a zone id means knowing how the game names its
-// targeting components (Targeting_Head, Targeting_Chest, Targeting_LeftArmLimbCyberAim and
-// the rest, all confirmed present on our own puppets). Mapping them is a small job that
-// needs the real component names read off a live hit, exactly like the quickhack actions
-// did.
-//
-// Sending a wrong zone would be worse than sending none: the receiver picks a hit reaction
-// from it, so a bad value produces somebody clutching their leg when they were shot in the
-// head, and nothing in any log would say why.

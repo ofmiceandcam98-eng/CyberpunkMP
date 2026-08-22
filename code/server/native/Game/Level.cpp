@@ -979,13 +979,29 @@ void Level::BroadcastAppearance(flecs::entity aPuppet) noexcept
 static const std::unordered_map<uint64_t, QuickhackRule>& QuickhackRules()
 {
     static const std::unordered_map<uint64_t, QuickhackRule> rules = {
-        // Damaging hacks. Overheat and Short Circuit burn health directly.
-        {TweakDBIDFromName("QuickHack.BaseOverheatHack"), {6.f, 25.f, 12000}},
-        {TweakDBIDFromName("QuickHack.BrainMeltBaseHack"), {8.f, 30.f, 20000}},
-        {TweakDBIDFromName("QuickHack.OverloadBaseHack"), {7.f, 20.f, 15000}},
-        {TweakDBIDFromName("QuickHack.BaseContagionHack"), {8.f, 18.f, 18000}},
-        {TweakDBIDFromName("QuickHack.SystemCollapseHackBase"), {16.f, 60.f, 60000}},
-        {TweakDBIDFromName("QuickHack.SuicideHackBase"), {18.f, 70.f, 60000}},
+        // DAMAGE IS ZERO ON EVERY ENTRY, and that is the correct value rather than a
+        // placeholder waiting to be filled in.
+        //
+        // Cyberpunk applies quickhack damage through its ORDINARY hit pipeline - an Overheat
+        // burns health via gameHitEvent exactly like a bullet. The hit hook therefore
+        // already reports the game's own figure, computed with the attacker's cyberdeck,
+        // perks and the target's resistances, none of which this server models.
+        //
+        // An earlier version of this table carried numbers I chose (Overheat = 25). Those
+        // would have been added ON TOP of the native damage the hit path was already
+        // carrying, so every damaging quickhack would have hit twice - once correctly and
+        // once with a made-up figure. The bug was not that the values were wrong; it was
+        // that they existed at all.
+        //
+        // What the server still owns is everything the client must not: RAM, cooldown, and
+        // whether the hack is permitted. Damage comes from the game, through the same
+        // validated path a rifle uses.
+        {TweakDBIDFromName("QuickHack.BaseOverheatHack"), {6.f, 0.f, 12000}},
+        {TweakDBIDFromName("QuickHack.BrainMeltBaseHack"), {8.f, 0.f, 20000}},
+        {TweakDBIDFromName("QuickHack.OverloadBaseHack"), {7.f, 0.f, 15000}},
+        {TweakDBIDFromName("QuickHack.BaseContagionHack"), {8.f, 0.f, 18000}},
+        {TweakDBIDFromName("QuickHack.SystemCollapseHackBase"), {16.f, 0.f, 60000}},
+        {TweakDBIDFromName("QuickHack.SuicideHackBase"), {18.f, 0.f, 60000}},
 
         // Control and disruption. No direct damage - the effect IS the point.
         {TweakDBIDFromName("QuickHack.BaseBlindHack"), {4.f, 0.f, 10000}},

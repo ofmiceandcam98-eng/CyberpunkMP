@@ -52,8 +52,26 @@ struct QuickhackComponent
 // problem rather than a security one.
 struct QuickhackRule
 {
+    // RAM COST AND COOLDOWN are development placeholders, and are marked as such until they
+    // are read from TweakDB the way the object actions were. The real figures vary by
+    // cyberdeck, perks and hack tier; these are plausible stand-ins so the authority works
+    // today. A wrong cost is a balance problem. A client that OWNS the cost is a security
+    // one, and this fixes the second while being honest about the first.
     float RamCost{4.f};
+
+    // ORDER MATTERS. The rule table uses braced initialisers - {ram, damage, cooldown} -
+    // so moving these silently reassigns every entry rather than failing to compile.
+    // ALWAYS ZERO for anything Cyberpunk damages itself, which is every damaging quickhack.
+    //
+    // The game applies quickhack damage through its ordinary hit pipeline, so the hit hook
+    // already carries the real figure - computed with the attacker's deck, their perks and
+    // the target's resistances. Adding a number here would double-count it.
+    //
+    // Kept as a field rather than deleted because a future effect the game does NOT damage
+    // through the hit path would need it, and finding that out later is easier if the shape
+    // is already here with this note attached.
     float Damage{0.f};
+
     uint64_t CooldownMs{8000};
 };
 
