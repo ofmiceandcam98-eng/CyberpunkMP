@@ -2380,12 +2380,28 @@ async function hydrateUserFromToken () {
       `https://discord.com/api/v10/users/@me/guilds/${GUILD_ID}/member`,
       { headers: { Authorization: `Bearer ${accessToken}` }, validateStatus: () => true })
 
-    // 404 is Discord's honest "not in that server".
-    isMember = membership.status === 200
+    if (membership.status === 200 || membership.status === 404) {
+      // The two DEFINITIVE answers - in the server, or not. Only these may change
+      // the stored verdict.
+      isMember = membership.status === 200
+      saveSettings({ memberCache: { id: user.id, isMember } })
+    } else {
+      // Everything else - 429 above all - is Discord not answering, not Discord
+      // saying no. Treating a rate limit as "not a member" told the person who OWNS
+      // the Discord to "Join the Discord to play", live, on his own launcher. Stand
+      // on the last definitive answer for this account; the server re-verifies on
+      // connect anyway, and fail-closed lives THERE, where it cannot be patched out.
+      const cached = loadSettings().memberCache
+      isMember = Boolean(cached && cached.id === user.id && cached.isMember)
+      launcherLog(`membership check inconclusive (Discord answered ${membership.status}) - ` +
+                  `standing on cached verdict: ${isMember ? 'member' : 'unknown, treated as not yet verified'}`)
+    }
   } catch (err) {
-    // Network trouble - do not claim they are a member, and do not claim they
-    // are not. The server will decide either way.
-    isMember = false
+    // Network trouble - same rule as an inconclusive answer: the last definitive
+    // verdict stands, and the server decides for real on connect.
+    const cached = loadSettings().memberCache
+    isMember = Boolean(cached && cached.id === user.id && cached.isMember)
+    launcherLog(`membership check unreachable (${err.message}) - standing on cached verdict: ${isMember}`)
   }
 
   // Two records, deliberately.
@@ -3268,8 +3284,20 @@ async function resolveUserLevel () {
 // request per call would be its own problem.
 let cachedLevel = 'player'
 
-async function refreshUserLevel () {
+// Memoized for ten minutes, because callers multiplied: the mods list refreshes it on
+// every render, and every refresh was a Discord member call. Enough of those in one
+// evening and Discord answers 429 to EVERYTHING on this token - including the
+// membership gate, which is how the person who owns the server got told to "Join the
+// Discord to play" by his own launcher. Roles change rarely; ten minutes of staleness
+// is the same tolerance the role map itself already accepts.
+let levelMemoAt = 0
+const LEVEL_MEMO_TTL_MS = 10 * 60 * 1000
+
+async function refreshUserLevel (force = false) {
+  if (!force && Date.now() - levelMemoAt < LEVEL_MEMO_TTL_MS) return cachedLevel
+
   cachedLevel = await resolveUserLevel()
+  levelMemoAt = Date.now()
   return cachedLevel
 }
 
