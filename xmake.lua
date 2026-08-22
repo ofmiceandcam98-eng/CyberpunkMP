@@ -32,7 +32,22 @@ add_requires(
     "flecs v4.0.3",
     "protobuf-cpp 29.3",
     "entt",
-    "microsoft-gsl")
+    "microsoft-gsl",
+
+    -- Voice. Opus rather than raw PCM because raw is not affordable: 48kHz mono 16-bit is
+    -- ~94KB/s per person talking, which the server would then relay to everybody in range.
+    -- Opus carries speech at 24kbps - about a fortieth - and is the codec every other game
+    -- uses for the same reason.
+    --
+    -- Linked into the CLIENT only. The server relays frames without decoding them, so it
+    -- needs no codec at all, and keeping it out of the server build means a codec change
+    -- never forces a server redeploy.
+    --
+    -- "libopus", not "opus" - the latter is not a package and xmake reports it as an
+    -- unfound name only at configure time. Pinned like every other load-bearing
+    -- dependency here: a codec that changes frame layout under us is a silent audio bug,
+    -- not a build failure.
+    "libopus 1.5.2")
 
 -- The 29.3 pin above only covers OUR requirement. Dependencies resolve their own -
 -- gamenetworkingsockets asks for protobuf too, and left free it resolves to 35.x: the

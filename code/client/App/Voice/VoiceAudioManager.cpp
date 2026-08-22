@@ -380,6 +380,10 @@ void VoiceAudioManager::CaptureThread(std::string aDeviceId)
     const uint16_t channels = pFormat->nChannels;
     const uint16_t bits = pFormat->wBitsPerSample;
 
+    // Read here, not in the loop: pFormat is freed below, and the voice path needs the rate
+    // with every buffer to know what it is converting from.
+    const uint32_t sampleRate = pFormat->nSamplesPerSec;
+
     // Shared mode normally hands back 32-bit float; 16-bit integer still turns up on some
     // drivers. Anything else is read as silence rather than as noise - misreading the bytes
     // produces a meter that pins at full and a microphone that sounds like a fax machine.
@@ -405,7 +409,8 @@ void VoiceAudioManager::CaptureThread(std::string aDeviceId)
     }
 
     m_capturing.store(true, std::memory_order_relaxed);
-    spdlog::info("[Voice] capturing - {} channel(s), {}-bit {}", channels, bits, isFloat ? "float" : "int");
+    spdlog::info("[Voice] capturing - {} channel(s), {}Hz, {}-bit {}", channels, sampleRate, bits,
+                 isFloat ? "float" : "int");
 
     while (!m_stopRequested.load(std::memory_order_relaxed))
     {
@@ -436,6 +441,7 @@ void VoiceAudioManager::CaptureThread(std::string aDeviceId)
         }
 
         float peak = 0.f;
+        size_t converted = 0;
 
         // AUDCLNT_BUFFERFLAGS_SILENT means the buffer is meaningless, not that it is quiet -
         // reading it produces whatever happened to be in memory.
@@ -443,21 +449,45 @@ void VoiceAudioManager::CaptureThread(std::string aDeviceId)
         {
             const uint32_t samples = frames * channels;
 
+            // Converted to float once, here, and used for BOTH the meter and the voice
+            // path. Previously the samples were read only to measure them and then thrown
+            // away, which is why voice had nothing to encode.
+            //
+            // resize() on a vector that is already large enough does not allocate, so this
+            // settles after the first buffer and never allocates on the audio thread again.
+            if (m_convertBuffer.size() < samples)
+                m_convertBuffer.resize(samples);
+
             if (isFloat && bits == 32)
             {
                 const auto* pSamples = reinterpret_cast<const float*>(pData);
                 for (uint32_t i = 0; i < samples; ++i)
+                {
+                    m_convertBuffer[i] = pSamples[i];
                     peak = std::max(peak, std::fabs(pSamples[i]));
+                }
+                converted = samples;
             }
             else if (!isFloat && bits == 16)
             {
                 const auto* pSamples = reinterpret_cast<const int16_t*>(pData);
                 for (uint32_t i = 0; i < samples; ++i)
-                    peak = std::max(peak, std::fabs(static_cast<float>(pSamples[i])) / 32768.f);
+                {
+                    const float value = static_cast<float>(pSamples[i]) / 32768.f;
+                    m_convertBuffer[i] = value;
+                    peak = std::max(peak, std::fabs(value));
+                }
+                converted = samples;
             }
         }
 
         pCapture->ReleaseBuffer(frames);
+
+        // After ReleaseBuffer, deliberately: the samples are already copied, and holding a
+        // WASAPI capture buffer across a callback of unknown cost is how an endpoint starts
+        // reporting overruns.
+        if (converted > 0 && m_callback)
+            m_callback(m_convertBuffer.data(), converted / channels, channels, sampleRate);
 
         if (peak > 0.f)
         {

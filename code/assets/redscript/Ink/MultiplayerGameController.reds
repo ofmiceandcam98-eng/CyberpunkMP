@@ -23,6 +23,9 @@ public class MultiplayerGameController extends inkGameController {
     // not knowing you are shouting.
     private let m_voiceRange: MpVoiceRange = MpVoiceRange.Local;
 
+    // The "you are talking" indicator. Built on first transmission, not at startup.
+    private let m_voiceIndicator: wref<inkText>;
+
     public let m_audioSystem: wref<AudioSystem>;
     public let m_uiSystem: wref<UISystem>;
     public let m_repeatingScrollActionEnabled: Bool = false;
@@ -1058,6 +1061,77 @@ public class MultiplayerGameController extends inkGameController {
             this.m_voiceTransmitting = down;
             FTLog(s"[Voice] push-to-talk -> \(down)");
         }
+
+        this.MpVoicePushState();
+    }
+
+    /**
+     * Hand the current state to the part that actually opens the microphone.
+     *
+     * Called from every path that can change it rather than only from the key handler -
+     * toggle, the explicit stop, and a mode change can all end transmission, and this
+     * script tracking one thing while the audio layer does another is precisely the bug
+     * where somebody's microphone stays open after they think they let go.
+     */
+    private func MpVoicePushState() -> Void {
+        let network = GameInstance.GetNetworkWorldSystem();
+        if !IsDefined(network) {
+            return;
+        }
+
+        network.VoiceSetTransmitting(this.m_voiceTransmitting);
+        network.VoiceSetRange(Cast<Uint32>(EnumInt(this.m_voiceRange)));
+
+        this.MpVoiceUpdateIndicator();
+    }
+
+    /**
+     * The small "you are talking" indicator, bottom left.
+     *
+     * Deliberately minimal - a dot and the range, shown only while the microphone is open.
+     * A voice indicator that is always on screen becomes furniture nobody reads, and the
+     * one moment it has to be unmissable is when somebody is transmitting and does not
+     * realise it.
+     *
+     * Built on first use rather than in OnInitialize: most sessions never press the key,
+     * and a widget nobody sees should not cost anything to have.
+     */
+    private func MpVoiceUpdateIndicator() -> Void {
+        if !this.m_voiceTransmitting {
+            if IsDefined(this.m_voiceIndicator) {
+                this.m_voiceIndicator.SetVisible(false);
+            }
+            return;
+        }
+
+        if !IsDefined(this.m_voiceIndicator) {
+            let root = this.GetRootCompoundWidget();
+            if !IsDefined(root) {
+                return;
+            }
+
+            let text = new inkText();
+            text.SetName(n"mp_voice_indicator");
+            text.SetFontFamily("base\\gameplay\\gui\\fonts\\raj\\raj.inkfontfamily");
+            text.SetFontStyle(n"Medium");
+            text.SetFontSize(20);
+            text.SetAnchor(inkEAnchor.BottomLeft);
+
+            // Anchor point as well as anchor - without it the widget's top-left is placed at
+            // the screen's bottom-left and it draws off the bottom edge. That exact mistake
+            // put the character selector panel off the side of the screen.
+            text.SetAnchorPoint(0.0, 1.0);
+            text.SetMargin(new inkMargin(60.0, 0.0, 0.0, 200.0));
+            text.Reparent(root);
+
+            this.m_voiceIndicator = text;
+        }
+
+        // The same yellow the game uses for its own prompts, so it reads as the game
+        // speaking rather than as a mod drawing on top of it.
+        this.m_voiceIndicator.SetTintColor(new HDRColor(2.0, 1.75, 0.25, 1.0));
+        this.m_voiceIndicator.SetText(s"[ TALKING ]  \(this.MpVoiceRangeName())");
+        this.m_voiceIndicator.SetVisible(true);
     }
 
     // Stop transmitting whatever the mode and whatever the key is doing.
@@ -1070,6 +1144,10 @@ public class MultiplayerGameController extends inkGameController {
             this.m_voiceTransmitting = false;
             FTLog(s"[Voice] stopped");
         }
+
+        // Unconditionally, not inside the branch above. If this script and the audio layer
+        // ever disagree, the safe direction to correct in is "closed".
+        this.MpVoicePushState();
     }
 
     public func MpVoiceSetMode(mode: MpVoiceMode) -> Void {
@@ -1109,6 +1187,7 @@ public class MultiplayerGameController extends inkGameController {
         }
 
         FTLog(s"[Voice] range -> \(this.MpVoiceRangeName())");
+        this.MpVoicePushState();
         this.MpShowVoiceRange();
     }
 

@@ -9,6 +9,7 @@
 #include "Red/TypeInfo/Macros/Definition.hpp"
 #include "AppearanceSystem.h"
 #include "App/Voice/VoiceAudioManager.h"
+#include "App/Voice/VoiceClient.h"
 #include "ChatSystem.h"
 #include "InterpolationSystem.h"
 #include "VehicleSystem.h"
@@ -206,6 +207,35 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
 
     Red::CString VoiceLastError() const;
 
+    // ---------------------------------------------------------------------------
+    // Voice chat proper - microphone to other people's speakers.
+    //
+    // Separate from the capture calls above, which exist for the settings page's level
+    // meter and open a microphone WITHOUT transmitting anything. Starting voice takes over
+    // the microphone, so the two are never running at once.
+    // ---------------------------------------------------------------------------
+
+    // Empty ids follow the Windows defaults. Returns false and changes nothing on failure -
+    // voice refusing to start must never stop somebody playing.
+    bool VoiceStart(const Red::CString& acInputDevice, const Red::CString& acOutputDevice);
+    void VoiceStop();
+    bool VoiceIsRunning() const;
+
+    // Push-to-talk. Frames exist only while this is true; there is no "stopped talking"
+    // message, so a lost packet cannot leave a microphone open.
+    void VoiceSetTransmitting(bool aOn);
+    bool VoiceIsTransmitting() const;
+
+    // 0 whisper, 1 local, 2 yell. The SERVER decides what each means in metres.
+    void VoiceSetRange(uint32_t aRange);
+    uint32_t VoiceGetRange() const;
+
+    void VoiceSetMicVolume(uint32_t aPercent);
+    void VoiceSetPlaybackVolume(uint32_t aPercent);
+
+    // How many people are audible right now, for the speaking indicator.
+    uint32_t VoiceActiveSpeakerCount() const;
+
     // Why the last request was refused, empty when nothing was. The selector shows this
     // instead of appearing to ignore the button.
     Red::CString GetCharacterError() const { return Red::CString(m_characterError.c_str()); }
@@ -258,6 +288,10 @@ protected:
     // Somebody already in the world changed clothes or had work done. NotifyCharacterLoad
     // only fires at spawn, so without this an outfit change never left the wearer's screen.
     void HandleAppearanceUpdate(const PacketEvent<server::NotifyAppearanceUpdate>& aMessage);
+
+    // Somebody near us said something. Queues the frame and returns - decoding happens on
+    // the voice render thread, never here. See VoiceClient.h.
+    void HandleVoiceFrame(const PacketEvent<server::NotifyVoiceFrame>& aMessage);
 
     // The account's characters changed - a delete landed, or one was refused.
     void HandleCharacterList(const PacketEvent<server::NotifyCharacterList>& aMessage);
@@ -364,6 +398,14 @@ private:
     std::vector<VoiceDevice> m_voiceInputs;
     std::vector<VoiceDevice> m_voiceOutputs;
 
+    // Voice chat proper. Owns its own capture and playback - see VoiceClient.h for which
+    // thread does what.
+    VoiceClient m_voiceClient;
+
+    // Numbers our outgoing frames so receivers can drop ones that arrive out of order.
+    // Wraps deliberately - only differences between neighbours are ever compared.
+    uint32_t m_voiceSequence{0};
+
     // For measuring our own speed from how far we actually moved - see
     // UpdatePlayerLocation. Mutable because that function is const and only reports.
     mutable glm::vec3 m_lastPosition{};
@@ -469,6 +511,16 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(VoiceIsCapturing);
     RTTI_METHOD(VoiceInputLevel);
     RTTI_METHOD(VoiceLastError);
+    RTTI_METHOD(VoiceStart);
+    RTTI_METHOD(VoiceStop);
+    RTTI_METHOD(VoiceIsRunning);
+    RTTI_METHOD(VoiceSetTransmitting);
+    RTTI_METHOD(VoiceIsTransmitting);
+    RTTI_METHOD(VoiceSetRange);
+    RTTI_METHOD(VoiceGetRange);
+    RTTI_METHOD(VoiceSetMicVolume);
+    RTTI_METHOD(VoiceSetPlaybackVolume);
+    RTTI_METHOD(VoiceActiveSpeakerCount);
     RTTI_METHOD(GetCharacterError);
     RTTI_METHOD(GetDenialMessage);
     RTTI_METHOD(GetDenialCode);

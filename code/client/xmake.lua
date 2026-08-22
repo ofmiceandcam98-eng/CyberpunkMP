@@ -53,6 +53,10 @@ target("Client")
         "nameof",
         "semver",
         "microsoft-gsl",
+
+        -- Voice codec. Client only - the server relays encoded frames without decoding
+        -- them, so it never links this.
+        "libopus",
         "flecs")
 
     on_install(function (target)

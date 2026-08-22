@@ -56,6 +56,7 @@ Level::Level(World* apWorld) noexcept
     GServer->RegisterHandler<&Level::HandleEnterVehicleRequest>(this);
     GServer->RegisterHandler<&Level::HandleExitVehicleRequest>(this);
     GServer->RegisterHandler<&Level::HandleUpdateAppearanceRequest>(this);
+    GServer->RegisterHandler<&Level::HandleVoiceFrameRequest>(this);
 
     m_updateSystem = m_pWorld->system<const LevelActorTag>("Level Update")
         .each([this](flecs::entity aEntity, const LevelActorTag&)
@@ -892,6 +893,81 @@ void Level::BroadcastAppearance(flecs::entity aPuppet) noexcept
         [&message, owner](flecs::entity player, const PlayerComponent& aPlayerComponent)
         {
             if (player == owner)
+                return;
+
+            GServer->Send(aPlayerComponent.Connection, message);
+        });
+}
+
+void Level::HandleVoiceFrameRequest(PacketEvent<client::VoiceFrameRequest>& aMessage) noexcept
+{
+    auto* pPlayerManager = GetWorld()->get_mut<PlayerManager>();
+
+    // The speaker comes from the CONNECTION, exactly as the appearance path does. There is
+    // no id field on this request, so "play this audio as me" cannot be spelled "play it as
+    // somebody else" - impersonation over voice is not a bug anyone should have to notice.
+    const auto speaker = pPlayerManager->GetByConnectionId(aMessage.ConnectionId);
+    if (!speaker)
+        return;
+
+    const auto* pSpeaker = speaker.get<PlayerComponent>();
+    if (!pSpeaker || !pSpeaker->Puppet || !pSpeaker->Puppet.is_alive())
+        return;
+
+    // A 20ms Opus frame at any sane bitrate is well under 200 bytes; 1KB is generous and
+    // still bounds what one connection can make the server relay to everybody near them.
+    // Empty frames are dropped rather than forwarded - silence is the absence of frames.
+    constexpr size_t kMaxFrame = 1024;
+
+    if (aMessage.get_data().empty() || aMessage.get_data().size() > kMaxFrame)
+        return;
+
+    const auto* pSpeakerMovement = pSpeaker->Puppet.get<MovementComponent>();
+    if (!pSpeakerMovement)
+        return;
+
+    // What the range values MEAN, decided here rather than by the client.
+    //
+    // The client sends an intent - whisper, local, yell - and the server turns it into
+    // metres. A client that invents a range of 9 gets the default, not the horizon.
+    float radius;
+
+    switch (aMessage.get_range())
+    {
+    case 0: radius = 6.f; break;   // whisper - the people immediately around you
+    case 2: radius = 60.f; break;  // yell - across a junction
+    default: radius = 25.f; break; // local - normal speech, and the fall-back
+    }
+
+    const float radiusSquared = radius * radius;
+    const auto speakerPosition = pSpeakerMovement->Position;
+
+    server::NotifyVoiceFrame message;
+    message.set_id(pSpeaker->Puppet.id());
+    message.set_data(aMessage.get_data());
+    message.set_sequence(aMessage.get_sequence());
+
+    GetWorld()->get_world().each(
+        [&message, speaker, speakerPosition, radiusSquared](flecs::entity player,
+                                                            const PlayerComponent& aPlayerComponent)
+        {
+            // Never echo somebody their own voice. Hearing yourself a ping later is the
+            // single most disorienting thing a voice system can do.
+            if (player == speaker)
+                return;
+
+            if (!aPlayerComponent.Puppet || !aPlayerComponent.Puppet.is_alive())
+                return;
+
+            const auto* pMovement = aPlayerComponent.Puppet.get<MovementComponent>();
+            if (!pMovement)
+                return;
+
+            // Squared distance - no square root, and this runs per listener per frame at
+            // 50 frames a second per speaker.
+            const auto delta = pMovement->Position - speakerPosition;
+
+            if (glm::dot(delta, delta) > radiusSquared)
                 return;
 
             GServer->Send(aPlayerComponent.Connection, message);

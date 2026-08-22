@@ -63,6 +63,10 @@ protected:
     // own note in client.proto for why this is not SaveCharacterRequest.
     void HandleUpdateAppearanceRequest(PacketEvent<client::UpdateAppearanceRequest>& aMessage) noexcept;
 
+    // One encoded slice of somebody talking, relayed to whoever is close enough to hear it.
+    // The frame is never decoded here - see NotifyVoiceFrame in server.proto.
+    void HandleVoiceFrameRequest(PacketEvent<client::VoiceFrameRequest>& aMessage) noexcept;
+
 public:
     // Tell everyone except the owner that this puppet looks different now.
     //

@@ -230,6 +230,51 @@ void NetworkWorldSystem::Update(uint64_t aTick)
 {
     GTick = aTick;
 
+    // Send whatever the microphone produced since the last frame.
+    //
+    // HERE, on the game thread, and not from the capture thread that encoded it. The
+    // transport is not documented as safe to call from an arbitrary thread, and a voice
+    // feature that corrupts the connection would cost the whole session rather than just
+    // sounding bad. The queue between the two is what makes that safe - see VoiceClient.h.
+    if (m_voiceClient.IsRunning())
+    {
+        auto frames = m_voiceClient.TakeOutgoing();
+
+        if (!frames.empty())
+        {
+            const auto pNetworkService = Core::Container::Get<NetworkService>();
+
+            if (pNetworkService && pNetworkService->IsConnected())
+            {
+                const auto range = m_voiceClient.GetRange();
+
+                for (auto& frame : frames)
+                {
+                    client::VoiceFrameRequest request;
+
+                    // The generator spells "bytes" as a vector with its own allocator.
+                    // Taken from the setter itself rather than written out, so a change to
+                    // how the protocol represents bytes does not silently break here.
+                    using VoiceBytes = std::decay_t<decltype(request.get_data())>;
+
+                    request.set_data(VoiceBytes(frame.begin(), frame.end()));
+                    request.set_sequence(m_voiceSequence++);
+                    request.set_range(range);
+
+                    // Unreliable, and declared so on the MESSAGE - VoiceFrameRequest carries
+                    // the `unreliable` tag field, which is how this protocol says it (see
+                    // MoveEntityRequest). Send() reads that trait and picks the channel, so
+                    // passing one here would not compile.
+                    //
+                    // A voice frame that arrives late is worse than one that never arrives:
+                    // retransmitting pushes every frame behind it later still, heard as a
+                    // delay that grows and never recovers.
+                    pNetworkService->Send(request);
+                }
+            }
+        }
+    }
+
     // Apply the server's possessions as soon as there is somebody to give them to.
     //
     // Retried from the update loop rather than fired once on the spawn response, because
@@ -1235,6 +1280,69 @@ void NetworkWorldSystem::HandleVehicleControlAssigned(const PacketEvent<server::
     Red::CallVirtual(Red::GetGameSystem<NetworkWorldSystem>(), "TakeDriverSeat", pEntityComponent->Id);
 }
 
+void NetworkWorldSystem::HandleVoiceFrame(const PacketEvent<server::NotifyVoiceFrame>& aMessage)
+{
+    // Straight into the queue. This runs on the network thread, and decoding here would put
+    // Opus decoder state under two threads - see the header note on VoiceClient.
+    const auto& data = aMessage.get_data();
+
+    m_voiceClient.OnFrameReceived(aMessage.get_id(), data.data(), data.size(), aMessage.get_sequence());
+}
+
+bool NetworkWorldSystem::VoiceStart(const Red::CString& acInputDevice, const Red::CString& acOutputDevice)
+{
+    // The settings meter and voice cannot both hold the microphone. Whoever asks last wins,
+    // and the meter is the one that gives way - somebody pressing talk means it.
+    m_voice.StopCapture();
+
+    return m_voiceClient.Start(acInputDevice.c_str(), acOutputDevice.c_str());
+}
+
+void NetworkWorldSystem::VoiceStop()
+{
+    m_voiceClient.Stop();
+}
+
+bool NetworkWorldSystem::VoiceIsRunning() const
+{
+    return m_voiceClient.IsRunning();
+}
+
+void NetworkWorldSystem::VoiceSetTransmitting(bool aOn)
+{
+    m_voiceClient.SetTransmitting(aOn);
+}
+
+bool NetworkWorldSystem::VoiceIsTransmitting() const
+{
+    return m_voiceClient.IsTransmitting();
+}
+
+void NetworkWorldSystem::VoiceSetRange(uint32_t aRange)
+{
+    m_voiceClient.SetRange(aRange);
+}
+
+uint32_t NetworkWorldSystem::VoiceGetRange() const
+{
+    return m_voiceClient.GetRange();
+}
+
+void NetworkWorldSystem::VoiceSetMicVolume(uint32_t aPercent)
+{
+    m_voiceClient.SetMicVolume(aPercent);
+}
+
+void NetworkWorldSystem::VoiceSetPlaybackVolume(uint32_t aPercent)
+{
+    m_voiceClient.SetPlaybackVolume(aPercent);
+}
+
+uint32_t NetworkWorldSystem::VoiceActiveSpeakerCount() const
+{
+    return static_cast<uint32_t>(m_voiceClient.GetActiveSpeakers().size());
+}
+
 void NetworkWorldSystem::HandleAppearanceUpdate(const PacketEvent<server::NotifyAppearanceUpdate>& aMessage)
 {
     const auto entity = GetEntityByServerId(aMessage.get_id());
@@ -1718,6 +1826,7 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleWorldState>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleInteraction>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleAppearanceUpdate>(this);
+    pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleVoiceFrame>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleVehicleControlAssigned>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleCharacterList>(this);
 
@@ -1796,6 +1905,28 @@ void NetworkWorldSystem::OnConnected()
 {
     RED4ext::StackArgs_t args;
     ExecuteFunction(this, this->GetNativeType()->GetFunction("OnConnected"), nullptr, args);
+
+    // Voice starts with the session, not with the first key press.
+    //
+    // Opening a microphone and a render endpoint takes long enough to be heard as a clipped
+    // first word if it happened when somebody pressed talk. Starting here means the audio
+    // path is already warm and push-to-talk only flips a flag.
+    //
+    // Devices and volumes come from the launcher (Settings::Load). Empty ids follow the
+    // Windows defaults, which is what somebody means by not having chosen.
+    {
+        const auto& settings = Settings::Get();
+
+        m_voiceClient.SetMicVolume(settings.voiceMicVolume);
+        m_voiceClient.SetPlaybackVolume(settings.voiceChatVolume);
+
+        if (!m_voiceClient.Start(settings.voiceInputDevice.c_str(), settings.voiceOutputDevice.c_str()))
+        {
+            // Never fatal. Somebody with no working audio device still gets to play - they
+            // just cannot talk, and the log says why rather than leaving it a mystery.
+            spdlog::warn("[Voice] not available this session: {}", m_voiceClient.GetLastError());
+        }
+    }
 
     const auto pNetworkService = Core::Container::Get<NetworkService>();
 
@@ -1887,6 +2018,11 @@ void NetworkWorldSystem::OnConnected()
 
 void NetworkWorldSystem::OnDisconnected(Client::EDisconnectReason aReason)
 {
+    // Release the microphone and the speakers before anything else. Leaving a capture
+    // thread running after a disconnect would hold somebody's headset open for a session
+    // that no longer exists - and on a reconnect, try to open it twice.
+    m_voiceClient.Stop();
+
     each([this](flecs::entity entity, EntityComponent&)
         {
             DeSpawn(entity.raw_id());

@@ -34,6 +34,7 @@
  */
 
 #include <atomic>
+#include <functional>
 #include <thread>
 #include <mutex>
 #include <string>
@@ -88,6 +89,26 @@ public:
     bool StartCapture(const std::string& acDeviceId);
     void StopCapture();
 
+    /**
+     * Receives captured audio, as interleaved float in the endpoint's OWN format.
+     *
+     * Format is passed with every call rather than fixed, because a shared-mode endpoint
+     * decides its own: 44100 or 48000, mono or stereo, whatever the driver prefers. Forcing
+     * a format is how a perfectly good interface ends up refusing to open. Converting is the
+     * caller's job.
+     *
+     * CALLED ON THE CAPTURE THREAD, every few milliseconds. Nothing in here may touch the
+     * game, allocate unpredictably, or block - a stall here is a stall in the audio path,
+     * which is heard as a gap in somebody's voice.
+     *
+     * Set it BEFORE StartCapture. It is deliberately not guarded by a lock: taking one on
+     * the audio thread to support a change nobody makes would cost more than it protects.
+     */
+    using CaptureCallback =
+        std::function<void(const float* apSamples, size_t aFrames, uint32_t aChannels, uint32_t aSampleRate)>;
+
+    void SetCaptureCallback(CaptureCallback aCallback) { m_callback = std::move(aCallback); }
+
     bool IsCapturing() const { return m_capturing.load(std::memory_order_relaxed); }
 
     /**
@@ -115,6 +136,12 @@ private:
     // Stored as a bit pattern so the whole thing stays lock-free; float atomics are not
     // guaranteed lock-free on every target and this is read every frame.
     std::atomic<uint32_t> m_peakBits{0};
+
+    CaptureCallback m_callback;
+
+    // Scratch for converting the endpoint's samples to float before handing them over.
+    // Owned by the capture thread and reused, so a running capture does not allocate.
+    std::vector<float> m_convertBuffer;
 
     mutable std::mutex m_errorLock;
     std::string m_lastError;

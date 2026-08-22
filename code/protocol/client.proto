@@ -223,6 +223,34 @@ message UpdateAppearanceRequest {
 message DeleteCharacterRequest {
 }
 
+// One encoded slice of somebody talking.
+//
+// Opus at 48kHz mono in 20ms frames - the codec's own default, and small enough that a
+// dropped frame is inaudible rather than a gap. There is no "start talking" or "stop
+// talking" message: a frame arriving IS the transmission, and silence is simply the
+// absence of frames. That removes the failure everybody has met in some other game, where
+// a lost stop-message leaves a microphone open.
+//
+// Unreliable channel. A voice frame that arrives late is worse than one that never
+// arrives, so none of them are worth retransmitting.
+message VoiceFrameRequest {
+    bool unreliable = 1000; // This is just a tag to indicate that this message is unreliable
+    bytes data = 1;
+
+    // Wraps deliberately at 16 bits. Only used to spot gaps and to discard frames that
+    // arrive out of order, both of which are decisions about neighbours, never about
+    // absolute position.
+    uint32 sequence = 2;
+
+    // How far this should carry: 0 whisper, 1 local, 2 yell. Sent per FRAME rather than
+    // held as connection state, so changing range takes effect on the next frame and a
+    // lost range-change cannot leave somebody quietly broadcasting across the district.
+    //
+    // The SERVER decides what each value means in metres and who is close enough. A client
+    // saying "yell" is asking, not telling.
+    uint32 range = 3;
+}
+
 message Protocol {
     oneof content {
         AuthenticationRequest authentication_request = 1;
@@ -236,5 +264,6 @@ message Protocol {
         SaveCharacterRequest save_character_request = 9;
         UpdateAppearanceRequest update_appearance_request = 10;
         DeleteCharacterRequest delete_character_request = 11;
+        VoiceFrameRequest voice_frame_request = 12;
     }
 }

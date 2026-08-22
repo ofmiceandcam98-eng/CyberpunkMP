@@ -154,6 +154,35 @@ public native class NetworkWorldSystem extends IGameSystem {
     public native func VoiceInputLevel() -> Float;
 
     public native func VoiceLastError() -> String;
+
+    // ---------------------------------------------------------------------------
+    // Voice chat proper - microphone to other people's speakers.
+    //
+    // Distinct from the capture calls above, which exist for the settings meter and open a
+    // microphone WITHOUT transmitting. Starting voice takes the microphone over, so the two
+    // never run at once.
+    // ---------------------------------------------------------------------------
+
+    // Empty ids follow the Windows defaults. False means voice did not start; the game
+    // carries on regardless, because losing a session over a headset is not acceptable.
+    public native func VoiceStart(inputDevice: String, outputDevice: String) -> Bool;
+    public native func VoiceStop() -> Void;
+    public native func VoiceIsRunning() -> Bool;
+
+    // Frames exist only while transmitting - there is no "stopped talking" message, so a
+    // lost packet can never leave somebody's microphone open.
+    public native func VoiceSetTransmitting(on: Bool) -> Void;
+    public native func VoiceIsTransmitting() -> Bool;
+
+    // 0 whisper, 1 local, 2 yell. The SERVER turns these into metres.
+    public native func VoiceSetRange(range: Uint32) -> Void;
+    public native func VoiceGetRange() -> Uint32;
+
+    public native func VoiceSetMicVolume(percent: Uint32) -> Void;
+    public native func VoiceSetPlaybackVolume(percent: Uint32) -> Void;
+
+    // How many people are audible right now, for the speaking indicator.
+    public native func VoiceActiveSpeakerCount() -> Uint32;
     public native func GetEntityIdByServerId(serverId: Uint64) -> EntityID;
     public native func GetAppearanceSystem() -> ref<AppearanceSystem>;
     public native func GetChatSystem() -> ref<ChatSystem>;

@@ -399,6 +399,22 @@ message NotifyCharacterList {
     string error = 2;
 }
 
+// Somebody near you said something.
+//
+// The server relays frames verbatim - it never decodes them. That keeps the mixing cost on
+// the machines doing the listening and means a codec change does not need a server rebuild,
+// but it also means the server cannot inspect what is being said. Range is enforced by
+// choosing who gets the frame, which is the only decision worth making centrally.
+//
+// The id is the SPEAKER's remote player id, so the receiver can place the sound at their
+// puppet and show who is talking.
+message NotifyVoiceFrame {
+    bool unreliable = 1000; // This is just a tag to indicate that this message is unreliable
+    uint64 id = 1;
+    bytes data = 2;
+    uint32 sequence = 3;
+}
+
 message Protocol {
     oneof content {
         AuthenticationResponse authentication_response = 1;
@@ -424,5 +440,6 @@ message Protocol {
         NotifyQuestSkip notify_quest_skip = 21;
         NotifyAppearanceUpdate notify_appearance_update = 22;
         NotifyCharacterList notify_character_list = 23;
+        NotifyVoiceFrame notify_voice_frame = 24;
     }
 }
