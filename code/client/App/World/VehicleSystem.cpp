@@ -262,6 +262,33 @@ void VehicleSystem::OnVehicleExit()
 bool VehicleSystem::HandleVehicleLoadMessage(const PacketEvent<server::NotifyVehicleLoad>& aMessage)
 {
     spdlog::info("[VehicleSystem] HandleVehicleLoadMessage");
+
+    const auto worldSystem = Red::GetGameSystem<NetworkWorldSystem>();
+
+    // One server vehicle, one local copy.
+    //
+    // This handler used to call SpawnVehicle unconditionally, with nothing anywhere asking
+    // whether we already had a car for this server id. The server sends a load alongside
+    // the enter, so every time somebody got into a car - the same car, re-entered, or a car
+    // re-replicated as it came back into range - another copy was spawned on top of the one
+    // already standing there. That is the cars multiplying: they are real entities, each
+    // with its own physics, stacked in the same parking space.
+    //
+    // The duplicates were also invisible to everything downstream. Only the newest copy is
+    // recorded against the server id, so the earlier ones belong to nobody: they are never
+    // moved, never mounted into, and never cleaned up, because no message can name them.
+    //
+    // Returning true, not false. We handled it correctly - the vehicle is present, which is
+    // what the message asked for. False is for a load we could not honour.
+    const auto existing = worldSystem->GetEntityByServerId(aMessage.get_id());
+
+    if (existing && (existing.has<SpawningComponent>() || existing.has<EntityComponent>()))
+    {
+        spdlog::info("[VehicleSystem] HandleVehicleLoadMessage: already have vehicle {} - not spawning a duplicate",
+                     aMessage.get_id());
+        return true;
+    }
+
     const auto handle = Red::Handle(this);
     Red::EntityID id;
     Red::ScriptGameInstance game;
@@ -282,7 +309,6 @@ bool VehicleSystem::HandleVehicleLoadMessage(const PacketEvent<server::NotifyVeh
         return false;
 
     // spdlog::info("[VehicleSystem] * Spawned: {}, {}", aMessage.get_id(), id.hash);
-    const auto worldSystem = Red::GetGameSystem<NetworkWorldSystem>();
     worldSystem->make_alive(aMessage.get_id()).emplace<SpawningComponent>(id);
 
     return true;
