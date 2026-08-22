@@ -79,6 +79,10 @@ protected:
     // happened TO - their own game has no other way of knowing.
     void HandleStatusEffectRequest(PacketEvent<client::StatusEffectRequest>& aMessage) noexcept;
 
+    // A quickhack upload started or finished. Relayed so the people around it can see it
+    // happening - see QuickhackUploadRequest.
+    void HandleQuickhackUploadRequest(PacketEvent<client::QuickhackUploadRequest>& aMessage) noexcept;
+
 public:
     // Tell everyone who can see this combatant what its health and life state now are.
     // Quiet state, not an event - see NotifyCombatState.

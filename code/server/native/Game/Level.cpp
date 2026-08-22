@@ -62,6 +62,7 @@ Level::Level(World* apWorld) noexcept
     GServer->RegisterHandler<&Level::HandleCombatEventRequest>(this);
     GServer->RegisterHandler<&Level::HandleWeaponEventRequest>(this);
     GServer->RegisterHandler<&Level::HandleStatusEffectRequest>(this);
+    GServer->RegisterHandler<&Level::HandleQuickhackUploadRequest>(this);
 
     m_updateSystem = m_pWorld->system<const LevelActorTag>("Level Update")
         .each([this](flecs::entity aEntity, const LevelActorTag&)
@@ -953,6 +954,43 @@ void Level::BroadcastAppearance(flecs::entity aPuppet) noexcept
 
             GServer->Send(aPlayerComponent.Connection, message);
         });
+}
+
+void Level::HandleQuickhackUploadRequest(PacketEvent<client::QuickhackUploadRequest>& aMessage) noexcept
+{
+    auto* pPlayerManager = GetWorld()->get_mut<PlayerManager>();
+
+    const auto attacker = pPlayerManager->GetByConnectionId(aMessage.ConnectionId);
+    if (!attacker)
+        return;
+
+    const auto* pAttacker = attacker.get<PlayerComponent>();
+    if (!pAttacker || !pAttacker->Puppet || !pAttacker->Puppet.is_alive())
+        return;
+
+    flecs::entity target(GetWorld()->get_world(), aMessage.get_target_id());
+
+    if (!target || !target.is_alive())
+        return;
+
+    // Only the two states the game models. An upload that claims to be in some third state
+    // is a client saying something the engine cannot produce.
+    if (aMessage.get_state() > 1)
+        return;
+
+    server::NotifyQuickhackUpload message;
+    message.set_target_id(target.id());
+    message.set_source_id(pAttacker->Puppet.id());
+    message.set_state(aMessage.get_state());
+    message.set_quickhack_id(aMessage.get_quickhack_id());
+    message.set_duration(aMessage.get_duration());
+
+    // Everyone, target included. This is presentation rather than authority - nothing here
+    // changes any state the server owns, which is why it needs no validation beyond "these
+    // two entities exist". A forged upload notification makes somebody flicker; it cannot
+    // hurt them, and the damage path is where that is defended.
+    GetWorld()->get_world().each([&message](flecs::entity, const PlayerComponent& aPlayerComponent)
+                                 { GServer->Send(aPlayerComponent.Connection, message); });
 }
 
 void Level::HandleStatusEffectRequest(PacketEvent<client::StatusEffectRequest>& aMessage) noexcept

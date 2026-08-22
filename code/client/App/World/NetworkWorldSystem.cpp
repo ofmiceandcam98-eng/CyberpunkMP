@@ -1369,6 +1369,72 @@ void NetworkWorldSystem::HandleCombatState(const PacketEvent<server::NotifyComba
                  aMessage.get_life_state());
 }
 
+void NetworkWorldSystem::SendQuickhackUpload(uint64_t aTargetServerId, uint32_t aState, uint64_t aQuickhackId,
+                                             float aDuration)
+{
+    const auto pNetworkService = Core::Container::Get<NetworkService>();
+
+    if (!pNetworkService || !pNetworkService->IsConnected() || aTargetServerId == 0)
+        return;
+
+    client::QuickhackUploadRequest request;
+    request.set_target_id(aTargetServerId);
+    request.set_state(aState);
+    request.set_quickhack_id(aQuickhackId);
+    request.set_duration(aDuration);
+    request.set_sequence(++m_combatSequence);
+
+    pNetworkService->Send(request);
+}
+
+void NetworkWorldSystem::HandleQuickhackUpload(const PacketEvent<server::NotifyQuickhackUpload>& aMessage)
+{
+    // Which local entity is the target? For a remote player that is their puppet; when the
+    // target is US there is no puppet, and script uses the local player instead.
+    const auto self = GetRemotePlayerId();
+    const bool aboutUs = self && *self == aMessage.get_target_id();
+
+    const auto entityId =
+        aboutUs ? Red::EntityID{} : GetEntityIdByServerId(aMessage.get_target_id());
+
+    // A hack aimed at somebody whose puppet we do not hold - out of range, or not yet
+    // spawned here. Nothing to draw.
+    if (!aboutUs && entityId.hash == 0)
+        return;
+
+    m_incomingUploads.push_back(aboutUs ? 0 : entityId.hash);
+    m_incomingUploadStates.push_back(aMessage.get_state());
+
+    spdlog::info("[Combat] quickhack upload {} on {} from entity {}",
+                 aMessage.get_state() == 0 ? "started" : "completed", aboutUs ? "US" : "a remote player",
+                 aMessage.get_source_id());
+}
+
+uint64_t NetworkWorldSystem::ConsumeIncomingUploadTarget()
+{
+    if (m_incomingUploads.empty())
+    {
+        m_incomingUploadState = 0;
+        return 0;
+    }
+
+    // The state is read through a separate accessor rather than returned alongside, because
+    // redscript cannot receive two values from one native call without a struct - and a
+    // struct across RTTI is exactly the marshalling this boundary avoids everywhere else.
+    // Set BEFORE the id is handed over, so a caller that reads both always sees a pair.
+    m_incomingUploadState = m_incomingUploadStates.front();
+
+    const auto target = m_incomingUploads.front();
+
+    m_incomingUploads.erase(m_incomingUploads.begin());
+    m_incomingUploadStates.erase(m_incomingUploadStates.begin());
+
+    // Zero means "us", which is a real answer rather than "nothing waiting" - so it is
+    // returned as a sentinel the caller distinguishes by having asked at all. An empty
+    // queue is the only case that yields zero with state left at zero as well.
+    return target == 0 ? std::numeric_limits<uint64_t>::max() : target;
+}
+
 float NetworkWorldSystem::ConsumeIncomingHealth()
 {
     const auto health = m_incomingHealth;
@@ -2004,6 +2070,7 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleStatusEffect>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleDamageResult>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleCombatState>(this);
+    pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleQuickhackUpload>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleVehicleControlAssigned>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleCharacterList>(this);
 

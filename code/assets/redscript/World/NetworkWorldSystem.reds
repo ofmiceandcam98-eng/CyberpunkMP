@@ -203,6 +203,12 @@ public native class NetworkWorldSystem extends IGameSystem {
     // a delta - see MpApplyServerHealth.
     public native func ConsumeIncomingHealth() -> Float;
     public native func IsDowned() -> Bool;
+
+    // Quickhack upload visibility - see Combat.reds. State is read separately because
+    // redscript cannot receive a pair from one native call without a struct.
+    public native func SendQuickhackUpload(targetId: Uint64, state: Uint32, quickhackId: Uint64, duration: Float) -> Void;
+    public native func ConsumeIncomingUploadTarget() -> Uint64;
+    public native func GetIncomingUploadState() -> Uint32;
     public native func GetEntityIdByServerId(serverId: Uint64) -> EntityID;
     public native func GetAppearanceSystem() -> ref<AppearanceSystem>;
     public native func GetChatSystem() -> ref<ChatSystem>;

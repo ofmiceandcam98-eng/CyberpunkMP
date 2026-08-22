@@ -223,6 +223,34 @@ message UpdateAppearanceRequest {
 message DeleteCharacterRequest {
 }
 
+// A quickhack is being uploaded to somebody, or has finished.
+//
+// The part everyone WATCHING needs. A hack currently happens in silence: the attacker sees
+// their upload bar, and to everybody else - the person being hacked included - nothing
+// occurs until the effect lands. That removes the one window in which being hacked can be
+// noticed and reacted to, which on a roleplay server is most of the point.
+//
+// Cyberpunk already has the presentation for it. ScriptedPuppet.OnUploadProgressStateChanged
+// applies AIQuickHackStatusEffect.BeingHacked on STARTED and removes it on COMPLETED, which
+// is what draws the "being hacked" state. Relaying the transition lets every client run the
+// game's own visual rather than inventing one.
+message QuickhackUploadRequest {
+    uint64 target_id = 1;
+
+    // 0 started, 1 completed. The same two states EUploadProgramState has - there is no
+    // third, and an "interrupted" that the game does not model would be a lie.
+    uint32 state = 2;
+
+    // Which quickhack, for the log and for anything that later wants to show WHAT is being
+    // uploaded rather than merely that something is.
+    uint64 quickhack_id = 3;
+
+    // How long the upload takes, so a receiver can size a progress bar rather than guess.
+    float duration = 4;
+
+    uint32 sequence = 5;
+}
+
 // A quickhack landed a status effect on somebody.
 //
 // SEPARATE FROM DAMAGE, because they arrive by different routes. A quickhack's damage runs
@@ -395,5 +423,6 @@ message Protocol {
         CombatEventRequest combat_event_request = 13;
         WeaponEventRequest weapon_event_request = 14;
         StatusEffectRequest status_effect_request = 15;
+        QuickhackUploadRequest quickhack_upload_request = 16;
     }
 }

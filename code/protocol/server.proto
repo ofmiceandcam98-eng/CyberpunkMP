@@ -399,6 +399,19 @@ message NotifyCharacterList {
     string error = 2;
 }
 
+// Somebody near you is being quickhacked, or has stopped being.
+//
+// Sent to everyone who can see the target, the target included. Each client runs the game's
+// own BeingHacked visual from it, so the window in which a hack can be noticed and reacted
+// to actually exists for the people around it.
+message NotifyQuickhackUpload {
+    uint64 target_id = 1;
+    uint64 source_id = 2;
+    uint32 state = 3;
+    uint64 quickhack_id = 4;
+    float duration = 5;
+}
+
 // A quickhack put a status effect on somebody - blindness, a weapon glitch, crippled
 // movement.
 //
@@ -559,5 +572,6 @@ message Protocol {
         NotifyWeaponEvent notify_weapon_event = 27;
         NotifyWeaponState notify_weapon_state = 28;
         NotifyStatusEffect notify_status_effect = 29;
+        NotifyQuickhackUpload notify_quickhack_upload = 30;
     }
 }

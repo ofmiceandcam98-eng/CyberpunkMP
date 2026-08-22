@@ -257,6 +257,16 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // has no other way of learning about it - the effect was applied to a puppet here.
     void SendStatusEffect(uint64_t aTargetServerId, uint64_t aEffectId, uint32_t aStacks, uint64_t aSourceId);
 
+    // A quickhack upload started or finished on a remote player, so everyone watching can
+    // see it rather than only the attacker.
+    void SendQuickhackUpload(uint64_t aTargetServerId, uint32_t aState, uint64_t aQuickhackId, float aDuration);
+
+    // An upload somebody else started, waiting for script to render. Returns the target's
+    // ENGINE entity id and reports the state through the out-parameter shape below; zero
+    // when nothing is waiting.
+    uint64_t ConsumeIncomingUploadTarget();
+    uint32_t GetIncomingUploadState() const { return m_incomingUploadState; }
+
     // Effects the server says landed on US, one at a time. Zero when none are waiting.
     //
     // Drained by script rather than applied in C++: applying a status effect is a script
@@ -343,6 +353,9 @@ protected:
 
     // Health and life state changing without a hit - a spawn, a revive, a correction.
     void HandleCombatState(const PacketEvent<server::NotifyCombatState>& aMessage);
+
+    // Somebody is being quickhacked. Rendered with the game's own BeingHacked state.
+    void HandleQuickhackUpload(const PacketEvent<server::NotifyQuickhackUpload>& aMessage);
 
     // The account's characters changed - a delete landed, or one was refused.
     void HandleCharacterList(const PacketEvent<server::NotifyCharacterList>& aMessage);
@@ -474,6 +487,11 @@ private:
     float m_incomingHealth{-1.f};
     bool m_downed{false};
 
+    // Uploads somebody else started, as (server id, state) pairs waiting for script.
+    Vector<uint64_t> m_incomingUploads;
+    Vector<uint32_t> m_incomingUploadStates;
+    uint32_t m_incomingUploadState{0};
+
     // For measuring our own speed from how far we actually moved - see
     // UpdatePlayerLocation. Mutable because that function is const and only reports.
     mutable glm::vec3 m_lastPosition{};
@@ -596,6 +614,9 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(ConsumeIncomingStatusEffect);
     RTTI_METHOD(ConsumeIncomingHealth);
     RTTI_METHOD(IsDowned);
+    RTTI_METHOD(SendQuickhackUpload);
+    RTTI_METHOD(ConsumeIncomingUploadTarget);
+    RTTI_METHOD(GetIncomingUploadState);
     RTTI_METHOD(GetCharacterError);
     RTTI_METHOD(GetDenialMessage);
     RTTI_METHOD(GetDenialCode);

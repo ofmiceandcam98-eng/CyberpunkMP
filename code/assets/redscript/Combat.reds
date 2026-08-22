@@ -205,12 +205,96 @@ public class MpStatusEffectPoll extends DelayCallback {
                 }
 
                 MpApplyServerHealth(player, network);
+                MpApplyIncomingUploads(network);
             }
         }
 
         // Rearmed unconditionally, including while disconnected - the poll has to survive a
         // reconnect, and a callback that stops on the first quiet tick never comes back.
         GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(new MpStatusEffectPoll(), 0.25, false);
+    }
+}
+
+/**
+ * Stage 9 - other people can see a quickhack being uploaded.
+ *
+ * Without this a hack happens in silence: the attacker watches their upload bar, and to
+ * everybody else - including the person being hacked - nothing exists until the effect
+ * lands. That deletes the one window in which being hacked can be noticed and reacted to,
+ * which on a roleplay server is most of the point of hacking somebody.
+ *
+ * Uses the game's own presentation rather than inventing one. ScriptedPuppet's handler
+ * applies AIQuickHackStatusEffect.BeingHacked on STARTED and removes it on COMPLETED - so
+ * relaying the transition and running the same two calls gives every client the real
+ * visual, and it keeps working if a patch changes what that visual looks like.
+ */
+@wrapMethod(ScriptedPuppet)
+protected cb func OnUploadProgressStateChanged(evt: ref<UploadProgramProgressEvent>) -> Bool {
+    MpReportUpload(this, evt);
+    return wrappedMethod(evt);
+}
+
+public func MpReportUpload(target: ref<ScriptedPuppet>, evt: ref<UploadProgramProgressEvent>) -> Void {
+    if !IsDefined(target) || !IsDefined(evt) {
+        return;
+    }
+
+    // Quickhack uploads only. The same event carries other progress bars, and relaying a
+    // device's would put a BeingHacked shimmer on somebody for no reason.
+    if NotEquals(evt.progressBarContext, EProgressBarContext.QuickHack)
+    || NotEquals(evt.progressBarType, EProgressBarType.UPLOAD) {
+        return;
+    }
+
+    let network = GameInstance.GetNetworkWorldSystem();
+    if !IsDefined(network) || !network.IsConnected() {
+        return;
+    }
+
+    let targetId = network.GetServerIdByEntity(target.GetEntityID());
+    if Equals(targetId, 0ul) {
+        return;
+    }
+
+    let state: Uint32 = Equals(evt.state, EUploadProgramState.STARTED) ? 0u : 1u;
+
+    network.SendQuickhackUpload(targetId, state, 0ul, evt.duration);
+}
+
+/**
+ * Render an upload somebody else started.
+ *
+ * Applied to the puppet when it is about another player, and to our own player when we are
+ * the one being hacked - the same split as status effects, for the same reason.
+ */
+public func MpApplyIncomingUploads(network: ref<NetworkWorldSystem>) -> Void {
+    if !IsDefined(network) {
+        return;
+    }
+
+    let target = network.ConsumeIncomingUploadTarget();
+
+    while NotEquals(target, 0ul) {
+        let state = network.GetIncomingUploadState();
+
+        // The sentinel for "this one is about us" - see ConsumeIncomingUploadTarget.
+        let entity: ref<GameObject>;
+
+        if Equals(target, 18446744073709551615ul) {
+            entity = GetPlayer(GetGameInstance());
+        } else {
+            entity = GameInstance.FindEntityByID(GetGameInstance(), EntityID.FromHash(target)) as GameObject;
+        }
+
+        if IsDefined(entity) {
+            if Equals(state, 0u) {
+                StatusEffectHelper.ApplyStatusEffect(entity, t"AIQuickHackStatusEffect.BeingHacked");
+            } else {
+                StatusEffectHelper.RemoveStatusEffect(entity, t"AIQuickHackStatusEffect.BeingHacked");
+            }
+        }
+
+        target = network.ConsumeIncomingUploadTarget();
     }
 }
 
