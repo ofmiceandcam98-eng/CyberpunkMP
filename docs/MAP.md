@@ -7,19 +7,37 @@ whoever lands or finds things (both Claude streams included): landing an item re
 from the ledger in the same commit; finding one adds it. A ledger that is not updated in
 the landing commit is how items get missed twice.
 
-Last full revision: 2026-08-22, after v0.3.103.
+Last full revision: 2026-08-22, after v0.3.106 (player combat).
 
 ---
 
 ## 1. THE LEDGER
 
 ### Needs a live session (built, never validated with humans)
-- **Player combat (Cam, v0.3.104 in prep)**: PvP damage server-decided, quickhacks on
-  players, server-owned RAM/cooldowns/ammo, hack-warning telegraphs, wanted-level clear
-  on down, scan shows real names. His own notes say none of it has seen a proper
-  multi-player test. ANOTHER protocol flag-day when it ships - client and server move
-  together; test builds cut before his ship are dead against a post-combat server.
-  Also rides along: the v0.3.100 voice-playback fix (communications-device fallback).
+- **Player combat (Cam) — SHIPPED v0.3.104/105/106, never tested with two humans.**
+  Stages 1-10 of the brief: PvP damage server-decided, quickhacks on players, hack-warning
+  telegraphs, server-owned health/ammo/RAM pool, wanted-level clear on down, scan shows
+  real names. Rode along: the v0.3.100 voice-playback fix (communications-device fallback).
+  Flag-day was v0.3.105; **v0.3.106 is client-only**, so the live server is correct for it.
+  Server logs one `[COMBAT]` and one `[QUICKHACK]` line per validated event - a two-client
+  disagreement is then a specific number, not a feeling.
+  **The engine-level blocker is solved** (see the combat row in the code map).
+  Genuinely open, in order:
+  1. **Quickhack id is sent as 0**, so the RAM/cooldown authority refuses every hack as
+     unknown - hacks still work (damage rides the native hit path) but cost nothing. The
+     upload event exposes its action only as a weak handle whose concrete type varies;
+     resolving that is the whole fix. Refusing beats mischarging, which is why it ships
+     this way.
+  2. **Cooldown**: `ObjectAction_Record.Cooldown()` → `Cooldown_Record.Duration()` and
+     `.Modifiable()`. If Modifiable is false, use Duration and delete `MinIntervalMs`,
+     which is ONLY an anti-spam floor and is labelled as such - do not tune it to imitate
+     a cooldown. Solo-answerable: the CET mod at
+     `bin/x64/plugins/cyber_engine_tweaks/mods/nco_hackdump` dumps it ~15s after load.
+  3. **Hit zone vocabulary**: zones travel as the native `hitShapeName` CName hash, no
+     invented enum. The names live in a `gameHitShapeBVH` the .ent only references, so
+     they cannot be read statically - every hit logs `[HitShape] '<name>'`. Solo: shoot
+     any NPC.
+  4. Two-client validation of the whole thing. Nothing has crossed between two machines.
 - **Late-join vehicles** (885f252): join while someone drives → you must see the car,
   and parked cars. Test server has it; pair with pre-release **v0.3.100-worldstate-test.14**
   (post-voice protocol `0x602ef720946cb1b8` / `0x88ae7e552943e8f2`; test.13 is dead).
@@ -110,11 +128,14 @@ Last full revision: 2026-08-22, after v0.3.103.
 | Client settings | `code/client/App/Settings.cpp` | ALL launch args (`--key=value` form ONLY — space-separated silently ignored) | The launcher→DLL channel is argv, one-shot; there is no config file |
 | Client net | `code/client/App/Network/NetworkService.cpp` | Auth request fill (build_stamp, manifest attest, unmanaged, password), denial capture → NetworkWorldSystem | Denials must be stored BEFORE Close() or the popup has nothing to say |
 | Client world | `code/client/App/World/` | NetworkWorldSystem (join/detach/denial natives), VehicleSystem (load/enter queue, exit grace), InterpolationSystem, AppearanceSystem, PuppetRegistry | Every native needs a matching `native func` line in the .reds or ALL scripts fail with UNRESOLVED_METHOD |
-| Scripts | `code/assets/redscript/` | MainMenu (join arming), Death.reds (immortality + floor + menu backstop), World/*.reds | redscript is ONE compilation unit — one broken file boots the game with no scripts at all |
+| Scripts | `code/assets/redscript/` | MainMenu (join arming), Death.reds (immortality + floor + menu backstop), Combat.reds (hit hook, weapon poll, quickhack requests), Hackable.reds, World/*.reds | redscript is ONE compilation unit — one broken file boots the game with no scripts at all. **No hex literals** (`0xFF...` is a parse error that kills every script). Match integer widths exactly — `GetMagazineAmmoCount` returns Uint32, and mixing it with Int32 is NO_MATCHING_OVERLOAD |
+| Combat | `code/server/native/Game/Level.cpp` (handlers) + `Components/{Health,Weapon,Quickhack}Component.h` + `code/assets/redscript/Combat.reds` | Detect → validate → broadcast → apply. Server owns health, magazine, RAM pool | **The game computes, the server bounds.** Weapon damage, quickhack damage and RAM cost all come from the client because they are native calculations needing a live StatsSystem — `GetCost()` runs `CalculateStatModifiers` against the attacker's deck and perks and can include a RANDOM modifier. Quickhack damage MUST stay 0 in the rule table: Cyberpunk applies it through the ordinary hit pipeline, so a number there double-counts (the v0.3.104 bug). A TweakDBID is **CRC32** of the name + length in bits 32-39, not FNV — guarded by a static_assert against a value dumped from the game |
+| Making players targetable | `code/assets/Tweaks/CyberpunkMP.tweak` + `Hackable.reds` | `objectActions` on the puppet records; hostile attitude at spawn | **`MaMuppet`/`WaMuppet` inherit from `Character.Panam`, NOT from `Character.Muppet`** — editing Muppet does nothing. Quickhack action names in the game's scripts are WRONG (`BaseBlindHack` not `BlindHack`, `MadnessHackBase` not `MadnessLvl3Hack`) — they were dumped live. Hostile attitude satisfies BOTH gates: `Att_Hostile` for `TSF_EnemyNPC` and the fourth route to `IsAggressive()`. The entity templates were never missing targeting components (16 `gameTargetingComponent`s, confirmed via WolvenKit CLI). Behind `--hackable-puppets` |
+| Runtime inspection | `bin/x64/plugins/cyber_engine_tweaks/mods/nco_hackdump` (not in repo) | Dumps TweakDB data the game will not reveal statically | CET only honours `registerForEvent` from `init.lua`; a required module's registration is ignored. Mod globals are NOT reachable from the console — export by returning a table. `io` is sandboxed to the mod folder. **Lua output goes to `scripting.log`**, not `cyber_engine_tweaks.log` |
 | Launcher | `code/launcher-lite/main.js` | Discord identity (membership: only 200/404 are verdicts), roles (10-min memo), manifest state machine, install lock + queue, Nexus manager, game detect (A–Z drives), footprint/uninstall | **CSS specificity**: base `button.action` (0,1,1) beats bare class rules — trio overrides must be `button.action.x`. Electron packaged: new source files MUST be added to package.json `build.files` (v0.3.97 shipped importing a file it didn't contain) |
 | Manifest kit | `code/launcher-lite/manifest.js` (+ selftest) | Signature verify vs pins, §2.1 availability states, install digest, ownership index, unmanaged classifier, tailnet check | Pure functions, Electron-free; run `node manifest.selftest.mjs` (82 checks) before shipping launcher changes |
 | Ship tooling | `tools/Ship.ps1`, `tools/manifest/*.cjs` | Gate battery, staging, carry-forward, manifest generate/sign/verify-vs-pins, prerelease→verify→promote | Ship bumps package.json but never commits — carry the bump or the next ship collides with an existing tag and silently uploads into an old release |
-| Deploy | `tools/deploy/update-server.sh` | NAS cron: player-count gate + server-relevant-path filter | Deploys `main` — see the live-vs-main divergence in the ledger |
+| Deploy | `tools/deploy/update-server.sh` | NAS cron: player-count gate + server-relevant-path filter | **Deploys whatever branch the checkout is ON — production `/mnt/vol/NASa/CyberpunkMP` is on `feat/world-state`, not main** (verified 2026-08-22). The repo dir is the script's first ARG and defaults to `~/CyberpunkMP`, which is not where production lives — calling it without the arg fails with "no such directory". Two traps beyond that: it DEFERS while Players>0 (so a deploy can silently not happen), and it skips the rebuild when no server-relevant path changed — a docs-only commit logs "pulled, nothing changed" and leaves earlier unbuilt server code still unbuilt. Verify a deploy by checking the running binary for a symbol, never by reading the log |
 | Coordination | `code/coord-api/`, `publish/assistant-updates.json` | The feed both Claude streams post to; dev-key handout | Personal key `~/.ncoa-coord-key`; posts as "zeldfep (Claude)" |
 | Published surface | `publish/` | server.json (address, republished by workflow), modlist.json (curated Nexus list), roles.json (written by server), manifest-source.json (curated components), release-notes.md (EVERY release's body), fullinstall-base/ | All fetched from `releases/latest/download/<name>` — a launcher-only ship must carry mod assets forward or every launcher 404s (v0.3.1 lesson, automated since) |
 
