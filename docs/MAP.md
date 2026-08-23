@@ -33,9 +33,11 @@ Last full revision: 2026-08-22, after v0.3.106 (player combat).
      LEVELED variants instead, hacks still refuse as unknown; the refusal log prints the
      raw id, and `tools/hackid.py <id>` turns it back into a name offline (same
      CRC32+length encoding as QuickhackComponent.h, anchored to its static_assert), so
-     one live session closes it either way. NOTE: Combat.reds change not compile-checked
-     on this VM (no game script env) - symbols verified against vanilla sources; Cam's
-     staged scc gate or the next boot validates.
+     one live session closes it either way. **COMPILE-CHECKED 2026-08-22 on Cam's 2.31
+     install** (`tools\CheckScripts.ps1`, 40 .reds staged, Combat.reds hash-matched to the
+     repo copy): `OK - redscript compiles`, so `GetObjectActionID()` resolves on the real
+     game scripts and the abort-everything risk is closed. What is still unproven is the
+     VALUE on the wire - Base* vs LEVELED record ids - which only a live hack answers.
   2. **Cooldown**: `ObjectAction_Record.Cooldown()` → `Cooldown_Record.Duration()` and
      `.Modifiable()`. If Modifiable is false, use Duration and delete `MinIntervalMs`,
      which is ONLY an anti-spam floor and is labelled as such - do not tune it to imitate
