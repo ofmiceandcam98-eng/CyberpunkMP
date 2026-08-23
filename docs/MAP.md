@@ -107,6 +107,15 @@ Last full revision: 2026-08-22, after v0.3.106 (player combat).
   (dead ~2s after 'queued 70 piece(s)') - possibly the same not-fully-built-entity
   class. Needs a dedicated session in VehicleSystem.cpp: gate DoMount/MakeRemoteDriven
   on entity readiness beyond OnVehicleReady, and treat a frozen-warned id as NOT ready.
+  **Test-box flavor NARROWED by experiment (2026-08-23 night session, 10 crashes):**
+  ghosts purged - still crashed; parked-vehicle replay absent - still crashed; creator
+  flow bypassed entirely (Initialised+NameChosen flipped server-side, guard live,
+  clean spawn 03:02:29) - still crashed in 25s. Creator EXONERATED. Last suspect
+  standing: the spawn-time appearance/cyberware APPLY of a FEMALE character (Cam +
+  phonix female, 12-13KB blobs, both crash-prone; every male player clean; matches
+  the AddItemToSlot cluster). Decisive next experiment: a female character on
+  zeldfep's machine - crash there too = female-apply convicted cross-machine, fix
+  goes to the apply path (defer/chunk/gate on entity readiness).
 - **EACCES shell-fallback destroys crash telemetry** (phonix, every launch): when spawn
   falls back to the cmd/start shell, the trail's 'game exited with code' reports the
   SHELL's exit (0, after 1-4s) - his two suspected crashes recorded nothing. Fix: when
