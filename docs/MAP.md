@@ -75,8 +75,11 @@ Last full revision: 2026-08-22, after v0.3.106 (player combat).
   installing it over a v0.3.106 install orphaned the combat-era .reds against its older
   DLL - redscript aborted the whole compilation naming Combat/Hackable/Scanner. The
   launcher extract now clears shipped dirs first (extractPayloadClean), so the orphan
-  class is closed for the NEXT build. Pair with **test.15 - STAGED, DELAYED on
-  zeldfep's explicit word** ("dont cut it delay it"); cut it when he says go.
+  class is closed for the NEXT build. **test.15 is CUT** (2026-08-23, zeldfep's go):
+  its ModPayload is byte-identical to v0.3.107's (quickhack fix aboard, superset =
+  safe over .107 even on merge-extract launchers), protocol verified identical to the
+  e15f6f5 test server (zero proto/netpack commits since). Checklist rides the release
+  notes: late-join vehicles, quickhack live confirm, denial popups, -sync-trace drives.
 - **Milestone-1 handshake**: denial popups in game (join with a stale client on purpose),
   MaxPlayer enforcement (5th player refused with "server is full"), password check.
 - **Download queue + install lock**: Install-missing shows the queue, strictly one at a
