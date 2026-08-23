@@ -4,6 +4,15 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.108
+
+Launcher only — no game or server changes, nothing to re-test in a session.
+
+- **Installing any build now replaces the mod instead of merging over it.** Installing an older test build over a newer install used to leave the newer build's script files behind, and scripts whose native half is gone abort the game's ENTIRE script compilation — the game boots, but with no scripts and no multiplayer, blaming three innocent files in a popup. Lived through with test.14; cannot happen again. Logs, config and version markers are untouched.
+- **Test-build installs now refuse while the game is running**, the same way updates always have. A locked file mid-swap used to leave a half-installed mod.
+- **The mod list stopped saying REQUIRED.** Nothing on the curated list has ever blocked playing, so the badge now says what it means: RECOMMENDED. House rule, now enforced in the tooling too: content mods are helpers — no feature depends on one, and none will ever gate joining.
+- **A tampered mod manifest that tries to smuggle a Nexus mod into the join check is now rejected as invalid**, even with a valid signature. Groundwork hardening — no manifest ships yet.
+
 ## What changed — v0.3.107
 
 Mostly launcher repairs, all of them things that quietly did the wrong thing.
