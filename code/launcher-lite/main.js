@@ -4155,12 +4155,27 @@ async function resolveMainFile (modId) {
   if (!apiKey) return null
 
   try {
+    const headers = { apikey: apiKey, 'User-Agent': 'NightCityOnline-Launcher/1.0' }
     const response = await axios.get(
       `https://api.nexusmods.com/v1/games/cyberpunk2077/mods/${modId}/files.json?category=main`,
-      { headers: { apikey: apiKey, 'User-Agent': 'NightCityOnline-Launcher/1.0' }, timeout: 15000 }
+      { headers, timeout: 15000 }
     )
 
-    const files = response.data?.files || []
+    let files = response.data?.files || []
+
+    // The category filter can come back EMPTY when a mod's author recategorises their
+    // files - Fast Launch (5186) did exactly that and the boot-policy auto-install then
+    // failed with 'no main file listed' on every launch for a full day (Cam's trail,
+    // 14 consecutive skips) while the same mod installed fine through nxm. When main
+    // yields nothing, ask for everything and pick the newest ourselves.
+    if (files.length === 0) {
+      const all = await axios.get(
+        `https://api.nexusmods.com/v1/games/cyberpunk2077/mods/${modId}/files.json`,
+        { headers, timeout: 15000 }
+      )
+      files = (all.data?.files || []).filter((f) => f.category_name !== 'OLD_VERSION' && f.category_name !== 'ARCHIVED')
+    }
+
     const main = files.filter((f) => f.category_name === 'MAIN')
     const pick = (main.length > 0 ? main : files).sort((a, b) => (b.uploaded_timestamp || 0) - (a.uploaded_timestamp || 0))[0]
 

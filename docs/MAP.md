@@ -62,6 +62,35 @@ Last full revision: 2026-08-22, after v0.3.106 (player combat).
   in the line.
 
 ### Known bugs, diagnosed, unfixed
+- **THE crash: 0xC0000005 in the remote-vehicle-mount path - cross-machine fingerprint
+  (2026-08-23 log sweep, all 9 players).** 20 access violations + 8 breakpoint exits
+  across 76 recorded launches, on five different machines, and every crash with a
+  shipped log dies within seconds of the same sequence: `[Interpolation] movement for
+  id N but no puppet is registered` (frozen-remote warning) -> `HandleVehicleEnterMessage:
+  queueing mount` -> `OnVehicleReady` -> `DoMount ... (network copy)` /
+  `MakeRemoteDriven: SetKinematic ... done` -> dead in 2-10s. rimtek's is explicit: the
+  frozen-warned id IS the vehicle being mounted into. Working theory: the queued mount
+  fires against an entity (vehicle or occupant puppet) that is not fully built, and an
+  engine vcall on it faults. Second cluster: remote APPEARANCE apply (`AddItemToSlot
+  failed` x106/evening for one player) and Cam's post-spawn cyberware/inventory restore
+  (dead ~2s after 'queued 70 piece(s)') - possibly the same not-fully-built-entity
+  class. Needs a dedicated session in VehicleSystem.cpp: gate DoMount/MakeRemoteDriven
+  on entity readiness beyond OnVehicleReady, and treat a frozen-warned id as NOT ready.
+- **EACCES shell-fallback destroys crash telemetry** (phonix, every launch): when spawn
+  falls back to the cmd/start shell, the trail's 'game exited with code' reports the
+  SHELL's exit (0, after 1-4s) - his two suspected crashes recorded nothing. Fix: when
+  the fallback path is used, do not log the wrapper's exit as the game's; poll the real
+  process or say 'exit unknown (shell fallback)'.
+- **Ghost remotes on join**: six server entities (ids ~31-45, 0-byte ccstate, 0
+  equipment) arrive on EVERY join, fail `entity id is not dynamic - bailing out`, then
+  spam frozen-remote warnings. They look like never-customised character residue on the
+  server (players.json?) being replayed to every joiner. Server-side cleanup or a
+  skip-empty-ccstate guard at spawn relay.
+- **Mod 22114 (70 files, still unnamed) verify-flip churn**: reinstalled 4x with
+  IDENTICAL archive hashes yet verification keeps flipping back to broken on Cam's
+  machine - something on disk rewrites or removes its files after install. Identify the
+  mod first (tools/hackid.py will not help - it is a Nexus id; check the page when
+  Cloudflare allows, or Cam names it), then diff which recorded files fail.
 - **Death-respawn loop for creator-flow players** (ashencorridor 17, rimtek 59 respawns).
   Mechanism: immortality blocks death but not damage; the health floor fires "downed",
   revive teleports to the respawn point, where a naked level-1 keeps getting farmed →
