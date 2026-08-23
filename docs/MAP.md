@@ -112,11 +112,23 @@ Last full revision: 2026-08-22, after v0.3.106 (player combat).
   SHELL's exit (0, after 1-4s) - his two suspected crashes recorded nothing. Fix: when
   the fallback path is used, do not log the wrapper's exit as the game's; poll the real
   process or say 'exit unknown (shell fallback)'.
-- **Ghost remotes on join**: six server entities (ids ~31-45, 0-byte ccstate, 0
-  equipment) arrive on EVERY join, fail `entity id is not dynamic - bailing out`, then
-  spam frozen-remote warnings. They look like never-customised character residue on the
-  server (players.json?) being replayed to every joiner. Server-side cleanup or a
-  skip-empty-ccstate guard at spawn relay.
+- **Ghost remotes on join: SOLVED (2026-08-23) - they are /npc entries with garbage
+  records.** The test server's npcs.json holds 7 NPCs; FIVE carry the literal string
+  `Character.<record>` (the usage line's placeholder, typed verbatim and persisted),
+  plus a made-up `Character.Steve_urgelles` and a bare `Character.Panam`. Count
+  matches the client logs exactly: six bail `entity id is not dynamic`, the seventh
+  (entity 9e03d1, 0-byte appearance) half-spawns and got an interpolation controller
+  attach SECONDS before Cam's solo 0xC0000005 - garbage NPCs are now suspect #1 in
+  the test-server flavor of THE crash. Live has NO npcs.json, so live ghosts (if the
+  sweep's were live) have another source. Immediate cure: `/npc clear` (admin, in
+  game). Code fix owed: /npc must refuse records containing `<`/`>` (placeholder
+  paste) - the base-game-records warning added 2026-08-23 does not stop this.
+- **Parked persisted vehicles get MakeRemoteDriven on every join** (found in the same
+  logs): HandleVehicleLoadMessage -> OnVehicleReady -> MakeRemoteDriven runs for
+  Cam's parked, unoccupied Archer Hella (vehicles.json) on BOTH machines - a parked
+  replayed car must not be made kinematic/player-controlled; MakeRemoteDriven belongs
+  to occupied vehicles only. Client-code fix in VehicleSystem.cpp, pairs with the
+  readiness gating THE-crash entry already calls for.
 - **Mod 22114 (70 files, still unnamed) verify-flip churn**: reinstalled 4x with
   IDENTICAL archive hashes yet verification keeps flipping back to broken on Cam's
   machine - something on disk rewrites or removes its files after install. Identify the
