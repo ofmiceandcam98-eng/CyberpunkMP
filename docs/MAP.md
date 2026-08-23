@@ -69,8 +69,17 @@ Last full revision: 2026-08-22, after v0.3.106 (player combat).
 - **`AddItemToSlot failed`** on remote puppets' equipment (cosmetic: some clothing
   missing on remotes; possibly items the viewer lacks). Not investigated.
 - **rimtek-class ping (170ms) vs the fixed 100ms interpolation budget** — far players
-  look the choppiest. Queued: derive per-connection delay from measured RTT (the old
-  jitter-tuning item; `docs/NODE-TO-NODE-VERDICT.md` holds the ordered plan).
+  look the choppiest. NOW MEASURABLE: `tools/netlab/` (Python lab; README has the
+  charter — Python is the lab, C++ is the ship). First synthetic results (2026-08-22):
+  on the rimtek profile today's vehicle algorithm starves 75% of frames with 162
+  teleport-pops; the `vehicle_dr` candidate (dead reckoning + projective blend) gets
+  0 pops / 0.03% starvation / lower error, and is identical to baseline on clean
+  links. `adaptive` delay looks right for players (30ms effective delay on LAN vs
+  80) but misbehaves on vehicles — LAB BUG, investigate before trusting it. NEXT:
+  capture real traces — launch a far player's client with `-sync-trace` (dev flag,
+  hand-added; writes NDJSON into the mod's logs, ships to the NAS automatically),
+  then `replay.py --trace file --validate` to prove the lab's baseline matches the
+  shipped C++ before promoting any candidate to InterpolationSystem.cpp.
 
 ### Manifest system: built, waiting on two keys and one deploy
 - **Cam's signing key**: he runs `node tools/manifest/keygen.cjs`, posts the PUBLIC line

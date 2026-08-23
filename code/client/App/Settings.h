@@ -95,6 +95,13 @@ struct Settings
     // so ordinary players are not confronted with a developer toolbar over their game.
     bool debug = false;
 
+    // Dev-only movement tracing for tools/netlab: one NDJSON line per received movement
+    // sample and per applied pose, written to the mod's logs folder (so it ships to the
+    // server with the rest). Off by default and never offered by the launcher - this is
+    // for capturing a real session's network behaviour to replay through candidate
+    // interpolation algorithms, not for players.
+    bool syncTrace = false;
+
     // Which TweakDB record remote players are built from.
     //
     // Configurable because it is a question nobody can answer from reading code. The

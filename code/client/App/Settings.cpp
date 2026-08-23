@@ -135,6 +135,12 @@ void Settings::Load()
     if (launchParameters.Get("-puppet-driver-all"))
         settings.puppetDriverAll = true;
 
+    if (launchParameters.Contains("-sync-trace"))
+    {
+        settings.syncTrace = true;
+        spdlog::info("Sync trace ON - writing movement NDJSON for tools/netlab");
+    }
+
     if (launchParameters.Get("-hackable-puppets"))
         settings.hackablePuppets = true;
 

@@ -2,7 +2,59 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <unordered_set>
+
+#include <App/Settings.h>
+#include <App/World/NetworkWorldSystem.h>
+
+extern std::filesystem::path GCyberpunkMpLocation;
+
+namespace
+{
+// Dev-only movement tracing for tools/netlab (-sync-trace). One NDJSON line per
+// received sample ("in") and per applied pose ("out"), into the mod's logs folder so it
+// ships to the server with the session logs - a far player's real network behaviour can
+// then be replayed through candidate algorithms without asking them for anything. The
+// "out" records are the trust anchor: replay.py --validate checks the lab's port of
+// THIS file against what THIS file actually rendered, on the same input.
+std::ofstream& SyncTraceFile()
+{
+    static std::ofstream file;
+    static bool opened = false;
+    if (!opened)
+    {
+        opened = true;
+        std::error_code ec;
+        std::filesystem::create_directories(GCyberpunkMpLocation / "logs", ec);
+        file.open(GCyberpunkMpLocation / "logs" /
+                  fmt::format("sync-trace-{}.ndjson", NetworkWorldSystem::GetTick()));
+    }
+    return file;
+}
+
+void SyncTraceIn(const uint64_t aId, const uint64_t aTick, const glm::vec3& aPos,
+                 const glm::vec3& aRot, const float aSpeed, const bool aIsVehicle)
+{
+    if (!Settings::Get().syncTrace)
+        return;
+
+    SyncTraceFile() << fmt::format(
+        R"({{"k":"in","id":"{:x}","tick":{},"tr":{},"p":[{:.3f},{:.3f},{:.3f}],"r":[{:.4f},{:.4f},{:.4f}],"v":{:.3f},"veh":{}}})",
+        aId, aTick, NetworkWorldSystem::GetTick(), aPos.x, aPos.y, aPos.z,
+        aRot.x, aRot.y, aRot.z, aSpeed, aIsVehicle ? 1 : 0) << '\n';
+}
+
+void SyncTraceOut(const uint64_t aId, const int64_t aRenderTick, const glm::vec3& aPos)
+{
+    if (!Settings::Get().syncTrace)
+        return;
+
+    SyncTraceFile() << fmt::format(
+        R"({{"k":"out","id":"{:x}","rt":{},"p":[{:.3f},{:.3f},{:.3f}]}})",
+        aId, aRenderTick, aPos.x, aPos.y, aPos.z) << '\n';
+}
+} // namespace
 
 #include <App/Components/AttachedComponent.h>
 #include <App/Threading/ThreadService.h>
@@ -222,6 +274,8 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
         const glm::vec3 heading{-std::sin(first.Rotation.z), std::cos(first.Rotation.z), 0.f};
         const glm::vec3 guessed = first.Position + heading * (first.Velocity * ahead * 0.001f);
 
+        SyncTraceOut(aEntity.id(), renderTick, guessed);
+
         if (const auto* pDriver = aEntity.get<DriverComponent>())
         {
             const float frameDelta = (aInterpolation.LastRenderTick > 0)
@@ -258,6 +312,8 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
     }
 
     const glm::vec3 position{Lerp(first.Position, second.Position, ratio)};
+
+    SyncTraceOut(aEntity.id(), renderTick, position);
 
     if (aEntityComponent.IsVehicle)
     {
@@ -506,6 +562,13 @@ void InterpolationSystem::HandleNotifyEntityMove(const PacketEvent<server::Notif
     pInterpolation->TimePoints.push_back(InterpolationComponent::Timepoint{
         position, rotation, aMessage.get_speed(), aMessage.get_tick(),
         aMessage.get_locomotion(), aMessage.get_upper_body()});
+
+    if (Settings::Get().syncTrace)
+    {
+        const auto* pEntityComponent = entity.get<EntityComponent>();
+        SyncTraceIn(aMessage.get_id(), aMessage.get_tick(), position, rotation,
+                    aMessage.get_speed(), pEntityComponent && pEntityComponent->IsVehicle);
+    }
 }
 
 static Core::RawFunc<4018412273UL, float (*)(Red::move::Component*, MultiMovementController*)> AttachController;
