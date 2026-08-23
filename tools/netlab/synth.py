@@ -109,3 +109,25 @@ def receive(samples, channel, epoch=1_787_000_000_000):
         records.append({"k": "in", "id": "e6", "tick": s["tick"],
                         "tr": epoch + recv_t, "p": s["p"], "r": s["r"], "v": s["v"]})
     return records
+
+
+def load_path(path_file):
+    """A banked real drive (paths/*.json) as truth - real roads, real kinematics."""
+    import json
+    with open(path_file, encoding="utf-8") as f:
+        d = json.load(f)
+    return [Truth(p["t"], tuple(p["p"]), p["yaw"], p["v"]) for p in d["samples"]]
+
+
+def save_path(records, out_file, name, kind):
+    """Reduce a trace's 'in' records to a reusable path. Positions on the wire ARE the
+    sender's path at update-rate resolution, and the tick spacing keeps the timing."""
+    import json
+    t0 = records[0]["tick"]
+    samples = [{"t": r["tick"] - t0, "p": [round(c, 3) for c in r["p"]],
+                "yaw": round(r["r"][2], 4), "v": round(r["v"], 3)} for r in records]
+    with open(out_file, "w", encoding="utf-8") as f:
+        json.dump({"name": name, "kind": kind, "count": len(samples),
+                   "duration_ms": samples[-1]["t"] if samples else 0,
+                   "samples": samples}, f)
+    return len(samples)

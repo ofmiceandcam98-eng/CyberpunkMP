@@ -127,6 +127,10 @@ def main():
     ap.add_argument("--validate", action="store_true",
                     help="trace mode: compare python baseline to the game's own 'out' records")
     ap.add_argument("--plot", help="write a PNG comparing paths (needs matplotlib)")
+    ap.add_argument("--map", help="maps/*.calib.json - draw plots over your extracted city map")
+    ap.add_argument("--path", help="a banked drive from paths/ to run through channel profiles")
+    ap.add_argument("--profile", default="rimtek", help="channel profile for --path runs")
+    ap.add_argument("--save-path", help="trace mode: bank the trace's drive into paths/<name>.json")
     args = ap.parse_args()
 
     if args.synth:
@@ -140,7 +144,21 @@ def main():
                 board = run(records, kind, args.rate, truth=truth)
                 print_board(f"{pname} / {kind}", board, truth=True)
                 if args.plot:
-                    plot(args.plot, truth, records, kind, args.rate, pname)
+                    plot(args.plot, truth, records, kind, args.rate, pname, map_calib=args.map)
+        return
+
+    if args.path:
+        import os
+        pf = args.path if args.path.endswith(".json") else os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "paths", args.path + ".json")
+        truth = synth.load_path(pf)
+        wire = synth.sample_wire(truth, args.rate)
+        records = synth.receive(wire, PROFILES[args.profile])
+        board = run(records, args.kind, args.rate, truth=truth)
+        print_board(f"path {args.path} / {args.profile} / {args.kind}", board, truth=True)
+        if args.plot:
+            plot(args.plot, truth, records, args.kind, args.rate,
+                 f"{args.path}/{args.profile}", map_calib=args.map)
         return
 
     if args.trace:
@@ -154,6 +172,12 @@ def main():
         records = by_id[ent]
         kind = "vehicle" if records[0].get("veh") else "player"
         print(f"entity {ent}: {len(records)} samples, kind={kind}")
+        if args.save_path:
+            import os
+            out = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "paths", args.save_path + ".json")
+            n = synth.save_path(records, out, args.save_path, kind)
+            print(f"banked {n} samples -> {out}")
         board = run(records, kind, args.rate)
         print_board(f"trace {args.trace} / {ent}", board, truth=False)
         if args.validate and outs:
@@ -182,11 +206,14 @@ def validate(records, outs, kind, rate):
               f"(>0.5m p95 means the port has drifted from the C++ - fix the port first)")
 
 
-def plot(path, truth, records, kind, rate, pname):
+def plot(path, truth, records, kind, rate, pname, map_calib=None):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     fig, ax = plt.subplots(figsize=(9, 7))
+    if map_calib:
+        import worldmap
+        worldmap.draw_underlay(ax, map_calib)
     ax.plot([t.pos[0] for t in truth], [t.pos[1] for t in truth],
             color="#9aa3b2", lw=3, alpha=.4, label="truth")
     for S in ALL:

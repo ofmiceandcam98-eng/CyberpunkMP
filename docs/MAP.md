@@ -80,6 +80,12 @@ Last full revision: 2026-08-22, after v0.3.106 (player combat).
   hand-added; writes NDJSON into the mod's logs, ships to the NAS automatically),
   then `replay.py --trace file --validate` to prove the lab's baseline matches the
   shipped C++ before promoting any candidate to InterpolationSystem.cpp.
+  Real-roads pipeline is ready: `paths/` banks recorded drives as reusable truth
+  (`--save-path` / `--path`), `maps/` + `calibrate.py` draw results over a locally
+  extracted city map (image never committed - CDPR asset). A capture-ready client
+  build (combat tip + -sync-trace) is STAGED but the test.15 pre-release is
+  DELAYED on zeldfep's call (2026-08-22) - cut it when he says go; the test server
+  is already rebuilt at e15f6f5 to pair with it.
 
 ### Manifest system: built, waiting on two keys and one deploy
 - **Cam's signing key**: he runs `node tools/manifest/keygen.cjs`, posts the PUBLIC line
