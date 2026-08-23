@@ -120,7 +120,11 @@ Last full revision: 2026-08-22, after v0.3.106 (player combat).
   phonix female, 12-13KB blobs, both crash-prone; every male player clean; matches
   the AddItemToSlot cluster). Decisive next experiment: a female character on
   zeldfep's machine - crash there too = female-apply convicted cross-machine, fix
-  goes to the apply path (defer/chunk/gate on entity readiness).
+  goes to the apply path (defer/chunk/gate on entity readiness). **THE FIX BRIEF is
+  written: docs/CRASH-FIX-BRIEF.md** - ranked code pointers (readiness gate via
+  Codeware's entity-status byte, the OnVehicleReady pattern to copy, the span
+  lifetime hot candidate at AppearanceSystem.cpp:497, the restore-storm seam, the
+  90s-autosave outlier explanation), diagnostics to add, validation plan.
 - **EACCES shell-fallback destroys crash telemetry** (phonix, every launch): when spawn
   falls back to the cmd/start shell, the trail's 'game exited with code' reports the
   SHELL's exit (0, after 1-4s) - his two suspected crashes recorded nothing. Fix: when
