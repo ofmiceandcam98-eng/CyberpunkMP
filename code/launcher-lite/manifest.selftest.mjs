@@ -209,6 +209,33 @@ check('state: invalid when manifest has no manifestVersion',
   })(),
   'invalid')
 
+// The helper rule (crew decree 2026-08-22): a signed manifest that marks a
+// class:nexus component required was crafted around the generator's refusal -
+// it would put a content mod into the join-gating digest. Invalid, even with a
+// perfect signature, and the warning names the smuggled component.
+check('state: invalid when a nexus component is marked required',
+  (() => {
+    const { bytes, sig } = signedManifest({
+      schema: 1,
+      manifestVersion: '2026.08.22.01',
+      components: [{ id: 'sneaky_mod', class: 'nexus', required: true, audience: 'all' }]
+    })
+    const r = evaluateManifestState({ fetchedBytes: bytes, fetchedSigText: sig, pinnedPubkeyLines: pinned })
+    return [r.state, r.warning.includes('sneaky_mod')]
+  })(),
+  ['invalid', true])
+
+check('state: a nexus helper marked optional stays valid',
+  (() => {
+    const { bytes, sig } = signedManifest({
+      schema: 1,
+      manifestVersion: '2026.08.22.01',
+      components: [{ id: 'friendly_mod', class: 'nexus', required: false, audience: 'all' }]
+    })
+    return evaluateManifestState({ fetchedBytes: bytes, fetchedSigText: sig, pinnedPubkeyLines: pinned }).state
+  })(),
+  'valid')
+
 // unreachable: cached manifest rides, offline-tolerant
 check('state: unreachable with cache -> cached',
   (() => {

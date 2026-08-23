@@ -4,6 +4,66 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.108
+
+Launcher only — no game or server changes, nothing to re-test in a session.
+
+- **Installing any build now replaces the mod instead of merging over it.** Installing an older test build over a newer install used to leave the newer build's script files behind, and scripts whose native half is gone abort the game's ENTIRE script compilation — the game boots, but with no scripts and no multiplayer, blaming three innocent files in a popup. Lived through with test.14; cannot happen again. Logs, config and version markers are untouched.
+- **Test-build installs now refuse while the game is running**, the same way updates always have. A locked file mid-swap used to leave a half-installed mod.
+- **The mod list stopped saying REQUIRED.** Nothing on the curated list has ever blocked playing, so the badge now says what it means: RECOMMENDED. House rule, now enforced in the tooling too: content mods are helpers — no feature depends on one, and none will ever gate joining.
+- **A tampered mod manifest that tries to smuggle a Nexus mod into the join check is now rejected as invalid**, even with a valid signature. Groundwork hardening — no manifest ships yet.
+
+## What changed — v0.3.107
+
+Mostly launcher repairs, all of them things that quietly did the wrong thing.
+
+- **Removing a mod now actually removes it.** It deleted the mod's files but left the mod's own folder sitting in your game directory — which from the outside looks exactly like an uninstall that silently failed. Shared folders and other mods' files are untouched: a folder is only removed when it is genuinely empty.
+- **Uninstalling the launcher now leaves nothing behind.** The "Mod Manager Download" handler used to survive an uninstall and keep pointing at a program that no longer existed. It is now cleared on both layers, and only ever ours — a handler another mod manager registered is left alone.
+- **A mod that kept refusing to auto-install now installs.** Fast Launch's author recategorised their files, and the automatic installer gave up with "no main file listed" fourteen launches in a row while the same mod installed fine by hand. It now falls back to the full file list.
+- **Mod 4198 is off the list.** It turned out to be a second copy of ArchiveXL, which you already have as a prerequisite — installing it wrote over the copy the server pins. The frameworks are now protected from being overwritten by any mod.
+- **Half-removed mods can no longer happen by our hand.** Removal refuses to run while the game is open, and if any file resists deletion the mod stays on record so Verify sees it and Remove can be run again.
+- **Quickhacks now tell the server which hack you used.** Groundwork for RAM actually being spent — not a change you will feel yet. Until now the server could not identify the hack and declined to charge for it rather than charge for the wrong one.
+
+**Still untested:** player-versus-player combat has never been run with two people in the same fight. If damage, ammo counts or a quickhack look wrong, please say so in the bug channel.
+
+## What changed — v0.3.106
+
+- **Ammunition is now genuinely the server's.** v0.3.105 shipped the whole server side of this — magazine and reserve counts, fire-rate checks, reload validation — and the game never told it anything, so none of it ever ran. Your shots, reloads and weapon switches now actually reach it. A modified game cannot fire on an empty magazine, fire faster than a weapon allows, or refill without reloading.
+- **Groundwork for RAM and quickhack cooldowns**, wired the same way. Quickhacks work exactly as they did in v0.3.105; what is new is that the server now hears about them at all. Charging RAM and enforcing cooldowns needs one more piece — identifying *which* hack was used — and until that lands the server declines to charge rather than guess and charge the wrong thing.
+
+Nothing else changes. This is the release that connects work already shipped, so if v0.3.105 felt fine, this will too.
+
+Still not tested with two players.
+
+## What changed — v0.3.105
+
+- **Quickhacks no longer hit twice.** v0.3.104 shipped a bug: Cyberpunk already applies quickhack damage through its ordinary hit pipeline, and the server was adding a second figure of its own on top. Every damaging quickhack did roughly double what it should. The server's damage table is gone — the game's own number is the only one now.
+- **RAM is the server's.** Your RAM pool lives on the server and regenerates there, so a modified game cannot refill it or spend what it does not have. What a hack *costs* still comes from your own game, because Cyberpunk computes that from your cyberdeck and perks and no two players pay the same.
+- **Hit locations are read from the game**, not invented. Where a shot lands now travels with it, using Cyberpunk's own body-part identity rather than a numbering scheme of our own.
+- **Scanning a player shows their name** — it used to show a random NPC name, and a different one depending on who was scanning.
+- **Being downed clears your wanted level**, so getting back up no longer feeds you straight back into the fight that put you down.
+- **Voice chat playback fix** carried forward from v0.3.104.
+
+**This release and this server move together.** Open the launcher and let it update.
+
+Still not tested with two players — the combat system has never carried a real event between two machines. Expect rough edges and please report them.
+
+## What changed — v0.3.104
+
+**Players can shoot each other.** Until now another player was scenery: you could see them, walk into them, and nothing else. The game itself refused to accept them as a target — you could not aim at one, and a quickhack menu never appeared. That is fixed at the engine level, and combat is built on top of it.
+
+- **You can aim at people, and hit them.** Damage is decided by the server, not by whoever pulled the trigger, so both of you end up agreeing on the result. What your game calculated — armour, resistances, the weapon you were holding — is what gets reported; the server checks it is possible and says what actually happened.
+- **You can quickhack other players.** Scan someone and the hack menu is there, the same as for any NPC. Overheat, Short Circuit, Blind, Weapon Glitch, Cripple Movement, Memory Wipe, Ping and the rest.
+- **Being hacked is something you can see coming.** The person being hacked gets the game's own "being hacked" warning while the upload runs, and so does anyone nearby — so there is a moment to react instead of an effect arriving out of nowhere.
+- **RAM, cooldowns and ammunition are the server's.** Your magazine, your reserve, your RAM and every cooldown live on the server. A modified game cannot mint bullets, fire faster than a weapon allows, reload without reloading, or run free quickhacks.
+- **Voice chat actually works now.** v0.3.100 shipped voice that could not be heard by anyone: it asked Windows for a "communications" speaker, and on systems where that is not set — which is most of them — playback stopped one millisecond after starting while everything else looked healthy. It now falls back properly, and a device you chose that is no longer plugged in falls back instead of going silent.
+- **Being downed clears your wanted level.** Getting back up used to leave you at whatever heat put you down, standing where it happened, with police still inbound — so you were fed straight back into the same fight until you logged out.
+- **Scanning a player shows their name.** It used to show a random NPC name, and a different one depending on who was scanning, because the name your game invented for a nameless character was never replaced by the real one.
+
+**This release and this server move together.** Combat needed a lot of new messages between the game and the server, so older builds are refused with a reason rather than a silent disconnect. Open the launcher and let it update.
+
+Not yet: NPCs still do not fight, and none of the combat above has been through a proper multi-player test — expect rough edges and please report them.
+
 ## What changed — v0.3.103
 
 - **The launcher stops telling members to join the Discord they are already in.** A Discord rate limit (HTTP 429) on the membership check was being read as "not a member" — shown live to the person who owns the server. Only Discord's two definitive answers change the verdict now (in the server, or 404 not in it); a rate limit or outage stands on the last definitive answer, exactly like the role lookup has since v0.3.87. The real membership check still happens server-side on connect, where it cannot be patched out.

@@ -19,7 +19,14 @@
     "hashes. Until then they carry only the identity fields a human can vouch for.",
     "'types': [\"resource\"] on a nexus entry marks a loading mechanism that has",
     "not been classified yet - the scanner replaces it with the real one.",
-    "Authors marked 'see Nexus page' are likewise awaiting that same pass."
+    "Authors marked 'see Nexus page' are likewise awaiting that same pass.",
+    "",
+    "THE HELPER RULE (crew decree, 2026-08-22): content mods are never load-bearing.",
+    "The generator REFUSES a class:nexus component with required:true, refuses",
+    "required:true on any id outside its load-bearing allowlist (the payload plus",
+    "the six MIT prerequisites), and refuses a load-bearing component that depends",
+    "on a nexus one. Do not fight those refusals by reclassifying a mod - they are",
+    "the decree, not a bug (docs/MANIFEST-ARCHITECTURE.md, F7)."
   ],
 
   "game": {

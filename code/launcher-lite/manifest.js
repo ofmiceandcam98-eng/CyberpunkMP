@@ -270,6 +270,19 @@ export function evaluateManifestState ({ fetchedBytes, fetchedSigText, fetchErro
     return invalid('the manifest carries no manifestVersion')
   }
 
+  // The helper rule (crew decree 2026-08-22): content mods are never load-bearing.
+  // The generator refuses to emit a class:"nexus" component marked required, so a
+  // signed manifest carrying one was crafted around the tooling - and it would put
+  // a Nexus mod's exact version into the join-gating install digest. Malformed,
+  // same posture as a bad signature. The digest algorithm itself stays class-blind
+  // (it is a protocol constant mirrored by the C++ server); the DATA is refused.
+  const smuggled = (Array.isArray(manifest?.components) ? manifest.components : [])
+    .filter((c) => c?.class === 'nexus' && c?.required === true)
+  if (smuggled.length > 0) {
+    return invalid(`component(s) ${smuggled.map((c) => c.id).join(', ')} are class:nexus yet ` +
+                   'marked required - content mods are never load-bearing')
+  }
+
   // Monotonicity (§10 replay defense): an attacker replaying an OLD signed
   // manifest gains nothing, because older-than-accepted is refused even with a
   // perfect signature. Equal is fine - re-fetching the current manifest is the
