@@ -27,6 +27,12 @@ Last full revision: 2026-08-22, after v0.3.106 (player combat).
   checks rather than load one, CurseForge ClientMods lane retired. Design test for
   every feature: "does it work on a modless install?" (rimtek proved the value).
   Doc: MANIFEST-ARCHITECTURE.md F7.
+  **SHIPPING STATUS: the enforcement is NOT in v0.3.107** - it was committed nine
+  minutes before that release was published but was not in the tree that built it,
+  so it goes out in v0.3.108. Consequence that matters: v0.3.107 launchers still
+  read a MISSING `required` field as required, so every modlist entry must keep
+  `required:false` until v0.3.108 is the floor. modlist.json says v0.3.108 for
+  this reason - do not "correct" it back to .107.
 
 ### Needs a live session (built, never validated with humans)
 - **Player combat (Cam) — SHIPPED v0.3.104/105/106, never tested with two humans.**
