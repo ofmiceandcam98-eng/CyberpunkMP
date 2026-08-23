@@ -3412,17 +3412,17 @@
       count.textContent = ''
       hint.textContent = modsSignedIn === false
         ? 'Sign in to Nexus in Settings to see the mod list.'
-        : 'No mods are required yet. When the server adds some, they appear here.'
+        : 'The server has no recommended mods yet. When it adds some, they appear here.'
       return
     }
 
     const installed = modState.filter((m) => m.state === 'installed').length
     count.textContent = modState.length + ' mods · ' + installed + ' installed'
 
-    const missingRequired = modState.filter((m) => m.state !== 'installed' && m.required).length
-    hint.textContent = missingRequired > 0
-      ? missingRequired + ' required mod(s) missing. Install opens Nexus - press "Mod Manager Download" there.'
-      : 'Everything the server expects is installed.'
+    const notInstalled = modState.filter((m) => m.state !== 'installed').length
+    hint.textContent = notInstalled > 0
+      ? notInstalled + ' recommended mod(s) not installed. Install opens Nexus - press "Mod Manager Download" there.'
+      : 'You have the full recommended set.'
 
     for (const mod of modState) {
       const row = document.createElement('div')
@@ -3445,8 +3445,10 @@
         badge.className = 'mod-badge bad'
         badge.textContent = 'FAILED'
       } else {
+        // Never REQUIRED: the helper rule (crew decree 2026-08-22) - everything on
+        // this list is a recommendation, and no content mod is ever an obligation.
         badge.className = 'mod-badge missing'
-        badge.textContent = mod.required ? 'REQUIRED' : 'OPTIONAL'
+        badge.textContent = 'RECOMMENDED'
       }
       row.appendChild(badge)
 

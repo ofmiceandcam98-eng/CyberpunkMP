@@ -179,7 +179,18 @@ namespace Server.Loader.Systems
 
             try
             {
-                GetMods(configuration.ClientMods, true);
+                // ClientMods is deliberately NOT resolved anymore (the helper rule,
+                // crew decree 2026-08-22: mods are helpers, never variables). This
+                // lane advertised operator-picked CurseForge downloads to clients -
+                // a distribution channel with no curation, no dependency ordering,
+                // no ownership guard, and a boot-time dependency on the CurseForge
+                // API. Client mods are the launcher's job: the curated modlist and
+                // the signed manifest. The config field stays parseable so old
+                // mods.json files load; its ids are ignored and /api/v1/mods serves
+                // an empty list. ServerMods (server-side plugins) are unaffected.
+                if (configuration.ClientMods is { Count: > 0 })
+                    logger.Info($"Ignoring {configuration.ClientMods.Count} ClientMods entr(ies) in mods.json - client mods ship via the launcher's curated list, not this lane.");
+
                 GetMods(configuration.ServerMods, false);
 
                 DownloadServerMods(root);

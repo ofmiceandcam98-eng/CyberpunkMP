@@ -13,6 +13,21 @@ Last full revision: 2026-08-22, after v0.3.106 (player combat).
 
 ## 1. THE LEDGER
 
+### Standing decrees (law, not open items - violating one is a bug by definition)
+- **Boot policy** (2026-08-21): the game boots STRAIGHT TO THE MENU -
+  `-skipStartScreen` + Fast Launch auto-install, both halves stay (main.js).
+- **The footprint rule** (2026-08-21): uninstall leaves NOTHING - every write
+  location lives in launcherFootprint()/installer.nsh, both layers, always in sync.
+- **The helper rule** (2026-08-22): content mods are never load-bearing - "they
+  should be there for helping us, not as a variable." No feature depends on a Nexus
+  mod, none gates Play/join, none enters the install digest, no load-bearing
+  component may depend on one. Load-bearing set: payload + the six MIT prerequisites,
+  exactly. Enforced structurally: generator refusals (allowlist + nexus+required +
+  edge direction), launcher treats a smuggled manifest as invalid, server disables
+  checks rather than load one, CurseForge ClientMods lane retired. Design test for
+  every feature: "does it work on a modless install?" (rimtek proved the value).
+  Doc: MANIFEST-ARCHITECTURE.md F7.
+
 ### Needs a live session (built, never validated with humans)
 - **Player combat (Cam) — SHIPPED v0.3.104/105/106, never tested with two humans.**
   Stages 1-10 of the brief: PvP damage server-decided, quickhacks on players, hack-warning

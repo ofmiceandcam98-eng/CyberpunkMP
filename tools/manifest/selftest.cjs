@@ -73,8 +73,11 @@ try {
   fs.writeFileSync(goodSource, JSON.stringify({
     game: { id: 'cyberpunk2077', supportedVersion: '2.31', enforce: 'warn' },
     components: [
-      component({ id: 'cyberpunk_multiplayer', name: 'CyberpunkMP', class: 'payload', version: undefined, required: true, networkImpact: 'critical', nexus: undefined, dependencies: [{ id: 'fake_framework' }] }),
-      component({ id: 'fake_framework', name: 'Fake Framework', class: 'bundled', required: true, networkImpact: 'critical', nexus: undefined, archive: { name: 'FakeFramework-1.0.0.zip' } })
+      // The fixture framework borrows the real red4ext id: required:true is an
+      // allowlist in the generator (the helper rule), and a made-up id carrying
+      // it would be refused - which is itself tested below.
+      component({ id: 'cyberpunk_multiplayer', name: 'CyberpunkMP', class: 'payload', version: undefined, required: true, networkImpact: 'critical', nexus: undefined, dependencies: [{ id: 'red4ext' }] }),
+      component({ id: 'red4ext', name: 'Fake Framework', class: 'bundled', required: true, networkImpact: 'critical', nexus: undefined, archive: { name: 'FakeFramework-1.0.0.zip' } })
     ],
     loadRules: [],
     compatibility: { entries: [] },
@@ -106,9 +109,9 @@ try {
       manifest.client.payload.files.every(f => f.path.startsWith('red4ext/plugins/zzzCyberpunkMP/') && /^[0-9a-f]{64}$/.test(f.sha256)))
     const installOrder = manifest.loadRules.find(r => r.rule === 'install_order')
     check('generator: install order derived from the graph',
-      !!installOrder && installOrder.order.join(',') === 'fake_framework,cyberpunk_multiplayer')
+      !!installOrder && installOrder.order.join(',') === 'red4ext,cyberpunk_multiplayer')
     check('generator: bundled prerequisite zip hashed',
-      /^[0-9a-f]{64}$/.test(manifest.components.find(c => c.id === 'fake_framework').archive.sha256))
+      /^[0-9a-f]{64}$/.test(manifest.components.find(c => c.id === 'red4ext').archive.sha256))
 
     // Same-day serial arithmetic: a second manifest generated against the
     // first must advance NN, nothing else.
@@ -157,6 +160,38 @@ try {
     '--release', 'v0.0.1', '--channel', 'development', '--protocol-client', '1', '--protocol-server', '2'])
   check('generator: refuses a dependency naming no component',
     gg.status !== 0 && gg.stderr.includes('ghost'), gg.stderr)
+
+  // --- refusals: the helper rule (crew decree 2026-08-22) ---------------------
+  // Content mods are never load-bearing. Three doors, each planted and each
+  // expected slammed: a required nexus component (the digest admission test),
+  // a required flag on an id outside the allowlist (the reclassification
+  // bypass), and a load-bearing component depending on a nexus one (building
+  // the system on a mod).
+  const decreeCases = [
+    ['a class:nexus component marked required',
+      [component({ id: 'cyberpunk_multiplayer', name: 'CyberpunkMP', class: 'payload', version: undefined, required: true, networkImpact: 'critical', nexus: undefined }),
+        component({ id: 'sneaky_mod', name: 'Sneaky Mod', required: true })],
+      'sneaky_mod', 'helpers, not variables'],
+    ['required:true on an id outside the load-bearing allowlist',
+      [component({ id: 'cyberpunk_multiplayer', name: 'CyberpunkMP', class: 'payload', version: undefined, required: true, networkImpact: 'critical', nexus: undefined }),
+        component({ id: 'not_a_framework', name: 'Not A Framework', class: 'bundled', required: true, nexus: undefined, archive: { name: 'FakeFramework-1.0.0.zip' } })],
+      'not_a_framework', 'reserved for the payload'],
+    ['a load-bearing component depending on a nexus one',
+      [component({ id: 'cyberpunk_multiplayer', name: 'CyberpunkMP', class: 'payload', version: undefined, required: true, networkImpact: 'critical', nexus: undefined, dependencies: [{ id: 'helper_mod' }] }),
+        component({ id: 'helper_mod', name: 'Helper Mod' })],
+      'helper_mod', 'cannot build on content mods']
+  ]
+  for (const [label, comps, needle, phrase] of decreeCases) {
+    const src = path.join(pub, `decree-${needle}.json`)
+    fs.writeFileSync(src, JSON.stringify({
+      game: { id: 'cyberpunk2077', supportedVersion: '2.31', enforce: 'warn' },
+      components: comps, loadRules: [], compatibility: { entries: [] }, policy: { unknownMods: 'warn' }
+    }, null, 2))
+    const gd = run('generate-manifest.cjs', ['--staged', staged, '--source', src, '--out', path.join(tmp, `never-${needle}.json`),
+      '--release', 'v0.0.1', '--channel', 'development', '--protocol-client', '1', '--protocol-server', '2'])
+    check(`generator: refuses ${label}`,
+      gd.status !== 0 && gd.stderr.includes(needle) && gd.stderr.includes(phrase), gd.stderr)
+  }
 
   // --- keygen + sign + verify roundtrip --------------------------------------
   const keyPath = path.join(tmp, 'signing-key')

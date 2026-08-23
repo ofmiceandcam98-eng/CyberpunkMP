@@ -1661,6 +1661,10 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         const auto* pCreated = GServer->GetVehicles().Find(id);
         Tell(acSender, fmt::format("Created {} - plate {}. It is yours, and stays yours.", record,
                                    pCreated ? pCreated->Plate : "?"));
+        // Same warning as /npc (the helper rule): the record persists and syncs to
+        // everyone forever - a mod-only vehicle record is invisible to anyone without
+        // that mod, and the server cannot tell the difference.
+        Tell(acSender, "Base-game records only: a modded record will not render for players without that mod.");
         return true;
     }
 
@@ -2291,6 +2295,12 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
 
         spdlog::info("{} declared NPC '{}' ({})", acSender.Username, name, record);
         Tell(acSender, fmt::format("'{}' now exists here for everyone, forever. /npc clear removes all.", name));
+        // The helper rule (crew decree 2026-08-22): the record replays to every future
+        // joiner, so a record only a MOD provides bakes that mod into the world - it
+        // renders for you and stands invisible or broken for everyone else. The server
+        // cannot verify records against the game's TweakDB, so the warning rides the
+        // reply instead of a refusal.
+        Tell(acSender, "Base-game records only: a modded record will not render for players without that mod.");
         return true;
     }
 

@@ -591,6 +591,21 @@ void GameServer::LoadServerManifest(const std::filesystem::path& acPath)
         {
             for (const auto& component : data["components"])
             {
+                // The helper rule (crew decree 2026-08-22): content mods are never
+                // load-bearing. The generator refuses to emit class:"nexus" with
+                // required:true and the launcher treats such a manifest as invalid;
+                // a copy reaching this server was crafted around both. Same posture
+                // as the malformed-component case below: checks stay disabled, loudly,
+                // rather than gating every join on a content mod's exact version.
+                if (component.value("class", "") == "nexus" && component.value("required", false))
+                {
+                    spdlog::error("server-manifest.json component '{}' is class:nexus yet marked required - "
+                                  "content mods are never load-bearing; manifest checks stay disabled",
+                                  component.value("id", "?"));
+                    m_manifestVersion.clear();
+                    return;
+                }
+
                 if (!component.value("required", false) || component.value("audience", "all") != "all")
                     continue;
 

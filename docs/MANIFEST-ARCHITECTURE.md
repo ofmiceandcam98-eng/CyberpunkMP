@@ -134,6 +134,23 @@ verification, and the server-side manifest checks. Detecting a *deliberately*
 hostile client is a non-goal — and every check that relies on client-supplied
 data is explicitly labeled advisory below, never sold as a security gate.
 
+**F7 — THE HELPER RULE (crew decree, 2026-08-22): content mods are never
+load-bearing.** "Mods should be there for helping us, not as a variable." The
+load-bearing set is exactly the payload plus the six MIT prerequisites
+(RED4ext, redscript, Codeware, ArchiveXL, TweakXL, Input Loader) — nothing
+`class: "nexus"` may carry `required: true`, enter the install digest, gate
+Play or join, or sit under a load-bearing component in the dependency graph.
+Allowed roles for content mods: helper (conveniences like Fast Launch — the
+system must work identically without them), observability (reporting what is
+installed), and defense (blocking known-broken mods, install-order refusals —
+protecting the system FROM mods is fine; the rule bans depending ON them).
+**Enforced structurally, not editorially:** the generator refuses
+nexus+required, refuses required outside an explicit id allowlist, and refuses
+load-bearing→nexus dependency edges; the launcher treats a signed manifest
+carrying nexus+required as `invalid`; the server disables manifest checks
+rather than load one. The digest *algorithm* stays class-blind — it is a
+protocol constant (§7.2) — the DATA is refused before it can matter.
+
 ---
 
 ## 2. The canonical manifest: `server-manifest.json`
@@ -280,7 +297,9 @@ into one self-contradictory example — review caught it):
   "types": ["red4ext_plugin", "redscript"],
   "class": "bundled",                  // §3.2 - decides transport + verify depth
   "version": "1.18.0",
-  "required": true,                    // required blocks Play; optional never does
+  "required": true,                    // required blocks Play; optional never does.
+                                       // Valid ONLY on class payload/bundled (F7):
+                                       // the generator refuses it on class:nexus
   "networkImpact": "critical",         // none|low|medium|high|critical (spec §44)
   "audience": "all",                   // all | dev | server (spec §45)
   // Attribution (spec §37-38). We did not write most of these.
@@ -441,7 +460,11 @@ existing resolver, per review: `sortByDependencies` (main.js:3687-3717)
 refuse them. The manifest pipeline upgrades this in two places: manifest
 *generation* refuses to emit a manifest whose graph has a cycle, naming the
 loop members (spec §12); the *launcher* reports a cycle in whatever list it is
-given the same way. And the `requires` gate must cover **all three install
+given the same way. Generation also enforces F7 on the graph: a load-bearing
+component (payload, bundled, or anything required) declaring a dependency on a
+`class: "nexus"` component is refused — that edge direction builds the system
+on a mod. The reverse direction, a nexus helper depending on a framework, is
+the point of the graph and stays legal. And the `requires` gate must cover **all three install
 paths** — today it guards only mods:open, not installMissing and not the
 nxm:// route (milestone 1).
 
@@ -494,7 +517,9 @@ A section of the manifest, not a separate fetch (one signed artifact):
   unknown`. Anything the engine cannot determine is **unknown, never
   compatible** (spec §62). Version-ranged on both sides (spec §63).
 - **Severity:** `info | warning | error | critical` (spec §43). `error`+
-  blocks Play for required components; `warning` shows but doesn't block.
+  blocks Play for required components — which per F7 can only be the payload
+  and bundled prerequisites, never a content mod; `warning` shows but doesn't
+  block.
 - **Detection signatures:** a compatibility entry may carry `detection`
   (filesystem markers) so the engine can see components that are not — and
   never will be — launcher-managed. CET is the archetype.
@@ -659,7 +684,11 @@ with real values and is included by nothing (F5) — milestone 1 includes it in
 **Input: manifest-declared fields only.** SHA-256 over the canonical string
 built from the sorted list of `(id, version, archive.sha256)` of every
 component with `required: true` and `audience: "all"`, plus
-`client.payload.archive.sha256` and `manifestVersion`. Nothing
+`client.payload.archive.sha256` and `manifestVersion`. The predicate is
+deliberately class-blind — it is a protocol constant mirrored byte-identically
+in launcher JS and server C++ — and F7 is what keeps content mods out of it:
+a nexus component can never legally carry `required: true`, refused at
+generation, at launcher verification, and at server load. Nothing
 launcher-learned enters the digest — review established that per-file hashes
 learned at install time (class:nexus, §3) would make the digest
 irreproducible server-side. Both sides can compute this from the manifest

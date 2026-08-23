@@ -126,10 +126,11 @@ function defaultServerDir () {
 // scenes and jump to the menu, hard code it and make note to not lose that for the
 // future." Two halves, and BOTH stay:
 //   1. -skipStartScreen below - kills the press-any-key screen.
-//   2. The Fast Launch mod (Nexus 5186) - kills the intro videos. It cannot be marked
-//      required in modlist.json (required blocks Play, and nobody gets locked out of
-//      the server over a cosmetic), so ensureFastLaunch() installs it by itself
-//      whenever it is missing and a Nexus key makes that possible.
+//   2. The Fast Launch mod (Nexus 5186) - kills the intro videos. A content mod can
+//      NEVER be an obligation (the helper rule, crew decree 2026-08-22: mods are
+//      helpers, not variables - nothing on the modlist gates Play or join), so
+//      ensureFastLaunch() installs it by itself whenever it is missing and a Nexus
+//      key makes that possible, and the boot still works without it.
 // Removing either half regresses the boot to logo-watching. Do not.
 const GAME_ARGS = ['-skipStartScreen']
 const FAST_LAUNCH_MOD_ID = 5186
@@ -3853,9 +3854,12 @@ ipcMain.handle('debug:set', async (_event, enabled) => {
 // ---------------------------------------------------------------------------
 // Mod list
 //
-// A curated list of Nexus mods the server expects everyone to be running. The launcher
-// installs and verifies against it, so a session is not half the players on one set of
-// mods and half on another.
+// A curated list of recommended Nexus mods the launcher can install, update and verify
+// as a convenience. THE HELPER RULE (crew decree, 2026-08-22): nothing on this list is
+// ever load-bearing - no feature depends on an entry, none gates Play or join, and a
+// player with none of them installed is a fully supported player (the crash sweep's
+// cleanest repro machine ran modless). The list exists so people who WANT the shared
+// extras get them installed in the right order with their files accounted for.
 //
 // It does NOT host anything. Those mods belong to their authors and are not ours to
 // redistribute - which is exactly why this points at Nexus instead. The six prerequisites
@@ -4474,7 +4478,9 @@ ipcMain.handle('mods:list', async () => {
           summary: mod.note || nexus?.summary || '',
           author: nexus?.author || null,
           latestVersion: nexus?.version || null,
-          required: mod.required !== false,
+          // No `required` field travels to the renderer: the helper rule (crew
+          // decree 2026-08-22) - nothing on this list is an obligation, so the UI
+          // has no vocabulary to claim one is.
           devOnly: Boolean(mod.devOnly),
           blockedBy: missing,
           nexusUrl: `https://www.nexusmods.com/cyberpunk2077/mods/${mod.nexusModId}`,

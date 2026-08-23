@@ -156,6 +156,11 @@ namespace Server.Loader.Systems
 
         private Task HandleModsRoute(IHttpContext context)
         {
+            // Permanently an empty list: the CurseForge ClientMods lane is retired
+            // (the helper rule, crew decree 2026-08-22 - see Plugins.DownloadMods).
+            // The route itself stays so anything old that fetches it gets an honest
+            // "no mods here" instead of a 404. Client mods ship via the launcher's
+            // curated modlist and the signed manifest, nowhere else.
             return context.SendDataAsync(new
             {
                 Mods = Plugins.ClientMods

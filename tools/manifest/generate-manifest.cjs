@@ -243,6 +243,40 @@ for (const comp of components) {
   }
 }
 
+// THE HELPER RULE (crew decree, 2026-08-22): content mods are never load-bearing -
+// "they should be there for helping us, not as a variable." The install digest
+// admits every component with required:true + audience:all, and that predicate is
+// a protocol constant mirrored byte-identically in the launcher (manifest.js) and
+// the server (GameServer.cpp) - it cannot grow a class filter without a flag day.
+// So the decree is enforced HERE, where a refusal costs a ship nothing:
+//   1. class:nexus + required:true is refused outright - required + audience:all
+//      is exactly the digest admission test, and a Nexus mod in the digest makes
+//      its exact version join-gating for every player.
+//   2. required:true is an allowlist, not a free field: only the payload and the
+//      six MIT prerequisites may carry it. Adding a seventh framework is a
+//      deliberate edit of the list below and the doc's F7 - never an accident.
+//   3. Load-bearing components may not depend on class:nexus ones - that edge
+//      direction builds the system on a mod. The reverse (a nexus helper needing
+//      a framework) is the point of the graph and stays legal.
+const LOAD_BEARING_IDS = ['cyberpunk_multiplayer', 'red4ext', 'redscript', 'codeware', 'archive_xl', 'tweak_xl', 'input_loader']
+for (const comp of components) {
+  if (!comp) continue
+  if (comp.class === 'nexus' && comp.required === true) {
+    problem(`component ${comp.id}: class:nexus components can never be required - mods are helpers, not variables (crew decree 2026-08-22)`)
+  }
+  if (comp.required === true && !LOAD_BEARING_IDS.includes(comp.id)) {
+    problem(`component ${comp.id}: required:true is reserved for the payload and the prerequisite frameworks (${LOAD_BEARING_IDS.join(', ')}) - extend the allowlist deliberately or mark this optional`)
+  }
+  if ((comp.class === 'payload' || comp.class === 'bundled' || comp.required === true) && Array.isArray(comp.dependencies)) {
+    for (const dep of comp.dependencies) {
+      const target = components.find(c => c && c.id === dep?.id)
+      if (target && target.class === 'nexus') {
+        problem(`component ${comp.id} depends on "${dep.id}" (class:nexus) - load-bearing components cannot build on content mods (crew decree 2026-08-22)`)
+      }
+    }
+  }
+}
+
 if (problems.length > 0) {
   blocked(`the source list has ${problems.length} violation(s):\n  - ` + problems.join('\n  - '))
 }

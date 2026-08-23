@@ -140,6 +140,13 @@ struct Settings
     // swings at anything it should be inert; "should be" is not "is", and this way turning
     // it off is a relaunch instead of a rebuild.
     bool hackablePuppets = false;
+    // Extra content paths fed by repeated -mod launch arguments; Main.cpp routes each
+    // into the payload's own loading channels (scripts, ArchiveXL, TweakXL, Input
+    // Loader). A side door for the payload's OWN extensions and dev experiments only.
+    // The helper rule (crew decree 2026-08-22): nothing loaded through here may ever
+    // be something the server or a feature depends on - content mods are helpers,
+    // not variables, and this channel is invisible to the launcher's install records
+    // and the manifest's ownership guard.
     Vector<fs::path> mods = {};
     bool enabled = false;
     bool RpcOnly = false;

@@ -643,6 +643,10 @@ if ($Mod) {
 # ---------------------------------------------------------------------------
 
 # The small published files, which are decided by people rather than by a build.
+# Required here means "must exist LOCALLY to stage" - modlist.json is optional at this
+# stage only because an unchanged copy rides forward from the previous release; the
+# promote gate below still hard-requires it ON the release, because every launcher
+# fetches it from releases/latest unconditionally. The two answers different questions.
 $sideFiles = @(
     @{ Path = "publish\modlist.json";            Label = "mod list";       Required = $false },
     @{ Path = "publish\server.json";             Label = "server address"; Required = $true  },
