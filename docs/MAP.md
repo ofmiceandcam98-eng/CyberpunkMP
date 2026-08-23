@@ -80,8 +80,13 @@ Last full revision: 2026-08-22, after v0.3.106 (player combat).
   safe over .107 even on merge-extract launchers), protocol verified identical to the
   e15f6f5 test server (zero proto/netpack commits since). Checklist rides the release
   notes: late-join vehicles, quickhack live confirm, denial popups, -sync-trace drives.
-- **Milestone-1 handshake**: denial popups in game (join with a stale client on purpose),
-  MaxPlayer enforcement (5th player refused with "server is full"), password check.
+- **Milestone-1 handshake**: SERVER SIDE VALIDATED LIVE 2026-08-23 - a stale client
+  (voice-era protocol) was refused five times with the correct identifiers in the log
+  and a clean kRefused close. Still open: the in-game denial POPUP (the refused
+  client was scriptless, so the redscript popup could not render - needs a stale but
+  script-intact client), MaxPlayer (5th player refused), password check. Also
+  validated live the same night: the /character new confirm guard (a bare command
+  arrived and retired nothing).
 - **Download queue + install lock**: Install-missing shows the queue, strictly one at a
   time; clicking Add-mod mid-queue waits its turn; the INSTALLING strip never shows two
   installs braided.
