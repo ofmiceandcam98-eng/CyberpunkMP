@@ -2557,7 +2557,7 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             Tell(acSender, fmt::format("  appearance {} bytes stored, {}",
                                        Base64::Decode(pCharacter->Appearance).size(),
                                        pCharacter->Initialised ? "initialised" : "not initialised yet"));
-            Tell(acSender, "  /character new <name>  - retire this one and start again");
+            Tell(acSender, "  /character new confirm  - retire this one and start again");
             return true;
         }
 
@@ -2609,18 +2609,60 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             return true;
         }
 
+        // Retiring a character is destructive enough to need a second, deliberate step.
+        //
+        // Live evidence (2026-08-23 01:16): Cam typed /character new again AFTER already
+        // spawning as his saved character - it is a habit left over from when every join
+        // needed it, and one stray line in chat retired the character he was standing in.
+        // Worse than losing it outright, retiring the record underneath a LIVE character
+        // does something other than what the command says: the server keeps simulating
+        // somebody whose record has gone and the next autosave writes it straight back, so
+        // the retire silently half-undoes and the player cannot tell which character they
+        // now are. HandleCharacterDelete refuses outright for exactly this reason, but the
+        // selector's client half does not exist yet, so chat is still the ONLY way to start
+        // a new character - refusing here would leave no way at all. It asks instead.
         if (target == "new")
         {
-            if (store.RetireCharacter(acSender.DiscordId))
-                Tell(acSender, "Your old character has been retired - it is kept, not deleted.");
-            else
+            const auto* pCharacter = store.FindCharacter(acSender.DiscordId);
+
+            if (!pCharacter)
+            {
                 Tell(acSender, "You had no character yet, so there was nothing to retire.");
+                Tell(acSender, "Change how you look at any ripperdoc - it saves by itself.");
+                return true;
+            }
+
+            // The confirmation carries the word, not just a bare repeat: typing the same
+            // line twice is exactly what a habit does.
+            if (rest != "confirm")
+            {
+                Tell(acSender, fmt::format("This retires {} and starts you over from nothing.",
+                                           pCharacter->Name.empty() ? "your character" : pCharacter->Name));
+
+                if (acSender.Puppet && acSender.Puppet.is_alive())
+                    Tell(acSender, "You are playing as that character RIGHT NOW - retire it and what you are standing in stops matching your record.");
+
+                Tell(acSender, "If you meant it, type:  /character new confirm");
+                Tell(acSender, "If you just want to look different, visit any ripperdoc - that keeps your character.");
+                return true;
+            }
+
+            if (store.RetireCharacter(acSender.DiscordId))
+            {
+                Tell(acSender, "Your old character has been retired - it is kept, not deleted.");
+                spdlog::info("{} retired their character via /character new confirm", acSender.Username);
+            }
+            else
+            {
+                Tell(acSender, "That character could not be retired.");
+                return true;
+            }
 
             Tell(acSender, "Change how you look at any ripperdoc - it saves by itself.");
             return true;
         }
 
-        Tell(acSender, "Usage: /character [show | create | new | save <name>]");
+        Tell(acSender, "Usage: /character [show | create | new confirm | save <name>]");
         return true;
     }
 
