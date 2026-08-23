@@ -685,6 +685,7 @@
   .check { font-size: .72rem; display: flex; align-items: center; gap: .4rem; }
   .check.yes { color: var(--ok); }
   .check.no  { color: var(--bad); }
+  .check.warn { color: var(--warn, #e0af68); }
 
   .tool { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
   .tool-name { font-size: .84rem; font-weight: 600; }
@@ -995,6 +996,19 @@
               </div>
             </div>
             <button class="action ghost" id="openTailscaleInvite">Open invite</button>
+          </div>
+
+          <div class="tool">
+            <div style="min-width:0">
+              <div class="tool-name">Checkup</div>
+              <div class="tool-desc">
+                Runs the whole checklist at once - launcher, game, mod, frameworks,
+                sign-ins, which server JACK IN goes to, and whether it answers. Runs by
+                itself at startup; the button re-runs it.
+              </div>
+              <div id="checkupResults" style="margin-top:8px"></div>
+            </div>
+            <button class="action ghost" id="runCheckup">Run checkup</button>
           </div>
 
           <div class="tool">
@@ -2417,7 +2431,39 @@
   }
 
   function check (ok, text) {
+    // Three states, not two: 'warn' is "works, but you should know" - an active
+    // dev override, a skippable update, a missing optional key.
+    if (ok === 'warn') return `<div class="check warn">! ${text}</div>`
     return `<div class="check ${ok ? 'yes' : 'no'}">${ok ? '✓' : '✗'} ${text}</div>`
+  }
+
+  async function runCheckup () {
+    const box = $('checkupResults')
+    const btn = $('runCheckup')
+    if (!box || !btn) return
+
+    btn.disabled = true
+    btn.textContent = 'Checking...'
+
+    try {
+      const result = await window.launcher.checkup()
+      if (!result.ok) { box.innerHTML = check(false, 'The checkup itself failed - try again.'); return }
+
+      box.innerHTML = result.rows.map((r) => check(r.ok, `${r.name} - ${r.detail}`)).join('')
+
+      const summary = document.createElement('div')
+      summary.className = 'tool-desc'
+      summary.style.marginTop = '6px'
+      summary.textContent = result.problems === 0
+        ? (result.warnings === 0 ? 'Everything checks out.' : `Working, with ${result.warnings} thing(s) worth knowing.`)
+        : `${result.problems} problem(s) - each row above says what to do.`
+      box.appendChild(summary)
+    } catch {
+      box.innerHTML = check(false, 'The checkup itself failed - try again.')
+    } finally {
+      btn.disabled = false
+      btn.textContent = 'Run checkup'
+    }
   }
 
   async function refreshSettings () {
@@ -2503,6 +2549,8 @@
       }
     }
   })
+
+  $('runCheckup').addEventListener('click', runCheckup)
 
   $('runConnTest').addEventListener('click', async () => {
     const box = $('connTestResults')
@@ -3916,6 +3964,10 @@
     // people leave it running, and a stale "offline" would be worse than no badge.
     setInterval(checkServer, 10000)
     setInterval(checkTailscale, 15000)
+
+    // The checkup runs by itself once everything above has settled, so the results
+    // are waiting in Settings before anyone thinks to ask. Never blocks startup.
+    runCheckup().catch(() => { /* the box says it failed; startup carries on */ })
   })()
 </script>
 </body>

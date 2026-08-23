@@ -1468,6 +1468,21 @@ async function checkForUpdates () {
  * DLL, a half-finished extract leaves gaps - and in every one of those cases the
  * launcher would happily report "up to date" and let them launch into a broken mod.
  */
+// The six load-bearing frameworks and the one file that proves each is present.
+// One list, shared by verify and the checkup - two copies of this table WOULD
+// drift, and a drifted copy reports a healthy install as broken.
+function missingPrerequisites (aGameDir) {
+  const prerequisites = [
+    ['RED4ext', path.join(aGameDir, 'bin', 'x64', 'winmm.dll')],
+    ['redscript', path.join(aGameDir, 'engine', 'tools', 'scc.exe')],
+    ['Codeware', path.join(aGameDir, 'red4ext', 'plugins', 'Codeware', 'Codeware.dll')],
+    ['ArchiveXL', path.join(aGameDir, 'red4ext', 'plugins', 'ArchiveXL', 'ArchiveXL.dll')],
+    ['TweakXL', path.join(aGameDir, 'red4ext', 'plugins', 'TweakXL', 'TweakXL.dll')],
+    ['Input Loader', path.join(aGameDir, 'red4ext', 'plugins', 'input_loader', 'input_loader.dll')]
+  ]
+  return prerequisites.filter(([, file]) => !existsSync(file)).map(([name]) => name)
+}
+
 async function verifyInstall () {
   const modDir = findModDir()
 
@@ -1546,16 +1561,7 @@ async function verifyInstall () {
   const gameDir = findGameDir()
 
   if (gameDir) {
-    const prerequisites = [
-      ['RED4ext', path.join(gameDir, 'bin', 'x64', 'winmm.dll')],
-      ['redscript', path.join(gameDir, 'engine', 'tools', 'scc.exe')],
-      ['Codeware', path.join(gameDir, 'red4ext', 'plugins', 'Codeware', 'Codeware.dll')],
-      ['ArchiveXL', path.join(gameDir, 'red4ext', 'plugins', 'ArchiveXL', 'ArchiveXL.dll')],
-      ['TweakXL', path.join(gameDir, 'red4ext', 'plugins', 'TweakXL', 'TweakXL.dll')],
-      ['Input Loader', path.join(gameDir, 'red4ext', 'plugins', 'input_loader', 'input_loader.dll')]
-    ]
-
-    const missing = prerequisites.filter(([, file]) => !existsSync(file)).map(([name]) => name)
+    const missing = missingPrerequisites(gameDir)
 
     if (missing.length > 0) {
       problems.push(`Missing required mods: ${missing.join(', ')}. Use "Install everything" in Settings.`)
@@ -5188,6 +5194,126 @@ ipcMain.handle('tailscale:status', async () => {
 // to present identically as "Server offline" - a person on the wrong Tailscale
 // network, a person with no Tailscale at all, and a genuinely down server all saw the
 // same two words and none of them knew what to do next.
+// ---------------------------------------------------------------------------
+// The checkup: one automated checklist over everything between double-click and
+// playing. Born 2026-08-23, the night a wiped settings file silently pointed a
+// dev at the LIVE server and an hour went to "the launcher must be broken".
+// Every row answers a question a person would otherwise have to know to ask -
+// the server-target row exists precisely because nobody thinks to ask it.
+//
+// Unlike connectivity:test (which stops at the first broken link and prescribes
+// the fix), the checkup runs EVERY row regardless: its job is the whole picture.
+// Rows never throw - a checkup that dies mid-list answers nothing - and rows
+// come back ok: true, false, or 'warn' (works, but you should know).
+// ---------------------------------------------------------------------------
+ipcMain.handle('system:checkup', async () => {
+  const rows = []
+  const row = (name, ok, detail) => rows.push({ name, ok, detail })
+
+  // Launcher up to date - the one row that needs the network first, so its
+  // failure mode is "could not check", never "out of date". Reads update.launcher,
+  // NOT the top-level fields: those describe the MOD payload, and a stale launcher
+  // next to a fresh mod would report green on exactly the row named for it.
+  try {
+    const update = lastUpdateCheck || (lastUpdateCheck = await checkForUpdates())
+    const launcher = update.launcher
+    if (!launcher) row('Launcher', 'warn', `v${app.getVersion()} - could not check for updates`)
+    else if (launcher.upToDate === false && launcher.available) row('Launcher', 'warn', `v${app.getVersion()} - v${launcher.available} is available`)
+    else row('Launcher', true, `v${app.getVersion()} - up to date`)
+  } catch { row('Launcher', 'warn', `v${app.getVersion()} - could not check for updates`) }
+
+  const gameDir = findGameDir()
+  row('Game found', Boolean(gameDir), gameDir || 'Cyberpunk 2077 not detected - set it in Settings')
+
+  if (gameDir) {
+    let writable = false
+    try {
+      const probe = path.join(gameDir, '.nco-write-test')
+      writeFileSync(probe, '')
+      writable = true
+      // Cleanup failing (an AV briefly holding the new file) must not flip the
+      // verdict - the WRITE is the question, and the leftover is empty and inert.
+      try { rmSync(probe, { force: true }) } catch { /* swept by the next run */ }
+    } catch { /* not writable */ }
+    row('Game folder writable', writable, writable ? 'installs can land' : 'run the launcher as administrator')
+
+    const missing = missingPrerequisites(gameDir)
+    row('Frameworks', missing.length === 0,
+      missing.length === 0 ? 'all six present' : `missing: ${missing.join(', ')} - use Install everything`)
+  }
+
+  const modDir = findModDir()
+  const hasDll = Boolean(modDir) && existsSync(path.join(modDir, 'CyberpunkMP.dll'))
+  let modDetail = 'not installed - use Install everything'
+  if (hasDll) {
+    let marker = null
+    try { marker = readFileSync(path.join(modDir, '.nco-version'), 'utf8').trim() } catch { /* unstamped */ }
+    const testTag = loadSettings().testBuildTag
+    modDetail = marker || 'installed (version unstamped)'
+    if (testTag) modDetail += ` - TEST BUILD ${testTag}`
+  }
+  row('Multiplayer mod', hasDll ? (loadSettings().testBuildTag ? 'warn' : true) : false, modDetail)
+
+  row('Discord sign-in', Boolean(accessToken && currentUser),
+    currentUser ? `signed in as ${currentUser.username || currentUser.handle || 'someone'}` : 'not signed in')
+
+  row('Nexus key', loadNexusKey() ? true : 'warn',
+    loadNexusKey() ? 'present - mod installs and boot skip available' : 'absent - optional mods and the intro skip stay manual')
+
+  try {
+    row('Mod Manager Download handler', app.isDefaultProtocolClient('nxm'),
+      app.isDefaultProtocolClient('nxm') ? 'this launcher answers nxm:// links' : 'another program owns nxm:// links - Nexus buttons will open it instead')
+  } catch { row('Mod Manager Download handler', 'warn', 'could not ask Windows') }
+
+  // WHERE the next JACK IN actually goes. The row that would have saved
+  // 2026-08-23: an override quietly lost with wiped settings sent a dev to the
+  // live server all night. An active override is always shown as a warning -
+  // not because it is wrong, but because it must never be a surprise.
+  const server = await resolveServer()
+  row('Server target', server.source === 'settings' ? 'warn' : true,
+    `${server.host}:${server.port} - ${server.source === 'settings' ? 'DEV OVERRIDE (usually the test server)' : 'the published server'}`)
+
+  try {
+    const published = await fetchPublishedServer().catch(() => null)
+    if (published?.requiresTailscale || ManifestKit.isTailnetHost(server.host)) {
+      const ts = await getTailscaleStatus()
+      row('Tailscale', Boolean(ts.installed && ts.connected),
+        !ts.installed ? 'not installed - the server lives on a private network' :
+        ts.connected ? (ts.ip || 'connected') : 'installed but signed out or stopped')
+    }
+  } catch { row('Tailscale', 'warn', 'could not check') }
+
+  try {
+    const status = await getGameServerStatus()
+    if (!status.online) row('Server answers', false, 'no route - run "Test server connection" for the full chain')
+    else if (status.state === 'stopped') row('Server answers', 'warn', 'reachable, deliberately stopped by an admin')
+    else row('Server answers', true, `running, ${status.players} player(s) online`)
+  } catch { row('Server answers', false, 'no route - run "Test server connection" for the full chain') }
+
+  // Recorded Nexus mods: existence only. Hashing belongs to Verify - the
+  // checkup answers "is anything obviously missing", in milliseconds.
+  if (gameDir) {
+    try {
+      const installed = loadInstalledMods()
+      const entries = Object.entries(installed)
+      if (entries.length > 0) {
+        let missingFiles = 0
+        for (const [, record] of entries) {
+          for (const rel of recordPaths(record)) {
+            if (!existsSync(path.join(gameDir, rel))) missingFiles++
+          }
+        }
+        row('Installed mods', missingFiles === 0,
+          missingFiles === 0 ? `${entries.length} mod(s), every file present` : `${missingFiles} file(s) missing - use Verify, then Repair`)
+      }
+    } catch { /* no records - nothing to check */ }
+  }
+
+  const problems = rows.filter((r) => r.ok === false).length
+  const warnings = rows.filter((r) => r.ok === 'warn').length
+  return { ok: true, rows, problems, warnings }
+})
+
 ipcMain.handle('connectivity:test', async () => {
   const steps = []
   let verdict = null
