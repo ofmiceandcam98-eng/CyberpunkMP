@@ -4,6 +4,19 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.107
+
+Mostly launcher repairs, all of them things that quietly did the wrong thing.
+
+- **Removing a mod now actually removes it.** It deleted the mod's files but left the mod's own folder sitting in your game directory — which from the outside looks exactly like an uninstall that silently failed. Shared folders and other mods' files are untouched: a folder is only removed when it is genuinely empty.
+- **Uninstalling the launcher now leaves nothing behind.** The "Mod Manager Download" handler used to survive an uninstall and keep pointing at a program that no longer existed. It is now cleared on both layers, and only ever ours — a handler another mod manager registered is left alone.
+- **A mod that kept refusing to auto-install now installs.** Fast Launch's author recategorised their files, and the automatic installer gave up with "no main file listed" fourteen launches in a row while the same mod installed fine by hand. It now falls back to the full file list.
+- **Mod 4198 is off the list.** It turned out to be a second copy of ArchiveXL, which you already have as a prerequisite — installing it wrote over the copy the server pins. The frameworks are now protected from being overwritten by any mod.
+- **Half-removed mods can no longer happen by our hand.** Removal refuses to run while the game is open, and if any file resists deletion the mod stays on record so Verify sees it and Remove can be run again.
+- **Quickhacks now tell the server which hack you used.** Groundwork for RAM actually being spent — not a change you will feel yet. Until now the server could not identify the hack and declined to charge for it rather than charge for the wrong one.
+
+**Still untested:** player-versus-player combat has never been run with two people in the same fight. If damage, ammo counts or a quickhack look wrong, please say so in the bug channel.
+
 ## What changed — v0.3.106
 
 - **Ammunition is now genuinely the server's.** v0.3.105 shipped the whole server side of this — magazine and reserve counts, fire-rate checks, reload validation — and the game never told it anything, so none of it ever ran. Your shots, reloads and weapon switches now actually reach it. A modified game cannot fire on an empty magazine, fire faster than a weapon allows, or refill without reloading.
