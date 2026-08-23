@@ -2430,11 +2430,23 @@
     el.className = 'status' + (kind ? ' ' + kind : '')
   }
 
+  // Every check row is assembled into innerHTML, and row text now carries strings
+  // we do not author: Discord display names (which allow < and >), the contents of
+  // a version-marker file, a typed server host. The CSP permits inline script, so
+  // un-escaped markup here would EXECUTE with window.launcher in reach. Self-XSS
+  // only - all of those sources are the user's own - but "only" is doing a lot of
+  // work in that sentence, and escaping at the single assembly point costs nothing.
+  function escapeHtml (value) {
+    return String(value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+  }
+
   function check (ok, text) {
     // Three states, not two: 'warn' is "works, but you should know" - an active
     // dev override, a skippable update, a missing optional key.
-    if (ok === 'warn') return `<div class="check warn">! ${text}</div>`
-    return `<div class="check ${ok ? 'yes' : 'no'}">${ok ? '✓' : '✗'} ${text}</div>`
+    if (ok === 'warn') return `<div class="check warn">! ${escapeHtml(text)}</div>`
+    return `<div class="check ${ok ? 'yes' : 'no'}">${ok ? '✓' : '✗'} ${escapeHtml(text)}</div>`
   }
 
   async function runCheckup () {
