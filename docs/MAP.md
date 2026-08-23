@@ -70,8 +70,13 @@ Last full revision: 2026-08-22, after v0.3.106 (player combat).
      any NPC.
   4. Two-client validation of the whole thing. Nothing has crossed between two machines.
 - **Late-join vehicles** (885f252): join while someone drives → you must see the car,
-  and parked cars. Test server has it; pair with pre-release **v0.3.100-worldstate-test.14**
-  (post-voice protocol `0x602ef720946cb1b8` / `0x88ae7e552943e8f2`; test.13 is dead).
+  and parked cars. **test.14 is DEAD** (2026-08-23, zeldfep hit both failure modes):
+  its protocol predates the combat flag-day while the test server runs e15f6f5, AND
+  installing it over a v0.3.106 install orphaned the combat-era .reds against its older
+  DLL - redscript aborted the whole compilation naming Combat/Hackable/Scanner. The
+  launcher extract now clears shipped dirs first (extractPayloadClean), so the orphan
+  class is closed for the NEXT build. Pair with **test.15 - STAGED, DELAYED on
+  zeldfep's explicit word** ("dont cut it delay it"); cut it when he says go.
 - **Milestone-1 handshake**: denial popups in game (join with a stale client on purpose),
   MaxPlayer enforcement (5th player refused with "server is full"), password check.
 - **Download queue + install lock**: Install-missing shows the queue, strictly one at a

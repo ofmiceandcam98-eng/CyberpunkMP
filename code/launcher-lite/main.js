@@ -1952,21 +1952,35 @@ function isProcessRunning (imageName) {
   })
 }
 
+// A payload extract OWNS the directories it ships. Plain extract-over-existing MERGES:
+// files another build carried that THIS archive does not stay on disk, and orphaned
+// redscript beside a DLL that lacks its natives aborts the ENTIRE modded compilation -
+// the game boots with no scripts at all. Lived through on 2026-08-23: test.14's payload
+// over a v0.3.106 install left Combat/Hackable/Scanner.reds (combat-era, unknown to
+// test.14's DLL) in assets/redscript, and the tester got the redscript failure popup
+// naming exactly those three. The character-template installer (its "Cleared first"
+// comment) knew this all along; the payload paths now do too. Every top-level DIRECTORY
+// the archive ships is deleted before extracting - top-level files (the DLL) are simply
+// overwritten, and logs/config/.nco-version survive because no payload ships them.
+function extractPayloadClean (aModDir, aZip) {
+  const shippedDirs = new Set()
+  for (const entry of aZip.getEntries()) {
+    const name = entry.entryName
+    if (name.includes('/')) shippedDirs.add(name.split('/')[0])
+  }
+  for (const dir of shippedDirs) {
+    try { rmSync(path.join(aModDir, dir), { recursive: true, force: true }) } catch { /* locked - the extract's own error says so louder */ }
+  }
+  aZip.extractAllTo(aModDir, true)
+}
+
 async function applyUpdate () {
   const modDir = findModDir()
   if (!modDir) throw new Error('The mod is not installed - install it once first.')
 
   // The game holds CyberpunkMP.dll open, so extracting over it fails with a
   // permission error that reads like a broken download. Say what it actually is.
-  const running = await new Promise((resolve) => {
-    const check = spawn('tasklist', ['/FI', 'IMAGENAME eq Cyberpunk2077.exe', '/NH'], { windowsHide: true })
-    let out = ''
-    check.stdout.on('data', (c) => { out += c.toString() })
-    check.on('close', () => resolve(out.includes('Cyberpunk2077.exe')))
-    check.on('error', () => resolve(false))
-  })
-
-  if (running) {
+  if (await isGameRunning()) {
     throw new Error('Close Cyberpunk 2077 first - the game is holding the mod files open.')
   }
 
@@ -2005,8 +2019,7 @@ async function applyUpdate () {
     launcherLog(`payload verified against manifest ${manifest.manifestVersion} before install`)
   }
 
-  const zip = new AdmZip(buffer)
-  zip.extractAllTo(modDir, true)
+  extractPayloadClean(modDir, new AdmZip(buffer))
 
   saveSettings({ installedStamp: info.remoteStamp, installedVersion: info.version })
 
@@ -5409,6 +5422,13 @@ ipcMain.handle('prerelease:install', async (_event, tag) => {
     const modDir = findModDir()
     if (!modDir) return { ok: false, error: 'Mod folder not found - install the mod first.' }
 
+    // Same refusal applyUpdate has, and it matters MORE here: the payload extract now
+    // clears the shipped directories first, so a locked DLL mid-swap would leave a
+    // cleared install instead of a merely stale one. Whole or not at all.
+    if (await isGameRunning()) {
+      return { ok: false, error: 'Close Cyberpunk 2077 first - the game is holding the mod files open.' }
+    }
+
     const release = await axios.get(
       `https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${encodeURIComponent(tag)}`,
       { timeout: 8000 })
@@ -5467,7 +5487,7 @@ ipcMain.handle('prerelease:install', async (_event, tag) => {
         return { ok: false, error: `That payload looks wrong (${bytes.length} bytes) - install left alone.` }
       }
 
-      new AdmZip(bytes).extractAllTo(modDir, true)
+      extractPayloadClean(modDir, new AdmZip(bytes))
     } else {
       writeFileSync(dllPath, bytes)
     }
@@ -5537,7 +5557,7 @@ ipcMain.handle('prerelease:restore', async () => {
         const plausible = !payload || bytes.length >= 1024 * 1024
 
         if (intact && plausible) {
-          if (payload) new AdmZip(bytes).extractAllTo(modDir, true)
+          if (payload) extractPayloadClean(modDir, new AdmZip(bytes))
           else writeFileSync(dllPath, bytes)
 
           if (existsSync(backupPath)) unlinkSync(backupPath)
