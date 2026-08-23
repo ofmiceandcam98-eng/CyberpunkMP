@@ -23,11 +23,19 @@ Last full revision: 2026-08-22, after v0.3.106 (player combat).
   disagreement is then a specific number, not a feeling.
   **The engine-level blocker is solved** (see the combat row in the code map).
   Genuinely open, in order:
-  1. **Quickhack id is sent as 0**, so the RAM/cooldown authority refuses every hack as
-     unknown - hacks still work (damage rides the native hit path) but cost nothing. The
-     upload event exposes its action only as a weak handle whose concrete type varies;
-     resolving that is the whole fix. Refusing beats mischarging, which is why it ships
-     this way.
+  1. **Quickhack id is sent as 0 - FIXED IN CODE, needs one live confirm.** The fear
+     ("weak handle whose type varies") was answered from the vanilla sources instead of
+     a runtime dump: gameplayRoleComponent.script declares `var action :
+     ScriptableDeviceAction` (strong, concrete), and vanilla ScriptedPuppet calls
+     GetObjectActionID() on it in exactly our filtered context. MpUploadQuickhackId now
+     returns TDBID.ToNumber of that id (zero stays the no-action fallback). RESIDUAL
+     RISK: the server table lists QuickHack.Base* record ids - if the wire delivers
+     LEVELED variants instead, hacks still refuse as unknown; the refusal log prints the
+     raw id, and `tools/hackid.py <id>` turns it back into a name offline (same
+     CRC32+length encoding as QuickhackComponent.h, anchored to its static_assert), so
+     one live session closes it either way. NOTE: Combat.reds change not compile-checked
+     on this VM (no game script env) - symbols verified against vanilla sources; Cam's
+     staged scc gate or the next boot validates.
   2. **Cooldown**: `ObjectAction_Record.Cooldown()` → `Cooldown_Record.Duration()` and
      `.Modifiable()`. If Modifiable is false, use Duration and delete `MinIntervalMs`,
      which is ONLY an anti-spam floor and is labelled as such - do not tune it to imitate

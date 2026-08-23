@@ -367,16 +367,26 @@ public let m_mpLastRam: Float;
 /**
  * Which quickhack an upload is for.
  *
- * UploadProgramProgressEvent carries `action`, but reading a TweakDBID off it needs the
- * action's own record and the event exposes it only as a weak handle whose type varies by
- * context. Returning zero rather than guessing: the server refuses an unknown hack, which is
- * the correct outcome for "we could not tell which one this was" and is visibly different
- * from silently charging the wrong thing.
+ * Answered from the game's own sources rather than a runtime dump: the class definition
+ * (gameplayRoleComponent.script) declares the field as a CONCRETE, strongly-typed
+ * `var action : ScriptableDeviceAction` - not the varying weak handle it was feared to
+ * be - and the vanilla ScriptedPuppet.OnUploadProgressStateChanged calls
+ * action.GetObjectActionID() on it in exactly the QuickHack/UPLOAD context our caller
+ * has already filtered to. GetObjectActionID() is the hack's TweakDBID (the same id the
+ * game itself copies onto spread targets in ActivateIntelligencePerks), and raw TweakDB
+ * numbers are already this mod's wire currency for items and weapons.
  *
- * TODO once the CET dump confirms the action's concrete type - see ANTIGRAVITY_NOTES.
+ * Zero stays the honest fallback for an upload with no action attached - the server
+ * refuses an unknown hack, which is the correct outcome for "we could not tell", and
+ * visibly different from silently charging the wrong thing.
  */
 public func MpUploadQuickhackId(evt: ref<UploadProgramProgressEvent>) -> Uint64 {
-    return 0ul;
+    let action = evt.action;
+    if !IsDefined(action) {
+        return 0ul;
+    }
+
+    return TDBID.ToNumber(action.GetObjectActionID());
 }
 
 /**
