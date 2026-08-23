@@ -28,5 +28,15 @@
     RMDir /r "$LOCALAPPDATA\nightcity-launcher-updater"
     Delete "$DESKTOP\Night City Online Launcher.lnk"
     Delete "$APPDATA\Microsoft\Windows\Start Menu\Programs\Night City Online Launcher.lnk"
+
+    ; The nxm:// handler registration (proven left behind on 2026-08-22: a dead
+    ; handler pointing at the uninstalled exe, so "Mod Manager Download" on Nexus
+    ; silently does nothing forever after). Deleted ONLY when the command is exactly
+    ; this install's exe - Vortex and Mod Organizer write the same key, and theirs
+    ; must survive our uninstall. Electron writes the value as `"<exe>" "%1"`,
+    ; verified against a live install.
+    ReadRegStr $0 HKCU "Software\Classes\nxm\shell\open\command" ""
+    StrCmp $0 '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "%1"' 0 +2
+    DeleteRegKey HKCU "Software\Classes\nxm"
   ${endIf}
 !macroend

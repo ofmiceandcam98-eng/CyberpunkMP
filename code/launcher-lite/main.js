@@ -15,7 +15,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } from 'electron'
 import electronUpdater from 'electron-updater'
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, copyFileSync, unlinkSync, realpathSync, appendFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, rmdirSync, statSync, copyFileSync, unlinkSync, realpathSync, appendFileSync } from 'node:fs'
 import fsp from 'node:fs/promises'
 import AdmZip from 'adm-zip'
 // 7-Zip's standalone extractor, because Nexus main files are as often .7z or .rar as
@@ -558,6 +558,10 @@ function launcherLog (aLine) {
 // the installer's product name ("Night City Online Launcher", from the build block),
 // and the package name ("nightcity-launcher"). Old installs left data under each, so
 // each is hunted.
+//
+// Off-list writes hunted by collectResidue itself: the nxm:// protocol class in HKCU
+// (findNxmRegistration - ours only when the command points at our exe) and nco-mod-*
+// staging dirs in the user's temp. The NSIS side of the mirror is installer.nsh.
 function launcherFootprint () {
   const roaming = app.getPath('appData')
   const local = process.env.LOCALAPPDATA || path.join(app.getPath('home'), 'AppData', 'Local')
@@ -627,6 +631,27 @@ function findUninstallRegistryEntries () {
   return entries
 }
 
+// The nxm:// handler registration - written by setAsDefaultProtocolClient on every
+// start, and the one registry key the footprint hunted nothing for until 2026-08-22,
+// when this very machine turned up a handler pointing at a build folder deleted weeks
+// earlier. "Ours" is decided by what the command points AT, never by the key existing:
+// Vortex and Mod Organizer write the same key, and deleting THEIR registration would
+// break the other manager the person went back to.
+function findNxmRegistration () {
+  try {
+    const { execSync } = require('node:child_process')
+    const out = execSync(
+      'reg query "HKCU\\Software\\Classes\\nxm\\shell\\open\\command" /ve',
+      { windowsHide: true }).toString()
+    const m = out.match(/REG_(?:EXPAND_)?SZ\s+"([^"]+\.exe)"/i)
+    if (!m || !path.isAbsolute(m[1])) return null
+    const exe = m[1]
+    const ours = /night city online.*\.exe$/i.test(path.basename(exe)) ||
+                 samePath(exe, process.execPath)
+    return { key: 'HKCU\\Software\\Classes\\nxm', exe, ours, dead: !existsSync(exe) }
+  } catch { return null /* no key, or reg unavailable */ }
+}
+
 function isGameRunning () {
   return new Promise((resolve) => {
     const check = spawn('tasklist', ['/FI', 'IMAGENAME eq Cyberpunk2077.exe', '/NH'], { windowsHide: true })
@@ -691,6 +716,26 @@ function collectResidue (aIncludeLive) {
     .filter((e) => e.orphaned)
     .map((e) => e.key)
 
+  // The nxm:// handler: on uninstall it goes whenever it is ours (every install dir
+  // is being purged, so a live-looking one is dead by the end of this purge anyway);
+  // on Deep clean only a provably dead one goes - a live registration belongs to the
+  // copy that wrote it, possibly the one running this scan.
+  const nxm = findNxmRegistration()
+  if (nxm && nxm.ours && (aIncludeLive || nxm.dead)) regKeys.push(nxm.key)
+
+  // Interrupted installs leave nco-mod-* staging under the user's temp. Anything an
+  // hour old is wreckage - no install runs that long; anything younger might be a
+  // download in flight right now, so it stays.
+  try {
+    const tmp = os.tmpdir()
+    const cutoff = Date.now() - 60 * 60 * 1000
+    for (const f of readdirSync(tmp)) {
+      if (!/^nco-mod-/i.test(f)) continue
+      const full = path.join(tmp, f)
+      try { if (statSync(full).mtimeMs < cutoff) dirs.push(full) } catch { /* raced away - fine */ }
+    }
+  } catch { /* temp unreadable - skip */ }
+
   return { dirs, files, regKeys }
 }
 
@@ -712,6 +757,8 @@ function purgeResidue (aResidue) {
   // rather than leaving it for a second Deep clean. execFileSync, not a cmd string:
   // any user process can create a key whose NAME carries quotes.
   const orphanedNow = findUninstallRegistryEntries().filter((e) => e.orphaned).map((e) => e.key)
+  const nxmNow = findNxmRegistration()
+  if (nxmNow && nxmNow.ours && nxmNow.dead) orphanedNow.push(nxmNow.key)
   for (const k of new Set([...aResidue.regKeys, ...orphanedNow])) {
     try { execFileSync('reg', ['delete', k, '/f'], { windowsHide: true }) } catch { failed.push(k) }
   }
@@ -4226,6 +4273,26 @@ function recordPaths (record) {
   return (record?.files || []).map((f) => (typeof f === 'string' ? f : f.path))
 }
 
+// Removing a mod file-by-file leaves its folders standing, and an emptied folder is a
+// lie at a crime scene: Cam's boot-block hunt (2026-08-22) stared at empty plugin
+// folders next to leftover scripts, reconstructing which halves of a mod were gone.
+// After a sweep, the folders the deleted files sat in are pruned upward - rmdirSync
+// without recursive refuses anything non-empty, so a folder still holding a
+// neighbour's files (red4ext\plugins, r6\scripts) survives by construction. The game
+// root itself is never touched.
+function pruneEmptyDirs (gameDir, relativePaths) {
+  const root = path.resolve(gameDir).toLowerCase()
+  for (const rel of relativePaths) {
+    let dir = path.dirname(path.resolve(path.join(gameDir, rel)))
+    for (let hop = 0; hop < 8; hop++) {
+      const low = dir.toLowerCase()
+      if (!low.startsWith(root) || low === root) break
+      try { rmdirSync(dir) } catch { break /* non-empty or locked - done climbing */ }
+      dir = path.dirname(dir)
+    }
+  }
+}
+
 function describeInstalledMod (mod, installed, gameDir) {
   const record = installed[String(mod.nexusModId)]
 
@@ -4690,15 +4757,42 @@ ipcMain.handle('mods:delete', async (_event, modId) => {
 
   if (response !== 0) return { ok: false }
 
+  // A running game holds the mod's DLLs open: deletion would take the scripts and
+  // FAIL on the natives, leaving exactly the half-mod that blocks the next boot with
+  // "invalid native definitions" (lived through on Cam's PC, 2026-08-22). Whole or
+  // not at all.
+  if (await isGameRunning()) {
+    return { ok: false, error: 'Cyberpunk is running - its files are locked. Close the game first.' }
+  }
+
   // Only the files WE recorded installing. Never a whole directory - mods share folders
   // like red4ext\plugins, and removing one must not take its neighbours with it.
+  const root = path.resolve(gameDir).toLowerCase()
+  const failedFiles = []
   let removed = 0
   for (const relative of recordPaths(record)) {
-    const target = path.join(gameDir, relative)
+    const target = path.resolve(path.join(gameDir, relative))
+    // Same containment the uninstall sweep has: a record is data from disk, and a
+    // path that climbs out of the game folder does not get followed.
+    if (!target.toLowerCase().startsWith(root)) continue
     try {
       if (existsSync(target)) { rmSync(target, { force: true }); removed++ }
     } catch (err) {
       console.error('[mods] could not delete', target, err.message)
+      failedFiles.push(relative)
+    }
+  }
+
+  pruneEmptyDirs(gameDir, recordPaths(record))
+
+  // A record deleted while its files survive orphans them forever - nothing would
+  // remember they are ours. Partial removal keeps the record so verify still sees
+  // the mod (as damaged, which it now is) and Remove can be run again.
+  if (failedFiles.length > 0) {
+    return {
+      ok: false,
+      error: `${failedFiles.length} file(s) locked and not removed (${removed} deleted). ` +
+             'Close anything using them and Remove again.'
     }
   }
 
@@ -4774,7 +4868,7 @@ ipcMain.handle('launcher:uninstall', async () => {
       '- the launcher program and its Windows "Apps" entry\n' +
       '- saved sign-in, settings and keys (all data folders, old versions included)\n' +
       '- updater caches, shortcuts, crash-log copies on the Desktop\n' +
-      '- dead registry entries left by older installs\n' +
+      '- registry entries: the Apps rows and the nxm:// download handler\n' +
       (modDir ? `- the multiplayer mod:  ${modDir}\n` : '') +
       '- every Nexus mod this launcher installed (the frameworks stay)\n' +
       '\nCyberpunk 2077 itself, your saves, and the framework mods (RED4ext, ' +
@@ -4810,13 +4904,16 @@ ipcMain.handle('launcher:uninstall', async () => {
       const record = loadInstalledMods()
       if (gameDir && record) {
         const root = path.resolve(gameDir).toLowerCase()
+        const swept = []
         for (const entry of Object.values(record)) {
           for (const rel of recordPaths(entry)) {
             const target = path.resolve(path.join(gameDir, rel))
             if (!target.toLowerCase().startsWith(root)) continue
+            swept.push(rel)
             try { rmSync(target, { force: true }) } catch { /* locked - the purge report below covers honesty */ }
           }
         }
+        pruneEmptyDirs(gameDir, swept)
       }
     } catch { /* record unreadable - nothing to sweep */ }
 
