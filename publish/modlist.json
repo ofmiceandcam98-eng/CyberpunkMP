@@ -55,11 +55,6 @@
       "note": "Cam: lock this to devs."
     },
     {
-      "nexusModId": 4198,
-      "required": false,
-      "note": "NAME UNCONFIRMED - left without one deliberately rather than guessed. Worth checking whether this is ArchiveXL: TweakXL is 4197 and the two are siblings by the same author, and ArchiveXL already ships as prerequisite 4 of 6 in FullInstall.zip. If it is, this entry is a duplicate install over a pinned version and should be removed, not named."
-    },
-    {
       "nexusModId": 22114,
       "required": false,
       "note": "Cam: good for police and prison RP. NAME UNCONFIRMED - not guessed."
@@ -73,6 +68,14 @@
   ],
 
   "_pulled": [
+    "4198 - PULLED 2026-08-23, identity CONFIRMED as ArchiveXL: its install lands exactly",
+    "27 files, the same count as the pinned ArchiveXL-1.26.0 prerequisite it overwrites",
+    "(fingerprinted from a live install record; TweakXL is 4197, same author). The entry",
+    "was a duplicate over a pinned framework - installing it drifts the version, and its",
+    "launcher uninstall would DELETE ArchiveXL and boot the game with no scripts. Anyone",
+    "who installed it: do NOT press its trash button; remove it, then run Reinstall to",
+    "restore the pinned prerequisites (that order - delete first, restore second).",
+    "",
     "Audioware (12001) and RedData (14139) - PULLED 2026-08-22 after a live boot-block:",
     "their r6/scripts land but the native halves do not load, and RED4ext then refuses to",
     "start the game at all ('scripts contain invalid native definitions', hit live by Cam).",

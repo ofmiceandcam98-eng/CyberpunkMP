@@ -1600,6 +1600,7 @@ async function installEverything (onProgress = () => {}) {
   }
 
   const installed = []
+  const bundledOwnership = {}
 
   // The signed manifest, when one exists, knows the sha256 of every prerequisite zip -
   // so each is verified against the manifest BEFORE its bytes touch the game folder.
@@ -1628,8 +1629,20 @@ async function installEverything (onProgress = () => {}) {
 
     const inner = new AdmZip(data)
     inner.extractAllTo(gameDir, true)
+
+    // Remember what the framework owns, so no later Nexus install can overwrite it.
+    // The ownership guard in installModArchive could only see per-mod install records,
+    // and prerequisites had none - which let a curated list entry that was secretly
+    // ArchiveXL (Nexus 4198, fingerprinted live 2026-08-23) extract straight over the
+    // pinned framework, and would have let its uninstall DELETE the framework. These
+    // are file lists only, held in settings, never offered in any mods UI.
+    bundledOwnership[name.replace(/-[\d.]+\.zip$/i, '').replace(/\.zip$/i, '')] =
+      inner.getEntries().filter((e) => !e.isDirectory).map((e) => e.entryName.replace(/\\/g, '/'))
+
     installed.push(name.replace(/\.zip$/, ''))
   }
+
+  saveSettings({ bundledFiles: bundledOwnership })
 
   // --- the mod ------------------------------------------------------------
   onProgress('Installing the multiplayer mod...')
@@ -5760,7 +5773,22 @@ async function installModArchive (modId, buffer, options = {}) {
   {
     const others = { ...loadInstalledMods() }
     delete others[String(modId)]
-    const index = ManifestKit.buildOwnershipIndex(usableManifest(), others)
+
+    // The frameworks stand behind everything and are owned by nobody's install record,
+    // so they get synthetic components here: a Nexus archive trying to write over
+    // ArchiveXL (or any prerequisite) is refused by name, exactly like clobbering
+    // another mod. Recorded by installEverything; installs that predate the recording
+    // are unprotected until their next Reinstall, which the map's ledger notes.
+    const manifest = usableManifest()
+    const bundled = loadSettings().bundledFiles || {}
+    const guardManifest = {
+      client: manifest?.client,
+      components: [
+        ...(manifest?.components || []),
+        ...Object.entries(bundled).map(([id, files]) => ({ id, files: files.map((p) => ({ path: p })) }))
+      ]
+    }
+    const index = ManifestKit.buildOwnershipIndex(guardManifest, others)
     const clashes = []
     for (const entry of entries) {
       const relative = entry.entryName.replace(/\\/g, '/')
