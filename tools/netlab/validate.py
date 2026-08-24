@@ -14,6 +14,7 @@ from netmodel import PROFILES
 from replay import run
 from strategies import ALL
 import synth
+from authority import AuthorityModel
 
 
 PROFILES_TO_CHECK = ("lan", "rimtek", "wifi_burst")
@@ -30,6 +31,24 @@ def measure(profile_name, kind):
 
 def check(results):
     failures = []
+
+    authority = AuthorityModel("driver-a")
+    if not authority.accepts_movement("driver-a", 0):
+        failures.append("authority rejected the initial simulator")
+    if authority.transfer("driver-a").epoch != 0:
+        failures.append("authority bumped epoch for a same-owner announcement")
+    if authority.accepts_movement("driver-b", 0):
+        failures.append("authority accepted movement from a non-owner")
+    authority.transfer("driver-b")
+    if authority.state.epoch != 1:
+        failures.append("authority did not bump epoch on ownership transfer")
+    if authority.accepts_movement("driver-a", 1):
+        failures.append("authority accepted movement from the previous owner")
+    if not authority.accepts_movement("driver-b", 1):
+        failures.append("authority rejected movement from the new owner")
+    authority.transfer(None)
+    if authority.accepts_movement("driver-b", 2):
+        failures.append("parked authority accepted movement")
 
     for profile_name in PROFILES_TO_CHECK:
         row = results[profile_name]["player"]["baseline"]

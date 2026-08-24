@@ -30,6 +30,10 @@ to `code/client/App/World/InterpolationSystem.cpp` by hand.
   to improve pops, starvation and p95 error over the baseline on rimtek. Keep the synthetic
   gate green while changing the algorithms; use real traces before promoting a candidate.
 
+  The same gate models the authority contract: only the current simulator may move a vehicle,
+  ownership changes advance the epoch, same-owner announcements do not, and parked vehicles
+  accept no movement.
+
 Synthetic profiles model the links we have actually measured: `lan` (Cam-class, ~20ms),
 `rimtek` (~170ms RTT, 30ms jitter, 1% loss - the far-player case from 2026-08-22), and
 `wifi_burst` (spiky home wifi). `--synth all` runs every profile x player/vehicle.
