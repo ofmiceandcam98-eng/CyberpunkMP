@@ -23,6 +23,9 @@ void MultiMovementController::PreTick(float delta)
 
 void MultiMovementController::Tick(float delta)
 {
+    if (!m_pState)
+        return;
+
     States::Base::Update update;
     update.Delta = delta;
     update.Speed = m_speed;
@@ -96,6 +99,9 @@ void MultiMovementController::sub_38(Red::Vector4& position, Red::Quaternion& ro
 
 void MultiMovementController::SendAnimationParameters(float delta, Red::Vector4& position, Red::Quaternion& orientation)
 {
+    if (!m_pState)
+        return;
+
     AnimationData data;
     data.controller = GetName();
 
@@ -141,6 +147,12 @@ void MultiMovementController::Mount(RED4ext::move::Component& movable, Red::Hand
 
 void MultiMovementController::Attach(Red::move::Component& movable)
 {
+    if (!movable.owner || !movable.owner->placedComponent)
+    {
+        spdlog::warn("[MultiMovement] Attach skipped with missing placement chain");
+        return;
+    }
+
     m_pComponent = &movable;
 
     const auto& pos = movable.owner->placedComponent->localTransform.Position;
@@ -166,6 +178,9 @@ void MultiMovementController::Detach(Red::move::Component& movable)
 
 void MultiMovementController::GetAnimationParameters(AnimationData& animationData)
 {
+    if (!m_pState)
+        return;
+
     m_pState->GetAnimationData(animationData);
 }
 

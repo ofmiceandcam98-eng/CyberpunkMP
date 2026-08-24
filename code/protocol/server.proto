@@ -6,6 +6,10 @@ import "common.proto";
 
 message Settings {
     uint32 update_rate = 1;
+    string world_id = 2;
+    uint32 coordinate_version = 3;
+    uint32 cell_size = 4;
+    uint32 interest_radius = 5;
 }
 
 message AuthenticationResponse {

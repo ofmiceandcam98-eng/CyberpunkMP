@@ -58,6 +58,7 @@ protected:
     void OnGameUpdate(RED4ext::CGameApplication* apApp) override;
 
     void HandleAuthentication(const PacketEvent<server::AuthenticationResponse>& aResponse);
+    void TrySpawnCharacter();
 
     static ScratchAllocator& GetScratch();
 
@@ -70,6 +71,8 @@ private:
     std::chrono::time_point<std::chrono::steady_clock> m_lastHealthReport;
     bool m_ready = false;
     bool m_authenticated = false;
+    bool m_spawnCharacterSent = false;
+    bool m_spawnWaitLogged = false;
     bool m_isPaused = false;
     entt::dispatcher m_dispatcher;
     uint64_t m_lastCharacterUpdate{};

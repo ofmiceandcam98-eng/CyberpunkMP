@@ -61,6 +61,8 @@ void NetworkService::OnDisconnected(EDisconnectReason aReason)
     Red::GetGameSystem<NetworkWorldSystem>()->OnDisconnected(aReason);
 
     m_authenticated = false;
+    m_spawnCharacterSent = false;
+    m_spawnWaitLogged = false;
 }
 
 void NetworkService::OnUpdate()
@@ -145,6 +147,9 @@ void NetworkService::ReportConnectionHealth()
 
 void NetworkService::OnGameUpdate(RED4ext::CGameApplication* apApp)
 {
+    if (m_authenticated && !m_spawnCharacterSent)
+        TrySpawnCharacter();
+
     Update();
 }
 
@@ -157,16 +162,47 @@ void NetworkService::HandleAuthentication(const PacketEvent<server::Authenticati
         return;
     }
 
-    m_settings = aResponse.get_settings();
+    const auto& settings = aResponse.get_settings();
+    if (settings.get_world_id() != "night-city" ||
+        settings.get_coordinate_version() != 1 ||
+        settings.get_cell_size() != 60000 ||
+        settings.get_interest_radius() != 3)
+    {
+        spdlog::error("Authentication failed: incompatible world contract (world '{}', coordinate {}, cell {}, radius {})",
+                      settings.get_world_id(), settings.get_coordinate_version(),
+                      settings.get_cell_size(), settings.get_interest_radius());
+        Close();
+        return;
+    }
+
+    m_settings = settings;
+    m_authenticated = true;
+    m_spawnCharacterSent = false;
+    m_spawnWaitLogged = false;
 
     Red::GetGameSystem<NetworkWorldSystem>()->OnConnected();
 
-    client::SpawnCharacterRequest request;
-    request.set_is_player(true);
+    TrySpawnCharacter();
+}
 
+void NetworkService::TrySpawnCharacter()
+{
     const auto system = Red::GetGameSystem<Game::PlayerSystem>();
     Red::Handle<Red::GameObject> player;
     system->GetLocalPlayerControlledGameObject(player);
+
+    if (!player || !player->placedComponent)
+    {
+        if (!m_spawnWaitLogged)
+        {
+            spdlog::info("[Character] authenticated; waiting for the local player to become controllable");
+            m_spawnWaitLogged = true;
+        }
+        return;
+    }
+
+    client::SpawnCharacterRequest request;
+    request.set_is_player(true);
 
     // Use worldTransform: localTransform is relative and stays near-origin, which made
     // the server spawn our puppet at ~(0, 3.6, 0) instead of our actual world position.
@@ -206,6 +242,8 @@ void NetworkService::HandleAuthentication(const PacketEvent<server::Authenticati
     }
 
     Send(request);
+    m_spawnCharacterSent = true;
+    spdlog::info("[Character] local player is ready; sent spawn request");
 }
 
 ScratchAllocator& NetworkService::GetScratch()

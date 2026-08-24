@@ -22,6 +22,13 @@ constexpr static float sCellSize = 60 * 100;
 constexpr static int16_t sCellLoadRadius = 3;
 constexpr static int16_t sCellUnloadRadius = 4;
 
+static bool IsCellInRange(const GridCell::TPosition aCenter, const GridCell::TPosition aCell,
+                          const int16_t aRange) noexcept
+{
+    return aCell.x >= aCenter.x - aRange && aCell.x < aCenter.x + aRange &&
+           aCell.y >= aCenter.y - aRange && aCell.y < aCenter.y + aRange;
+}
+
 // An empty vehicle awaiting teardown. ReleaseVehicleIfEmpty schedules instead of
 // destroying because "empty" is routinely a transient: a seat swap is an exit and an
 // enter a millisecond apart, and destroying at the exit deleted the car out from under
@@ -118,6 +125,7 @@ void Level::Add(flecs::entity aEntity) noexcept
 
     const auto cellPosition = ToCell(pMovementComponent->Position);
     const auto pCell = GetCell(cellPosition);
+    aEntity.set<CellComponent>({pCell});
 
     server::NotifyCharacterLoad load = Serialize(aEntity);
 
@@ -656,7 +664,25 @@ void Level::HandleMoveEntityRequest(PacketEvent<client::MoveEntityRequest>& aMes
             component.Rotation += glm::vec3(0, 0, 3.1415);
     }
 
+    const auto* pOldCell = target.get<CellComponent>();
+    const auto oldCellPosition = pOldCell ? pOldCell->pCell->GetPosition() : GridCell::TPosition{};
+    const auto newCellPosition = ToCell(component.Position);
+
     target.set(component);
+
+    if (!pOldCell || oldCellPosition != newCellPosition)
+    {
+        const auto pNewCell = GetCell(newCellPosition);
+        if (pOldCell)
+        {
+            TransferCell(target, pOldCell->pCell, pNewCell);
+        }
+        else
+        {
+            target.set<CellComponent>({pNewCell});
+            pNewCell->Add(target);
+        }
+    }
 }
 
 void Level::HandleEnterVehicleRequest(PacketEvent<client::EnterVehicleRequest>& aMessage) noexcept
@@ -943,33 +969,77 @@ server::NotifyCharacterLoad Level::Serialize(flecs::entity aEntity) noexcept
 
 void Level::TransferCell(flecs::entity aEntity, GridCell* apOldCell, GridCell* apNewCell) noexcept
 {
+    if (apOldCell == apNewCell)
+        return;
+
+    const auto owner = aEntity.parent();
+    const auto oldPosition = apOldCell->GetPosition();
+    const auto newPosition = apNewCell->GetPosition();
+
     Set<GridCell*> cellsToLoad;
     Set<GridCell*> cellsToUnload;
-
-    apOldCell->Remove(aEntity);
-
     CollectCells(apNewCell, apOldCell, cellsToLoad, cellsToUnload);
 
+    if (owner)
     {
-        server::NotifyCharacterLoad message;
-        message.set_id(aEntity.id());
-
-        for (const auto pCell : cellsToLoad)
+        if (const auto* pPlayer = owner.get<PlayerComponent>())
         {
-        //    pCell->ForEach([&message](flecs::entity aEntity) { apPlayer->Send(message); });
+            for (const auto pCell : cellsToLoad)
+            {
+                pCell->ForEach(
+                    [this, owner, connection = pPlayer->Connection](flecs::entity aVisible)
+                    {
+                        if (aVisible != owner)
+                            GServer->Send(connection, Serialize(aVisible));
+                    });
+            }
+
+            for (const auto pCell : cellsToUnload)
+            {
+                pCell->ForEach(
+                    [owner, connection = pPlayer->Connection](flecs::entity aVisible)
+                    {
+                        if (aVisible != owner)
+                        {
+                            server::NotifyEntityUnload unload;
+                            unload.set_id(aVisible);
+                            GServer->Send(connection, unload);
+                        }
+                    });
+            }
         }
     }
 
-    {
-        server::NotifyEntityUnload message;
-        message.set_id(aEntity.id());
-
-        //for (const auto pCell : cellsToUnload)
+    GetWorld()->each(
+        [this, aEntity, owner, oldPosition, newPosition](flecs::entity aPlayer,
+                                                          const PlayerComponent& aPlayerComponent)
         {
-        //    pCell->ForEachPlayer([&message](const Player* apPlayer) { apPlayer->Send(message); });
-        }
-    }
+            if (!IsDebug() && aPlayer == owner)
+                return;
 
+            const auto puppet = aPlayerComponent.Puppet;
+            const auto* pCell = puppet ? puppet.get<CellComponent>() : nullptr;
+            if (!pCell)
+                return;
+
+            const auto recipientPosition = pCell->pCell->GetPosition();
+            const bool wasVisible = IsCellInRange(recipientPosition, oldPosition, sCellLoadRadius);
+            const bool isVisible = IsCellInRange(recipientPosition, newPosition, sCellLoadRadius);
+
+            if (!wasVisible && isVisible)
+            {
+                GServer->Send(aPlayerComponent.Connection, Serialize(aEntity));
+            }
+            else if (wasVisible && !isVisible)
+            {
+                server::NotifyEntityUnload unload;
+                unload.set_id(aEntity);
+                GServer->Send(aPlayerComponent.Connection, unload);
+            }
+        });
+
+    apOldCell->Remove(aEntity);
+    aEntity.set<CellComponent>({apNewCell});
     apNewCell->Add(aEntity);
 
     if (apOldCell->Count() == 0)

@@ -634,6 +634,10 @@ void GameServer::HandleAuthentication(const PacketEvent<client::AuthenticationRe
 
     server::Settings settings;
     settings.set_update_rate(m_config.UpdateRate);
+    settings.set_world_id("night-city");
+    settings.set_coordinate_version(1);
+    settings.set_cell_size(60000);
+    settings.set_interest_radius(3);
     response.set_settings(settings);
 
     server::RpcDefinitions definitions;
