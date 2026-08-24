@@ -6,7 +6,7 @@ namespace States
 {
 struct Spawning : Base
 {
-    Spawning(MultiMovementController& aParent)
+    Spawning(ILocomotionHost& aParent)
         : Base(aParent)
     {
     }

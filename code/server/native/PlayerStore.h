@@ -197,6 +197,157 @@ struct PlayerStore
      * This is what the join flow branches on: somebody with a character is offered it,
      * somebody without goes straight to creation and is never asked to pick a save.
      */
+    /**
+     * Is this number already somebody's?
+     *
+     * Retired characters count. Their numbers are not free to reissue: people still have
+     * them saved, and handing a retired character's number to a new one silently redirects
+     * every message meant for someone who no longer exists to someone who never knew them.
+     */
+    bool IsPhoneNumberTaken(const std::string& acNumber) const
+    {
+        if (acNumber.empty())
+            return true;   // never hand out an empty number
+
+        for (const auto& record : m_records)
+        {
+            for (const auto& character : record.Characters)
+            {
+                if (character.PhoneNumber == acNumber)
+                    return true;
+            }
+
+            for (const auto& character : record.RetiredCharacters)
+            {
+                if (character.PhoneNumber == acNumber)
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Whoever currently holds this number, or nullptr.
+     *
+     * Resolved at the moment of use rather than stored, because a contact list holds
+     * numbers and the person behind a number is a separate question - one that has a
+     * different answer after a character is retired.
+     */
+    const CharacterRecord* FindCharacterByPhoneNumber(const std::string& acNumber,
+                                                      std::string* apOwnerDiscordId = nullptr) const
+    {
+        if (acNumber.empty())
+            return nullptr;
+
+        for (const auto& record : m_records)
+        {
+            for (const auto& character : record.Characters)
+            {
+                if (character.PhoneNumber != acNumber)
+                    continue;
+
+                if (apOwnerDiscordId)
+                    *apOwnerDiscordId = record.DiscordId;
+
+                return &character;
+            }
+        }
+
+        return nullptr;
+    }
+
+    /**
+     * Contacts and quest grants change HERE, never through SaveCharacter.
+     *
+     * SaveCharacter deliberately carries these fields across an incoming save, because the
+     * save is built from what the client reported and the client does not know about them.
+     * That protection makes it useless as a way to CHANGE them - the carried-over value
+     * would win over the new one, and the change would vanish with every sign of having
+     * worked. Separate mutators keep both behaviours correct instead of trading one for the
+     * other.
+     *
+     * All of them act on the ACTIVE character, and all return false when there is nothing
+     * to act on, so a caller can say what happened rather than reporting success blindly.
+     */
+    bool AddContact(const std::string& acDiscordId, const std::string& acNumber)
+    {
+        auto* pCharacter = FindCharacterMutable(acDiscordId);
+        if (!pCharacter || acNumber.empty())
+            return false;
+
+        if (std::find(pCharacter->Contacts.begin(), pCharacter->Contacts.end(), acNumber) !=
+            pCharacter->Contacts.end())
+            return false;   // already theirs - the caller says so rather than duplicating it
+
+        pCharacter->Contacts.push_back(acNumber);
+        pCharacter->UpdatedAt = Now();
+
+        m_dirty = true;
+        Flush();
+        return true;
+    }
+
+    bool RemoveContact(const std::string& acDiscordId, const std::string& acNumber)
+    {
+        auto* pCharacter = FindCharacterMutable(acDiscordId);
+        if (!pCharacter)
+            return false;
+
+        const auto before = pCharacter->Contacts.size();
+
+        pCharacter->Contacts.erase(
+            std::remove(pCharacter->Contacts.begin(), pCharacter->Contacts.end(), acNumber),
+            pCharacter->Contacts.end());
+
+        if (pCharacter->Contacts.size() == before)
+            return false;
+
+        pCharacter->UpdatedAt = Now();
+        m_dirty = true;
+        Flush();
+        return true;
+    }
+
+    bool AllowQuest(const std::string& acDiscordId, const std::string& acQuest)
+    {
+        auto* pCharacter = FindCharacterMutable(acDiscordId);
+        if (!pCharacter || acQuest.empty())
+            return false;
+
+        if (std::find(pCharacter->AllowedQuests.begin(), pCharacter->AllowedQuests.end(), acQuest) !=
+            pCharacter->AllowedQuests.end())
+            return false;
+
+        pCharacter->AllowedQuests.push_back(acQuest);
+        pCharacter->UpdatedAt = Now();
+
+        m_dirty = true;
+        Flush();
+        return true;
+    }
+
+    bool DenyQuest(const std::string& acDiscordId, const std::string& acQuest)
+    {
+        auto* pCharacter = FindCharacterMutable(acDiscordId);
+        if (!pCharacter)
+            return false;
+
+        const auto before = pCharacter->AllowedQuests.size();
+
+        pCharacter->AllowedQuests.erase(
+            std::remove(pCharacter->AllowedQuests.begin(), pCharacter->AllowedQuests.end(), acQuest),
+            pCharacter->AllowedQuests.end());
+
+        if (pCharacter->AllowedQuests.size() == before)
+            return false;
+
+        pCharacter->UpdatedAt = Now();
+        m_dirty = true;
+        Flush();
+        return true;
+    }
+
     bool HasCharacter(const std::string& acDiscordId) const
     {
         return FindCharacter(acDiscordId) != nullptr;
@@ -272,9 +423,32 @@ struct PlayerStore
                 continue;
 
             const auto created = existing.CreatedAt;   // not reset by an edit
+
+            // Server-owned fields, carried across the assignment below.
+            //
+            // `existing = acCharacter` replaces the whole record, and the caller is usually
+            // a save built from what the CLIENT reported - which knows nothing about phone
+            // numbers, contacts or quest grants and therefore sends them empty. Without
+            // this, every autosave would quietly erase a player's contact list and an
+            // admin's quest grants, and the damage would look exactly like a save that
+            // worked. Same shape as the CreatedAt line above, and the same reason.
+            const auto number = existing.PhoneNumber;
+            const auto contacts = existing.Contacts;
+            const auto allowed = existing.AllowedQuests;
+
             existing = acCharacter;
             existing.CreatedAt = created ? created : now;
             existing.UpdatedAt = now;
+
+            if (!number.empty())
+                existing.PhoneNumber = number;
+            if (!contacts.empty())
+                existing.Contacts = contacts;
+            if (!allowed.empty())
+                existing.AllowedQuests = allowed;
+
+            if (existing.PhoneNumber.empty())
+                existing.PhoneNumber = MakeUniquePhoneNumber();
 
             m_dirty = true;
             Flush();
@@ -284,6 +458,10 @@ struct PlayerStore
         auto added = acCharacter;
         added.CreatedAt = now;
         added.UpdatedAt = now;
+
+        if (added.PhoneNumber.empty())
+            added.PhoneNumber = MakeUniquePhoneNumber();
+
         pRecord->Characters.push_back(added);
 
         m_dirty = true;
@@ -383,6 +561,27 @@ struct PlayerStore
         return nullptr;
     }
 
+    /**
+     * The active character, writable. Mirrors FindCharacter's slot rule so a mutation and a
+     * read never disagree about which character "theirs" means.
+     */
+    CharacterRecord* FindCharacterMutable(const std::string& acDiscordId, int aSlot = -1)
+    {
+        auto* pRecord = FindMutable(acDiscordId);
+        if (!pRecord)
+            return nullptr;
+
+        const int slot = (aSlot < 0) ? pRecord->ActiveSlot : aSlot;
+
+        for (auto& character : pRecord->Characters)
+        {
+            if (character.Slot == slot)
+                return &character;
+        }
+
+        return nullptr;
+    }
+
     // Writes only when something actually changed, so calling this on a timer is cheap.
     void Flush()
     {
@@ -405,6 +604,29 @@ struct PlayerStore
     }
 
 private:
+    /**
+     * A number nobody else has.
+     *
+     * Retried rather than accepted, like vehicle plates. Bounded so a full number space
+     * cannot hang the tick loop - and unlike a plate, a duplicate here is not a cosmetic
+     * problem, so exhausting the attempts returns empty and the caller reports a failure
+     * instead of issuing a number that already rings somebody else's phone.
+     */
+    std::string MakeUniquePhoneNumber() const
+    {
+        for (int attempt = 0; attempt < 64; ++attempt)
+        {
+            auto candidate = GeneratePhoneNumber();
+
+            if (!IsPhoneNumberTaken(candidate))
+                return candidate;
+        }
+
+        spdlog::error("Could not find a free phone number after 64 attempts - the number "
+                      "space may be exhausted. Character left without one.");
+        return {};
+    }
+
     std::vector<PlayerRecord> m_records;
     std::filesystem::path m_path;
     bool m_dirty{false};

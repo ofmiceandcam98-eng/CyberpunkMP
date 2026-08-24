@@ -9,10 +9,15 @@
 #include <Components/CharacterComponent.h>
 #include <Components/VehicleComponent.h>
 #include <Components/AuthorityComponent.h>
+#include <Components/NpcComponent.h>
+#include <Components/HealthComponent.h>
+#include <Components/WeaponComponent.h>
+#include <Components/QuickhackComponent.h>
 
 #include "GameServer.h"
 #include "World.h"
 #include "PlayerManager.h"
+#include "WorldClock.h"
 #include "Systems/ChatSystem.h"   // telling someone their seat is taken
 #include "Validation.h"           // sanity checks on anything a client sent
 
@@ -29,11 +34,20 @@ static bool IsCellInRange(const GridCell::TPosition aCenter, const GridCell::TPo
            aCell.y >= aCenter.y - aRange && aCell.y < aCenter.y + aRange;
 }
 
-// An empty vehicle awaiting teardown. ReleaseVehicleIfEmpty schedules instead of
-// destroying because "empty" is routinely a transient: a seat swap is an exit and an
-// enter a millisecond apart, and destroying at the exit deleted the car out from under
-// the re-enter - with its simulator still driving it. Any occupant arriving before the
-// deadline cancels the teardown.
+// An empty vehicle awaiting teardown.
+//
+// NOTHING SETS THIS ANY MORE, and the system that consumes it therefore never fires.
+// Kept, rather than deleted, because it is the shape an abandoned-vehicle cleanup policy
+// will want: a deadline per entity and a sweep that acts when it passes.
+//
+// It became unused when ReleaseVehicleIfEmpty stopped destroying empty vehicles and began
+// parking them instead - a car whose driver got out is a parked car, not litter. The delay
+// existed to absorb a seat swap, which is an exit and an enter a millisecond apart, where
+// destroying at the exit deleted the car out from under the re-enter with its simulator
+// still driving it. Parking is reversible, so that race no longer needs absorbing.
+//
+// Anyone reviving this: the trigger for removing a car should be a real lifecycle rule -
+// stored, destroyed, owner reclaimed it, idle for hours - and never "the driver got out".
 struct PendingReleaseComponent
 {
     std::chrono::steady_clock::time_point At;
@@ -51,6 +65,13 @@ Level::Level(World* apWorld) noexcept
     GServer->RegisterHandler<&Level::HandleMoveEntityRequest>(this);
     GServer->RegisterHandler<&Level::HandleEnterVehicleRequest>(this);
     GServer->RegisterHandler<&Level::HandleExitVehicleRequest>(this);
+    GServer->RegisterHandler<&Level::HandleUpdateAppearanceRequest>(this);
+    GServer->RegisterHandler<&Level::HandleVoiceFrameRequest>(this);
+    GServer->RegisterHandler<&Level::HandleCombatEventRequest>(this);
+    GServer->RegisterHandler<&Level::HandleWeaponEventRequest>(this);
+    GServer->RegisterHandler<&Level::HandleStatusEffectRequest>(this);
+    GServer->RegisterHandler<&Level::HandleQuickhackRequest>(this);
+    GServer->RegisterHandler<&Level::HandleQuickhackUploadRequest>(this);
 
     m_updateSystem = m_pWorld->system<const LevelActorTag>("Level Update")
         .each([this](flecs::entity aEntity, const LevelActorTag&)
@@ -216,6 +237,11 @@ void Level::AddPlayer(flecs::entity aEntity) noexcept
     if (!pPlayerComponent)
         return;
 
+    // The world's clock and sky, before anything stands in the world - so the city a
+    // player loads into is already showing the same hour everyone else is living in.
+    if (auto* pClock = GetWorld()->get_mut<WorldClock>())
+        pClock->SendTo(pPlayerComponent->Connection);
+
     Add(pPlayerComponent->Puppet);
 
     GetWorld()->each(
@@ -225,6 +251,48 @@ void Level::AddPlayer(flecs::entity aEntity) noexcept
                 return;
 
             GServer->Send(pPlayerComponent->Connection, Serialize(aEntity));
+        });
+
+    // Replay the rolling stock. Vehicle spawns and seat entries replicate through
+    // observers (VehicleComponent.cpp, AttachmentComponent.cpp) - which by definition
+    // only reach players PRESENT when they fire. A late joiner missed all of them, so
+    // they got the characters (replayed above) and none of the cars: anyone already
+    // driving appeared standing in the road, gliding along at highway speed, and every
+    // parked car simply did not exist. Cars before seats, both after the characters -
+    // the client queues a mount until its local copy of the vehicle is ready, but the
+    // character being seated has to exist before the mount can name them.
+    GetWorld()->each(
+        [pPlayerComponent](flecs::entity aVehicle, const VehicleComponent& aVehicleComponent,
+                           const MovementComponent& aMovementComponent)
+        {
+            common::Vector3 pos;
+            pos.set_x(aMovementComponent.Position.x);
+            pos.set_y(aMovementComponent.Position.y);
+            pos.set_z(aMovementComponent.Position.z);
+
+            server::NotifyVehicleLoad load;
+            load.set_position(pos);
+            load.set_id(aVehicle);
+            load.set_rotation(aMovementComponent.Rotation.z);
+            load.set_tweak_id(aVehicleComponent.TweakDBID);
+
+            GServer->Send(pPlayerComponent->Connection, load);
+        });
+
+    GetWorld()->each(
+        [player = aEntity, pPlayerComponent](flecs::entity aOccupant, const AttachmentComponent& aAttachment)
+        {
+            // Nothing of the joiner's can be seated this early; the guard keeps the
+            // symmetry every other replication loop here has.
+            if (aOccupant.parent() == player)
+                return;
+
+            server::NotifyVehicleEnter enter;
+            enter.set_vehicle_id(aAttachment.Parent);
+            enter.set_character_id(aOccupant);
+            enter.set_sit_id(aAttachment.SlotId);
+
+            GServer->Send(pPlayerComponent->Connection, enter);
         });
 }
 
@@ -308,11 +376,21 @@ void Level::RemoveOwnedVehicles(flecs::entity aPlayer) noexcept
     {
         if (const auto next = NextOccupant(vehicle, aPlayer))
         {
-            TransferAuthority(vehicle, next.parent());
+            PromoteToDriver(vehicle, next.parent());
             continue;
         }
 
-        Remove(vehicle);
+        // Nobody left inside, so park it rather than delete it.
+        //
+        // A player's connection dropping is not a reason for their car to stop existing.
+        // It used to be: the vehicle was a child of the player entity, so losing the player
+        // took the car with it - somebody's parked car evaporating out from under the
+        // people standing next to it because its last driver alt-tabbed and timed out.
+        //
+        // Same parking as the exit path. The car keeps its network id, its position, and
+        // its place on every client; the only thing it loses is a simulator, which is
+        // correct, because the machine that was simulating it has gone.
+        TransferAuthority(vehicle, flecs::entity::null());
     }
 }
 
@@ -519,7 +597,26 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
     pComponent->Puppet = GetWorld()->entity()
         .child_of(player)
         .set<MovementComponent>({pos, rot, {}})
-        .set<AppearanceComponent>({equipment, appearance});
+        .set<AppearanceComponent>({equipment, appearance})
+
+        // Everyone arrives whole. Defaults live in the component rather than here so a
+        // server-declared NPC gets the same treatment without a second spawn path - one
+        // Combatant, per the brief.
+        .set<HealthComponent>({})
+
+        // Empty-handed until their client says otherwise. Present from the start so the
+        // weapon path never has to ask whether the component exists.
+        .set<WeaponComponent>({})
+
+        // A full deck on arrival. RAM regeneration is the game's own curve and is not
+        // modelled here - see QuickhackComponent.
+        .set<QuickhackComponent>({});
+
+    // The one line that says a person actually arrived in the world. Vehicle spawns log
+    // similar-sounding lines and have been misread as player spawns during diagnosis;
+    // this one names the human.
+    spdlog::info("Puppet {:x} spawned for {} (connection {:x})",
+                 pComponent->Puppet.id(), pComponent->Username, aMessage.ConnectionId);
 
     // Somebody with no character is told, once, on arrival.
     //
@@ -551,6 +648,156 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
         }
 
         spdlog::info("{} has no character yet - capturing the one they arrived as", pComponent->Username);
+    }
+
+    // Hand back what this character owns.
+    //
+    // Sent with the spawn rather than afterwards, so there is no window in which somebody
+    // is standing in the world holding whatever their local save gave them. Their save
+    // decides nothing about their possessions any more; this does.
+    //
+    // has_possessions is the important flag. An empty inventory is ambiguous - it means
+    // either "this character owns nothing" or "the server has never been told what they
+    // own", and the two demand opposite behaviour. Applying an empty record to a character
+    // created before possessions were stored would empty their pockets on their next
+    // login, which is a far worse failure than a character keeping a save's contents for
+    // one more session.
+    if (const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(pComponent->DiscordId))
+    {
+        const bool known = !pCharacter->Inventory.empty() || pCharacter->Money > 0;
+
+        if (known)
+        {
+            // Built as a vector and set in one go - the generator here is netpack, not
+            // protobuf, so there is no add_inventory() to append with.
+            Vector<server::ItemStack> stacks;
+            stacks.reserve(pCharacter->Inventory.size());
+
+            for (const auto& stack : pCharacter->Inventory)
+            {
+                server::ItemStack entry;
+                entry.set_id(stack.Id);
+                entry.set_quantity(stack.Quantity);
+                stacks.push_back(entry);
+            }
+
+            response.set_inventory(stacks);
+            response.set_money(pCharacter->Money);
+        }
+
+        response.set_has_possessions(known);
+
+        if (!pCharacter->Proficiencies.empty())
+        {
+            Vector<server::Proficiency> profs;
+            profs.reserve(pCharacter->Proficiencies.size());
+
+            for (const auto& prof : pCharacter->Proficiencies)
+            {
+                server::Proficiency entry;
+                entry.set_type(prof.Type);
+                entry.set_level(prof.Level);
+                profs.push_back(entry);
+            }
+
+            response.set_proficiencies(profs);
+        }
+
+        if (!pCharacter->Attributes.empty())
+        {
+            Vector<server::Attribute> attrs;
+            attrs.reserve(pCharacter->Attributes.size());
+
+            for (const auto& a : pCharacter->Attributes)
+            {
+                server::Attribute entry;
+                entry.set_type(a.Type);
+                entry.set_value(a.Value);
+                attrs.push_back(entry);
+            }
+
+            response.set_attributes(attrs);
+        }
+
+        if (!pCharacter->Perks.empty())
+        {
+            Vector<server::Perk> perks;
+            perks.reserve(pCharacter->Perks.size());
+
+            for (const auto& k : pCharacter->Perks)
+            {
+                server::Perk entry;
+                entry.set_type(k.Type);
+                entry.set_level(k.Level);
+                perks.push_back(entry);
+            }
+
+            response.set_perks(perks);
+        }
+
+        // What appears in this player's phone.
+        //
+        // Derived from the vehicles they OWN, not from what their client reported having
+        // unlocked. The client's own garage is a consequence of ownership here, never a
+        // source of it - otherwise "which cars do I have" would be answered by the machine
+        // most motivated to lie about it.
+        //
+        // Models rather than instances, because the phone menu is a list of models and
+        // cannot be anything else. Owning three Quadras puts one Quadra in the menu; which
+        // particular one arrives is the server's business, and /garage is where the
+        // difference between them is visible.
+        {
+            Vector<String> models;
+
+            for (const auto& vehicle : GServer->GetVehicles().OwnedBy(pComponent->DiscordId))
+            {
+                if (vehicle.ModelName.empty())
+                    continue;
+
+                const auto already = std::any_of(models.begin(), models.end(),
+                                                 [&vehicle](const String& acName)
+                                                 { return acName == vehicle.ModelName.c_str(); });
+
+                if (!already)
+                    models.push_back(String(vehicle.ModelName.c_str()));
+            }
+
+            if (!models.empty())
+            {
+                response.set_vehicles(models);
+                spdlog::info("{} owns {} vehicle model(s) - unlocking them in their phone",
+                             pComponent->Username, models.size());
+            }
+        }
+
+        spdlog::info("{} spawns with {} stored item stack(s) and {} eddies{}",
+                     pComponent->Username, pCharacter->Inventory.size(), pCharacter->Money,
+                     known ? "" : " - nothing stored yet, their save keeps what it has");
+    }
+
+    // The server's version of which doors are open.
+    //
+    // Sent to everybody, not just to characters with stored possessions - an unlocked
+    // building is a property of the world rather than of a character, and a new player
+    // should walk into the same city as everyone else.
+    {
+        const auto& facts = GServer->GetWorldFacts().All();
+
+        if (!facts.empty())
+        {
+            Vector<server::WorldFact> wire;
+            wire.reserve(facts.size());
+
+            for (const auto& fact : facts)
+            {
+                server::WorldFact entry;
+                entry.set_name(fact.Name.c_str());
+                entry.set_value(fact.Value);
+                wire.push_back(entry);
+            }
+
+            response.set_facts(wire);
+        }
     }
 
     response.set_id(pComponent->Puppet);
@@ -623,6 +870,8 @@ void Level::HandleMoveEntityRequest(PacketEvent<client::MoveEntityRequest>& aMes
     component.Position = {pos.get_x(), pos.get_y(), pos.get_z()};
     component.Velocity = aMessage.get_speed();
     component.Tick = aMessage.get_tick();
+    component.Locomotion = aMessage.get_locomotion();
+    component.UpperBody = aMessage.get_upper_body();
 
     // Carried forward, because the component is replaced wholesale below rather than
     // edited. Interest management sends only every Nth update to distant players, and a
@@ -685,33 +934,986 @@ void Level::HandleMoveEntityRequest(PacketEvent<client::MoveEntityRequest>& aMes
     }
 }
 
+void Level::PromoteToDriver(flecs::entity aVehicle, flecs::entity aPlayer) noexcept
+{
+    if (!aVehicle || !aVehicle.is_alive() || !aPlayer || !aPlayer.is_alive())
+        return;
+
+    TransferAuthority(aVehicle, aPlayer);
+
+    const auto* pPlayer = aPlayer.get<PlayerComponent>();
+    if (!pPlayer)
+        return;
+
+    // The server picks the driver, never the clients.
+    //
+    // Every client can see who is in the car, so every client could work out a new driver
+    // for itself - and they would not always agree, which is two people at one wheel. The
+    // choice is made once here, by seat priority, and the chosen client is told.
+    server::NotifyVehicleControlAssigned message;
+    message.set_vehicle_id(aVehicle.id());
+
+    GServer->Send(pPlayer->Connection, message);
+
+    spdlog::info("{} promoted to driver of vehicle {:x}", pPlayer->Username, aVehicle.id());
+}
+
+void Level::BroadcastAppearance(flecs::entity aPuppet) noexcept
+{
+    if (!aPuppet || !aPuppet.is_alive())
+        return;
+
+    const auto* pAppearance = aPuppet.get<AppearanceComponent>();
+    if (!pAppearance)
+        return;
+
+    const auto owner = aPuppet.parent();
+
+    server::NotifyAppearanceUpdate message;
+    message.set_id(aPuppet.id());
+    message.set_equipment(pAppearance->equipment);
+    message.set_ccstate(pAppearance->ccstate);
+
+    // Everyone except the person it is about. Their own game already shows what they are
+    // wearing - it is where the change came from - and echoing it back invites the client
+    // to re-apply an appearance to the local player, which is a different code path with
+    // its own hazards.
+    GetWorld()->get_world().each(
+        [&message, owner](flecs::entity player, const PlayerComponent& aPlayerComponent)
+        {
+            if (player == owner)
+                return;
+
+            GServer->Send(aPlayerComponent.Connection, message);
+        });
+}
+
+// What each quickhack costs and does. THE SERVER'S OPINION, not the client's.
+//
+// A request names which hack; every number about it comes from here. That is the whole
+// difference between "the client asked for Overheat" and "the client says Overheat does
+// 999999 damage".
+//
+// These are deliberately placeholder values rather than Cyberpunk's real ones, which live
+// in TweakDB and vary by cyberdeck, perks and hack tier. Getting them exactly right needs
+// the same live-dump treatment the objectActions needed. Getting them ROUGHLY right makes
+// the authority real today, and a wrong damage figure is a balance problem rather than a
+// security one - which is the correct order to solve them in.
+//
+// Anything not listed is refused rather than given a default: an unknown hack is either a
+// game update we have not looked at or a client inventing one, and both deserve a no.
+static const std::unordered_map<uint64_t, QuickhackRule>& QuickhackRules()
+{
+    static const std::unordered_map<uint64_t, QuickhackRule> rules = {
+        // DAMAGE IS ZERO ON EVERY ENTRY, and that is the correct value rather than a
+        // placeholder waiting to be filled in.
+        //
+        // Cyberpunk applies quickhack damage through its ORDINARY hit pipeline - an Overheat
+        // burns health via gameHitEvent exactly like a bullet. The hit hook therefore
+        // already reports the game's own figure, computed with the attacker's cyberdeck,
+        // perks and the target's resistances, none of which this server models.
+        //
+        // An earlier version of this table carried numbers I chose (Overheat = 25). Those
+        // would have been added ON TOP of the native damage the hit path was already
+        // carrying, so every damaging quickhack would have hit twice - once correctly and
+        // once with a made-up figure. The bug was not that the values were wrong; it was
+        // that they existed at all.
+        //
+        // THE FIRST NUMBER IS A CEILING, NOT A PRICE, and it is the same for every hack
+        // deliberately. RAM cost is computed per use from the attacker's deck and perks, so
+        // no per-hack figure here could be right - and a ceiling set to a guessed price
+        // would silently UNDERCHARGE, clamping a legitimate expensive hack down to it.
+        //
+        // One generous bound does the only job a bound can do: refuse absurd values. The
+        // pool is what actually limits hacking, and the pool is ours.
+        //
+        // The second number is always zero - see above. The third is a rate floor, not the
+        // game's cooldown.
+        //
+        // What the server still owns is everything the client must not: the RAM pool,
+        // whether a hack may run at all, and how often. Damage comes from the game, through
+        // the same validated path a rifle uses.
+        {TweakDBIDFromName("QuickHack.BaseOverheatHack"), {40.f, 0.f, 12000}},
+        {TweakDBIDFromName("QuickHack.BrainMeltBaseHack"), {40.f, 0.f, 20000}},
+        {TweakDBIDFromName("QuickHack.OverloadBaseHack"), {40.f, 0.f, 15000}},
+        {TweakDBIDFromName("QuickHack.BaseContagionHack"), {40.f, 0.f, 18000}},
+        {TweakDBIDFromName("QuickHack.SystemCollapseHackBase"), {40.f, 0.f, 60000}},
+        {TweakDBIDFromName("QuickHack.SuicideHackBase"), {40.f, 0.f, 60000}},
+
+        // Control and disruption. No direct damage - the effect IS the point.
+        {TweakDBIDFromName("QuickHack.BaseBlindHack"), {40.f, 0.f, 10000}},
+        {TweakDBIDFromName("QuickHack.BaseWeaponMalfunctionHack"), {40.f, 0.f, 12000}},
+        {TweakDBIDFromName("QuickHack.BaseLocomotionMalfunctionHack"), {40.f, 0.f, 12000}},
+        {TweakDBIDFromName("QuickHack.BaseCyberwareMalfunctionHack"), {40.f, 0.f, 15000}},
+        {TweakDBIDFromName("QuickHack.BaseMemoryWipeHack"), {40.f, 0.f, 20000}},
+        {TweakDBIDFromName("QuickHack.MadnessHackBase"), {40.f, 0.f, 30000}},
+
+        // Cheap utility.
+        {TweakDBIDFromName("QuickHack.BasePingHack"), {40.f, 0.f, 3000}},
+        {TweakDBIDFromName("QuickHack.BaseWhistleHack"), {40.f, 0.f, 6000}},
+        {TweakDBIDFromName("QuickHack.BaseCommsCallInHack"), {40.f, 0.f, 8000}},
+        {TweakDBIDFromName("QuickHack.BaseCommsNoiseHack"), {40.f, 0.f, 8000}},
+    };
+
+    return rules;
+}
+
+void Level::HandleQuickhackRequest(PacketEvent<client::QuickhackRequest>& aMessage) noexcept
+{
+    enum : uint32_t
+    {
+        kAccepted = 0,
+        kNoRam = 1,
+        kOnCooldown = 2,
+        kBadTarget = 3,
+        kOutOfRange = 4,
+        kUnknownHack = 5
+    };
+
+    auto* pPlayerManager = GetWorld()->get_mut<PlayerManager>();
+
+    const auto attacker = pPlayerManager->GetByConnectionId(aMessage.ConnectionId);
+    if (!attacker)
+        return;
+
+    auto* pAttacker = attacker.get_mut<PlayerComponent>();
+    if (!pAttacker || !pAttacker->Puppet || !pAttacker->Puppet.is_alive())
+        return;
+
+    const auto attackerPuppet = pAttacker->Puppet;
+
+    auto* pQuickhack = attackerPuppet.get_mut<QuickhackComponent>();
+    if (!pQuickhack)
+        return;
+
+    // Replay rejection, same rule as everywhere else.
+    if (pQuickhack->HasSequence)
+    {
+        const int32_t age = static_cast<int32_t>(aMessage.get_sequence() - pQuickhack->LastSequence);
+
+        if (age <= 0)
+            return;
+    }
+
+    pQuickhack->LastSequence = aMessage.get_sequence();
+    pQuickhack->HasSequence = true;
+
+    const auto now = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
+            .count());
+
+    auto refuse = [&](uint32_t aReason)
+    {
+        server::NotifyQuickhackResult result;
+        result.set_source_id(attackerPuppet.id());
+        result.set_target_id(aMessage.get_target_id());
+        result.set_quickhack_id(aMessage.get_quickhack_id());
+        result.set_accepted(false);
+        result.set_reason(aReason);
+        result.set_ram_after(pQuickhack->Ram);
+
+        // Only the person who asked. A refusal is not news to anybody else.
+        GServer->Send(pAttacker->Connection, result);
+
+        spdlog::info("[QUICKHACK] refused {} from {} - reason {}", aMessage.get_quickhack_id(), pAttacker->Username,
+                     aReason);
+    };
+
+    // A hack we do not have a rule for. Refused rather than defaulted - see QuickhackRules.
+    const auto& rules = QuickhackRules();
+    const auto rule = rules.find(aMessage.get_quickhack_id());
+
+    if (rule == rules.end())
+    {
+        refuse(kUnknownHack);
+        return;
+    }
+
+    flecs::entity target(GetWorld()->get_world(), aMessage.get_target_id());
+
+    if (!target || !target.is_alive())
+    {
+        refuse(kBadTarget);
+        return;
+    }
+
+    auto* pTargetHealth = target.get_mut<HealthComponent>();
+
+    if (!pTargetHealth || pTargetHealth->LifeState != 0)
+    {
+        refuse(kBadTarget);
+        return;
+    }
+
+    // Range. Quickhacks have per-hack ranges in the game's own rules; this is the outer
+    // bound that stops one being run from across the city, and is noted as coarser than
+    // the real thing rather than pretended to be it.
+    constexpr float kMaxHackRange = 100.f;
+
+    const auto* pAttackerMovement = attackerPuppet.get<MovementComponent>();
+    const auto* pTargetMovement = target.get<MovementComponent>();
+
+    if (pAttackerMovement && pTargetMovement)
+    {
+        const auto delta = pTargetMovement->Position - pAttackerMovement->Position;
+
+        if (glm::dot(delta, delta) > kMaxHackRange * kMaxHackRange)
+        {
+            refuse(kOutOfRange);
+            return;
+        }
+    }
+
+    // Rate floor, per hack. Not the game's cooldown - see MinIntervalMs.
+    if (const auto last = pQuickhack->LastUsedMs.find(aMessage.get_quickhack_id());
+        last != pQuickhack->LastUsedMs.end() && now - last->second < rule->second.MinIntervalMs)
+    {
+        refuse(kOnCooldown);
+        return;
+    }
+
+    // Regenerate the pool lazily, from however long has passed since it was last touched.
+    if (pQuickhack->RamStampMs != 0 && now > pQuickhack->RamStampMs)
+    {
+        const auto elapsedSeconds = static_cast<float>(now - pQuickhack->RamStampMs) / 1000.f;
+
+        pQuickhack->Ram =
+            std::min(pQuickhack->MaxRam, pQuickhack->Ram + elapsedSeconds * QuickhackComponent::kRamRegenPerSecond);
+    }
+
+    pQuickhack->RamStampMs = now;
+
+    // THE POOL IS OURS, THE PRICE IS THE GAME'S.
+    //
+    // The client reports what its own game charged, because that figure is computed from
+    // the attacker's deck, perks and the target - there is no correct number the server
+    // could hold. What the server refuses to accept is a price outside sane bounds, and
+    // more importantly a spend the pool cannot cover.
+    //
+    // That is the same arrangement ammunition has: the game decides how fast a weapon
+    // fires, the server decides how many rounds exist. A client can lie about the cost
+    // within the ceiling and gain very little; it cannot refill, and it cannot overspend.
+    float cost = aMessage.get_ram_cost();
+
+    if (!std::isfinite(cost) || cost < 0.f)
+        return;
+
+    // A floor as well as a ceiling. Zero-cost hacks are how "the client reports the price"
+    // becomes "the client hacks for free".
+    constexpr float kMinRamCost = 1.f;
+
+    cost = std::clamp(cost, kMinRamCost, rule->second.MaxRamCost);
+
+    if (pQuickhack->Ram < cost)
+    {
+        refuse(kNoRam);
+        return;
+    }
+
+    pQuickhack->Ram -= cost;
+    pQuickhack->LastUsedMs[aMessage.get_quickhack_id()] = now;
+
+    server::NotifyQuickhackResult result;
+    result.set_source_id(attackerPuppet.id());
+    result.set_target_id(target.id());
+    result.set_quickhack_id(aMessage.get_quickhack_id());
+    result.set_accepted(true);
+    result.set_reason(kAccepted);
+    result.set_ram_after(pQuickhack->Ram);
+
+    GetWorld()->get_world().each([&result](flecs::entity, const PlayerComponent& aPlayerComponent)
+                                 { GServer->Send(aPlayerComponent.Connection, result); });
+
+    spdlog::info("[QUICKHACK] request {} | source {} ({}) | target {} | hack {} | validated TRUE | ram cost {:.1f} | "
+                 "ram after {:.0f} | damage {:.0f}",
+                 aMessage.get_sequence(), attackerPuppet.id(), pAttacker->Username, target.id(),
+                 aMessage.get_quickhack_id(), rule->second.MaxRamCost, pQuickhack->Ram, rule->second.Damage);
+
+    // Damage, if this hack does any - through the SAME path a bullet takes, so a quickhack
+    // and a rifle reach a health bar identically. One damage pipeline, per the brief.
+    if (rule->second.Damage <= 0.f)
+        return;
+
+    const float before = pTargetHealth->Health;
+    const float after = std::max(0.f, before - rule->second.Damage);
+
+    pTargetHealth->Health = after;
+
+    const bool downed = after <= 0.f;
+
+    if (downed)
+        pTargetHealth->LifeState = 1;
+
+    server::NotifyDamageResult damage;
+    damage.set_event_id(0);
+    damage.set_attacker_id(attackerPuppet.id());
+    damage.set_target_id(target.id());
+    damage.set_source_type(2); // quickhack
+    damage.set_damage_type(0);
+    damage.set_hit_zone(0);
+
+    // Raw and final are the same figure here, and both are OURS. There is no client claim
+    // to clamp because the request never carried one.
+    damage.set_raw_damage(rule->second.Damage);
+    damage.set_final_damage(before - after);
+    damage.set_target_health_after(after);
+    damage.set_target_max_health(pTargetHealth->MaxHealth);
+    damage.set_killed(false);
+    damage.set_knocked_down(downed);
+
+    GetWorld()->get_world().each([&damage](flecs::entity, const PlayerComponent& aPlayerComponent)
+                                 { GServer->Send(aPlayerComponent.Connection, damage); });
+
+    if (downed)
+        BroadcastCombatState(target);
+}
+
+void Level::HandleQuickhackUploadRequest(PacketEvent<client::QuickhackUploadRequest>& aMessage) noexcept
+{
+    auto* pPlayerManager = GetWorld()->get_mut<PlayerManager>();
+
+    const auto attacker = pPlayerManager->GetByConnectionId(aMessage.ConnectionId);
+    if (!attacker)
+        return;
+
+    const auto* pAttacker = attacker.get<PlayerComponent>();
+    if (!pAttacker || !pAttacker->Puppet || !pAttacker->Puppet.is_alive())
+        return;
+
+    flecs::entity target(GetWorld()->get_world(), aMessage.get_target_id());
+
+    if (!target || !target.is_alive())
+        return;
+
+    // Only the two states the game models. An upload that claims to be in some third state
+    // is a client saying something the engine cannot produce.
+    if (aMessage.get_state() > 1)
+        return;
+
+    server::NotifyQuickhackUpload message;
+    message.set_target_id(target.id());
+    message.set_source_id(pAttacker->Puppet.id());
+    message.set_state(aMessage.get_state());
+    message.set_quickhack_id(aMessage.get_quickhack_id());
+    message.set_duration(aMessage.get_duration());
+
+    // Everyone, target included. This is presentation rather than authority - nothing here
+    // changes any state the server owns, which is why it needs no validation beyond "these
+    // two entities exist". A forged upload notification makes somebody flicker; it cannot
+    // hurt them, and the damage path is where that is defended.
+    GetWorld()->get_world().each([&message](flecs::entity, const PlayerComponent& aPlayerComponent)
+                                 { GServer->Send(aPlayerComponent.Connection, message); });
+}
+
+void Level::HandleStatusEffectRequest(PacketEvent<client::StatusEffectRequest>& aMessage) noexcept
+{
+    auto* pPlayerManager = GetWorld()->get_mut<PlayerManager>();
+
+    const auto attacker = pPlayerManager->GetByConnectionId(aMessage.ConnectionId);
+    if (!attacker)
+        return;
+
+    const auto* pAttacker = attacker.get<PlayerComponent>();
+    if (!pAttacker || !pAttacker->Puppet || !pAttacker->Puppet.is_alive())
+        return;
+
+    // A downed player is not hacking anybody.
+    if (const auto* pHealth = pAttacker->Puppet.get<HealthComponent>(); pHealth && pHealth->LifeState != 0)
+        return;
+
+    flecs::entity target(GetWorld()->get_world(), aMessage.get_target_id());
+
+    if (!target || !target.is_alive())
+        return;
+
+    if (aMessage.get_effect_id() == 0)
+        return;
+
+    // Range, same outer bound the damage path uses. A quickhack has a real range in the
+    // game's own rules; this is not that, it is the sanity check that stops an effect being
+    // applied from across the city. Per-hack ranges need quickhack data the server does not
+    // hold, and is noted as a gap rather than pretended away.
+    constexpr float kMaxHackRange = 250.f;
+
+    const auto* pAttackerMovement = pAttacker->Puppet.get<MovementComponent>();
+    const auto* pTargetMovement = target.get<MovementComponent>();
+
+    if (pAttackerMovement && pTargetMovement)
+    {
+        const auto delta = pTargetMovement->Position - pAttackerMovement->Position;
+
+        if (glm::dot(delta, delta) > kMaxHackRange * kMaxHackRange)
+            return;
+    }
+
+    server::NotifyStatusEffect message;
+    message.set_target_id(target.id());
+    message.set_source_id(pAttacker->Puppet.id());
+    message.set_effect_id(aMessage.get_effect_id());
+    message.set_stacks(aMessage.get_stacks());
+
+    // Everyone who can see it, and crucially the TARGET - they are the one person for whom
+    // this is not cosmetic. The effect was applied to their puppet on somebody else's
+    // machine; this is what makes it happen to them.
+    GetWorld()->get_world().each([&message](flecs::entity, const PlayerComponent& aPlayerComponent)
+                                 { GServer->Send(aPlayerComponent.Connection, message); });
+
+    spdlog::info("{} applied status effect {} to entity {}", pAttacker->Username, aMessage.get_effect_id(),
+                 target.id());
+}
+
+void Level::HandleWeaponEventRequest(PacketEvent<client::WeaponEventRequest>& aMessage) noexcept
+{
+    auto* pPlayerManager = GetWorld()->get_mut<PlayerManager>();
+
+    const auto player = pPlayerManager->GetByConnectionId(aMessage.ConnectionId);
+    if (!player)
+        return;
+
+    auto* pPlayerComponent = player.get_mut<PlayerComponent>();
+    if (!pPlayerComponent || !pPlayerComponent->Puppet || !pPlayerComponent->Puppet.is_alive())
+        return;
+
+    const auto puppet = pPlayerComponent->Puppet;
+
+    // A downed combatant is not firing. Checked here as well as in the damage path, because
+    // the two arrive independently and a client that stopped sending one would otherwise
+    // keep the other.
+    if (const auto* pHealth = puppet.get<HealthComponent>(); pHealth && pHealth->LifeState != 0)
+        return;
+
+    auto* pWeapon = puppet.get_mut<WeaponComponent>();
+    if (!pWeapon)
+        return;
+
+    if (pWeapon->HasSequence)
+    {
+        const int32_t age = static_cast<int32_t>(aMessage.get_sequence() - pWeapon->LastSequence);
+
+        if (age <= 0)
+            return;
+    }
+
+    pWeapon->LastSequence = aMessage.get_sequence();
+    pWeapon->HasSequence = true;
+
+    const auto now = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
+            .count());
+
+    enum : uint32_t
+    {
+        kEquip = 0,
+        kUnequip = 1,
+        kFire = 2,
+        kReloadStart = 3,
+        kReloadComplete = 4,
+        kSwitchStart = 5,
+        kSwitchComplete = 6,
+        kMeleeSwing = 7,
+        kThrow = 8
+    };
+
+    const auto kind = aMessage.get_kind();
+    bool correctClient = false;
+
+    switch (kind)
+    {
+    case kEquip:
+    case kSwitchComplete:
+    {
+        // The server learns what somebody is holding from them, because it has no inventory
+        // to check against - that is a real gap and is noted as one. What it does NOT accept
+        // is the ammunition that comes with it, because that is the number worth forging.
+        //
+        // Taken on trust the first time a weapon is seen and defended from then on: a
+        // re-equip cannot be used to top the magazine back up.
+        if (pWeapon->WeaponId != aMessage.get_weapon_id())
+        {
+            pWeapon->WeaponId = aMessage.get_weapon_id();
+            pWeapon->MagazineAmmo = aMessage.get_magazine_ammo();
+            pWeapon->ReserveAmmo = aMessage.get_reserve_ammo();
+        }
+
+        pWeapon->Reloading = false;
+        break;
+    }
+
+    case kUnequip:
+        pWeapon->WeaponId = 0;
+        pWeapon->Reloading = false;
+        break;
+
+    case kFire:
+    {
+        // Nothing in the magazine, nothing leaves the barrel. The single most valuable check
+        // here, because infinite ammunition is the cheapest cheat to write.
+        if (pWeapon->MagazineAmmo == 0)
+        {
+            correctClient = true;
+            break;
+        }
+
+        // A floor on how fast anybody can fire. Not a per-weapon rate - the server does not
+        // model weapons - but enough to separate a fast weapon from a script firing every
+        // frame. 40ms is 1500 rounds a minute, above anything the game ships.
+        constexpr uint64_t kMinShotIntervalMs = 40;
+
+        if (pWeapon->LastShotMs != 0 && now - pWeapon->LastShotMs < kMinShotIntervalMs)
+        {
+            spdlog::warn("Refused a shot from {} - {}ms since the last one", pPlayerComponent->Username,
+                         now - pWeapon->LastShotMs);
+            correctClient = true;
+            break;
+        }
+
+        pWeapon->MagazineAmmo -= 1;
+        pWeapon->LastShotMs = now;
+        break;
+    }
+
+    case kReloadStart:
+        if (pWeapon->ReserveAmmo == 0)
+        {
+            correctClient = true;
+            break;
+        }
+
+        pWeapon->Reloading = true;
+        pWeapon->ReloadStartedMs = now;
+        break;
+
+    case kReloadComplete:
+    {
+        // A completion with no start is a client refilling instantly. Refused, and the real
+        // state sent back so the refusal is visible rather than silent.
+        constexpr uint64_t kMinReloadMs = 500;
+
+        if (!pWeapon->Reloading || now - pWeapon->ReloadStartedMs < kMinReloadMs)
+        {
+            spdlog::warn("Refused a reload from {}", pPlayerComponent->Username);
+            correctClient = true;
+            break;
+        }
+
+        // How big the magazine is comes from the client, for the same reason the weapon does:
+        // there is no weapon table here. What the server enforces is CONSERVATION - rounds
+        // come out of the reserve it is tracking, so a reload cannot create ammunition.
+        const uint32_t wanted = aMessage.get_magazine_ammo() > pWeapon->MagazineAmmo
+                                    ? aMessage.get_magazine_ammo() - pWeapon->MagazineAmmo
+                                    : 0;
+
+        const uint32_t moved = std::min(wanted, pWeapon->ReserveAmmo);
+
+        pWeapon->MagazineAmmo += moved;
+        pWeapon->ReserveAmmo -= moved;
+        pWeapon->Reloading = false;
+
+        if (moved != wanted)
+            correctClient = true;
+
+        break;
+    }
+
+    default:
+        // Switch start, melee swing, throw: presentation only. Relayed so other people see
+        // the animation, with no state to defend.
+        break;
+    }
+
+    if (correctClient)
+    {
+        server::NotifyWeaponState state;
+        state.set_weapon_id(pWeapon->WeaponId);
+        state.set_magazine_ammo(pWeapon->MagazineAmmo);
+        state.set_reserve_ammo(pWeapon->ReserveAmmo);
+
+        GServer->Send(pPlayerComponent->Connection, state);
+        return;
+    }
+
+    server::NotifyWeaponEvent event;
+    event.set_id(puppet.id());
+    event.set_kind(kind);
+    event.set_weapon_id(aMessage.get_weapon_id());
+    event.set_magazine_ammo(pWeapon->MagazineAmmo);
+    event.set_position(aMessage.get_position());
+    event.set_direction(aMessage.get_direction());
+
+    // Everyone, the shooter included - their client predicted this locally and the echo is
+    // what confirms the server agreed.
+    GetWorld()->get_world().each([&event](flecs::entity, const PlayerComponent& aPlayerComponent)
+                                 { GServer->Send(aPlayerComponent.Connection, event); });
+}
+
+void Level::BroadcastCombatState(flecs::entity aPuppet) noexcept
+{
+    if (!aPuppet || !aPuppet.is_alive())
+        return;
+
+    const auto* pHealth = aPuppet.get<HealthComponent>();
+    if (!pHealth)
+        return;
+
+    server::NotifyCombatState message;
+    message.set_id(aPuppet.id());
+    message.set_health(pHealth->Health);
+    message.set_max_health(pHealth->MaxHealth);
+    message.set_life_state(pHealth->LifeState);
+
+    // Everyone, including the owner. Unlike appearance - where echoing a change back to the
+    // person who made it invites a re-apply loop - health is decided HERE, so the owner is
+    // exactly who most needs telling. Their own client only ever proposed a number.
+    GetWorld()->get_world().each([&message](flecs::entity, const PlayerComponent& aPlayerComponent)
+                                 { GServer->Send(aPlayerComponent.Connection, message); });
+}
+
+void Level::HandleCombatEventRequest(PacketEvent<client::CombatEventRequest>& aMessage) noexcept
+{
+    auto* pPlayerManager = GetWorld()->get_mut<PlayerManager>();
+
+    // The attacker is the CONNECTION. See CombatEventRequest - there is no attacker field
+    // to forge.
+    const auto attacker = pPlayerManager->GetByConnectionId(aMessage.ConnectionId);
+    if (!attacker)
+        return;
+
+    auto* pAttackerComponent = attacker.get_mut<PlayerComponent>();
+    if (!pAttackerComponent || !pAttackerComponent->Puppet || !pAttackerComponent->Puppet.is_alive())
+        return;
+
+    const auto attackerPuppet = pAttackerComponent->Puppet;
+
+    auto* pAttackerHealth = attackerPuppet.get_mut<HealthComponent>();
+    if (!pAttackerHealth)
+        return;
+
+    // A corpse cannot shoot. Checked before anything else because every rule below assumes
+    // the attacker is a participant.
+    if (pAttackerHealth->LifeState != 0)
+        return;
+
+    // Replay and duplicate rejection. A burst of fire is a rising sequence; a replayed
+    // packet is not. Compared as a difference so wrap-around does not silently drop
+    // everything for a full cycle.
+    if (pAttackerHealth->HasCombatSequence)
+    {
+        const int32_t age = static_cast<int32_t>(aMessage.get_sequence() - pAttackerHealth->LastCombatSequence);
+
+        if (age <= 0)
+        {
+            spdlog::warn("Dropped a stale or duplicate combat event from {} (sequence {})",
+                         pAttackerComponent->Username, aMessage.get_sequence());
+            return;
+        }
+    }
+
+    flecs::entity target(GetWorld()->get_world(), aMessage.get_target_id());
+
+    if (!target || !target.is_alive())
+        return;
+
+    auto* pTargetHealth = target.get_mut<HealthComponent>();
+    if (!pTargetHealth)
+        return;
+
+    // Already down. Refusing rather than clamping to zero, so a body cannot be farmed for
+    // events and so "killed" is reported exactly once.
+    if (pTargetHealth->LifeState != 0)
+        return;
+
+    // Range. The cheapest physical-plausibility check there is, and the one that catches
+    // the most: an attack from across the district is not a hit however well-formed the
+    // packet is. Deliberately generous - this is an outer bound on what any weapon in the
+    // game can reach, not a per-weapon range, which needs weapon state the server does not
+    // own yet.
+    constexpr float kMaxAttackRange = 250.f;
+
+    const auto* pAttackerMovement = attackerPuppet.get<MovementComponent>();
+    const auto* pTargetMovement = target.get<MovementComponent>();
+
+    if (pAttackerMovement && pTargetMovement)
+    {
+        const auto delta = pTargetMovement->Position - pAttackerMovement->Position;
+
+        if (glm::dot(delta, delta) > kMaxAttackRange * kMaxAttackRange)
+        {
+            spdlog::warn("Refused a combat event from {} - target is {:.0f}m away", pAttackerComponent->Username,
+                         std::sqrt(glm::dot(delta, delta)));
+            return;
+        }
+    }
+
+    // What the client claimed, clamped to something a single hit can plausibly be.
+    //
+    // The engine's own numbers are trusted only as far as this: the client is the only
+    // thing that can see what Cyberpunk calculated, so throwing its figure away would mean
+    // reimplementing every weapon, mod and resistance in the game on the server. Clamping
+    // is the compromise - a wrong number costs a fraction of a health bar, where an
+    // unclamped one is an instant kill from anywhere.
+    //
+    // 100 is a full health pool, so this permits a one-shot kill (a sniper headshot is
+    // one) while refusing the 999999 the brief calls out.
+    constexpr float kMaxSingleHit = 100.f;
+
+    float damage = aMessage.get_reported_damage();
+
+    if (!std::isfinite(damage) || damage < 0.f)
+        return;
+
+    if (damage > kMaxSingleHit)
+    {
+        spdlog::warn("Clamped a combat event from {} - claimed {:.0f} damage", pAttackerComponent->Username, damage);
+        damage = kMaxSingleHit;
+    }
+
+    pAttackerHealth->LastCombatSequence = aMessage.get_sequence();
+    pAttackerHealth->HasCombatSequence = true;
+
+    const float before = pTargetHealth->Health;
+    const float after = std::max(0.f, before - damage);
+
+    pTargetHealth->Health = after;
+
+    // Downed, not dead. The client currently cannot die at all - Death.reds applies the
+    // engine's Immortal flag so the death menu never opens - and a server that declared
+    // people dead while their game refused to let them be would be the worst of both. Down
+    // is the state both halves can agree on today.
+    const bool downed = after <= 0.f;
+
+    if (downed)
+        pTargetHealth->LifeState = 1;
+
+    // The combat trace. One line per validated event, with everything needed to compare
+    // three machines afterwards.
+    //
+    // A two-client test without this produces "the damage looked wrong", which is a
+    // starting point for an argument rather than a diagnosis. With it, the server's view is
+    // written down: who, whom, how much was claimed, how much was allowed, and what the
+    // target is on now. Any disagreement with either client is then a specific number that
+    // differs, and the side that is wrong is obvious.
+    //
+    // Always on, unlike the ImGui overlay. It is one line per hit - a burst of automatic
+    // fire is thirty lines a second at worst - and the moment it would be useful is
+    // precisely the moment nobody thought to enable it first.
+    spdlog::info("[COMBAT] event {} | attacker {} ({}) | target {} | src {} | claimed {:.1f} | allowed {:.1f} | "
+                 "health {:.1f} -> {:.1f} | {}",
+                 aMessage.get_event_id(), attackerPuppet.id(), pAttackerComponent->Username, target.id(),
+                 aMessage.get_source_type(), aMessage.get_reported_damage(), before - after, before, after,
+                 downed ? "DOWNED" : "validated");
+
+    server::NotifyDamageResult result;
+    result.set_event_id(aMessage.get_event_id());
+    result.set_attacker_id(attackerPuppet.id());
+    result.set_target_id(target.id());
+    result.set_source_type(aMessage.get_source_type());
+    result.set_damage_type(aMessage.get_damage_type());
+    result.set_hit_zone(aMessage.get_hit_zone());
+    result.set_raw_damage(aMessage.get_reported_damage());
+    result.set_final_damage(before - after);
+    result.set_target_health_after(after);
+    result.set_target_max_health(pTargetHealth->MaxHealth);
+    result.set_critical(aMessage.get_critical());
+    result.set_headshot(aMessage.get_headshot());
+    result.set_killed(false);
+    result.set_knocked_down(downed);
+    result.set_hit_position(aMessage.get_hit_position());
+    result.set_hit_direction(aMessage.get_hit_direction());
+
+    // Everyone gets the event, not just the two involved - a bystander has to see the hit
+    // reaction and hear the impact, and giving them only a health number would leave them
+    // inventing a reason for it.
+    GetWorld()->get_world().each([&result](flecs::entity, const PlayerComponent& aPlayerComponent)
+                                 { GServer->Send(aPlayerComponent.Connection, result); });
+
+    if (downed)
+    {
+        spdlog::info("{} downed entity {}", pAttackerComponent->Username, target.id());
+        BroadcastCombatState(target);
+    }
+}
+
+void Level::HandleVoiceFrameRequest(PacketEvent<client::VoiceFrameRequest>& aMessage) noexcept
+{
+    auto* pPlayerManager = GetWorld()->get_mut<PlayerManager>();
+
+    // The speaker comes from the CONNECTION, exactly as the appearance path does. There is
+    // no id field on this request, so "play this audio as me" cannot be spelled "play it as
+    // somebody else" - impersonation over voice is not a bug anyone should have to notice.
+    const auto speaker = pPlayerManager->GetByConnectionId(aMessage.ConnectionId);
+    if (!speaker)
+        return;
+
+    const auto* pSpeaker = speaker.get<PlayerComponent>();
+    if (!pSpeaker || !pSpeaker->Puppet || !pSpeaker->Puppet.is_alive())
+        return;
+
+    // A 20ms Opus frame at any sane bitrate is well under 200 bytes; 1KB is generous and
+    // still bounds what one connection can make the server relay to everybody near them.
+    // Empty frames are dropped rather than forwarded - silence is the absence of frames.
+    constexpr size_t kMaxFrame = 1024;
+
+    if (aMessage.get_data().empty() || aMessage.get_data().size() > kMaxFrame)
+        return;
+
+    const auto* pSpeakerMovement = pSpeaker->Puppet.get<MovementComponent>();
+    if (!pSpeakerMovement)
+        return;
+
+    // What the range values MEAN, decided here rather than by the client.
+    //
+    // The client sends an intent - whisper, local, yell - and the server turns it into
+    // metres. A client that invents a range of 9 gets the default, not the horizon.
+    float radius;
+
+    switch (aMessage.get_range())
+    {
+    case 0: radius = 6.f; break;   // whisper - the people immediately around you
+    case 2: radius = 60.f; break;  // yell - across a junction
+    default: radius = 25.f; break; // local - normal speech, and the fall-back
+    }
+
+    const float radiusSquared = radius * radius;
+    const auto speakerPosition = pSpeakerMovement->Position;
+
+    server::NotifyVoiceFrame message;
+    message.set_id(pSpeaker->Puppet.id());
+    message.set_data(aMessage.get_data());
+    message.set_sequence(aMessage.get_sequence());
+
+    GetWorld()->get_world().each(
+        [&message, speaker, speakerPosition, radiusSquared](flecs::entity player,
+                                                            const PlayerComponent& aPlayerComponent)
+        {
+            // Never echo somebody their own voice. Hearing yourself a ping later is the
+            // single most disorienting thing a voice system can do.
+            if (player == speaker)
+                return;
+
+            if (!aPlayerComponent.Puppet || !aPlayerComponent.Puppet.is_alive())
+                return;
+
+            const auto* pMovement = aPlayerComponent.Puppet.get<MovementComponent>();
+            if (!pMovement)
+                return;
+
+            // Squared distance - no square root, and this runs per listener per frame at
+            // 50 frames a second per speaker.
+            const auto delta = pMovement->Position - speakerPosition;
+
+            if (glm::dot(delta, delta) > radiusSquared)
+                return;
+
+            GServer->Send(aPlayerComponent.Connection, message);
+        });
+}
+
+void Level::HandleUpdateAppearanceRequest(PacketEvent<client::UpdateAppearanceRequest>& aMessage) noexcept
+{
+    auto* pPlayerManager = GetWorld()->get_mut<PlayerManager>();
+
+    const auto player = pPlayerManager->GetByConnectionId(aMessage.ConnectionId);
+    if (!player)
+        return;
+
+    auto* pComponent = player.get_mut<PlayerComponent>();
+    if (!pComponent || !pComponent->Puppet || !pComponent->Puppet.is_alive())
+        return;
+
+    // The puppet comes from the CONNECTION, never from the message.
+    //
+    // There is no id field on this request precisely so that "change my clothes" cannot be
+    // spelled "change theirs". The authenticated connection decides whose appearance this
+    // is, and a client that wants to dress somebody else has nowhere to say so.
+    const auto puppet = pComponent->Puppet;
+
+    auto* pAppearance = puppet.get_mut<AppearanceComponent>();
+    if (!pAppearance)
+        return;
+
+    // Same bounds the spawn path uses, for the same reason - this is relayed to every other
+    // client, so an unbounded blob is a way to make one wardrobe visit allocate arbitrary
+    // memory everywhere.
+    constexpr size_t kMaxCcstate = 256 * 1024;
+    constexpr size_t kMaxEquipment = 64;
+
+    if (aMessage.get_ccstate().size() > kMaxCcstate || aMessage.get_equipment().size() > kMaxEquipment)
+    {
+        spdlog::warn("Refused an appearance update from {} - {} bytes, {} item(s)",
+                     pComponent->Username, aMessage.get_ccstate().size(),
+                     aMessage.get_equipment().size());
+        return;
+    }
+
+    bool changed = false;
+
+    if (aMessage.get_equipment() != pAppearance->equipment)
+    {
+        pAppearance->equipment = aMessage.get_equipment();
+        changed = true;
+    }
+
+    // Only when it is plausible AND actually sent.
+    //
+    // Absence means "clothing only", which is most updates - clearing the stored face
+    // because a jacket changed would undo a ripperdoc visit every time somebody got
+    // dressed. Too small means the customization state was read before it was populated,
+    // which is the 23-byte case that has already reached storage once.
+    constexpr size_t kMinCcstate = 1024;
+
+    if (aMessage.get_ccstate().size() >= kMinCcstate && aMessage.get_ccstate() != pAppearance->ccstate)
+    {
+        pAppearance->ccstate = aMessage.get_ccstate();
+        changed = true;
+    }
+
+    if (!changed)
+        return;
+
+    puppet.modified<AppearanceComponent>();
+
+    spdlog::info("{} changed appearance - {} item(s), {} bytes", pComponent->Username,
+                 pAppearance->equipment.size(), pAppearance->ccstate.size());
+
+    BroadcastAppearance(puppet);
+}
+
 void Level::HandleEnterVehicleRequest(PacketEvent<client::EnterVehicleRequest>& aMessage) noexcept
 {
     flecs::entity target(GetWorld()->get_world(), aMessage.get_id());
 
+    // These rejections say everything they know - which id the client sent (generation
+    // bits included), whether that entity is alive, and what the parent actually is -
+    // the same shape the movement rejection took when every observed desync turned out
+    // to funnel through a warn that named nothing.
     if (!target)
     {
-        spdlog::warn("Attempt to enter vehicle from invalid entity from connection {:x}", aMessage.ConnectionId);
+        spdlog::warn("Attempt to enter vehicle from invalid entity id={:#x} from connection {:x}",
+                     aMessage.get_id(), aMessage.ConnectionId);
         return;
     }
 
     const auto player = target.parent();
     if (!player)
     {
-        spdlog::warn("Attempt to enter vehicle an entity without an owner from connection {:x}", aMessage.ConnectionId);
+        spdlog::warn("Attempt to enter vehicle from an entity without an owner! enter id={:#x} alive={} target='{}' from connection {:x}",
+                     aMessage.get_id(), target.is_alive(), target.name().c_str(), aMessage.ConnectionId);
         return;
     }
 
     auto* pPlayer = player.get<PlayerComponent>();
     if (!pPlayer)
     {
-        spdlog::warn("The entity's owner is not a player! From connection {:x}", aMessage.ConnectionId);
+        spdlog::warn("The entity's owner is not a player! enter id={:#x} alive={} target='{}' parent id={:#x} parent='{}' from connection {:x}",
+                     aMessage.get_id(), target.is_alive(), target.name().c_str(),
+                     player.raw_id(), player.name().c_str(), aMessage.ConnectionId);
         return;
     }
 
     if (pPlayer->Connection != aMessage.ConnectionId)
     {
-        spdlog::warn("The entity's owner is not the current player! From connection {:x}", aMessage.ConnectionId);
+        spdlog::warn("The entity's owner is not the current player! enter id={:#x} owned by '{}' on connection {:x}, sent from connection {:x}",
+                     aMessage.get_id(), pPlayer->Username, pPlayer->Connection, aMessage.ConnectionId);
         return;
     }
 
@@ -762,7 +1964,9 @@ void Level::HandleEnterVehicleRequest(PacketEvent<client::EnterVehicleRequest>& 
         // later change of hands goes through TransferAuthority.
         vehicle = GetWorld()->entity().child_of(player).set<MovementComponent>({pos, rot, {}}).set<VehicleComponent>({aMessage.get_vehicle_id()}).set<AuthorityComponent>({});
 
-        spdlog::info("Player {:x} spawned and entered vehicle {:x}", aMessage.get_id(), vehicle.id());
+        // Named "Vehicle ... spawned", not "Player ... spawned" - this line kept being
+        // misread as a player spawn in log forensics.
+        spdlog::info("Vehicle {:x} spawned by character {:x} (driver seat)", vehicle.id(), aMessage.get_id());
     }
 
     // One person per seat.
@@ -807,29 +2011,36 @@ void Level::HandleExitVehicleRequest(PacketEvent<client::ExitVehicleRequest>& aM
 {
     flecs::entity target(GetWorld()->get_world(), aMessage.get_id());
 
+    // Same informative shape as the enter and movement rejections: the id as sent,
+    // liveness, and the actual parent, so a live desync names itself in one line.
     if (!target)
     {
-        spdlog::warn("Attempt to exit vehicle from invalid entity from connection {:x}", aMessage.ConnectionId);
+        spdlog::warn("Attempt to exit vehicle from invalid entity id={:#x} from connection {:x}",
+                     aMessage.get_id(), aMessage.ConnectionId);
         return;
     }
 
     const auto player = target.parent();
     if (!player)
     {
-        spdlog::warn("Attempt to exit vehicle an entity without an owner from connection {:x}", aMessage.ConnectionId);
+        spdlog::warn("Attempt to exit vehicle from an entity without an owner! exit id={:#x} alive={} target='{}' from connection {:x}",
+                     aMessage.get_id(), target.is_alive(), target.name().c_str(), aMessage.ConnectionId);
         return;
     }
 
     auto* pPlayer = player.get<PlayerComponent>();
     if (!pPlayer)
     {
-        spdlog::warn("The entity's owner is not a player! From connection {:x}", aMessage.ConnectionId);
+        spdlog::warn("The entity's owner is not a player! exit id={:#x} alive={} target='{}' parent id={:#x} parent='{}' from connection {:x}",
+                     aMessage.get_id(), target.is_alive(), target.name().c_str(),
+                     player.raw_id(), player.name().c_str(), aMessage.ConnectionId);
         return;
     }
 
     if (pPlayer->Connection != aMessage.ConnectionId)
     {
-        spdlog::warn("The entity's owner is not the current player! From connection {:x}", aMessage.ConnectionId);
+        spdlog::warn("The entity's owner is not the current player! exit id={:#x} owned by '{}' on connection {:x}, sent from connection {:x}",
+                     aMessage.get_id(), pPlayer->Username, pPlayer->Connection, aMessage.ConnectionId);
         return;
     }
 
@@ -867,7 +2078,7 @@ void Level::HandleExitVehicleRequest(PacketEvent<client::ExitVehicleRequest>& aM
     if (vehicle && vehicle.is_alive() && vehicle.parent() == player)
     {
         if (const auto next = NextOccupant(vehicle, player))
-            TransferAuthority(vehicle, next.parent());
+            PromoteToDriver(vehicle, next.parent());
     }
 
     ReleaseVehicleIfEmpty(vehicle);
@@ -907,10 +2118,34 @@ void Level::ReleaseVehicleIfEmpty(flecs::entity aVehicle) noexcept
         return;
     }
 
-    // Schedule, never destroy on the spot - see PendingReleaseComponent for the race
-    // this absorbs. Two seconds is far beyond any reordered exit/enter pair and far
-    // below anyone noticing an abandoned car linger.
-    aVehicle.set<PendingReleaseComponent>({std::chrono::steady_clock::now() + std::chrono::seconds(2)});
+    // PARK IT. Do not destroy it.
+    //
+    // This used to schedule the vehicle for destruction two seconds after the last person
+    // got out, which is why a car vanished the moment its driver stepped away from it. The
+    // destruction was never the goal: it was the fix for a DIFFERENT bug, where entering a
+    // car created a fresh network entity every single time and nothing ever removed the old
+    // ones - seven copies stacked in the road in one session.
+    //
+    // That duplication is prevented at the other end now: a client entering a car that is
+    // already networked names it with remote_vehicle_id and joins the existing entity
+    // rather than making another. So the entity can safely outlive its occupants, which is
+    // what a parked car in the street actually is.
+    //
+    // Parking is TransferAuthority with no player, which the handoff already supports:
+    // nobody simulates it, nobody may move it, and it holds its last replicated position
+    // until somebody takes it over. Crucially it is reversible - the two-second delay
+    // existed to absorb a reordered exit/enter pair, and a parked car that is re-entered
+    // simply gets an owner again. There is nothing left to race against.
+    //
+    // The vehicle is NOT unloaded on the clients, so their mapping from the car in front of
+    // them to its network id survives, and getting back in reuses this same entity.
+    //
+    // Still missing, deliberately: a cleanup policy. Nothing removes an abandoned car yet,
+    // so a long session will accumulate them. That is a server-side lifecycle rule to be
+    // written, not a reason to keep deleting cars people are still standing next to.
+    TransferAuthority(aVehicle, flecs::entity::null());
+
+    aVehicle.remove<PendingReleaseComponent>();
 }
 
 server::NotifyCharacterLoad Level::Serialize(flecs::entity aEntity) noexcept
@@ -926,6 +2161,14 @@ server::NotifyCharacterLoad Level::Serialize(flecs::entity aEntity) noexcept
 
         message.set_position(pos);
         message.set_rotation(pMovementComponent->Rotation.z);
+        const auto cell = ToCell(pMovementComponent->Position);
+        message.set_world_revision(1);
+        message.set_cell_x(cell.x);
+        message.set_cell_y(cell.y);
+        message.set_sequence(pMovementComponent->Sequence);
+
+        if (const auto* pAuthority = aEntity.get<AuthorityComponent>())
+            message.set_authority_epoch(pAuthority->Epoch);
     }
 
     if (auto* pCharacterComponent = aEntity.get<CharacterComponent>())
@@ -937,6 +2180,14 @@ server::NotifyCharacterLoad Level::Serialize(flecs::entity aEntity) noexcept
     {
         message.set_equipment(pAppearanceComponent->equipment);
         message.set_ccstate(pAppearanceComponent->ccstate);
+    }
+
+    // A server-declared NPC: the record says WHO to build (a specific person, not a
+    // player mannequin), and the name is whatever the admin called them.
+    if (auto* pNpcComponent = aEntity.get<NpcComponent>())
+    {
+        message.set_puppet_record(pNpcComponent->Record.c_str());
+        message.set_username(pNpcComponent->Name.c_str());
     }
 
     // The name lives on the PLAYER, not the puppet - the puppet is a child entity with no
@@ -959,6 +2210,11 @@ server::NotifyCharacterLoad Level::Serialize(flecs::entity aEntity) noexcept
                 message.set_username(pCharacter->Name.c_str());
             else
                 message.set_username(pPlayerComponent->Username.c_str());
+
+            // Body gender is granted here, next to the name, for the same reason: the
+            // server is the only side that stored the explicit answer. A player with no
+            // character yet gets the old default (male) until they save one.
+            message.set_is_male(pCharacter ? pCharacter->IsMale : true);
         }
     }
 
@@ -987,10 +2243,10 @@ void Level::TransferCell(flecs::entity aEntity, GridCell* apOldCell, GridCell* a
             for (const auto pCell : cellsToLoad)
             {
                 pCell->ForEach(
-                    [this, owner, connection = pPlayer->Connection](flecs::entity aVisible)
+                    [owner, connection = pPlayer->Connection](flecs::entity aVisible)
                     {
                         if (aVisible != owner)
-                            GServer->Send(connection, Serialize(aVisible));
+                            GServer->Send(connection, Level::Serialize(aVisible));
                     });
             }
 
@@ -1011,8 +2267,8 @@ void Level::TransferCell(flecs::entity aEntity, GridCell* apOldCell, GridCell* a
     }
 
     GetWorld()->each(
-        [this, aEntity, owner, oldPosition, newPosition](flecs::entity aPlayer,
-                                                          const PlayerComponent& aPlayerComponent)
+        [aEntity, owner, oldPosition, newPosition](flecs::entity aPlayer,
+                                                    const PlayerComponent& aPlayerComponent)
         {
             if (!IsDebug() && aPlayer == owner)
                 return;
@@ -1028,7 +2284,7 @@ void Level::TransferCell(flecs::entity aEntity, GridCell* apOldCell, GridCell* a
 
             if (!wasVisible && isVisible)
             {
-                GServer->Send(aPlayerComponent.Connection, Serialize(aEntity));
+                GServer->Send(aPlayerComponent.Connection, Level::Serialize(aEntity));
             }
             else if (wasVisible && !isVisible)
             {

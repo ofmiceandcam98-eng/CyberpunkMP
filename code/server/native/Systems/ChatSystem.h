@@ -71,6 +71,38 @@ struct ChatSystem
     // character was made before the prompt existed.
     void AskForCharacterName(const PlayerComponent& acPlayer, const CharacterRecord& acCharacter);
 
+    /**
+     * A vehicle sale waiting on the buyer.
+     *
+     * Held in memory rather than on disk deliberately. An offer is a conversation, not
+     * property: if the server restarts mid-offer, the right outcome is that nothing
+     * happened, and the vehicle's lock is cleared on load for exactly that reason. A
+     * persisted offer would resume against players who are no longer here and prices
+     * neither of them remembers agreeing to.
+     */
+    struct PendingSale
+    {
+        std::string Token;      // also the vehicle's lock - see VehicleStore::Lock
+        std::string VehicleId;
+        std::string SellerId;
+        std::string BuyerId;
+        int64_t Price{0};
+        int64_t OfferedAt{0};
+    };
+
+    // Runs the transfer: funds checked, money moved both ways, ownership changed, both
+    // clients corrected. Separate from the command so the same path serves an expiry or a
+    // disconnect later without the logic being duplicated.
+    void CompleteSale(const PendingSale& acSale, const PlayerComponent& acBuyer);
+
+    // Tells one player what the server thinks their balance is, so their game agrees.
+    void PushMoney(const PlayerComponent& acPlayer, int32_t aBalance, const std::string& acReason);
+
+    // Only the client owning a journal can change it, so /quest skip relays rather than acts.
+    void SendQuestSkip(flecs::entity aSubject, const std::string& acQuest);
+
+    std::vector<PendingSale> m_pendingSales;
+
     // Only players whose puppet is within aRange of acOrigin.
     //
     // The sender is always included regardless of distance. Not seeing your own message
@@ -90,6 +122,13 @@ protected:
     // Stores what the character creator produced. The one message whose appearance the
     // server keeps - the spawn message's describes whatever save the client loaded.
     void HandleSaveCharacterRequest(const PacketEvent<client::SaveCharacterRequest>& aMessage);
+
+    // The selector's trash can. Retires rather than destroys - see PlayerStore.
+    void HandleDeleteCharacterRequest(const PacketEvent<client::DeleteCharacterRequest>& aMessage);
+
+    // Send this connection its current character list. The selector redraws from this
+    // rather than assuming what a delete did.
+    void SendCharacterList(const PlayerComponent& acPlayer, const std::string& acError = {});
 
     // Splits a chat channel prefix off the front of a line. Returns false when the line
     // named a channel the sender is not allowed to use, or gave it no text, having

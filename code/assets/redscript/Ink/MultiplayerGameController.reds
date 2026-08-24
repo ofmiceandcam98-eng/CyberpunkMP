@@ -7,6 +7,25 @@ import CyberpunkMP.Plugins.*
 
 // based on NewHudPhoneGameController and PauseMenuBackgroundGameController
 public class MultiplayerGameController extends inkGameController {
+    // Voice, kept here rather than on NetworkWorldSystem: that is a NATIVE class whose
+    // layout is fixed in C++, and adding a field to one fails with a constant-pool error
+    // that names nothing useful. This controller is also where the input already arrives,
+    // and it is torn down with the world - which is the right lifetime, since a voice
+    // state that outlived the session would come back latched on.
+    private let m_voiceTransmitting: Bool = false;
+    private let m_voiceMode: MpVoiceMode = MpVoiceMode.PushToTalk;
+
+    // Local, always, at the start of a session - never restored from last time.
+    //
+    // Deliberate: somebody who ended yesterday on YELL and forgets would spend their first
+    // conversation broadcasting to everyone within forty metres, and the person doing it
+    // is the last to notice. The cost of re-pressing a key is far smaller than the cost of
+    // not knowing you are shouting.
+    private let m_voiceRange: MpVoiceRange = MpVoiceRange.Local;
+
+    // The "you are talking" indicator. Built on first transmission, not at startup.
+    private let m_voiceIndicator: wref<inkText>;
+
     public let m_audioSystem: wref<AudioSystem>;
     public let m_uiSystem: wref<UISystem>;
     public let m_repeatingScrollActionEnabled: Bool = false;
@@ -76,6 +95,15 @@ public class MultiplayerGameController extends inkGameController {
         // this.bbListener = this.psmBB.RegisterListenerInt(GetAllBlackboardDefs().PlayerStateMachine.Vehicle, this, n"OnPlayerEnteredVehicle", true);
 
         this.m_player.RegisterInputListener(this, n"UIConnectToServer");
+
+        // Registered here rather than on connect, so holding the voice key reacts even
+        // before joining - that is how somebody confirms their binding works before it
+        // matters. Registered exactly once, in OnInitialize: RegisterInputListener does
+        // NOT deduplicate, and the note further down this file records what a duplicate
+        // registration already cost once.
+        this.m_player.RegisterInputListener(this, n"VoicePushToTalk");
+        this.m_player.RegisterInputListener(this, n"VoiceCycleRange");
+
         // this.m_player.RegisterInputListener(this, n"UIDisconnectFromServer");
         this.UpdateInputHints();
 
@@ -101,8 +129,20 @@ public class MultiplayerGameController extends inkGameController {
         // actually asked to join on, and not for any load after it.
         let network = GameInstance.GetNetworkWorldSystem();
         if IsDefined(network) && network.ConsumeJoinRequest() {
-            FTLog(s"[MultiplayerGameController] Joining - requested from the main menu");
-            network.Connect();
+            // Already signed in means the selector did it, back on the main menu, and the
+            // spawn has been held ever since. Connecting again here would abort that
+            // connection and start a second one - so this sends the held spawn instead,
+            // which is the moment the player actually enters the world.
+            //
+            // Not connected is the original route: the menu armed the join and this is the
+            // first point where there is somewhere for other players to be spawned.
+            if network.IsConnected() {
+                FTLog(s"[MultiplayerGameController] Already signed in - entering the world");
+                network.EnterWorld();
+            } else {
+                FTLog(s"[MultiplayerGameController] Joining - requested from the main menu");
+                network.Connect();
+            }
         }
     }
 
@@ -593,7 +633,17 @@ public class MultiplayerGameController extends inkGameController {
             // this.m_emoteSelectorWidget.RegisterToCallback(n"OnCloseServerList", this, n"OnCloseServerList");
             this.m_emoteSelector = widget.GetController() as EmoteSelector;
             if IsDefined(this.m_emoteSelector) {
-                this.GetSystemRequestsHandler().PauseGame();
+                // The emote wheel used to stop the world while it was open. It is a menu
+                // that only exists on a server, so that pause was always the wrong call:
+                // everyone else keeps playing while this client sits frozen, and the
+                // client comes back some seconds behind them.
+                //
+                // The matching UnpauseGame in OnEmoteSelectorClosed is left as it is -
+                // unpausing something already running does nothing, and leaving it means
+                // the close path ends in the same state regardless of this branch.
+                if !MpTimeDilationBlocked() {
+                    this.GetSystemRequestsHandler().PauseGame();
+                }
                 this.m_uiSystem.PushGameContext(UIGameContext.ModalPopup);
                 this.m_uiSystem.RequestNewVisualState(n"inkModalPopupState");
                 TimeDilationHelper.SetTimeDilationWithProfile(this.m_player, "radialMenu", true, true);
@@ -979,11 +1029,246 @@ public class MultiplayerGameController extends inkGameController {
         this.m_player.UnregisterInputListener(this, n"UIShop");
     }
 
+    /**
+     * Start or stop transmitting, according to the mode.
+     *
+     * HOLD: down transmits, up stops.
+     * TOGGLE: down flips, up is ignored - so holding the key does not switch on and
+     *         straight back off, which is what a naive toggle does to anyone who does not
+     *         tap it cleanly.
+     *
+     * Voice activation ignores the key entirely; its trigger is the input level, which
+     * needs the capture layer that does not exist yet.
+     *
+     * NOTHING HERE KNOWS WHICH KEY IT IS. The caller matched on the VoicePushToTalk
+     * ACTION, and the binding for that lives in Inputs\CyberpunkMP.xml where IK_V is only
+     * a starting value. Rebinding to Mouse4 or Caps Lock changes nothing in this method.
+     */
+    public func MpVoiceKey(down: Bool) -> Void {
+        if Equals(this.m_voiceMode, MpVoiceMode.VoiceActivation) {
+            return;
+        }
+
+        if Equals(this.m_voiceMode, MpVoiceMode.Toggle) {
+            if down {
+                this.m_voiceTransmitting = !this.m_voiceTransmitting;
+                FTLog(s"[Voice] toggle -> \(this.m_voiceTransmitting)");
+            }
+            return;
+        }
+
+        if NotEquals(this.m_voiceTransmitting, down) {
+            this.m_voiceTransmitting = down;
+            FTLog(s"[Voice] push-to-talk -> \(down)");
+        }
+
+        this.MpVoicePushState();
+    }
+
+    /**
+     * Hand the current state to the part that actually opens the microphone.
+     *
+     * Called from every path that can change it rather than only from the key handler -
+     * toggle, the explicit stop, and a mode change can all end transmission, and this
+     * script tracking one thing while the audio layer does another is precisely the bug
+     * where somebody's microphone stays open after they think they let go.
+     */
+    private func MpVoicePushState() -> Void {
+        let network = GameInstance.GetNetworkWorldSystem();
+        if !IsDefined(network) {
+            return;
+        }
+
+        network.VoiceSetTransmitting(this.m_voiceTransmitting);
+        network.VoiceSetRange(Cast<Uint32>(EnumInt(this.m_voiceRange)));
+
+        this.MpVoiceUpdateIndicator();
+    }
+
+    /**
+     * The small "you are talking" indicator, bottom left.
+     *
+     * Deliberately minimal - a dot and the range, shown only while the microphone is open.
+     * A voice indicator that is always on screen becomes furniture nobody reads, and the
+     * one moment it has to be unmissable is when somebody is transmitting and does not
+     * realise it.
+     *
+     * Built on first use rather than in OnInitialize: most sessions never press the key,
+     * and a widget nobody sees should not cost anything to have.
+     */
+    private func MpVoiceUpdateIndicator() -> Void {
+        if !this.m_voiceTransmitting {
+            if IsDefined(this.m_voiceIndicator) {
+                this.m_voiceIndicator.SetVisible(false);
+            }
+            return;
+        }
+
+        if !IsDefined(this.m_voiceIndicator) {
+            let root = this.GetRootCompoundWidget();
+            if !IsDefined(root) {
+                return;
+            }
+
+            let text = new inkText();
+            text.SetName(n"mp_voice_indicator");
+            text.SetFontFamily("base\\gameplay\\gui\\fonts\\raj\\raj.inkfontfamily");
+            text.SetFontStyle(n"Medium");
+            text.SetFontSize(20);
+            text.SetAnchor(inkEAnchor.BottomLeft);
+
+            // Anchor point as well as anchor - without it the widget's top-left is placed at
+            // the screen's bottom-left and it draws off the bottom edge. That exact mistake
+            // put the character selector panel off the side of the screen.
+            text.SetAnchorPoint(0.0, 1.0);
+            text.SetMargin(new inkMargin(60.0, 0.0, 0.0, 200.0));
+            text.Reparent(root);
+
+            this.m_voiceIndicator = text;
+        }
+
+        // The same yellow the game uses for its own prompts, so it reads as the game
+        // speaking rather than as a mod drawing on top of it.
+        this.m_voiceIndicator.SetTintColor(new HDRColor(2.0, 1.75, 0.25, 1.0));
+        this.m_voiceIndicator.SetText(s"[ TALKING ]  \(this.MpVoiceRangeName())");
+        this.m_voiceIndicator.SetVisible(true);
+    }
+
+    // Stop transmitting whatever the mode and whatever the key is doing.
+    //
+    // Toggle is why this exists: it latches, so without an explicit stop a player who
+    // toggled on and then left would return still transmitting, with no key held down to
+    // explain why.
+    public func MpVoiceStop() -> Void {
+        if this.m_voiceTransmitting {
+            this.m_voiceTransmitting = false;
+            FTLog(s"[Voice] stopped");
+        }
+
+        // Unconditionally, not inside the branch above. If this script and the audio layer
+        // ever disagree, the safe direction to correct in is "closed".
+        this.MpVoicePushState();
+    }
+
+    public func MpVoiceSetMode(mode: MpVoiceMode) -> Void {
+        // Changing mode always stops. Leaving toggle while latched on would otherwise
+        // leave the microphone open with the new mode's rules never closing it.
+        this.MpVoiceStop();
+
+        this.m_voiceMode = mode;
+        FTLog(s"[Voice] mode -> \(EnumInt(mode))");
+    }
+
+    public func MpVoiceTransmitting() -> Bool {
+        return this.m_voiceTransmitting;
+    }
+
+    /**
+     * Step to the next voice range, wrapping forever.
+     *
+     * whisper -> local -> yell -> whisper
+     *
+     * DOES NOT TRANSMIT. Changing how far a voice would carry is not the same as talking,
+     * and a key that opened the microphone as a side effect of changing range would put
+     * somebody on air without them asking.
+     *
+     * Safe to press while already transmitting: the range is read when a voice packet is
+     * sent, so a change mid-sentence simply applies to the rest of it.
+     */
+    public func MpVoiceCycleRange() -> Void {
+        if Equals(this.m_voiceRange, MpVoiceRange.Whisper) {
+            this.m_voiceRange = MpVoiceRange.Local;
+        } else {
+            if Equals(this.m_voiceRange, MpVoiceRange.Local) {
+                this.m_voiceRange = MpVoiceRange.Yell;
+            } else {
+                this.m_voiceRange = MpVoiceRange.Whisper;
+            }
+        }
+
+        FTLog(s"[Voice] range -> \(this.MpVoiceRangeName())");
+        this.MpVoicePushState();
+        this.MpShowVoiceRange();
+    }
+
+    public func MpVoiceRangeName() -> String {
+        if Equals(this.m_voiceRange, MpVoiceRange.Whisper) {
+            return "WHISPER";
+        }
+
+        if Equals(this.m_voiceRange, MpVoiceRange.Yell) {
+            return "YELL";
+        }
+
+        return "LOCAL";
+    }
+
+    public func MpVoiceCurrentRange() -> MpVoiceRange {
+        return this.m_voiceRange;
+    }
+
+    /**
+     * Say the new range, briefly.
+     *
+     * Uses the game's own warning-message channel - the same one the autosave indicator
+     * uses - rather than a widget of ours. It appears, it says one word, it goes away, and
+     * it already looks like the game.
+     *
+     * Two seconds, and nothing persistent: a permanent readout for something that changes
+     * a few times an hour is clutter, and the transmit indicator is where "what am I on
+     * right now" belongs once it exists.
+     */
+    public func MpShowVoiceRange() -> Void {
+        let message: SimpleScreenMessage;
+        message.isShown = true;
+        message.duration = 2.0;
+        message.message = s"VOICE: \(this.MpVoiceRangeName())";
+
+        GameInstance.GetBlackboardSystem(GetGameInstance())
+            .Get(GetAllBlackboardDefs().UI_Notifications)
+            .SetVariant(GetAllBlackboardDefs().UI_Notifications.WarningMessage, ToVariant(message), true);
+    }
+
 // Actions
 
     protected cb func OnAction(action: ListenerAction, consumer: ListenerActionConsumer) -> Bool {
         let actionName: CName = ListenerAction.GetName(action);
         let actionType: gameinputActionType = ListenerAction.GetType(action);
+
+        // Voice, before anything else and regardless of connection state.
+        //
+        // Handled by ACTION NAME, never by key. The binding lives in the input XML where
+        // IK_V is only a starting value, so a player who rebinds this to Mouse4 or Caps
+        // Lock changes nothing here - which is the point of not writing `if V pressed`.
+        //
+        // Not consumed: push-to-talk should not swallow whatever else the key does. If
+        // somebody binds it to a key the game already uses, both still happen, which is
+        // usually what they wanted when they chose it.
+        if Equals(actionName, n"VoicePushToTalk") {
+            if Equals(actionType, gameinputActionType.BUTTON_PRESSED) {
+                this.MpVoiceKey(true);
+            } else {
+                if Equals(actionType, gameinputActionType.BUTTON_RELEASED) {
+                    this.MpVoiceKey(false);
+                }
+            }
+
+            return false;
+        }
+
+        // Range, on a key of its own. Press only - the XML accepts nothing else, so a tap
+        // advances once rather than twice.
+        //
+        // Never transmits. Changing how far a voice would carry is not talking, and a key
+        // that opened the microphone as a side effect would put somebody on air without
+        // them asking for it.
+        if Equals(actionName, n"VoiceCycleRange") {
+            if Equals(actionType, gameinputActionType.BUTTON_PRESSED) {
+                this.MpVoiceCycleRange();
+            }
+
+            return false;
+        }
         if !this.m_connectedToServer {
             if !this.m_serverListOpen {
                 if Equals(actionName, n"UIConnectToServer") && Equals(actionType, gameinputActionType.BUTTON_HOLD_COMPLETE) {

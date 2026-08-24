@@ -40,6 +40,12 @@ struct Server
     void Send(ConnectionId aConnectionId, Packet* apPacket, EPacketFlags aPacketFlags = kReliable) const noexcept;
     void Kick(ConnectionId aConnectionId) noexcept;
 
+    // The one-byte transport-level refusal (EConnectOpcode::kRefused) sent just before a
+    // handshake kick, so a protocol mismatch is a readable state instead of a bare
+    // disconnect. Application-level denials do not use this - they carry a full
+    // AuthenticationResponse with a reason string.
+    void SendRefusal(ConnectionId aConnectionId, uint8_t aCode) noexcept;
+
     [[nodiscard]] uint16_t GetPort() const noexcept;
     [[nodiscard]] bool IsListening() const noexcept;
     [[nodiscard]] uint32_t GetClientCount() const noexcept;

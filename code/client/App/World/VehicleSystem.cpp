@@ -13,6 +13,8 @@
 #include "App/Components/AttachedComponent.h"
 #include "App/Components/SpawningComponent.h"
 #include "App/Components/InterpolationComponent.h"
+#include "App/Components/DriverComponent.h"
+#include "App/World/PuppetRegistry.h"
 
 
 // Puts a network vehicle fully under remote control: no local player input, no local
@@ -260,6 +262,47 @@ void VehicleSystem::OnVehicleExit()
 bool VehicleSystem::HandleVehicleLoadMessage(const PacketEvent<server::NotifyVehicleLoad>& aMessage)
 {
     spdlog::info("[VehicleSystem] HandleVehicleLoadMessage");
+
+    const auto worldSystem = Red::GetGameSystem<NetworkWorldSystem>();
+    const auto& settings = Core::Container::Get<NetworkService>()->GetServerSettings();
+    const auto cellSize = settings.get_cell_size();
+    const auto expectedCellX = cellSize
+                                   ? static_cast<int32_t>(std::floor(aMessage.get_position().get_x() / static_cast<float>(cellSize)))
+                                   : 0;
+    const auto expectedCellY = cellSize
+                                   ? static_cast<int32_t>(std::floor(aMessage.get_position().get_y() / static_cast<float>(cellSize)))
+                                   : 0;
+    if (cellSize == 0 || aMessage.get_world_revision() != 1 ||
+        aMessage.get_cell_x() != expectedCellX || aMessage.get_cell_y() != expectedCellY)
+    {
+        spdlog::warn("[VehicleSystem] dropped map-invalid vehicle load {}", aMessage.get_id());
+        return false;
+    }
+
+    // One server vehicle, one local copy.
+    //
+    // This handler used to call SpawnVehicle unconditionally, with nothing anywhere asking
+    // whether we already had a car for this server id. The server sends a load alongside
+    // the enter, so every time somebody got into a car - the same car, re-entered, or a car
+    // re-replicated as it came back into range - another copy was spawned on top of the one
+    // already standing there. That is the cars multiplying: they are real entities, each
+    // with its own physics, stacked in the same parking space.
+    //
+    // The duplicates were also invisible to everything downstream. Only the newest copy is
+    // recorded against the server id, so the earlier ones belong to nobody: they are never
+    // moved, never mounted into, and never cleaned up, because no message can name them.
+    //
+    // Returning true, not false. We handled it correctly - the vehicle is present, which is
+    // what the message asked for. False is for a load we could not honour.
+    const auto existing = worldSystem->GetEntityByServerId(aMessage.get_id());
+
+    if (existing && (existing.has<SpawningComponent>() || existing.has<EntityComponent>()))
+    {
+        spdlog::info("[VehicleSystem] HandleVehicleLoadMessage: already have vehicle {} - not spawning a duplicate",
+                     aMessage.get_id());
+        return true;
+    }
+
     const auto handle = Red::Handle(this);
     Red::EntityID id;
     Red::ScriptGameInstance game;
@@ -280,8 +323,8 @@ bool VehicleSystem::HandleVehicleLoadMessage(const PacketEvent<server::NotifyVeh
         return false;
 
     // spdlog::info("[VehicleSystem] * Spawned: {}, {}", aMessage.get_id(), id.hash);
-    const auto worldSystem = Red::GetGameSystem<NetworkWorldSystem>();
-    worldSystem->make_alive(aMessage.get_id()).emplace<SpawningComponent>(id);
+    worldSystem->make_alive(aMessage.get_id()).emplace<SpawningComponent>(id, nullptr,
+                                                                            aMessage.get_authority_epoch());
 
     return true;
 }
@@ -411,7 +454,44 @@ bool VehicleSystem::HandleVehicleExitMessage(const PacketEvent<server::NotifyVeh
 
     auto characterEntity = worldSystem->GetEntityByServerId(aMessage.get_character_id());
     if (characterEntity && characterEntity.is_alive())
+    {
         characterEntity.remove<AttachedComponent>();
+
+        // The interpolation anchor is stale from the moment of mounting - lerping from
+        // it after a drive would hurl the puppet across the map on the first frame.
+        // Start fresh from the next movement sample.
+        if (auto* pInterpolation = characterEntity.get_mut<InterpolationComponent>())
+        {
+            pInterpolation->TimePoints.clear();
+            pInterpolation->HasPrevious = false;
+            pInterpolation->LastRenderTick = 0.f;
+        }
+
+        // Exit grace for the idle-controller hook. The engine hands this puppet a
+        // FRESH idle controller while it rebuilds the components post-exit, and the
+        // hook attaching our multi controller into that teardown is the confirmed
+        // 2026-08-20 23:31 crash (observer's log ends 2s after the attach line).
+        // Four seconds: the live attach came 2s after "exit done", doubled for slow
+        // frames. The hook forwards to vanilla idle during the window.
+        if (const auto* pEntityComponent = characterEntity.get<EntityComponent>())
+        {
+            App::PuppetRegistry::SetExitGrace(pEntityComponent->Id.hash, 4000);
+            spdlog::info("[VehicleSystem] puppet {:x} in exit grace for 4s - no controller attach during rebuild",
+                         pEntityComponent->Id.hash);
+        }
+
+        // Driver-puppet stand-down. The engine spends the next several frames tearing
+        // this puppet out of the vehicle and rebuilding its components; the driver
+        // writing placed transforms and re-binding into that rebuild is the prime
+        // suspect for every crash logged 0-15s after an exit tonight. Two seconds
+        // matches the server's own post-exit grace.
+        if (auto* pDriver = characterEntity.get_mut<DriverComponent>())
+        {
+            pDriver->SuppressUntil = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            spdlog::info("[VehicleSystem] driver puppet {:x} standing down for 2s over component rebuild",
+                         aMessage.get_character_id());
+        }
+    }
 
     spdlog::info("[VehicleSystem] HandleVehicleExitMessage: done");
     return true;

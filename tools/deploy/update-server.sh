@@ -19,6 +19,18 @@ flock -n 9 || exit 0   # a previous run (or the initial build) is still going
 
 cd "$REPO" || exit 1
 
+# A coordination-API instance runs against this same checkout and writes its published
+# slice INTO publish/, so those two files carry local modifications between deploys.
+# git pull then refuses ("local changes would be overwritten by merge"), which this
+# script records as "pull failed" in a log nobody reads - so deploys stop happening and
+# nothing says so. That is not theoretical: on 2026-08-23 it held a live server fix off
+# the box entirely, and the checkout had been stuck several commits back.
+#
+# Discarding them loses nothing. They are a regenerated slice of coord-data/updates.jsonl,
+# which is untracked, is the actual record, and is never touched by git here. Scoped to
+# exactly these two paths - a blanket reset would throw away real work.
+git checkout --quiet -- publish/ASSISTANT_UPDATES.md publish/assistant-updates.json 2>/dev/null || true
+
 git fetch --quiet origin || { echo "$(date -Is) fetch failed" >> "$LOG"; exit 1; }
 
 LOCAL=$(git rev-parse @)

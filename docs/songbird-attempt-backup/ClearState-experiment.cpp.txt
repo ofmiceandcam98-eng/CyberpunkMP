@@ -1,0 +1,27 @@
+
+
+        /**
+         * Release the customization state now that we have read it.
+         *
+         * SaveCharacterAppearance's own comment records that the instance behind
+         * GetCustomizationState "can be null, and is during ordinary gameplay". After a new
+         * character it is NOT - the logs show `customising -> true` still true at spawn,
+         * long after the creator closed. Nothing in our path releases it, so it stays live
+         * into gameplay.
+         *
+         * That matters because Songbird's opening holocall RENDERS A CHARACTER, and it
+         * arrives moments after this on a new character - the one case where the state is
+         * still held. A customization system that thinks it is mid-edit is a plausible
+         * thing for that to collide with, and it is the one measured difference between a
+         * new character (freezes) and an existing one (never does).
+         *
+         * ClearState is the game's own call, taken from the RTTI dump of
+         * gameuiICharacterCustomizationSystem. Called AFTER the save, because clearing
+         * first would leave nothing to read - the same ordering trap the poll was written
+         * around.
+         */
+        if (auto ccSystem = Red::GetGameSystem<Red::game::ui::CharacterCustomizationSystem>())
+        {
+            Red::CallVirtual(ccSystem, "ClearState");
+            spdlog::info("[Character] customization state cleared after capture");
+        }

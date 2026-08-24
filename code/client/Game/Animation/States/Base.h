@@ -1,13 +1,49 @@
 #pragma once
 
-struct MultiMovementController;
+#include <RED4ext/Scripting/Natives/Generated/game/PSMLocomotionStates.hpp>
+
+struct AnimationData;
 
 namespace States
 {
+// What a state actually needs from whoever hosts it. Two hosts exist: the legacy
+// MultiMovementController (engine-attached, NPC records only - via an adapter member,
+// because its own vtable is an ENGINE ABI and must not gain a base class) and
+// PuppetDriver (mod-owned, record-agnostic).
+struct ILocomotionHost
+{
+    virtual ~ILocomotionHost() = default;
+    virtual float GetAnimLength(Red::CName aName) const = 0;
+    virtual float GetCurrentSpeed() const = 0;
+};
+
 struct Base
 {
-    static inline float kWalkSpeed = 3.f;
-    static inline float kRunSpeed = 5.f;
+    // Bands around the game's REAL locomotion speeds: walk ~1.8 m/s, jog ~5.5,
+    // sprint ~7.5+. kWalkSpeed sat at 3.0 for the project's whole life - above actual
+    // walking speed - so a walking player never left Idling and appeared to glide.
+    static inline float kWalkSpeed = 1.2f;
+    static inline float kJogSpeed = 4.f;
+    static inline float kSprintSpeed = 6.5f;
+
+    // The sender's own PlayerStateMachine locomotion value rides on every movement
+    // update now. Measured speed is honest about DISTANCE but lies about the band: a
+    // sprinting player sampled at 30Hz measures 5-6 m/s and lands in the jog band, so
+    // remote sprinters jogged forever. The sender's game already decided what they are
+    // doing - trust it for the band, keep the measured value for blend weights.
+    static float BandSpeed(float aMeasured, uint32_t aLocomotion) noexcept
+    {
+        using Red::game::PSMLocomotionStates;
+        const auto state = static_cast<PSMLocomotionStates>(aLocomotion);
+
+        // Only someone actually covering ground gets promoted - Sprint held against a
+        // wall measures ~0 and must not run in place.
+        if (aMeasured >= kWalkSpeed &&
+            (state == PSMLocomotionStates::Sprint || state == PSMLocomotionStates::CrouchSprint))
+            return std::max(aMeasured, kSprintSpeed);
+
+        return aMeasured;
+    }
 
     struct Update
     {
@@ -32,7 +68,7 @@ struct Base
         UniquePtr<Base> State;
     };
 
-    Base(MultiMovementController& aParent)
+    Base(ILocomotionHost& aParent)
         : m_parent(aParent)
     {
     }
@@ -58,7 +94,7 @@ struct Base
     }
 
 protected:
-    MultiMovementController& m_parent;
+    ILocomotionHost& m_parent;
 };
 }
 

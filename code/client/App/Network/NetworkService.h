@@ -58,7 +58,20 @@ protected:
     void OnGameUpdate(RED4ext::CGameApplication* apApp) override;
 
     void HandleAuthentication(const PacketEvent<server::AuthenticationResponse>& aResponse);
-    void TrySpawnCharacter();
+
+public:
+    // Announce this player to the server: position, equipment, appearance.
+    //
+    // Split out of HandleAuthentication because connecting can now happen at the main
+    // menu, where there is no player to describe. When that happens the spawn is held and
+    // this is called again once the world is up.
+    void SendSpawnCharacterRequest();
+
+    // Is a spawn still owed? True between authenticating at the menu and entering the
+    // world.
+    bool IsSpawnDeferred() const { return m_spawnDeferred; }
+
+private:
 
     static ScratchAllocator& GetScratch();
 
@@ -71,8 +84,9 @@ private:
     std::chrono::time_point<std::chrono::steady_clock> m_lastHealthReport;
     bool m_ready = false;
     bool m_authenticated = false;
-    bool m_spawnCharacterSent = false;
-    bool m_spawnWaitLogged = false;
+
+    // Authenticated, but with no world to spawn into yet - the character selector state.
+    bool m_spawnDeferred = false;
     bool m_isPaused = false;
     entt::dispatcher m_dispatcher;
     uint64_t m_lastCharacterUpdate{};

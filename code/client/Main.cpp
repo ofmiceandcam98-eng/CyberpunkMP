@@ -3,6 +3,7 @@
 #include <TweakXL/support/red4ext/TweakXL.hpp>
 #include <App/Settings.h>
 #include <RED4ext/LaunchParameters.hpp>
+#include <BuildInfo.h>
 
 #include "RED4ext/Api/EMainReason.hpp"
 
@@ -127,7 +128,11 @@ RED4EXT_C_EXPORT void Query(RED4ext::PluginInfo* aInfo)
 {
     aInfo->name = L"CyberpunkMP";
     aInfo->author = L"Tilted Phoques SRL";
-    aInfo->version = RED4EXT_SEMVER(0, 1, 0);
+
+    // Stamped from the release at ship time (BuildInfo.h, via NCO_BUILD_VERSION). This
+    // sat frozen at 0.1.0 for the project's whole life, which meant the one version
+    // surface RED4ext itself displays never matched anything anyone shipped.
+    aInfo->version = RED4EXT_SEMVER(BUILD_VERSION_MAJOR, BUILD_VERSION_MINOR, BUILD_VERSION_PATCH);
 
     aInfo->runtime = RED4EXT_V0_RUNTIME_INDEPENDENT;
     aInfo->sdk = RED4EXT_SDK_LATEST;

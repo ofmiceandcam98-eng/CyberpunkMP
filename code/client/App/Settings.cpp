@@ -17,6 +17,41 @@ void Settings::Load()
     if (launchParameters.Contains(RED4ext::CString("-debug")))
         settings.debug = true;
 
+    // Voice, from the launcher's Settings > Voice page.
+    //
+    // Every one has a working default, so a game started without the launcher - or by an
+    // older launcher that does not send these - still has a usable voice configuration
+    // rather than no key and silence.
+    if (const auto key = launchParameters.Get("-voicekey"); key && key->size > 0)
+        settings.voicePushToTalkKey = (*key)[0].c_str();
+
+    if (const auto rangeKey = launchParameters.Get("-voicerangekey"); rangeKey && rangeKey->size > 0)
+        settings.voiceCycleRangeKey = (*rangeKey)[0].c_str();
+
+    if (const auto mode = launchParameters.Get("-voicemode"); mode && mode->size > 0)
+        settings.voiceMode = (*mode)[0].c_str();
+
+    if (const auto mic = launchParameters.Get("-micvolume"); mic && mic->size > 0)
+    {
+        // Clamped again here. The launcher clamps before saving, but this is a launch
+        // argument - anything can pass one - and a gain read straight from an argument is
+        // a scream waiting to happen.
+        const auto value = std::strtoul((*mic)[0].c_str(), nullptr, 10);
+        settings.voiceMicVolume = static_cast<uint32_t>(value > 200 ? 200 : value);
+    }
+
+    if (const auto chat = launchParameters.Get("-voicevolume"); chat && chat->size > 0)
+    {
+        const auto value = std::strtoul((*chat)[0].c_str(), nullptr, 10);
+        settings.voiceChatVolume = static_cast<uint32_t>(value > 200 ? 200 : value);
+    }
+
+    if (const auto in = launchParameters.Get("-voicein"); in && in->size > 0)
+        settings.voiceInputDevice = (*in)[0].c_str();
+
+    if (const auto out = launchParameters.Get("-voiceout"); out && out->size > 0)
+        settings.voiceOutputDevice = (*out)[0].c_str();
+
     bool ipFromArgs = false;
     bool portFromArgs = false;
 
@@ -50,6 +85,40 @@ void Settings::Load()
             settings.discordName = (*name)[0].c_str();
     }
 
+    // The manifest attestation trio - see Settings.h. Carried, never computed here.
+    if (const auto manifest = launchParameters.Get("-manifest-version"); manifest && manifest->size > 0)
+        settings.manifestVersion = (*manifest)[0].c_str();
+
+    if (const auto digest = launchParameters.Get("-install-digest"); digest && digest->size > 0)
+        settings.installDigest = (*digest)[0].c_str();
+
+    if (const auto unmanaged = launchParameters.Get("-unmanaged"); unmanaged && unmanaged->size > 0)
+    {
+        // One comma-joined argument rather than a repeated flag, because the launcher
+        // builds one argv and the list is small (the launcher caps it before sending).
+        const std::string joined = (*unmanaged)[0].c_str();
+        size_t start = 0;
+        while (start < joined.size())
+        {
+            auto end = joined.find(',', start);
+            if (end == std::string::npos)
+                end = joined.size();
+            if (end > start)
+                settings.unmanaged.push_back(String(joined.substr(start, end - start).c_str()));
+            start = end + 1;
+        }
+    }
+
+    if (const auto password = launchParameters.Get("-server-password"); password && password->size > 0)
+        settings.serverPassword = (*password)[0].c_str();
+
+    spdlog::info("Manifest: {}", settings.manifestVersion.empty()
+                                     ? "none - launched without the launcher, or pre-manifest launcher"
+                                     : fmt::format("{} (digest {}, {} unmanaged reported)",
+                                                   settings.manifestVersion.c_str(),
+                                                   settings.installDigest.empty() ? "MISSING" : "present",
+                                                   settings.unmanaged.size()));
+
     // Which record remote players are built from. See Settings.h - this exists so the
     // record can be changed between launches instead of between releases, because
     // finding one that is both stable and targetable is trial and error that costs two
@@ -62,6 +131,18 @@ void Settings::Load()
             settings.puppetRecordFemale = (*record)[0].c_str();
         }
     }
+
+    if (launchParameters.Get("-puppet-driver-all"))
+        settings.puppetDriverAll = true;
+
+    if (launchParameters.Contains("-sync-trace"))
+    {
+        settings.syncTrace = true;
+        spdlog::info("Sync trace ON - writing movement NDJSON for tools/netlab");
+    }
+
+    if (launchParameters.Get("-hackable-puppets"))
+        settings.hackablePuppets = true;
 
     if (const auto record = launchParameters.Get("-puppet-record-female"); record)
     {

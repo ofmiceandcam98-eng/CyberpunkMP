@@ -46,9 +46,20 @@ struct MultiMovementController
     virtual void Detach(Red::move::Component& movable);
     virtual void GetAnimationParameters(AnimationData& animationData);
 
-    void SetTransform(const Red::Vector4& aPosition, float angle, float speed);
+    void SetTransform(const Red::Vector4& aPosition, float angle, float speed, uint32_t aLocomotion = 0);
 
     float GetAnimLength(Red::CName aName) const;
+
+    // States reach their host through this adapter member instead of this class
+    // inheriting ILocomotionHost: the controller's OWN vtable is an engine ABI (the
+    // idle-controller slots, called by index) and any base class would reorder it.
+    struct Host final : States::ILocomotionHost
+    {
+        explicit Host(MultiMovementController* apParent) : Parent(apParent) {}
+        float GetAnimLength(Red::CName aName) const override;
+        float GetCurrentSpeed() const override;
+        MultiMovementController* Parent;
+    };
 
     void Reset();
 
@@ -60,8 +71,13 @@ struct MultiMovementController
     Red::Vector4 m_position;
     float m_angle;
     float m_speed = 0.f;
+    // Sender's gamePSMLocomotionStates value, written from the main thread by
+    // SetTransform and read on the animation thread by Tick. An aligned 32-bit
+    // store/load cannot tear on x64, matching how m_speed already crosses.
+    uint32_t m_locomotion = 0;
     AnimationDriver m_animationDriver;
     UniquePtr<States::Base> m_pState;
+    Host m_host{this};
     // One-shot diagnostic flags for the vehicle-passenger crash hunt: each condition
     // logs once per controller, on the animation thread, then stays quiet.
     bool m_nullPlacementLogged = false;

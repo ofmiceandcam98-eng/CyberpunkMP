@@ -81,6 +81,45 @@ Character.MaMuppet : Character.Panam {
 	uiNameplate = "UINameplate.MpPlayerSettings";
 	abilities += [ "Ability.CanCrouch", "Ability.CanSprint" ];
 
+	// EXPERIMENT 1 - what a remote player needs to be a quickhack target.
+	//
+	// ScriptedPuppet.IsQuickHackAble() (scriptedPuppet.script:4045) refuses anything whose
+	// record carries no object actions, and then refuses again unless at least one of them
+	// is of type PuppetQuickHack. Panam has none, so a remote player could never be hacked
+	// no matter what else was true of them.
+	//
+	// READ OFF A REAL NPC, NOT GUESSED. These are the quickhack entries on
+	// Character.rcr_sixthstreet_hooligan_melee1_knife_wa - a Sixth Street hooligan the game
+	// itself reported as IsQuickHackAble: true, dumped live from TweakDB.
+	//
+	// That mattered: the plausible-looking names in the game's own scripts are wrong.
+	// QuickHack.BlindHack does not exist as a puppet action (it is BaseBlindHack), and
+	// MadnessLvl3Hack is not the base record (it is MadnessHackBase). Copying what the
+	// scripts appeared to say would have produced a record that silently did nothing.
+	//
+	// Deliberately NOT copied from that NPC: Takedown.*, GenericInteraction.* and
+	// MinigameAction.* - takedowns, talk prompts and breach-protocol daemons are not
+	// quickhacks and have no business on a player.
+	objectActions += [
+		"QuickHack.BaseOverheatHack",
+		"QuickHack.BrainMeltBaseHack",
+		"QuickHack.BaseContagionHack",
+		"QuickHack.OverloadBaseHack",
+		"QuickHack.SystemCollapseHackBase",
+		"QuickHack.MadnessHackBase",
+		"QuickHack.SuicideHackBase",
+		"QuickHack.GrenadeHackBase",
+		"QuickHack.BaseBlindHack",
+		"QuickHack.BaseWeaponMalfunctionHack",
+		"QuickHack.BaseLocomotionMalfunctionHack",
+		"QuickHack.BaseCyberwareMalfunctionHack",
+		"QuickHack.BaseMemoryWipeHack",
+		"QuickHack.BasePingHack",
+		"QuickHack.BaseCommsCallInHack",
+		"QuickHack.BaseCommsNoiseHack",
+		"QuickHack.BaseWhistleHack"
+	];
+
 	// Cleared because this record INHERITS FROM Character.Panam, and with it her name.
 	// That is why every remote player was labelled Panam regardless of who they were -
 	// the nameplate reads the character record first and only falls back to the entity's
@@ -105,6 +144,30 @@ Character.MaMuppet : Character.Panam {
 }
 
 Character.WaMuppet : Character.Panam {
+	// The same quickhack actions as MaMuppet - see the note there for where they came from
+	// and why the names in the game's scripts are not the ones that work. Repeated rather
+	// than shared because these two records inherit from Panam, not from each other, which
+	// is also why blanking her name had to be done twice.
+	objectActions += [
+		"QuickHack.BaseOverheatHack",
+		"QuickHack.BrainMeltBaseHack",
+		"QuickHack.BaseContagionHack",
+		"QuickHack.OverloadBaseHack",
+		"QuickHack.SystemCollapseHackBase",
+		"QuickHack.MadnessHackBase",
+		"QuickHack.SuicideHackBase",
+		"QuickHack.GrenadeHackBase",
+		"QuickHack.BaseBlindHack",
+		"QuickHack.BaseWeaponMalfunctionHack",
+		"QuickHack.BaseLocomotionMalfunctionHack",
+		"QuickHack.BaseCyberwareMalfunctionHack",
+		"QuickHack.BaseMemoryWipeHack",
+		"QuickHack.BasePingHack",
+		"QuickHack.BaseCommsCallInHack",
+		"QuickHack.BaseCommsNoiseHack",
+		"QuickHack.BaseWhistleHack"
+	];
+
 	appearanceName = "TPP_Body";
 	// appearanceName = "panam_nude";
 	priority = "SpawnableObjectPriority.Regular";
@@ -237,4 +300,38 @@ playerStateMachineInputContext.uiEmoteSelectionContext
 		"", "", "ExitCondition"
 	];
 	CName forceInputContext = "UI_EmoteSelection";
+}
+
+// The mannequins above stand on PLAYER CUTSCENE entity templates, and cutscene rigs
+// ship almost no locomotion clips - that is the male glide, and it has been the male
+// glide since the first session. Story NPCs carry COMPLETE locomotion sets on their
+// own entities (RedSync corroborates: their remotes are literally Jackie and Panam,
+// and their movement is the part that works). These two records are the muppet
+// multiplayer manners - blank names so the server's name reaches the nameplate,
+// NoReaction, crouch/sprint - applied over the story records WITHOUT overriding
+// template or appearance, so the NPC's own rig and clips are what spawns.
+//
+// Deliberately NOT the defaults yet. Character.Panam spawns are proven (/npc);
+// Character.Jackie is the unvalidated half - one -puppet-record session decides.
+// TweakXL skips an unresolvable record and logs it, so a wrong Jackie name cannot
+// take the file down with it.
+
+Character.MaJackie : Character.Jackie {
+	priority = "SpawnableObjectPriority.Regular";
+	reactionPreset = "ReactionPresets.NoReaction";
+	uiNameplate = "UINameplate.MpPlayerSettings";
+	abilities += [ "Ability.CanCrouch", "Ability.CanSprint" ];
+	displayName = "";
+	fullDisplayName = "";
+	alternativeDisplayName = "";
+}
+
+Character.WaPanam : Character.Panam {
+	priority = "SpawnableObjectPriority.Regular";
+	reactionPreset = "ReactionPresets.NoReaction";
+	uiNameplate = "UINameplate.MpPlayerSettings";
+	abilities += [ "Ability.CanCrouch", "Ability.CanSprint" ];
+	displayName = "";
+	fullDisplayName = "";
+	alternativeDisplayName = "";
 }

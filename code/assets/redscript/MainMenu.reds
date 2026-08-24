@@ -22,6 +22,242 @@ import CyberpunkMP.World.*
 // (core/ui/baseControllers/widgetController.script:84), not a free function, so it only
 // resolves on classes that inherit it. The controller does; the scenario does not.
 
+/**
+ * Waits for the server to say what character this account owns, then acts on it.
+ *
+ * THE SELECTOR'S STATE MACHINE, in the one place the game gives us to put it. The brief's
+ * own instruction is to make the states work before making them pretty, and this is that:
+ * CHARACTER_SELECT is the interval between pressing MULTIPLAYER and the answer arriving.
+ *
+ * Polls rather than listens because the answer lands on the network thread into native
+ * state - there is no script-side event to subscribe to. Ten attempts at a quarter second
+ * is two and a half seconds, which is generous for a round trip on a tailnet and short
+ * enough that a dead server does not leave somebody staring at a menu that never responds.
+ *
+ * Giving up says so. Failing silently here would be indistinguishable from the button not
+ * working, which is the single most expensive bug shape this project has had.
+ */
+public class MpSelectorPoll extends DelayCallback {
+    public let controller: wref<SingleplayerMenuGameController>;
+    public let attempts: Int32;
+
+    public func Call() -> Void {
+        let network = GameInstance.GetNetworkWorldSystem();
+
+        if !IsDefined(network) || !IsDefined(this.controller) {
+            return;
+        }
+
+        if network.IsCharacterStatusKnown() {
+            // Panel first, so the answer is on screen before the world starts loading -
+            // otherwise the only feedback for a press is the load itself.
+            this.controller.MpUpdatePanel();
+            this.controller.MpEnterWithCharacter();
+            return;
+        }
+
+        this.attempts += 1;
+
+        if this.attempts >= 10 {
+            FTLogError(s"[CyberpunkMP] the server never said what character this account has - is it up?");
+            return;
+        }
+
+        let again = new MpSelectorPoll();
+        again.controller = this.controller;
+        again.attempts = this.attempts;
+
+        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(again, 0.25, false);
+    }
+}
+
+/**
+ * Waits for the server's answer to a delete, then redraws the panel from it.
+ *
+ * Same shape as MpSelectorPoll and for the same reason: the reply lands on the network
+ * thread into native state with no script event to hang off. Redrawing from the SERVER's
+ * list rather than assuming the delete worked - it can be refused, and a panel that
+ * cleared itself would claim a character was gone while it was still there.
+ */
+public class MpDeletePoll extends DelayCallback {
+    public let controller: wref<SingleplayerMenuGameController>;
+    public let attempts: Int32;
+
+    public func Call() -> Void {
+        if !IsDefined(this.controller) {
+            return;
+        }
+
+        let network = GameInstance.GetNetworkWorldSystem();
+        if !IsDefined(network) {
+            return;
+        }
+
+        // Either outcome is an answer: the character is gone, or the server said why not.
+        if !network.HasCharacter() || NotEquals(network.GetCharacterError(), "") {
+            this.controller.MpUpdatePanel();
+            return;
+        }
+
+        this.attempts += 1;
+
+        if this.attempts >= 10 {
+            FTLogError(s"[Selector] the server never answered the delete");
+            return;
+        }
+
+        let again = new MpDeletePoll();
+        again.controller = this.controller;
+        again.attempts = this.attempts;
+
+        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(again, 0.25, false);
+    }
+}
+
+@addMethod(SingleplayerMenuGameController)
+public func MpEnterWithCharacter() -> Void {
+    let network = GameInstance.GetNetworkWorldSystem();
+    if !IsDefined(network) {
+        return;
+    }
+
+    if network.HasCharacter() {
+        FTLog(s"[CyberpunkMP] playing as '\(network.GetCharacterName())' (level \(network.GetCharacterLevel()))");
+
+        // Arm the in-world half. The world still has to be loaded to have somewhere to
+        // stand; what changed is that the server already knows who is arriving.
+        network.RequestJoin();
+        this.GetSystemRequestsHandler().LoadLastCheckpoint(false);
+        return;
+    }
+
+    // No character on this account - the CREATE branch.
+    //
+    // Routed through the game's own New Game flow for the reason spelled out below: the
+    // customization system is native-only and cannot be opened on demand, so New Game is
+    // the only real character creation that exists.
+    FTLog(s"[CyberpunkMP] this account has no character - starting creation");
+
+    network.RequestJoin();
+    network.MarkNewCharacter();
+
+    // The menu's own New Game event, not a call on the requests handler - RequestNewGame
+    // does not exist there, as the NEW CHARACTER path below already established. This is
+    // the event the vanilla New Game item spawns, so it is the real flow with the real
+    // lifepath and creator screens.
+    this.m_menuEventDispatcher.SpawnEvent(n"OnNewGame");
+}
+
+/**
+ * The character panel: who the server says you are, drawn on the main menu.
+ *
+ * Built in script rather than authored into an .inkwidget, the same way ChatController
+ * builds its CHARACTER NAME label. That is the only route available here - the menu's own
+ * assets are compiled, and adding to them is WolvenKit work rather than code.
+ *
+ * EVERY step is guarded and says what it could not find. A widget path that is wrong
+ * produces nothing at all on screen, which is indistinguishable from the selector never
+ * running, and that ambiguity has cost this project more time than any actual bug. If this
+ * lands somewhere invisible the log still says it was built.
+ *
+ * Informational only. The interactive parts are menu ITEMS, which are the game's own
+ * mechanism and work reliably; a hand-built clickable button would need its own input
+ * handling and hover states to feel like it belonged.
+ */
+@addField(SingleplayerMenuGameController)
+let m_mpPanel: wref<inkVerticalPanel>;
+
+@addField(SingleplayerMenuGameController)
+let m_mpTitle: wref<inkText>;
+
+@addField(SingleplayerMenuGameController)
+let m_mpDetail: wref<inkText>;
+
+// First press of DELETE arms, second confirms. A character is hours of somebody's evening
+// and the store keeps a retired copy, but neither is a reason to delete on one click.
+@addField(SingleplayerMenuGameController)
+let m_mpDeleteArmed: Bool;
+
+@addMethod(SingleplayerMenuGameController)
+public func MpBuildPanel() -> Void {
+    if IsDefined(this.m_mpPanel) {
+        return;
+    }
+
+    let root = this.GetRootCompoundWidget();
+    if !IsDefined(root) {
+        FTLogWarning(s"[Selector] no root widget to hang the character panel on");
+        return;
+    }
+
+    let panel = new inkVerticalPanel();
+    panel.SetName(n"mp_character_panel");
+    panel.SetAnchor(inkEAnchor.TopRight);
+    panel.SetMargin(new inkMargin(0.0, 120.0, 90.0, 0.0));
+    panel.SetFitToContent(true);
+    panel.Reparent(root);
+
+    let title = new inkText();
+    title.SetName(n"mp_character_title");
+    title.SetText("YOUR CHARACTER");
+    title.SetFontFamily("base\\gameplay\\gui\\fonts\\raj\\raj.inkfontfamily");
+    title.SetFontStyle(n"Medium");
+    title.SetFontSize(28);
+    title.SetLetterCase(textLetterCase.UpperCase);
+
+    // The same yellow the game uses for prompts, so it reads as the game speaking.
+    title.SetTintColor(new HDRColor(2.0, 1.75, 0.25, 1.0));
+    title.Reparent(panel);
+
+    let detail = new inkText();
+    detail.SetName(n"mp_character_detail");
+    detail.SetText("signing in...");
+    detail.SetFontFamily("base\\gameplay\\gui\\fonts\\raj\\raj.inkfontfamily");
+    detail.SetFontStyle(n"Regular");
+    detail.SetFontSize(42);
+    detail.SetMargin(new inkMargin(0.0, 6.0, 0.0, 0.0));
+    detail.Reparent(panel);
+
+    this.m_mpPanel = panel;
+    this.m_mpTitle = title;
+    this.m_mpDetail = detail;
+
+    FTLog(s"[Selector] character panel built");
+}
+
+@addMethod(SingleplayerMenuGameController)
+public func MpUpdatePanel() -> Void {
+    if !IsDefined(this.m_mpDetail) {
+        return;
+    }
+
+    let network = GameInstance.GetNetworkWorldSystem();
+    if !IsDefined(network) {
+        return;
+    }
+
+    // A refusal outranks everything - it is the answer to the button they just pressed.
+    let error = network.GetCharacterError();
+    if NotEquals(error, "") {
+        this.m_mpDetail.SetText(error);
+        return;
+    }
+
+    if !network.IsCharacterStatusKnown() {
+        this.m_mpDetail.SetText("signing in...");
+        return;
+    }
+
+    if !network.HasCharacter() {
+        this.m_mpTitle.SetText("NO CHARACTER");
+        this.m_mpDetail.SetText("Press MULTIPLAYER to make one");
+        return;
+    }
+
+    this.m_mpTitle.SetText("YOUR CHARACTER");
+    this.m_mpDetail.SetText(s"\(network.GetCharacterName())  -  LEVEL \(network.GetCharacterLevel())");
+}
+
 @wrapMethod(SingleplayerMenuGameController)
 private func PopulateMenuItemList() -> Void {
     wrappedMethod();
@@ -50,6 +286,28 @@ private func PopulateMenuItemList() -> Void {
     // have. A label that cannot be misread is available right now and cannot fail to show.
     this.AddMenuItem("MULTIPLAYER - NEW CHARACTER (REPLACES YOURS)", n"OnMultiplayerNewCharacter");
 
+    // The trash can.
+    //
+    // A menu ITEM rather than a hand-built button: menu items are the game's own mechanism
+    // and are reliably clickable, focusable and controller-navigable, none of which a
+    // widget built at runtime gets for free. The glyph carries the meaning; the words are
+    // there because a glyph alone in a list of words reads as a rendering fault.
+    //
+    // Only offered while a character exists to delete. Drawing it against an empty account
+    // would be a button whose only possible outcome is a refusal.
+    // Off with the selector. Both the trash can and the panel only make sense once the
+    // menu has asked the server who this account is, and it no longer does - drawn now,
+    // they would say "signing in..." forever against a connection nobody opened.
+    //
+    // The handler for OnMultiplayerDeleteCharacter is still present and still compiles, so
+    // re-adding this line is all it takes to bring the entry back.
+    //
+    // if IsDefined(network) && network.IsCharacterStatusKnown() && network.HasCharacter() {
+    //     this.AddMenuItem("[ TRASH ]  DELETE CHARACTER", n"OnMultiplayerDeleteCharacter");
+    // }
+    // this.MpBuildPanel();
+    // this.MpUpdatePanel();
+
     // PopulateMenuItemList refreshes at its end, before our item existed. Without
     // refreshing again the entry is in the data but never drawn, which looks exactly
     // like the hook silently doing nothing.
@@ -72,11 +330,34 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
         FTLog(s"[CyberpunkMP] MULTIPLAYER selected from the main menu");
 
         let network = GameInstance.GetNetworkWorldSystem();
-        if IsDefined(network) {
-            network.RequestJoin();
-        } else {
+        if !IsDefined(network) {
             FTLogError(s"[CyberpunkMP] No NetworkWorldSystem in the menu - cannot arm the join");
+            return true;
         }
+
+        // THE CHARACTER SELECTOR IS OFF FOR NOW - this is the original path.
+        //
+        // Load the save, connect once the world is up. Straight in, no selector.
+        //
+        // The selector below it is built and compiles: MpSelectorPoll asks the server what
+        // character this account owns before loading anything, MpBuildPanel draws it, and
+        // the trash can deletes it. What it has never had is a live session - and this is
+        // the main menu, the one screen where being wrong means nobody can play at all.
+        // It went out in v0.3.89 and rode along to v0.3.92 without ever being exercised,
+        // which is the actual mistake being undone here.
+        //
+        // TO TURN IT BACK ON: replace the two lines below with
+        //
+        //     if !network.IsConnected() { network.Connect(); }
+        //     let poll = new MpSelectorPoll();
+        //     poll.controller = this;
+        //     poll.attempts = 0;
+        //     GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(poll, 0.25, false);
+        //
+        // Nothing else has to change: the native half (held spawn, EnterWorld, character
+        // status) stays wired and is harmless while unused, and the in-world controller
+        // already handles both routes.
+        network.RequestJoin();
 
         this.GetSystemRequestsHandler().LoadLastCheckpoint(false);
         return true;
@@ -97,6 +378,52 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
     // The join is armed BEFORE the flow starts, on the game system that survives the load,
     // so the connection happens once there is a real world to arrive in. Same mechanism as
     // PLAY; only the route through the menus differs.
+    // DELETE, in two presses.
+    //
+    // The store retires rather than destroys, and the server refuses outright while the
+    // character is being played - but neither is a reason to delete on one click. The
+    // first press arms and says so on the panel; the second sends it. Walking away from
+    // the menu disarms, because the arm lives on the controller and the controller does
+    // not survive leaving the screen.
+    if Equals(data.eventName, n"OnMultiplayerDeleteCharacter") {
+        let network = GameInstance.GetNetworkWorldSystem();
+
+        if !IsDefined(network) || !network.IsConnected() {
+            FTLogError(s"[Selector] delete pressed with no connection");
+            return true;
+        }
+
+        if !this.m_mpDeleteArmed {
+            this.m_mpDeleteArmed = true;
+
+            if IsDefined(this.m_mpDetail) {
+                this.m_mpDetail.SetText("Press DELETE again to confirm");
+            }
+
+            FTLog(s"[Selector] delete armed - waiting for a second press");
+            return true;
+        }
+
+        this.m_mpDeleteArmed = false;
+
+        FTLog(s"[Selector] delete confirmed - asking the server");
+        network.DeleteCharacter();
+
+        if IsDefined(this.m_mpDetail) {
+            this.m_mpDetail.SetText("deleting...");
+        }
+
+        // The server answers with the list, which is what the panel redraws from. Polling
+        // for it rather than assuming success: the delete can be refused, and a panel that
+        // cleared itself optimistically would show NO CHARACTER for one that still exists.
+        let poll = new MpDeletePoll();
+        poll.controller = this;
+        poll.attempts = 0;
+
+        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(poll, 0.25, false);
+        return true;
+    }
+
     if Equals(data.eventName, n"OnMultiplayerNewCharacter") {
         FTLog(s"[CyberpunkMP] MULTIPLAYER - NEW CHARACTER selected from the main menu");
 

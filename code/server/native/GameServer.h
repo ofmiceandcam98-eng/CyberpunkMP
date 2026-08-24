@@ -5,6 +5,9 @@
 #include "Config.h"
 #include "BanList.h"
 #include "PlayerStore.h"
+#include "AuditLog.h"
+#include "Systems/WorldFacts.h"
+#include "Systems/VehicleStore.h"
 #include "Game/World.h"
 
 template <typename T>
@@ -17,6 +20,26 @@ concept NetworkMessage = requires(T a, Buffer::Writer writer, Buffer::Reader rea
     } -> std::convertible_to<bool>;
 };
 
+
+// Why a join was refused, carried as AuthenticationResponse.denial_code so the client
+// can ACT on the reason (open the launcher, update, sign in again) instead of
+// pattern-matching an English sentence. The numeric values are wire format - the client
+// and the .proto comment both reference them - so entries are only ever appended.
+enum class EDenialCode : uint32_t
+{
+    kNone = 0,
+    kProtocolMismatch = 1,
+    kClientOutdated = 2,
+    kManifestMismatch = 3,
+    kDigestMismatch = 4,
+    kDiscordExpired = 5,
+    kNotAMember = 6,
+    kDiscordUnreachable = 7,
+    kBanned = 8,
+    kServerFull = 9,
+    kUnmanagedBlocked = 10,
+    kWrongPassword = 11
+};
 
 struct GameServer final : Server
 {
@@ -89,6 +112,41 @@ private:
     // Asks Discord who a token belongs to and whether they are in the guild. The client's
     // own claims about its identity are ignored entirely.
     EDiscordAuthResult VerifyDiscordToken(const std::string& acToken, DiscordIdentity& aOutIdentity) const;
+
+    // Finishes a join once Discord has answered. Runs on the game thread, via the task
+    // queue - everything HandleAuthentication used to do after the verify lives here.
+    void FinishAuthentication(ConnectionId aConnectionId, EDiscordAuthResult aResult,
+                              const DiscordIdentity& acIdentity, const std::string& acToken);
+
+    // The accepted tail shared by the Discord and no-Discord paths: response, settings,
+    // rpc definitions, player creation, identity attachment. Game thread only.
+    void AdmitPlayer(ConnectionId aConnectionId, const std::string& acUsername,
+                     const std::string& acDiscordId, EPermissionLevel aLevel,
+                     const std::string& acToken);
+
+    // The one shape every refusal takes: reason string, denial code, the manifest the
+    // server wanted (when that is the answer), then the kick. Game thread only.
+    void Deny(ConnectionId aConnectionId, EDenialCode aCode, const std::string& acReason,
+              bool aIncludeRequiredManifest = false);
+
+    // True (and denies with kServerFull) when the server is at MaxPlayer. Checked twice
+    // per join on the Discord path: once before spending two HTTPS calls on a player who
+    // cannot fit, and again when the verdict lands - the count can grow while Discord
+    // answers.
+    bool DenyIfFull(ConnectionId aConnectionId);
+
+    // Reads config/server-manifest.json - the same signed file the launcher verifies
+    // against, copied beside the server config by the deploy. Absent file = manifest
+    // checks disabled, which is the migration state, not an error. See
+    // docs/MANIFEST-ARCHITECTURE.md sections 7.2-7.3 for what is checked and why.
+    void LoadServerManifest(const std::filesystem::path& acPath);
+
+    // Connections whose join verification is out with Discord. Game-thread only - written
+    // by HandleAuthentication, erased by the completion task and by OnDisconnection, all
+    // of which run inside Update(), so it needs no lock. A connection in here has no
+    // player entity yet: to every handler it looks exactly like any unauthenticated
+    // connection, which is the point - pending is not a third state, it is "not yet".
+    Set<ConnectionId> m_pendingVerifies;
 
     // A short-lived record of a successful verification.
     //
@@ -178,6 +236,18 @@ public:
     BanList& GetBanList() noexcept { return m_bans; }
     PlayerStore& GetPlayerStore() noexcept { return m_players; }
 
+    // Quest facts pushed to every client on spawn - see WorldFacts.h. This is how a
+    // building gets opened for everyone without touching quest state.
+    WorldFactStore& GetWorldFacts() noexcept { return m_worldFacts; }
+
+    // Owned vehicles - persistent property, distinct from the game's model-level
+    // garage. See VehicleRecord.h for why both exist.
+    VehicleStore& GetVehicles() noexcept { return m_vehicles; }
+
+    // The ledger of authoritative changes. See AuditLog.h for what belongs in it - state a
+    // player would be upset to lose or delighted to forge, never anything at frame rate.
+    AuditLog& GetAuditLog() noexcept { return m_audit; }
+
 private:
 
     Path m_path;
@@ -190,8 +260,20 @@ private:
     std::chrono::steady_clock::time_point m_lastReverify;
     BanList m_bans;
     PlayerStore m_players;
+    WorldFactStore m_worldFacts;
+    VehicleStore m_vehicles;
+    AuditLog m_audit;
     std::chrono::steady_clock::time_point m_lastPlayerSave;
     std::chrono::steady_clock::time_point m_lastJailCheck;
+
+    // Loaded from config/server-manifest.json at boot. Empty manifestVersion means no
+    // manifest was present and every manifest check is skipped (migration state). The
+    // digest is computed ONCE here from manifest-declared fields only - the exact
+    // canonical string is documented at the computation site and must stay byte-identical
+    // to computeInstallDigest in code/launcher-lite/manifest.js.
+    std::string m_manifestVersion;
+    std::string m_expectedDigest;
+    std::string m_unknownModPolicy{"warn"};
 
     glm::vec3 m_respawnPosition{};
     float m_respawnYaw{0.f};

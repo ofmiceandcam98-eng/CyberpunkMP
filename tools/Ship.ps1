@@ -52,7 +52,13 @@ param(
 
     # Also publish the portable build. It is another ~98MB copy of the same application
     # and everyone is pointed at the installer, so it is off by default.
-    [switch]$Portable
+    [switch]$Portable,
+
+    # Refuse to ship without a signed server-manifest.json. Off during migration - a
+    # machine without a signing key warns loudly and ships manifest-less (which every
+    # launcher treats as the legacy state) rather than blocking the other contributor's
+    # ships. Flip to always-on once both owners hold keys.
+    [switch]$RequireManifest
 )
 
 $ErrorActionPreference = 'Stop'
@@ -177,6 +183,11 @@ if ($Launcher -and -not $NoBump -and -not $WhatIf) {
 }
 
 $Tag = "v$version"
+
+# The release identity, into the binaries. BuildInfo.h reads this at configure time so
+# the DLL can finally say WHICH build it is (the handshake's build_stamp, and RED4ext's
+# own plugin version display). Without it a build honestly claims "0.0.0-dev".
+$env:NCO_BUILD_VERSION = $version
 
 # ---------------------------------------------------------------------------
 # Pre-flight. Cheap checks that catch the mistakes actually made before.
@@ -388,6 +399,87 @@ if ($Launcher) {
     }
     Ok "javascript parses"
 
+    # Every declared dependency must actually be installed BEFORE packaging.
+    #
+    # v0.3.93 shipped a launcher that could not start for anybody: "Cannot find package
+    # '7zip-bin'". The package was correctly declared - it arrived with the .7z/.rar
+    # support - but nobody ran pnpm install after merging, so electron-builder packaged an
+    # app importing modules that were not on disk. Every existing gate passed: the
+    # javascript parsed, the ids resolved, the markup balanced.
+    #
+    # The smoke test did not catch it either, and could not: an uncaught exception in the
+    # main process puts up a modal error dialog and the process STAYS ALIVE behind it, so
+    # "still running after 8 seconds" is exactly what a fatally broken launcher looks like.
+    #
+    # This check is the one that would have. It is a directory listing - no launching, no
+    # timing, no ambiguity about what "running" means.
+    $pkgJson = Get-Content (Join-Path $LauncherDir "package.json") -Raw | ConvertFrom-Json
+    $missing = @()
+
+    foreach ($dep in $pkgJson.dependencies.PSObject.Properties.Name) {
+        if (-not (Test-Path (Join-Path $LauncherDir "node_modules\$dep"))) { $missing += $dep }
+    }
+
+    if ($missing.Count -gt 0) {
+        Pop-Location
+        Die ("these dependencies are declared but not installed: {0}. Run 'pnpm install' in {1} - packaging now would ship a launcher that cannot start." -f ($missing -join ', '), $LauncherDir)
+    }
+
+    Ok "every declared dependency is installed"
+
+    # The same failure as the check above, one layer over: a file the launcher imports that
+    # is not IN the package.
+    #
+    # v0.3.97 shipped importing './manifest.js' and did not include it, so it died on
+    # start with "Cannot find module manifest.js" for everybody who updated - and because
+    # the updater lives inside the launcher, nobody could update out of it. The manifest
+    # work landed with the import wired up correctly; what nobody touched was the
+    # electron-builder "files" list, which is an ALLOWLIST naming each file individually.
+    # Add a source file and forget that list and it is silently left out of the build.
+    #
+    # Every gate passed again, for the same reason as v0.3.93: the javascript parses, the
+    # dependencies are installed, and the start-up test runs the SOURCE folder, where the
+    # file is present. Only the packaged artifact is missing it, and nothing looked there.
+    #
+    # Transitive, because manifest.js may import something too - following only main.js
+    # would move the same hole one file deeper.
+    $allow = @($pkgJson.build.files)
+    $pending = [System.Collections.Generic.Queue[string]]::new()
+    $seen = @{}
+    $notPackaged = @()
+
+    foreach ($f in $allow) { if ($f -match '\.(js|mjs)$') { $pending.Enqueue($f) } }
+
+    while ($pending.Count -gt 0) {
+        $file = $pending.Dequeue()
+        if ($seen.ContainsKey($file)) { continue }
+        $seen[$file] = $true
+
+        $full = Join-Path $LauncherDir $file
+        if (-not (Test-Path $full)) { continue }
+
+        foreach ($m in [regex]::Matches((Get-Content $full -Raw), "['""](\./[^'""]+)['""]")) {
+            $imported = $m.Groups[1].Value -replace '^\./', ''
+
+            # Covered by a literal entry, or by a directory glob like "fonts/**".
+            $covered = $false
+            foreach ($entry in $allow) {
+                if ($entry -eq $imported) { $covered = $true; break }
+                if ($entry -match '^(.+?)/\*\*$' -and $imported.StartsWith($Matches[1] + '/')) { $covered = $true; break }
+            }
+
+            if (-not $covered) { $notPackaged += "$imported (imported by $file)" }
+            elseif ($imported -match '\.(js|mjs)$') { $pending.Enqueue($imported) }
+        }
+    }
+
+    if ($notPackaged.Count -gt 0) {
+        Pop-Location
+        Die ("the launcher imports files that the build does not package: {0}. Add them to build.files in {1}\package.json - packaging now would ship a launcher that cannot start, and cannot update itself out of it." -f (($notPackaged | Sort-Object -Unique) -join ', '), $LauncherDir)
+    }
+
+    Ok "every imported file is inside the package"
+
     # Every id the script reaches for must exist in the markup. Getting this wrong
     # produces a dead button and no error at all.
     $html = Get-Content "index.html" -Raw
@@ -551,6 +643,10 @@ if ($Mod) {
 # ---------------------------------------------------------------------------
 
 # The small published files, which are decided by people rather than by a build.
+# Required here means "must exist LOCALLY to stage" - modlist.json is optional at this
+# stage only because an unchanged copy rides forward from the previous release; the
+# promote gate below still hard-requires it ON the release, because every launcher
+# fetches it from releases/latest unconditionally. The two answers different questions.
 $sideFiles = @(
     @{ Path = "publish\modlist.json";            Label = "mod list";       Required = $false },
     @{ Path = "publish\server.json";             Label = "server address"; Required = $true  },
@@ -639,7 +735,11 @@ if (-not $Mod) {
     } else {
         $carried = 0
 
-        foreach ($name in @("ModPayload.zip", "CyberpunkMP.dll", "FullInstall.zip")) {
+        # The manifest travels WITH the payload it describes: carried bytes are unchanged
+        # bytes, so the previous signature stays valid and re-signing is not needed. Old
+        # releases predate the manifest - a missing one here is the migration state, not
+        # a fault (the launcher treats absent as legacy).
+        foreach ($name in @("ModPayload.zip", "CyberpunkMP.dll", "FullInstall.zip", "server-manifest.json", "server-manifest.json.sig")) {
             Invoke-Native { & gh release download $carryFrom --repo $GhRepo --dir $carry --pattern $name } | Out-Null
 
             $got = Join-Path $carry $name
@@ -725,6 +825,92 @@ if ($Launcher) {
     $uploads += $marker
 
     Ok "launcher $version staged"
+}
+
+# ---------------------------------------------------------------------------
+# The signed manifest - generated fresh whenever this ship built the payload, because
+# that is exactly when the protocol hashes and file hashes on this machine describe the
+# bytes being shipped (docs/MANIFEST-ARCHITECTURE.md 9.1). Launcher-only ships carried
+# the previous manifest forward above, alongside the unchanged payload it describes.
+# ---------------------------------------------------------------------------
+
+if ($Mod) {
+    $manifestKeyFile = if ($env:NCO_MANIFEST_KEY_FILE) { $env:NCO_MANIFEST_KEY_FILE }
+                       else { Join-Path $env:USERPROFILE ".nco-manifest-key" }
+
+    if (-not (Test-Path $manifestKeyFile)) {
+        if ($RequireManifest) { Die "no manifest signing key at $manifestKeyFile - run tools\manifest\keygen.cjs first" }
+        # Loud but not fatal, deliberately: only owners hold keys, and a contributor
+        # shipping a fix must not be blocked by a file they are not supposed to have.
+        # A manifest-less release is the migration state every launcher understands.
+        Warn "no manifest signing key at $manifestKeyFile - shipping WITHOUT server-manifest.json."
+        Warn "Players get no manifest verification from this release. Run tools\manifest\keygen.cjs to fix permanently."
+    } else {
+        Step "Manifest"
+
+        # The protocol identity this build was generated with - parsed from the netpack
+        # output the build above just regenerated. Wrong-or-stale values here would name
+        # the wrong protocol in every diagnostic, so absence is a hard stop, not a guess.
+        $gensDir = Join-Path $Repo "build\.gens\Protocol\windows\x64\release\rules\netpack"
+        $clientGen = Join-Path $gensDir "client.gen.h"
+        $serverGen = Join-Path $gensDir "server.gen.h"
+        if (-not (Test-Path $clientGen) -or -not (Test-Path $serverGen)) {
+            Die "no generated protocol headers under $gensDir - did the mod build actually run?"
+        }
+        $protoClient = (Select-String -Path $clientGen -Pattern 'kIdentifier = (0x[0-9a-fA-F]+)ULL').Matches[0].Groups[1].Value
+        $protoServer = (Select-String -Path $serverGen -Pattern 'kIdentifier = (0x[0-9a-fA-F]+)ULL').Matches[0].Groups[1].Value
+        if (-not $protoClient -or -not $protoServer) { Die "could not parse kIdentifier from the generated headers" }
+
+        # The previous manifest, for same-day serial arithmetic. Absent is fine - first
+        # manifest of the day, or first manifest ever - so the failed download is
+        # tolerated and detected by Test-Path, the same shape the carry block uses.
+        $prevManifest = Join-Path $env:TEMP "ship_prev_manifest.json"
+        if (Test-Path $prevManifest) { Remove-Item $prevManifest -Force }
+        Invoke-Native { & gh release download --repo $GhRepo --pattern "server-manifest.json" --output $prevManifest } | Out-Null
+
+        $manifestOut = Join-Path $env:TEMP "server-manifest.json"
+        if (Test-Path $manifestOut) { Remove-Item $manifestOut -Force }
+
+        $genArgs = @(
+            (Join-Path $Repo "tools\manifest\generate-manifest.cjs"),
+            '--staged', $stage,
+            '--source', (Join-Path $Repo "publish\manifest-source.json"),
+            '--out', $manifestOut,
+            '--release', $Tag,
+            '--channel', 'production',
+            '--protocol-client', $protoClient,
+            '--protocol-server', $protoServer,
+            '--payload-zip', $payload,
+            # The first launcher release that understands manifests. Bump deliberately,
+            # never as a side effect - raising it strands older launchers on the legacy
+            # path, which is a decision, not housekeeping.
+            '--min-launcher', '0.3.97'
+        )
+        if (Test-Path $prevManifest) { $genArgs += @('--previous-manifest', $prevManifest) }
+
+        Invoke-Native { & node @genArgs }
+        if ($LASTEXITCODE -ne 0) { Die "manifest generation refused (RELEASE BLOCKED) - fix the source list and re-run" }
+
+        Invoke-Native { & node (Join-Path $Repo "tools\manifest\sign.cjs") $manifestOut }
+        if ($LASTEXITCODE -ne 0) { Die "manifest signing failed" }
+
+        # Verified against the keys the LAUNCHER pins, not merely against the key that
+        # signed - a manifest signed by a key no launcher trusts would verify locally and
+        # fail on every player's machine. The pins are read from main.js itself, so this
+        # gate and the launcher can never quietly disagree about who is trusted.
+        $pins = Select-String -Path (Join-Path $LauncherDir "main.js") -Pattern "'(ed25519-public:[^']+)'" -AllMatches
+        $pinLines = $pins.Matches | ForEach-Object { $_.Groups[1].Value }
+        if (-not $pinLines) { Die "no pinned manifest keys found in main.js - the launcher cannot verify anything this signs" }
+        $pinFile = Join-Path $env:TEMP "ship_pinned_keys.txt"
+        Set-Content -Path $pinFile -Value ($pinLines -join "`n") -Encoding ASCII
+
+        Invoke-Native { & node (Join-Path $Repo "tools\manifest\verify.cjs") $manifestOut $pinFile }
+        if ($LASTEXITCODE -ne 0) { Die "the signed manifest does not verify against the launcher's pinned keys - this machine's key is not pinned. Add its public line to MANIFEST_PUBKEYS in main.js (and ship that launcher) first." }
+
+        $uploads += $manifestOut
+        $uploads += "$manifestOut.sig"
+        Ok "manifest generated, signed and verified against the launcher's pins"
+    }
 }
 
 if ($uploads.Count -eq 0) { Warn "nothing to publish"; exit 0 }
@@ -815,6 +1001,18 @@ foreach ($required in @("server.json", "modlist.json", "ModPayload.zip", "Cyberp
     if ($names -notcontains $required) {
         Die "release is missing $required - promoting it would break every launcher. Nothing was promoted; $Tag is still a prerelease."
     }
+}
+
+# When this ship staged a manifest, the release must carry BOTH halves - a manifest
+# without its signature reads as tampering to every launcher, which is worse than no
+# manifest at all.
+if (($uploads | Where-Object { (Split-Path $_ -Leaf) -eq "server-manifest.json" })) {
+    foreach ($required in @("server-manifest.json", "server-manifest.json.sig")) {
+        if ($names -notcontains $required) {
+            Die "release is missing $required - a manifest without its signature fails verification on every launcher. Nothing was promoted."
+        }
+    }
+    Ok "manifest pair present"
 }
 Ok "runtime assets complete"
 

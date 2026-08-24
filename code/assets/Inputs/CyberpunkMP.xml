@@ -29,6 +29,26 @@
 		<button id="IK_Slash" />
     </mapping>
 
+	<!-- Voice push-to-talk.
+	     IK_V is a STARTING VALUE, not the key. The voice system asks whether the
+	     VoicePushToTalk action is active and never asks which key that is, so a player
+	     rebinding it changes nothing downstream.
+	     Both press and release are accepted below: hold-to-talk needs the release to know
+	     when to stop, and toggle needs only the press. Same action serves both modes. -->
+	<mapping name="VoicePushToTalk_Button" type="Button" >
+		<button id="IK_V" />
+    </mapping>
+
+	<!-- Cycling the voice range: whisper, local, yell.
+	     A SEPARATE action from push-to-talk, and separately bindable. One decides WHEN
+	     somebody talks, the other decides HOW FAR it carries, and combining them would
+	     mean changing range required talking.
+	     IK_F12 is a starting value like IK_V is. Only the press is accepted - cycling on
+	     release as well would advance twice per tap. -->
+	<mapping name="VoiceCycleRange_Button" type="Button" >
+		<button id="IK_F12" />
+    </mapping>
+
 	<mapping name="UIEnterChatMessage_Button" type="Button" >
 		<button id="IK_Semicolon" />
     </mapping>
@@ -125,7 +145,19 @@
 		<event name="BUTTON_RELEASED" />
 	</acceptedEvents>
 
+	<acceptedEvents action="VoicePushToTalk">
+		<event name="BUTTON_PRESSED" />
+		<event name="BUTTON_RELEASED" />
+	</acceptedEvents>
+
+	<!-- Press only. Accepting the release too would cycle twice for every tap. -->
+	<acceptedEvents action="VoiceCycleRange">
+		<event name="BUTTON_PRESSED" />
+	</acceptedEvents>
+
     <context name="UIBase" append="true">
+        <action name="VoicePushToTalk" map="VoicePushToTalk_Button" />
+        <action name="VoiceCycleRange" map="VoiceCycleRange_Button" />
         <action name="UIConnectToServer" map="UIConnectToServer_Button" />
         <action name="UIDisconnectFromServer" map="UIDisconnectFromServer_Button" />
         <action name="UIEnterChatMessage" map="UIEnterChatMessage_Button" />

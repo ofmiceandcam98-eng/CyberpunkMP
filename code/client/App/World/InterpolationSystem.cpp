@@ -2,6 +2,63 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
+#include <unordered_set>
+
+#include <App/Settings.h>
+#include <App/World/NetworkWorldSystem.h>
+
+extern std::filesystem::path GCyberpunkMpLocation;
+
+namespace
+{
+// Dev-only movement tracing for tools/netlab (-sync-trace). One NDJSON line per
+// received sample ("in") and per applied pose ("out"), into the mod's logs folder so it
+// ships to the server with the session logs - a far player's real network behaviour can
+// then be replayed through candidate algorithms without asking them for anything. The
+// "out" records are the trust anchor: replay.py --validate checks the lab's port of
+// THIS file against what THIS file actually rendered, on the same input.
+std::ofstream& SyncTraceFile()
+{
+    static std::ofstream file;
+    static bool opened = false;
+    if (!opened)
+    {
+        opened = true;
+        std::error_code ec;
+        std::filesystem::create_directories(GCyberpunkMpLocation / "logs", ec);
+        file.open(GCyberpunkMpLocation / "logs" /
+                  fmt::format("sync-trace-{}.ndjson", NetworkWorldSystem::GetTick()));
+    }
+    return file;
+}
+
+void SyncTraceIn(const uint64_t aId, const uint64_t aTick, const glm::vec3& aPos,
+                 const glm::vec3& aRot, const float aSpeed, const bool aIsVehicle,
+                 const uint32_t aWorldRevision, const int32_t aCellX, const int32_t aCellY,
+                 const uint32_t aSequence, const uint32_t aAuthorityEpoch,
+                 const bool aCorrection)
+{
+    if (!Settings::Get().syncTrace)
+        return;
+
+    SyncTraceFile() << fmt::format(
+        R"({{"k":"in","id":"{:x}","tick":{},"tr":{} ,"p":[{:.3f},{:.3f},{:.3f}],"r":[{:.4f},{:.4f},{:.4f}],"v":{:.3f},"veh":{},"wr":{},"cx":{},"cy":{},"seq":{},"epoch":{},"corr":{}}})",
+        aId, aTick, NetworkWorldSystem::GetTick(), aPos.x, aPos.y, aPos.z,
+        aRot.x, aRot.y, aRot.z, aSpeed, aIsVehicle ? 1 : 0, aWorldRevision,
+        aCellX, aCellY, aSequence, aAuthorityEpoch, aCorrection ? 1 : 0) << '\n';
+}
+
+void SyncTraceOut(const uint64_t aId, const int64_t aRenderTick, const glm::vec3& aPos)
+{
+    if (!Settings::Get().syncTrace)
+        return;
+
+    SyncTraceFile() << fmt::format(
+        R"({{"k":"out","id":"{:x}","rt":{},"p":[{:.3f},{:.3f},{:.3f}]}})",
+        aId, aRenderTick, aPos.x, aPos.y, aPos.z) << '\n';
+}
+} // namespace
 
 #include <App/Components/AttachedComponent.h>
 #include <App/Threading/ThreadService.h>
@@ -10,6 +67,7 @@
 #include "App/Network/NetworkService.h"
 #include "RED4ext/Scripting/Natives/Generated/game/EntityStubComponentPS.hpp"
 #include "RED4ext/Scripting/Natives/Generated/move/Component.hpp"
+#include "RED4ext/Scripting/Natives/Generated/ent/IPlacedComponent.hpp"
 #include "RED4ext/Scripting/Natives/Generated/ent/AnimationControllerComponent.hpp"
 #include <RED4ext/Scripting/Natives/Generated/vehicle/MoveSystem.hpp>
 #include "RED4ext/Scripting/Natives/Generated/vehicle/BaseObject.hpp"
@@ -19,6 +77,7 @@
 #include "Core/Hooking/HookingAgent.hpp"
 #include "NetworkWorldSystem.h"
 #include "App/Components/EntityComponent.h"
+#include "App/Components/DriverComponent.h"
 #include "Math/Math.h"
 #include "App/Components/InterpolationComponent.h"
 #include "App/Components/SpawningComponent.h"
@@ -34,9 +93,103 @@ inline void SetSimpleMovement(Red::vehicle::IMoveSystem* apMoveSystem, const Red
     reinterpret_cast<void (*)(Red::vehicle::IMoveSystem*, const Red::EntityID&, bool)>(*(uintptr_t*)(*(uintptr_t*)apMoveSystem + 0x1F0))(apMoveSystem, aEntityId, enabled);
 }
 
+// The driver path's movement primitive: write the placed transform directly - the
+// exact native Codeware's Entity.SetWorldTransform calls. No move controller, no
+// engine pipeline, works on any record type.
+static Core::RawFunc<1828854026UL, void (*)(Red::IPlacedComponent*, const Red::WorldTransform&)>
+    PlacedComponent_SetTransform;
+
+// Place a driver-puppet and advance its animation for this frame.
+static void DriveEntity(const DriverComponent& aDriver, const EntityComponent& aEntityComponent,
+                        const glm::vec3& aPosition, float aYaw, float aSpeed, uint32_t aLocomotion,
+                        float aFrameDeltaMs)
+{
+    // Vehicle-exit grace. The engine rebuilds the puppet's components over several
+    // frames after an unmount, and this path writing transforms plus re-binding into
+    // that rebuild is the prime suspect for every 2026-08-19 exit crash. Stand down
+    // completely until the deadline passes; the puppet holds still for the moment,
+    // which beats a dead game.
+    if (aDriver.SuppressUntil > std::chrono::steady_clock::now())
+        return;
+
+    const auto pSystem = Red::GetGameSystem<NetworkWorldSystem>();
+    const auto entityHandle = pSystem->GetEntity(aEntityComponent.Id);
+
+    // Every early-out logs ONCE per puppet: a frozen puppet must name its gate.
+    if (!entityHandle)
+    {
+        if (aDriver.Driver && !aDriver.Driver->GateLogged)
+        {
+            aDriver.Driver->GateLogged = true;
+            spdlog::warn("[Driver] puppet {:x} has no engine entity - cannot move it", aEntityComponent.Id.hash);
+        }
+        return;
+    }
+
+    if (!entityHandle->placedComponent)
+    {
+        if (aDriver.Driver && !aDriver.Driver->GateLogged)
+        {
+            aDriver.Driver->GateLogged = true;
+            spdlog::warn("[Driver] puppet {:x} has no placedComponent - transform writes have nowhere to go",
+                         aEntityComponent.Id.hash);
+        }
+        return;
+    }
+
+    Red::WorldTransform transform{};
+    transform.Position = Red::WorldPosition(Red::Vector4{aPosition.x, aPosition.y, aPosition.z, 0.f});
+    transform.Orientation = Game::ToRed(glm::quat(glm::vec3{0.f, 0.f, aYaw}));
+
+    PlacedComponent_SetTransform(entityHandle->placedComponent, transform);
+
+    if (aDriver.Driver)
+    {
+        if (!aDriver.Driver->FirstWriteLogged)
+        {
+            aDriver.Driver->FirstWriteLogged = true;
+            spdlog::info("[Driver] puppet {:x} first transform write -> ({:.1f}, {:.1f}, {:.1f})",
+                         aEntityComponent.Id.hash, aPosition.x, aPosition.y, aPosition.z);
+        }
+
+        // Mounts rebuild components; the driver re-binds itself (rate-limited) instead
+        // of dying the way the engine-attached controller did.
+        aDriver.Driver->EnsureAttached(entityHandle.GetPtr(), aEntityComponent.Id.hash);
+        aDriver.Driver->Tick(aFrameDeltaMs * 0.001f, aSpeed, aLocomotion);
+    }
+}
+
 void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComponent, InterpolationComponent& aInterpolation, float aSimulationDelay, Red::vehicle::IMoveSystem* apMoveSystem)
 {
-    const float tick = NetworkWorldSystem::GetTick() - aSimulationDelay;
+    // Render time, in the integer domain the ticks actually live in.
+    //
+    // THIS LINE USED TO BE `const float tick = GetTick() - aSimulationDelay;` AND IT WAS
+    // THE FREEZE.
+    //
+    // GetTick() returns milliseconds since the epoch as a uint64 - about 1.787e12. A
+    // 32-bit float carries 24 bits of mantissa, so at that magnitude the gap between
+    // consecutive representable values is 131072, or roughly 131 SECONDS. Converting the
+    // tick to float threw away everything below that. Three consequences, all silent:
+    //
+    //   1. Subtracting a 100ms simulation delay did nothing whatsoever - the result was
+    //      bit-identical to the input, so the interpolation buffer had no delay at all.
+    //   2. In the drain loop below, a sample 30ms old and the current render time rounded
+    //      to the SAME float, so `sample.Tick <= tick` was true for the whole buffer and
+    //      it emptied every single frame.
+    //   3. With the buffer always empty, the extrapolation branch computed
+    //      `ahead = tick - first.Tick` as exactly 0.0, hit its own `ahead <= 0` guard,
+    //      and returned without applying anything. Every frame. Forever.
+    //
+    // The remote puppet therefore stayed wherever it was last placed - its spawn point -
+    // while 30 packets a second arrived, the clocks agreed to within 20ms, and the
+    // appearance applied correctly. Everything looked healthy because everything WAS
+    // healthy except this arithmetic. Verified against real ticks out of a session log:
+    // float(1787286555346) and float(1787286555346 - 100) are the same number.
+    //
+    // The rule from here on: absolute ticks stay integer, and only DIFFERENCES - which
+    // are small - are allowed to become float.
+    const int64_t renderTick =
+        static_cast<int64_t>(NetworkWorldSystem::GetTick()) - static_cast<int64_t>(aSimulationDelay);
 
     // Advance the segment. Everything that is now behind render time becomes the anchor
     // we interpolate FROM; the first sample still ahead of it is what we interpolate TO.
@@ -46,7 +199,7 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
     // fraction covered per frame grew as the target got closer, so every 100ms segment
     // was a small acceleration followed by a jump to the next one.
     while (!aInterpolation.TimePoints.empty() &&
-           static_cast<float>(aInterpolation.TimePoints.front().Tick) <= tick)
+           static_cast<int64_t>(aInterpolation.TimePoints.front().Tick) <= renderTick)
     {
         aInterpolation.PreviousFrame = aInterpolation.TimePoints.front();
         aInterpolation.HasPrevious = true;
@@ -57,10 +210,48 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
     if (!aInterpolation.HasPrevious)
         return;
 
-    const auto pEntityStubSystem = Red::GetGameSystem<Red::game::IEntityStubSystem>();
-    const auto* pStub = pEntityStubSystem->FindStub(aEntityComponent.Id);
-    if (!pStub)
-        return;
+    // The stub gate predates driver puppets and only means anything on the legacy
+    // path - player-record entities may never get a stub at all, and this silently
+    // freezing them was indistinguishable from every other freeze. Driver puppets
+    // skip it; their own gates log.
+    //
+    // It now SAYS when it freezes something, which it never did before.
+    //
+    // On 19 Aug two players stood next to each other on foot and neither could see the
+    // other move, with 30 packets a second arriving, full appearance applied and the
+    // interpolation controller attached. This return was the obvious suspect: the only
+    // path producing exactly that and leaving no trace.
+    //
+    // It was not the cause. With the return removed, a puppet ran twelve seconds of
+    // interpolation and the warning below never fired once - so this gate was not being
+    // reached. The return is therefore back exactly as it was, and the warning stays,
+    // because a gate that freezes a puppet in silence is what made this cost an evening.
+    //
+    // Logged once per entity. This runs every frame for every remote player, so an
+    // unconditional line would be thousands a minute and would bury what it reveals.
+    if (!aEntity.has<DriverComponent>())
+    {
+        const auto pEntityStubSystem = Red::GetGameSystem<Red::game::IEntityStubSystem>();
+        const auto* pStub = pEntityStubSystem->FindStub(aEntityComponent.Id);
+
+        if (!pStub)
+        {
+            static std::unordered_set<uint32_t> reported;
+            if (reported.insert(aEntityComponent.Id.hash).second)
+            {
+                spdlog::warn("[Interpolation] no entity stub for puppet {:x} - FREEZING here",
+                             aEntityComponent.Id.hash);
+            }
+
+            // Behaviour restored to stock. Removing this return was a guess that the
+            // measurement did not support: on 19 Aug a puppet ran twelve seconds of
+            // interpolation with the return removed and the warning above never fired
+            // once, which means this gate was not what froze it. The warning stays,
+            // because the gate being silent is what made it a suspect for a whole
+            // evening in the first place.
+            return;
+        }
+    }
 
     if (aEntity.has<AttachedComponent>())
         return;
@@ -73,36 +264,119 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
     // that the guess is worse than standing still, so it stops.
     if (aInterpolation.TimePoints.empty())
     {
-        constexpr float kMaxExtrapolationMs = 250.f;
+        const float maxExtrapolationMs = aEntityComponent.IsVehicle ? 500.f : 250.f;
 
-        const float ahead = tick - static_cast<float>(first.Tick);
-        if (ahead <= 0.f || ahead > kMaxExtrapolationMs)
-            return;
-
-        if (aEntityComponent.IsVehicle || !aEntityComponent.Controller)
+        // A difference, so float is safe here - this is milliseconds, not epoch time.
+        const float ahead = static_cast<float>(renderTick - static_cast<int64_t>(first.Tick));
+        if (ahead <= 0.f || ahead > maxExtrapolationMs)
             return;
 
         // Velocity is metres per second and the tick is milliseconds.
         const glm::vec3 heading{-std::sin(first.Rotation.z), std::cos(first.Rotation.z), 0.f};
         const glm::vec3 guessed = first.Position + heading * (first.Velocity * ahead * 0.001f);
 
-        const auto pos = Red::Vector4{guessed.x, guessed.y, guessed.z, 0.f};
-        aEntityComponent.Controller->SetTransform(pos, first.Rotation.z, first.Velocity);
+        aInterpolation.LastRenderedPosition = guessed;
+        aInterpolation.HasLastRenderedPosition = true;
+        aInterpolation.WasExtrapolating = true;
+
+        SyncTraceOut(aEntity.id(), renderTick, guessed);
+
+        if (aEntityComponent.IsVehicle)
+        {
+            const auto pSystem = Red::GetGameSystem<NetworkWorldSystem>();
+            const auto vehicle = Red::Cast<Red::vehicle::BaseObject>(pSystem->GetEntity(aEntityComponent.Id));
+            if (vehicle)
+            {
+                auto transform = Red::WorldTransform();
+                transform.Position = Red::WorldPosition(Red::Vector4{guessed.x, guessed.y, guessed.z, 0.f});
+                transform.Orientation = Game::ToRed(glm::quat(first.Rotation));
+
+                static Core::RawFunc<2933986803UL, void (*)(Red::vehicle::BaseObject*, const Red::WorldTransform&, float)> ForceMoveTo;
+                const float frameDelta = (aInterpolation.LastRenderTick > 0)
+                                             ? static_cast<float>(std::max(
+                                                   renderTick - aInterpolation.LastRenderTick, INT64_C(0)))
+                                             : 16.f;
+                ForceMoveTo(vehicle, transform, frameDelta);
+                    aInterpolation.LastRenderTick = renderTick;
+            }
+        }
+        else if (const auto* pDriver = aEntity.get<DriverComponent>())
+        {
+            const float frameDelta = (aInterpolation.LastRenderTick > 0)
+                                         ? static_cast<float>(std::max(
+                                               renderTick - aInterpolation.LastRenderTick, INT64_C(0)))
+                                         : 16.f;
+            DriveEntity(*pDriver, aEntityComponent, guessed, first.Rotation.z, first.Velocity,
+                        first.Locomotion, frameDelta);
+            aInterpolation.LastRenderTick = renderTick;
+        }
+        else if (aEntityComponent.Controller)
+        {
+            const auto pos = Red::Vector4{guessed.x, guessed.y, guessed.z, 0.f};
+            aEntityComponent.Controller->SetTransform(pos, first.Rotation.z, first.Velocity, first.Locomotion);
+        }
         return;
     }
 
     const auto& second = aInterpolation.TimePoints.front();
 
     // Where render time sits between the two samples, 0..1.
+    // Both of these are differences between two ticks - tens of milliseconds - so they are
+    // safe in float. Subtracting in the integer domain FIRST is the whole point: taking
+    // float(second.Tick) - float(first.Tick) rounded both to the same value and produced a
+    // delta of zero, which pinned ratio at 0 and left every segment sitting on its first
+    // sample even when the buffer did have something to interpolate towards.
     auto ratio = 0.f;
-    const auto tickDelta = static_cast<float>(second.Tick) - static_cast<float>(first.Tick);
+    const auto tickDelta =
+        static_cast<float>(static_cast<int64_t>(second.Tick) - static_cast<int64_t>(first.Tick));
     if (tickDelta > 0.f)
     {
-        ratio = (tick - static_cast<float>(first.Tick)) / tickDelta;
+        ratio = static_cast<float>(renderTick - static_cast<int64_t>(first.Tick)) / tickDelta;
         ratio = std::clamp(ratio, 0.f, 1.f);
     }
 
-    const glm::vec3 position{Lerp(first.Position, second.Position, ratio)};
+    glm::vec3 position{Lerp(first.Position, second.Position, ratio)};
+
+    if (aInterpolation.WasExtrapolating &&
+        aInterpolation.HasLastRenderedPosition)
+    {
+        const int64_t recoveryMs = aEntityComponent.IsVehicle ? 150 : 300;
+
+        if (aInterpolation.RecoveryStartTick == 0)
+        {
+            aInterpolation.RecoveryFromPosition = aInterpolation.LastRenderedPosition;
+            aInterpolation.RecoveryStartTick = renderTick;
+        }
+
+        const auto recoveryElapsed = renderTick - aInterpolation.RecoveryStartTick;
+        const auto recoveryRatio = std::clamp(
+            static_cast<float>(recoveryElapsed) / static_cast<float>(recoveryMs), 0.f, 1.f);
+        position = Lerp(aInterpolation.RecoveryFromPosition, position, recoveryRatio);
+
+        if (recoveryRatio >= 1.f)
+        {
+            aInterpolation.WasExtrapolating = false;
+            aInterpolation.RecoveryStartTick = 0;
+        }
+    }
+
+    if (aInterpolation.RecoveryStartTick != 0 &&
+        aInterpolation.HasLastRenderedPosition)
+    {
+        const auto frameDelta = aInterpolation.LastRenderTick > 0
+                                    ? std::max(renderTick - aInterpolation.LastRenderTick, INT64_C(1))
+                                    : INT64_C(16);
+        const auto maxStep = std::max(0.25f, second.Velocity * static_cast<float>(frameDelta) * 0.001f * 3.f);
+        const auto correction = position - aInterpolation.LastRenderedPosition;
+        const auto correctionDistance = glm::length(correction);
+        if (correctionDistance > maxStep)
+            position = aInterpolation.LastRenderedPosition + correction * (maxStep / correctionDistance);
+    }
+
+    aInterpolation.LastRenderedPosition = position;
+    aInterpolation.HasLastRenderedPosition = true;
+
+    SyncTraceOut(aEntity.id(), renderTick, position);
 
     if (aEntityComponent.IsVehicle)
     {
@@ -141,8 +415,9 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
             // since the last network sample. PreviousFrame used to be rewritten every
             // frame so the two were the same number; now that it holds a real sample,
             // the frame delta has to be tracked on its own.
-            const float frameDelta = (aInterpolation.LastRenderTick > 0.f)
-                                         ? std::max(tick - aInterpolation.LastRenderTick, 0.f)
+            const float frameDelta = (aInterpolation.LastRenderTick > 0)
+                                         ? static_cast<float>(std::max(
+                                               renderTick - aInterpolation.LastRenderTick, INT64_C(0)))
                                          : 16.f;
 
             ForceMoveTo(vehicle, transform, frameDelta);
@@ -151,18 +426,31 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
     }
     else
     {
-        if (aEntityComponent.Controller)
-        {
-            const auto speed{Lerp(first.Velocity, second.Velocity, ratio)};
-            const auto deltaAngle{DeltaAngle(first.Rotation.z, second.Rotation.z, true) * ratio};
-            const auto direction = Mod(first.Rotation.z + deltaAngle, 2.f * static_cast<float>(Pi));
+        const auto speed{Lerp(first.Velocity, second.Velocity, ratio)};
+        const auto deltaAngle{DeltaAngle(first.Rotation.z, second.Rotation.z, true) * ratio};
+        const auto direction = Mod(first.Rotation.z + deltaAngle, 2.f * static_cast<float>(Pi));
 
+        if (const auto* pDriver = aEntity.get<DriverComponent>())
+        {
+            // Driver path FIRST - it outranks any controller a hook race may have
+            // attached before the suppressor registered this puppet as driver-owned.
+            const float frameDelta = (aInterpolation.LastRenderTick > 0)
+                                         ? static_cast<float>(std::max(
+                                               renderTick - aInterpolation.LastRenderTick, INT64_C(0)))
+                                         : 16.f;
+            // The band state comes from the sample AHEAD - it is where the mover is
+            // heading, and it is the fresher of the two.
+            DriveEntity(*pDriver, aEntityComponent, position, direction, speed, second.Locomotion, frameDelta);
+        }
+        else if (aEntityComponent.Controller)
+        {
+            // Legacy path: the engine-attached controller (NPC-record puppets).
             const auto pos = Red::Vector4{position.x, position.y, position.z, 0.f};
-            aEntityComponent.Controller->SetTransform(pos, direction, speed);
+            aEntityComponent.Controller->SetTransform(pos, direction, speed, second.Locomotion);
         }
     }
 
-    aInterpolation.LastRenderTick = tick;
+    aInterpolation.LastRenderTick = renderTick;
 }
 
 void InterpolationSystem::OnWorldAttached(RED4ext::world::RuntimeScene* aScene)
@@ -228,8 +516,82 @@ void InterpolationSystem::HandleNotifyEntityMove(const PacketEvent<server::Notif
     else
         rotation = {0.f, 0.f, aMessage.get_rotation()};
 
+    // Movement for an id we have no puppet for.
+    //
+    // The sixth silent return of the evening, and the last one on this path that could
+    // produce a frozen puppet while every log looks healthy: packets arrive at 30/s, the
+    // link is perfect, and every single one is dropped here because the id in the movement
+    // message does not match the id the puppet was spawned under.
+    //
+    // Logged once per unknown id rather than 30 times a second, with the ids listed, so a
+    // mismatch is legible rather than a wall.
     if (!entity)
+    {
+        static std::unordered_set<uint64_t> reportedUnknown;
+
+        if (reportedUnknown.insert(aMessage.get_id()).second)
+        {
+            spdlog::warn("[Interpolation] movement for id {} but no puppet is registered under it "
+                         "- this is a frozen remote player",
+                         aMessage.get_id());
+        }
+
         return;
+    }
+
+    // Tick 0 is not a timestamp - it means "this player has not moved yet".
+    //
+    // MovementComponent::Tick is uninitialised on the server and only ever assigned when a
+    // movement message arrives (Level.cpp). Between spawning and taking their first step, a
+    // player is therefore replicated with Tick = 0, and that sample reaches everybody who
+    // can see them.
+    //
+    // Downstream it is catastrophic rather than merely wrong. Our clock is milliseconds
+    // since the epoch - about 1.787e12 - so a zero tick is a sample roughly fifty-seven
+    // YEARS in the past. It anchors the interpolation buffer there, every subsequent real
+    // sample is newer by an amount no smoothing can absorb, and the puppet stays where it
+    // spawned. Kozzi's log shows exactly this: "their tick 0 ... DIFFERENT CLOCKS - this is
+    // the freeze" on the first sample, then "same clock - fine" on every one after, and a
+    // remote player who never appeared to move or to get into a car.
+    //
+    // Dropped rather than clamped. There is genuinely nothing to interpolate towards for
+    // somebody who has not moved - they are already drawn at their spawn point - and the
+    // first real sample arrives the moment they do.
+    if (aMessage.get_tick() == 0)
+        return;
+
+    // Is the sender's clock the same clock we interpolate against?
+    //
+    // This is the one difference between a real remote player and the test dummy that has
+    // never been eliminated. The dummy borrows the LOCAL player's tick, so its samples
+    // always land just ahead of render time - and it walks perfectly. A real player stamps
+    // packets with THEIR OWN SynchronizedClock.
+    //
+    // Both clocks track the server's, so in theory they agree within half a ping. If they
+    // do not - if one client's clock never synchronised, or drifted - every sample from
+    // that player is either permanently in the future (never played, puppet frozen at its
+    // spawn point) or permanently in the past (popped instantly, buffer always empty,
+    // puppet frozen at the last sample). Both look exactly like "remote players do not
+    // move", which is what has been chased all evening.
+    //
+    // Logged once per entity, with the numbers rather than a verdict, because a guess
+    // about which side is wrong is what has cost this the most time.
+    {
+        static std::unordered_set<uint64_t> reportedClocks;
+
+        if (reportedClocks.insert(aMessage.get_id()).second)
+        {
+            const auto ours = NetworkWorldSystem::GetTick();
+            const auto theirs = aMessage.get_tick();
+            const auto delta = static_cast<int64_t>(theirs) - static_cast<int64_t>(ours);
+
+            spdlog::info("[Clock] remote {} first sample: their tick {}, our tick {}, delta {}ms "
+                         "({})",
+                         aMessage.get_id(), theirs, ours, delta,
+                         std::abs(delta) < 1000 ? "same clock - fine"
+                                                : "DIFFERENT CLOCKS - this is the freeze");
+        }
+    }
 
     auto* pInterpolation = entity.get_mut<InterpolationComponent>();
 
@@ -246,6 +608,36 @@ void InterpolationSystem::HandleNotifyEntityMove(const PacketEvent<server::Notif
     if (!pInterpolation)
         return;
 
+    const auto& settings = Core::Container::Get<NetworkService>()->GetServerSettings();
+    const auto* pEntityComponent = entity.get<EntityComponent>();
+    const bool isVehicle = pEntityComponent && pEntityComponent->IsVehicle;
+    const auto cellSize = settings.get_cell_size();
+    const auto expectedCellX = cellSize
+                                   ? static_cast<int32_t>(std::floor(position.x / static_cast<float>(cellSize)))
+                                   : 0;
+    const auto expectedCellY = cellSize
+                                   ? static_cast<int32_t>(std::floor(position.y / static_cast<float>(cellSize)))
+                                   : 0;
+
+    if (settings.get_cell_size() == 0 ||
+        aMessage.get_world_revision() != 1 ||
+        aMessage.get_cell_x() != expectedCellX ||
+        aMessage.get_cell_y() != expectedCellY)
+    {
+        spdlog::warn("[Interpolation] dropped map-invalid snapshot for {}: revision {}, cell ({}, {}), expected ({}, {})",
+                     aMessage.get_id(), aMessage.get_world_revision(),
+                     aMessage.get_cell_x(), aMessage.get_cell_y(), expectedCellX, expectedCellY);
+        return;
+    }
+
+    if (pInterpolation->HasSequence &&
+        aMessage.get_sequence() <= pInterpolation->LastSequence)
+        return;
+
+    if (isVehicle && pInterpolation->HasAuthorityEpoch &&
+        aMessage.get_authority_epoch() < pInterpolation->LastAuthorityEpoch)
+        return;
+
     // Drop anything that arrives out of order. The buffer is usually non-empty so its
     // last sample is the newest thing we hold, but once it drains the newest thing we
     // hold is the anchor - and without that second check a late packet could reopen a
@@ -260,7 +652,28 @@ void InterpolationSystem::HandleNotifyEntityMove(const PacketEvent<server::Notif
         return;
     }
 
-    pInterpolation->TimePoints.push_back(InterpolationComponent::Timepoint{position, rotation, aMessage.get_speed(), aMessage.get_tick()});
+    pInterpolation->TimePoints.push_back(InterpolationComponent::Timepoint{
+        position, rotation, aMessage.get_speed(), aMessage.get_tick(),
+        aMessage.get_cell_x(), aMessage.get_cell_y(), aMessage.get_sequence(),
+        aMessage.get_authority_epoch(), aMessage.get_correction(),
+        aMessage.get_locomotion(), aMessage.get_upper_body()});
+    pInterpolation->LastSequence = aMessage.get_sequence();
+    pInterpolation->HasSequence = true;
+    if (isVehicle)
+    {
+        pInterpolation->LastAuthorityEpoch = aMessage.get_authority_epoch();
+        pInterpolation->HasAuthorityEpoch = true;
+    }
+
+    if (Settings::Get().syncTrace)
+    {
+        const auto* pEntityComponent = entity.get<EntityComponent>();
+        SyncTraceIn(aMessage.get_id(), aMessage.get_tick(), position, rotation,
+                    aMessage.get_speed(), pEntityComponent && pEntityComponent->IsVehicle,
+                    aMessage.get_world_revision(), aMessage.get_cell_x(), aMessage.get_cell_y(),
+                    aMessage.get_sequence(), aMessage.get_authority_epoch(),
+                    aMessage.get_correction());
+    }
 }
 
 static Core::RawFunc<4018412273UL, float (*)(Red::move::Component*, MultiMovementController*)> AttachController;
@@ -278,6 +691,27 @@ void HookIdleController_SetAnimation(Game::Controller* apController, AnimationDa
         // PuppetRegistry only touches the entity's 64-bit id.
         if (App::PuppetRegistry::Contains(pOwner->id.hash))
         {
+            // Driver puppets are moved and animated by the PuppetDriver from the main
+            // thread. This hook attaching its legacy controller to them OUTRANKED the
+            // driver (interpolation preferred a non-null Controller) and froze every
+            // driver puppet solid - the 2026-08-19 live failure. Total silence for
+            // them: no attach, and no vanilla idle writes either.
+            if (App::PuppetRegistry::IsDriver(pOwner->id.hash))
+                return;
+
+            // A vehicle exit rebuilds this puppet's components over the next several
+            // frames, and the engine hands it a fresh idle controller mid-teardown.
+            // Attaching ours into that window killed the observing client on
+            // 2026-08-20 (log ends 2s after the attach line below, 16s before the
+            // connection died). While the exit is being digested, the vanilla idle
+            // runs instead - engine code on an engine controller - and the multi
+            // controller re-attaches on the first frame after the grace lapses.
+            if (App::PuppetRegistry::InExitGrace(pOwner->id.hash))
+            {
+                RealIdleController_SetAnimation(apController, data);
+                return;
+            }
+
             if (apController->m_type == MultiMovementController::kMulti)
                 return;
 
@@ -299,9 +733,9 @@ void HookIdleController_SetAnimation(Game::Controller* apController, AnimationDa
             // vehicle mount, in exactly the window where mounts tear our controller off
             // and queue this re-attach. Attaching through the freed pointer was a
             // use-after-free with no log line: the observing client died seconds after
-            // a remote car materialized with its driver. Everything is re-resolved from
-            // the id once we are ON the main thread, where the entity cannot be rebuilt
-            // out from under us.
+            // a remote car materialized with its driver, twice, on the faster machine
+            // only. Everything is re-resolved from the id once we are ON the main
+            // thread, where the entity cannot be rebuilt out from under us.
             ThreadService::RunInMainThread([id = pOwner->id]
             {
                 const auto pSystem = Red::GetGameSystem<NetworkWorldSystem>();

@@ -1,0 +1,31 @@
+name: Netcode validation
+
+on:
+  pull_request:
+    paths:
+      - 'tools/netlab/**'
+      - 'code/client/App/World/**'
+      - 'code/protocol/**'
+  push:
+    branches:
+      - main
+      - feat/world-state
+    paths:
+      - 'tools/netlab/**'
+      - 'code/client/App/World/**'
+      - 'code/protocol/**'
+
+jobs:
+  synthetic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Run deterministic netcode gate
+        run: python tools/netlab/validate.py --json

@@ -9,6 +9,33 @@ message AuthenticationRequest {
     string token = 2;
     uint64 client_protocol = 3;
     uint64 server_protocol = 4;
+
+    // Which build this DLL actually is - the git commit baked in at compile time.
+    // The protocol hashes above say "same wire shape"; this says WHICH build, so a
+    // denial can finally name the stale side instead of "Invalid protocol version!".
+    string build_stamp = 5;
+
+    // What the launcher verified this installation against, passed through the game's
+    // launch arguments. Empty when the client was started without the launcher - the
+    // server decides what that means (during migration: nothing).
+    string manifest_version = 6;
+
+    // The launcher's attestation that every required component matched the manifest -
+    // 64 lowercase hex chars of SHA-256 over manifest-declared identities only (the
+    // canonical string is defined in docs/MANIFEST-ARCHITECTURE.md 7.2). An accident
+    // detector, not proof: a hostile client can echo it, a half-updated one cannot.
+    string install_digest = 7;
+
+    // Unmanaged things the launcher found, type-prefixed ("plugin:FlightControl",
+    // "archive:weather.archive", "script:foo.reds", "marker:cyber_engine_tweaks").
+    // Client-supplied and therefore advisory - it exists to stop accidents, never
+    // adversaries, and the server policy that reads it says so.
+    repeated string unmanaged = 8;
+
+    // Checked only when the server config sets one. Carried here rather than in a
+    // second round trip because the connection is refused before a player entity
+    // exists either way.
+    string password = 9;
 }
 
 message SpawnCharacterRequest {
@@ -32,6 +59,26 @@ message SpawnCharacterRequest {
 // Sent when the character creator closes, NOT on every spawn - the spawn message carries
 // an appearance too, but that one describes whoever the loaded save happens to contain.
 // This one is a deliberate "this is me", and it is the only one the server stores.
+message Attribute {
+    uint32 type = 1;
+    int32 value = 2;
+}
+
+message Perk {
+    uint32 type = 1;
+    int32 level = 2;
+}
+
+message Proficiency {
+    uint32 type = 1;
+    int32 level = 2;
+}
+
+message ItemStack {
+    uint64 id = 1;
+    uint32 quantity = 2;
+}
+
 message SaveCharacterRequest {
     // The game's own CharacterCustomizationState, serialised. The server stores it
     // opaquely and hands the same bytes back, so a game patch changing the format needs
@@ -44,7 +91,40 @@ message SaveCharacterRequest {
     // Kept out of the blob because the server needs it without parsing: it decides which
     // puppet record other clients spawn for this player.
     bool is_male = 3;
+
+    // What the character is carrying, so possessions belong to the server rather than to
+    // whatever save the player happened to load.
+    //
+    // Raw TweakDBIDs, like the equipment list above, for the same reason: the server has
+    // no need to know what an item IS in order to remember that you have it, and a server
+    // that understood item records would need updating every game patch.
+    repeated ItemStack inventory = 4;
+
+    // Eddies. A balance is a number - modelling it as a stack of one item is how you get
+    // somebody duplicating money by counting wrong.
+    int64 money = 5;
+
+    // Skills, street cred and level - all gamedataProficiencyType entries.
+    repeated Proficiency proficiencies = 6;
+
+    // The five attributes, and every perk bought.
+    repeated Attribute attributes = 8;
+    repeated Perk perks = 9;
+
+    // Owned vehicles, by the game's own vehicle name rather than a TweakDBID - see the
+    // note in CharacterRecord. EnablePlayerVehicle takes a string, and an id cannot be
+    // turned back into one on 2.31.
+    repeated string vehicles = 10;
+
+    // True when the save happened by itself - the ninety-second timer, or leaving.
+    //
+    // The server confirms a save in chat, which is right when somebody asked for one and
+    // is noise when nobody did. Without this the confirmation appeared every ninety
+    // seconds forever, burying actual chat under a message about something the player did
+    // not do and cannot stop.
+    bool automatic = 7;
 }
+
 
 message MoveEntityRequest {
     bool unreliable = 1000; // This is just a tag to indicate that this message is unreliable
@@ -62,6 +142,15 @@ message MoveEntityRequest {
     // grant; the server drops anything stale, silently - that race is expected, not an
     // attack. Entities that never change hands (player puppets) stay at zero.
     uint32 epoch = 7;
+
+    // What the sender's own game says they are DOING, not just where they are.
+    // gamePSMLocomotionStates (Default=0 Crouch=1 Sprint=2 Jump=5 Slide=10
+    // CrouchSprint=12 ...) and gamePSMUpperBodyStates (Aim=6). Measured speed lags
+    // and quantizes; these are read straight off the PlayerStateMachine blackboard,
+    // so remote puppets can be told to sprint/crouch/aim the way the sender actually
+    // is. Zero (Default) when unavailable - e.g. seated in a vehicle.
+    uint32 locomotion = 8;
+    uint32 upper_body = 9;
 }
 
 message EnterVehicleRequest {
@@ -102,6 +191,254 @@ message RpcCall {
 	bytes arguments = 2;
 }
 
+// "What I look like right now" - sent while already in the world.
+//
+// SaveCharacterRequest is the wrong message for this. It means "this is who this character
+// IS": it carries possessions, money and progression, it is what the character creator
+// closing produces, and the server treats it as a full identity write. Changing a jacket is
+// none of those things, and routing it through that path would mean a wardrobe visit
+// rewriting somebody's inventory record.
+//
+// Appearance only ever reached other players at spawn - NotifyCharacterLoad and nothing
+// else - so a player who changed clothes stayed dressed the way they arrived until everyone
+// watching rejoined. This is the message that was missing.
+message UpdateAppearanceRequest {
+    // Equipped items, as raw TweakDBIDs. Same reasoning as everywhere else: the server does
+    // not need to know what a garment IS in order to relay which ones somebody has on.
+    repeated uint64 equipment = 1;
+
+    // The customization blob, when it changed too - a ripperdoc visit rather than a
+    // wardrobe one. Optional, because most updates are clothing alone and the blob is 9KB.
+    bytes ccstate = 2;
+}
+
+// Delete this account's character. Permanently.
+//
+// NO ID FIELD, deliberately. The server derives whose character this is from the
+// authenticated connection, so "delete mine" cannot be spelled "delete theirs" - the one
+// request where getting that wrong is unrecoverable rather than merely wrong.
+//
+// The confirmation belongs on the client, in front of the person losing the character. By
+// the time this message exists they have already answered it.
+message DeleteCharacterRequest {
+}
+
+// "I want to run this quickhack on this person."
+//
+// AUTHORITATIVE, unlike QuickhackUploadRequest which is presentation. This one asks; the
+// server decides. Note what it does NOT contain: no damage, no RAM cost, no duration.
+// Naming those would be the client deciding them, and a client that can say "Overheat does
+// 999999" has already won.
+//
+// The server looks up what the named hack costs and does, checks the player can afford it
+// and is off cooldown, deducts the RAM itself, and only then produces a DamageResult. The
+// client's own game will have played the whole animation locally either way - that is
+// prediction, and it is fine, because none of it touched anybody's health.
+message QuickhackRequest {
+    uint64 target_id = 1;
+
+    // TweakDBID of the quickhack. The only thing about it the client gets to choose.
+    uint64 quickhack_id = 2;
+
+    // What the game charged for it.
+    //
+    // Reported rather than decided here, and that is a deliberate limit rather than a gap.
+    // RAM cost is not a stored number: ScriptableDeviceAction.GetCost() computes it per use
+    // via RPGManager.CalculateStatModifiers, against the attacker's deck and perks, the
+    // target, hack category, distance and overclock state. Two players pay different
+    // amounts for the same hack, so no table the server could hold would be correct.
+    //
+    // The server owns the POOL and bounds this figure; it does not set the price. Exactly
+    // the arrangement ammunition uses - the server knows how many rounds you have, the game
+    // decides how fast the weapon fires.
+    float ram_cost = 3;
+
+    uint32 sequence = 4;
+}
+
+// A quickhack is being uploaded to somebody, or has finished.
+//
+// The part everyone WATCHING needs. A hack currently happens in silence: the attacker sees
+// their upload bar, and to everybody else - the person being hacked included - nothing
+// occurs until the effect lands. That removes the one window in which being hacked can be
+// noticed and reacted to, which on a roleplay server is most of the point.
+//
+// Cyberpunk already has the presentation for it. ScriptedPuppet.OnUploadProgressStateChanged
+// applies AIQuickHackStatusEffect.BeingHacked on STARTED and removes it on COMPLETED, which
+// is what draws the "being hacked" state. Relaying the transition lets every client run the
+// game's own visual rather than inventing one.
+message QuickhackUploadRequest {
+    uint64 target_id = 1;
+
+    // 0 started, 1 completed. The same two states EUploadProgramState has - there is no
+    // third, and an "interrupted" that the game does not model would be a lie.
+    uint32 state = 2;
+
+    // Which quickhack, for the log and for anything that later wants to show WHAT is being
+    // uploaded rather than merely that something is.
+    uint64 quickhack_id = 3;
+
+    // How long the upload takes, so a receiver can size a progress bar rather than guess.
+    float duration = 4;
+
+    uint32 sequence = 5;
+}
+
+// A quickhack landed a status effect on somebody.
+//
+// SEPARATE FROM DAMAGE, because they arrive by different routes. A quickhack's damage runs
+// through Cyberpunk's ordinary hit pipeline and is already reported by the hit hook - an
+// Overheat burns health through gameHitEvent like anything else. What does NOT travel is
+// the EFFECT: blindness, a weapon glitch, crippled movement. Those are applied to the
+// puppet on the attacker's machine, and the person actually being hacked never learns of
+// them.
+//
+// This is the message that tells them. The victim's own game then applies the effect to
+// their real player, which is the only way it can affect anything - a status effect on a
+// puppet is a status effect on a puppet.
+//
+// The attacker comes from the connection, like every other combat message here.
+message StatusEffectRequest {
+    // Whose puppet caught it.
+    uint64 target_id = 1;
+
+    // TweakDBID of the StatusEffect record. Sent as the game's own id rather than a name
+    // we invent, so the receiver applies exactly what was applied here.
+    uint64 effect_id = 2;
+
+    uint32 stacks = 3;
+
+    // Which quickhack caused it, when one did. Zero otherwise - a status effect is not
+    // always a quickhack, and pretending it is would lie in the log.
+    uint64 source_id = 4;
+
+    uint32 sequence = 5;
+}
+
+// A weapon did something worth showing other people.
+//
+// Events, not state. A magazine is not replicated as a number that ticks down thirty times
+// a second - "fired" is sent once and every receiver decrements its own copy, which is both
+// smaller and how the receiving client knows to play a muzzle flash. State replication
+// would tell them the number changed and leave them guessing why.
+//
+// Whose weapon this is comes from the CONNECTION, like every other combat message here.
+message WeaponEventRequest {
+    // 0 equip, 1 unequip, 2 fire, 3 reload start, 4 reload complete, 5 switch start,
+    // 6 switch complete, 7 melee swing, 8 throw.
+    //
+    // One message rather than eight, because every one of them carries the same "who, which
+    // weapon, when" and differs only in what the receiver draws.
+    uint32 kind = 1;
+
+    // TweakDB id of the weapon record.
+    uint64 weapon_id = 2;
+
+    // What the client believes it has left AFTER this event. A claim, like reported_damage:
+    // the server keeps its own count and corrects with NotifyWeaponState when they diverge.
+    uint32 magazine_ammo = 3;
+    uint32 reserve_ammo = 4;
+
+    // Where the shot came from and where it went. Only meaningful for fire and throw; a
+    // reload does not have a direction, and sending zeroes for one is honest.
+    common.Vector3 position = 5;
+    common.Vector3 direction = 6;
+
+    // Rises per attacker, same rejection rule as combat events.
+    uint32 sequence = 7;
+    uint64 client_tick = 8;
+}
+
+// Something happened that should hurt somebody.
+//
+// THE ATTACKER IS NOT IN THIS MESSAGE, deliberately, exactly as UpdateAppearanceRequest
+// has no id field. The authenticated connection decides who is attacking, so "I shot them"
+// cannot be spelled "they shot them". Impersonation is not something a server should have
+// to detect - it should be unsayable.
+//
+// reported_damage is a CLAIM, not a result. The client is the only thing that can see what
+// the local engine calculated, so it is worth sending; the server is free to clamp it,
+// recompute it, or refuse it outright. Nothing here is applied to anybody's health until
+// the server says so in NotifyDamageResult.
+//
+// One message for every kind of attack. A bullet, a katana and an Overheat all arrive
+// here, because a combat system with three parallel pipelines drifts into three different
+// answers to the same question - see the brief's own note about not building
+// PlayerCombatSystem and NPCCombatSystem separately.
+message CombatEventRequest {
+    // Ours, so the result can be matched back to the event that caused it. Client-scoped;
+    // the server pairs it with the connection to make it unique.
+    uint64 event_id = 1;
+
+    // Server entity id of whoever is being hit. A puppet, which is what players AND
+    // server-declared NPCs both are - one target space, per the brief's Combatant idea.
+    uint64 target_id = 2;
+
+    // 0 weapon, 1 melee, 2 quickhack, 3 grenade, 4 vehicle, 5 environment.
+    uint32 source_type = 3;
+
+    // 0 ranged, 1 melee, 2 quickhack, 3 explosion, 4 status effect.
+    uint32 attack_type = 4;
+
+    // TweakDB id of the weapon or the quickhack - whichever applies. Zero when neither
+    // does, rather than a second field nobody fills in.
+    uint64 source_id = 5;
+
+    // gamedataDamageType: physical, thermal, chemical, electrical.
+    uint32 damage_type = 6;
+
+    // Which part was hit, for the reaction the receiver plays.
+    uint32 hit_zone = 7;
+
+    common.Vector3 hit_position = 8;
+
+    // Attacker to target. Enough for the receiving client to pick a front/left/back
+    // reaction without shipping animation internals.
+    common.Vector3 hit_direction = 9;
+
+    // What the local engine calculated, before the server has an opinion.
+    float reported_damage = 10;
+
+    bool critical = 11;
+    bool headshot = 12;
+
+    // The client's own clock, so the server can reject events that are stale or
+    // impossible. Same clock movement is stamped with.
+    uint64 client_tick = 13;
+
+    // Rises per attacker. Duplicate or out-of-order events are dropped rather than
+    // applied twice - the difference between a burst and a replayed packet.
+    uint32 sequence = 14;
+}
+
+// One encoded slice of somebody talking.
+//
+// Opus at 48kHz mono in 20ms frames - the codec's own default, and small enough that a
+// dropped frame is inaudible rather than a gap. There is no "start talking" or "stop
+// talking" message: a frame arriving IS the transmission, and silence is simply the
+// absence of frames. That removes the failure everybody has met in some other game, where
+// a lost stop-message leaves a microphone open.
+//
+// Unreliable channel. A voice frame that arrives late is worse than one that never
+// arrives, so none of them are worth retransmitting.
+message VoiceFrameRequest {
+    bool unreliable = 1000; // This is just a tag to indicate that this message is unreliable
+    bytes data = 1;
+
+    // Wraps deliberately at 16 bits. Only used to spot gaps and to discard frames that
+    // arrive out of order, both of which are decisions about neighbours, never about
+    // absolute position.
+    uint32 sequence = 2;
+
+    // How far this should carry: 0 whisper, 1 local, 2 yell. Sent per FRAME rather than
+    // held as connection state, so changing range takes effect on the next frame and a
+    // lost range-change cannot leave somebody quietly broadcasting across the district.
+    //
+    // The SERVER decides what each value means in metres and who is close enough. A client
+    // saying "yell" is asking, not telling.
+    uint32 range = 3;
+}
+
 message Protocol {
     oneof content {
         AuthenticationRequest authentication_request = 1;
@@ -113,5 +450,13 @@ message Protocol {
         ExitVehicleRequest exit_vehicle_request = 7;
         RespawnRequest respawn_request = 8;
         SaveCharacterRequest save_character_request = 9;
+        UpdateAppearanceRequest update_appearance_request = 10;
+        DeleteCharacterRequest delete_character_request = 11;
+        VoiceFrameRequest voice_frame_request = 12;
+        CombatEventRequest combat_event_request = 13;
+        WeaponEventRequest weapon_event_request = 14;
+        StatusEffectRequest status_effect_request = 15;
+        QuickhackUploadRequest quickhack_upload_request = 16;
+        QuickhackRequest quickhack_request = 17;
     }
 }

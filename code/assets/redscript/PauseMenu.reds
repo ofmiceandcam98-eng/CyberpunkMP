@@ -78,6 +78,44 @@ protected func AddMenuItem(label: script_ref<String>, spawnEvent: CName) -> Void
     wrappedMethod(label, spawnEvent);
 }
 
+// Quitting saves first.
+//
+// Disconnect() saves the character and then closes the socket - but it was reachable from
+// exactly one place, the mod's own disconnect button. Anybody who left through the pause
+// menu instead, which is how people actually leave a game, never touched it. Their session
+// fell back to the ninety-second autosave timer, so up to ninety seconds of shopping,
+// looting and eddies could be gone on the next join - and it looks precisely like the
+// server eating what you earned.
+//
+// Both exits count. EXIT TO MAIN MENU ends the session as completely as EXIT GAME does:
+// the world is torn down either way and the server is left holding a puppet for somebody
+// who has gone.
+//
+// The action names come from the game's own source, cyberpunk\UI\fullscreen\ingame\
+// pauseMenu.script - PauseMenuAction.ExitGame and .ExitToMainMenu, dispatched from
+// OnMenuItemActivated at line 189. Saving BEFORE wrappedMethod, because the original call
+// is what tears the session down; afterwards there is nothing left to send.
+//
+// Not covered, deliberately: Alt-F4 and killing the process. Nothing script-side runs on
+// those, which is exactly why the ninety-second timer exists as well as this.
+@wrapMethod(PauseMenuGameController)
+protected cb func OnMenuItemActivated(index: Int32, target: ref<ListItemController>) -> Bool {
+    let system = GameInstance.GetNetworkWorldSystem();
+
+    if IsDefined(system) && system.IsConnected() {
+        let data = target.GetData() as PauseMenuListItemData;
+
+        if IsDefined(data)
+            && (Equals(data.action, PauseMenuAction.ExitGame)
+                || Equals(data.action, PauseMenuAction.ExitToMainMenu)) {
+            FTLog(s"[PauseMenu] leaving the server - saving before exit");
+            system.Disconnect();
+        }
+    }
+
+    return wrappedMethod(index, target);
+}
+
 // REGULAR START is removed from the new-game screen.
 //
 // The first attempt at this filtered menu-item names on gameuiMenuItemListGameController,
