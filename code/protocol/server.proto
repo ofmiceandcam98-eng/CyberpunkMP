@@ -190,6 +190,12 @@ message NotifyCharacterLoad {
     // TweakDB record to build them from - a specific person, not a player mannequin.
     // Absent for players, whose record is derived from their appearance data.
     string puppet_record = 8;
+    uint32 world_revision = 10;
+    sint32 cell_x = 11;
+    sint32 cell_y = 12;
+    uint32 sequence = 13;
+    uint32 authority_epoch = 14;
+    bool correction = 15;
 }
 
 message NotifyVehicleLoad {
@@ -197,6 +203,12 @@ message NotifyVehicleLoad {
     common.Vector3 position = 2;
     float rotation = 3;
     uint64 tweak_id = 4;
+    uint32 world_revision = 5;
+    sint32 cell_x = 6;
+    sint32 cell_y = 7;
+    uint32 sequence = 8;
+    uint32 authority_epoch = 9;
+    bool correction = 10;
 }
 
 // DEPRECATED - subsumed by NotifyAuthorityAssigned. Never sent any more; kept so the

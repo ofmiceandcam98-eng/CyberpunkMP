@@ -264,6 +264,20 @@ bool VehicleSystem::HandleVehicleLoadMessage(const PacketEvent<server::NotifyVeh
     spdlog::info("[VehicleSystem] HandleVehicleLoadMessage");
 
     const auto worldSystem = Red::GetGameSystem<NetworkWorldSystem>();
+    const auto& settings = Core::Container::Get<NetworkService>()->GetServerSettings();
+    const auto cellSize = settings.get_cell_size();
+    const auto expectedCellX = cellSize
+                                   ? static_cast<int32_t>(std::floor(aMessage.get_position().get_x() / static_cast<float>(cellSize)))
+                                   : 0;
+    const auto expectedCellY = cellSize
+                                   ? static_cast<int32_t>(std::floor(aMessage.get_position().get_y() / static_cast<float>(cellSize)))
+                                   : 0;
+    if (cellSize == 0 || aMessage.get_world_revision() != 1 ||
+        aMessage.get_cell_x() != expectedCellX || aMessage.get_cell_y() != expectedCellY)
+    {
+        spdlog::warn("[VehicleSystem] dropped map-invalid vehicle load {}", aMessage.get_id());
+        return false;
+    }
 
     // One server vehicle, one local copy.
     //
@@ -309,7 +323,8 @@ bool VehicleSystem::HandleVehicleLoadMessage(const PacketEvent<server::NotifyVeh
         return false;
 
     // spdlog::info("[VehicleSystem] * Spawned: {}, {}", aMessage.get_id(), id.hash);
-    worldSystem->make_alive(aMessage.get_id()).emplace<SpawningComponent>(id);
+    worldSystem->make_alive(aMessage.get_id()).emplace<SpawningComponent>(id, nullptr,
+                                                                            aMessage.get_authority_epoch());
 
     return true;
 }

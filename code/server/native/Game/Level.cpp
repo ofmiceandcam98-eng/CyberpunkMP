@@ -2161,6 +2161,14 @@ server::NotifyCharacterLoad Level::Serialize(flecs::entity aEntity) noexcept
 
         message.set_position(pos);
         message.set_rotation(pMovementComponent->Rotation.z);
+        const auto cell = ToCell(pMovementComponent->Position);
+        message.set_world_revision(1);
+        message.set_cell_x(cell.x);
+        message.set_cell_y(cell.y);
+        message.set_sequence(pMovementComponent->Sequence);
+
+        if (const auto* pAuthority = aEntity.get<AuthorityComponent>())
+            message.set_authority_epoch(pAuthority->Epoch);
     }
 
     if (auto* pCharacterComponent = aEntity.get<CharacterComponent>())

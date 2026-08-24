@@ -1664,6 +1664,21 @@ void NetworkWorldSystem::HandleCharacterLoad(const PacketEvent<server::NotifyCha
     auto& pos = aMessage.get_position();
     auto& rot = aMessage.get_rotation();
 
+    const auto& settings = Core::Container::Get<NetworkService>()->GetServerSettings();
+    const auto cellSize = settings.get_cell_size();
+    const auto expectedCellX = cellSize
+                                   ? static_cast<int32_t>(std::floor(pos.get_x() / static_cast<float>(cellSize)))
+                                   : 0;
+    const auto expectedCellY = cellSize
+                                   ? static_cast<int32_t>(std::floor(pos.get_y() / static_cast<float>(cellSize)))
+                                   : 0;
+    if (cellSize == 0 || aMessage.get_world_revision() != 1 ||
+        aMessage.get_cell_x() != expectedCellX || aMessage.get_cell_y() != expectedCellY)
+    {
+        spdlog::warn("[World] dropped map-invalid character load {}", aMessage.get_id());
+        return;
+    }
+
     const Red::Vector4 position{pos.get_x(), pos.get_y(), pos.get_z(), 1.f};
     const auto eulerAngles = glm::vec3(0.f, 0.f, rot);
     const auto quat = glm::quat(eulerAngles);
