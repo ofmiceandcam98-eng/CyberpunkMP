@@ -206,7 +206,20 @@ void NetworkService::HandleAuthentication(const PacketEvent<server::Authenticati
         return;
     }
 
-    m_settings = aResponse.get_settings();
+    const auto& settings = aResponse.get_settings();
+    if (settings.get_world_id() != "night-city" ||
+        settings.get_coordinate_version() != 1 ||
+        settings.get_cell_size() != 60000 ||
+        settings.get_interest_radius() != 3)
+    {
+        spdlog::error("Authentication failed: incompatible world contract (world '{}', coordinate {}, cell {}, radius {})",
+                      settings.get_world_id(), settings.get_coordinate_version(),
+                      settings.get_cell_size(), settings.get_interest_radius());
+        Close();
+        return;
+    }
+
+    m_settings = settings;
 
     // What the SERVER says this account is playing, kept before anything else runs.
     //
