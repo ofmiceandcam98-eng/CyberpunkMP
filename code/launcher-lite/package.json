@@ -1,15 +1,17 @@
 {
   "name": "nightcity-launcher",
   "productName": "Night City Online",
-  "version": "0.3.108",
+  "version": "0.3.110",
   "description": "Lightweight launcher with Discord login verification",
   "main": "main.js",
   "type": "module",
   "private": true,
+  "repository": "https://github.com/ofmiceandcam98-eng/CyberpunkMP",
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
     "dist": "electron-builder --win --publish never",
+    "dist:release": "electron-builder --win --publish always",
     "pack": "electron-builder --win --dir"
   },
   "devDependencies": {
