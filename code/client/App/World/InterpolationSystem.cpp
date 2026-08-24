@@ -264,14 +264,11 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
     // that the guess is worse than standing still, so it stops.
     if (aInterpolation.TimePoints.empty())
     {
-        constexpr float kMaxExtrapolationMs = 250.f;
+        const float maxExtrapolationMs = aEntityComponent.IsVehicle ? 500.f : 250.f;
 
         // A difference, so float is safe here - this is milliseconds, not epoch time.
         const float ahead = static_cast<float>(renderTick - static_cast<int64_t>(first.Tick));
-        if (ahead <= 0.f || ahead > kMaxExtrapolationMs)
-            return;
-
-        if (aEntityComponent.IsVehicle)
+        if (ahead <= 0.f || ahead > maxExtrapolationMs)
             return;
 
         // Velocity is metres per second and the tick is milliseconds.
@@ -284,7 +281,26 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
 
         SyncTraceOut(aEntity.id(), renderTick, guessed);
 
-        if (const auto* pDriver = aEntity.get<DriverComponent>())
+        if (aEntityComponent.IsVehicle)
+        {
+            const auto pSystem = Red::GetGameSystem<NetworkWorldSystem>();
+            const auto vehicle = Red::Cast<Red::vehicle::BaseObject>(pSystem->GetEntity(aEntityComponent.Id));
+            if (vehicle)
+            {
+                auto transform = Red::WorldTransform();
+                transform.Position = Red::WorldPosition(Red::Vector4{guessed.x, guessed.y, guessed.z, 0.f});
+                transform.Orientation = Game::ToRed(glm::quat(first.Rotation));
+
+                static Core::RawFunc<2933986803UL, void (*)(Red::vehicle::BaseObject*, const Red::WorldTransform&, float)> ForceMoveTo;
+                const float frameDelta = (aInterpolation.LastRenderTick > 0)
+                                             ? static_cast<float>(std::max(
+                                                   renderTick - aInterpolation.LastRenderTick, INT64_C(0)))
+                                             : 16.f;
+                ForceMoveTo(vehicle, transform, frameDelta);
+                    aInterpolation.LastRenderTick = renderTick;
+            }
+        }
+        else if (const auto* pDriver = aEntity.get<DriverComponent>())
         {
             const float frameDelta = (aInterpolation.LastRenderTick > 0)
                                          ? static_cast<float>(std::max(
@@ -321,10 +337,10 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
 
     glm::vec3 position{Lerp(first.Position, second.Position, ratio)};
 
-    if (!aEntityComponent.IsVehicle && aInterpolation.WasExtrapolating &&
+    if (aInterpolation.WasExtrapolating &&
         aInterpolation.HasLastRenderedPosition)
     {
-        constexpr int64_t kRecoveryMs = 300;
+        const int64_t recoveryMs = aEntityComponent.IsVehicle ? 150 : 300;
 
         if (aInterpolation.RecoveryStartTick == 0)
         {
@@ -334,7 +350,7 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
 
         const auto recoveryElapsed = renderTick - aInterpolation.RecoveryStartTick;
         const auto recoveryRatio = std::clamp(
-            static_cast<float>(recoveryElapsed) / static_cast<float>(kRecoveryMs), 0.f, 1.f);
+            static_cast<float>(recoveryElapsed) / static_cast<float>(recoveryMs), 0.f, 1.f);
         position = Lerp(aInterpolation.RecoveryFromPosition, position, recoveryRatio);
 
         if (recoveryRatio >= 1.f)
@@ -344,7 +360,7 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
         }
     }
 
-    if (!aEntityComponent.IsVehicle && aInterpolation.RecoveryStartTick != 0 &&
+    if (aInterpolation.RecoveryStartTick != 0 &&
         aInterpolation.HasLastRenderedPosition)
     {
         const auto frameDelta = aInterpolation.LastRenderTick > 0
