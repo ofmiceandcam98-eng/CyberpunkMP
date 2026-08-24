@@ -57,6 +57,12 @@ def check(results):
         if row["err_p95"] > 1.0:
             failures.append(f"{profile_name}/player baseline err_p95={row['err_p95']:.3f}m (limit 1.0m)")
 
+        recovery = results[profile_name]["player"]["player_recovery"]
+        if recovery["pops"] != 0:
+            failures.append(f"{profile_name}/player player_recovery pops={recovery['pops']} (expected 0)")
+        if recovery["err_p95"] > 1.0:
+            failures.append(f"{profile_name}/player player_recovery err_p95={recovery['err_p95']:.3f}m (limit 1.0m)")
+
     for profile_name in PROFILES_TO_CHECK:
         row = results[profile_name]["vehicle"]["vehicle_dr"]
         if row["pops"] != 0:

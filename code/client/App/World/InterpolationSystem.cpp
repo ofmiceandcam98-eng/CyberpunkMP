@@ -278,6 +278,10 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
         const glm::vec3 heading{-std::sin(first.Rotation.z), std::cos(first.Rotation.z), 0.f};
         const glm::vec3 guessed = first.Position + heading * (first.Velocity * ahead * 0.001f);
 
+        aInterpolation.LastRenderedPosition = guessed;
+        aInterpolation.HasLastRenderedPosition = true;
+        aInterpolation.WasExtrapolating = true;
+
         SyncTraceOut(aEntity.id(), renderTick, guessed);
 
         if (const auto* pDriver = aEntity.get<DriverComponent>())
@@ -315,7 +319,46 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
         ratio = std::clamp(ratio, 0.f, 1.f);
     }
 
-    const glm::vec3 position{Lerp(first.Position, second.Position, ratio)};
+    glm::vec3 position{Lerp(first.Position, second.Position, ratio)};
+
+    if (!aEntityComponent.IsVehicle && aInterpolation.WasExtrapolating &&
+        aInterpolation.HasLastRenderedPosition)
+    {
+        constexpr int64_t kRecoveryMs = 300;
+
+        if (aInterpolation.RecoveryStartTick == 0)
+        {
+            aInterpolation.RecoveryFromPosition = aInterpolation.LastRenderedPosition;
+            aInterpolation.RecoveryStartTick = renderTick;
+        }
+
+        const auto recoveryElapsed = renderTick - aInterpolation.RecoveryStartTick;
+        const auto recoveryRatio = std::clamp(
+            static_cast<float>(recoveryElapsed) / static_cast<float>(kRecoveryMs), 0.f, 1.f);
+        position = Lerp(aInterpolation.RecoveryFromPosition, position, recoveryRatio);
+
+        if (recoveryRatio >= 1.f)
+        {
+            aInterpolation.WasExtrapolating = false;
+            aInterpolation.RecoveryStartTick = 0;
+        }
+    }
+
+    if (!aEntityComponent.IsVehicle && aInterpolation.RecoveryStartTick != 0 &&
+        aInterpolation.HasLastRenderedPosition)
+    {
+        const auto frameDelta = aInterpolation.LastRenderTick > 0
+                                    ? std::max(renderTick - aInterpolation.LastRenderTick, INT64_C(1))
+                                    : INT64_C(16);
+        const auto maxStep = std::max(0.25f, second.Velocity * static_cast<float>(frameDelta) * 0.001f * 3.f);
+        const auto correction = position - aInterpolation.LastRenderedPosition;
+        const auto correctionDistance = glm::length(correction);
+        if (correctionDistance > maxStep)
+            position = aInterpolation.LastRenderedPosition + correction * (maxStep / correctionDistance);
+    }
+
+    aInterpolation.LastRenderedPosition = position;
+    aInterpolation.HasLastRenderedPosition = true;
 
     SyncTraceOut(aEntity.id(), renderTick, position);
 

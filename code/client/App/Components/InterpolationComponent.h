@@ -48,4 +48,12 @@ struct InterpolationComponent
     uint32_t LastAuthorityEpoch{0};
     bool HasSequence{false};
     bool HasAuthorityEpoch{false};
+
+    // Recovery state for player dead reckoning. A late authoritative sample should
+    // correct the guess over a short window instead of lurching to the wire position.
+    glm::vec3 LastRenderedPosition{};
+    glm::vec3 RecoveryFromPosition{};
+    int64_t RecoveryStartTick{0};
+    bool HasLastRenderedPosition{false};
+    bool WasExtrapolating{false};
 };

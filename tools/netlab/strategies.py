@@ -199,4 +199,69 @@ class VehicleDR(Baseline):
         return target
 
 
-ALL = [Baseline, AdaptiveDelay, Hermite, VehicleDR]
+class PlayerRecovery(Baseline):
+    """Player dead reckoning with a short blend back to the authoritative path."""
+    name = "player_recovery"
+    MAX_EXTRAP_MS = 250.0
+    BLEND_MS = 300.0
+
+    def __init__(self, kind, update_rate=30):
+        super().__init__(kind, update_rate)
+        self.last_out = None
+        self.blend_from = None
+        self.blend_start = None
+        self.was_guessing = False
+
+    def render(self, now):
+        if self.kind != "player":
+            return super().render(now)
+
+        render_tick = int(now) - int(self.delay)
+        while self.buf and int(self.buf[0]["tick"]) <= render_tick:
+            self.prev = self.buf.popleft()
+        if self.prev is None:
+            return None
+
+        first = self.prev
+        if not self.buf:
+            ahead = float(render_tick - int(first["tick"]))
+            if 0.0 < ahead <= self.MAX_EXTRAP_MS:
+                yaw = first["r"][2]
+                heading = (-math.sin(yaw), math.cos(yaw), 0.0)
+                target = [first["p"][i] + heading[i] * first["v"] * ahead * 0.001 for i in range(3)]
+                self.was_guessing = True
+            else:
+                return self.last_out
+            self.last_out = list(target)
+            return target
+
+        second = self.buf[0]
+        td = float(int(second["tick"]) - int(first["tick"]))
+        ratio = max(0.0, min(1.0, (render_tick - int(first["tick"])) / td)) if td > 0 else 0.0
+        target = _lerp(first["p"], second["p"], ratio)
+
+        if self.was_guessing and self.last_out is not None and _dist(self.last_out, target) > 0.05:
+            self.blend_from = list(self.last_out)
+            self.blend_start = now
+        self.was_guessing = False
+
+        if self.blend_from is not None and self.blend_start is not None:
+            blend = (now - self.blend_start) / self.BLEND_MS
+            if blend >= 1.0:
+                self.blend_from = None
+                self.blend_start = None
+            else:
+                target = _lerp(self.blend_from, target, blend)
+
+        if self.blend_from is not None and self.last_out is not None:
+            correction = [target[i] - self.last_out[i] for i in range(3)]
+            distance = _dist(target, self.last_out)
+            max_step = max(0.25, second["v"] * 0.016 * 3.0)
+            if distance > max_step:
+                target = [self.last_out[i] + correction[i] * max_step / distance for i in range(3)]
+
+        self.last_out = list(target)
+        return target
+
+
+ALL = [Baseline, AdaptiveDelay, Hermite, PlayerRecovery, VehicleDR]

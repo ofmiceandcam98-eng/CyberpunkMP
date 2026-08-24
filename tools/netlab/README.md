@@ -70,7 +70,8 @@ synthetic runs also score positional error against perfect truth.
   heading extrapolation for players, NO extrapolation for vehicles - the port matches
   the freeze-history comments in the C++, integer ticks and all). The others are what
   we suspect will beat it: `adaptive` (delay follows measured jitter instead of a
-  constant), `hermite` (velocity-tangent cubic instead of lerp), `vehicle_dr` (dead
+  constant), `hermite` (velocity-tangent cubic instead of lerp), `player_recovery` (short
+  dead reckoning with 300ms recovery blending), `vehicle_dr` (dead
   reckoning with projective blending so cars neither freeze on loss nor pop on
   recovery).
 - `replay.py` - runs strategies over a trace, prints the scoreboard, optionally plots.
