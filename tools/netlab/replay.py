@@ -55,13 +55,17 @@ def run(records, kind, update_rate=30, truth=None, epoch=1_787_000_000_000,
             continue
         # pops: displacement beyond what any sane speed covers in a frame
         max_step = (12.0 if kind == "player" else 45.0) * (frame_ms / 1000.0) * 3.0
-        pops = sum(1 for i in range(1, len(out)) if _dist(out[i][1], out[i-1][1]) > max_step)
+        steps = [_dist(out[i][1], out[i-1][1]) for i in range(1, len(out))]
+        pops = sum(1 for step in steps if step > max_step)
+        correction_distance = sum(max(0.0, step - max_step) for step in steps)
+        max_correction = max([max(0.0, step - max_step) for step in steps] or [0.0])
         # jerk proxy: mean |second difference|
         jerk = sum(_dist([out[i][1][j] - out[i-1][1][j] for j in range(3)] + [0]*0,
                          [out[i-1][1][j] - out[i-2][1][j] for j in range(3)])
                    for i in range(2, len(out))) / (len(out) - 2) * 1000.0 / frame_ms
-        row = {"name": s.name, "pops": pops, "jerk": jerk,
-               "starve%": 100.0 * r["starved"] / max(1, r["frames"])}
+        row = {"name": s.name, "pops": pops, "correction_m": correction_distance,
+             "max_correction_m": max_correction, "jerk": jerk,
+             "starve%": 100.0 * r["starved"] / max(1, r["frames"])}
         if truth is not None:
             # error + effective delay vs truth: for each rendered frame, distance to the
             # truth position at that WALL time, and the time-shift that minimises error.
@@ -93,8 +97,8 @@ def run(records, kind, update_rate=30, truth=None, epoch=1_787_000_000_000,
 
 
 def print_board(title, board, truth):
-    cols = ["name", "err_mean", "err_p95", "pops", "jerk", "starve%", "delay_ms"] if truth \
-        else ["name", "pops", "jerk", "starve%"]
+    cols = ["name", "err_mean", "err_p95", "pops", "correction_m", "jerk", "starve%", "delay_ms"] if truth \
+        else ["name", "pops", "correction_m", "jerk", "starve%"]
     print(f"\n=== {title}")
     print("  " + "".join(f"{c:>10}" for c in cols))
     for row in board:
@@ -107,7 +111,7 @@ def print_board(title, board, truth):
 
 def load_trace(path):
     ins, outs = [], []
-    with open(path, encoding="utf-8") as f:
+    with open(path, encoding="utf-8-sig") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -116,6 +120,32 @@ def load_trace(path):
             (ins if rec.get("k") == "in" else outs).append(rec)
     ins.sort(key=lambda r: r["tr"])
     return ins, outs
+
+
+def validate_trace_metadata(records, cell_size=60000, world_revision=1):
+    """Return integrity errors for server-derived map and authority metadata."""
+    errors = []
+    last_sequence = None
+    last_epoch = None
+    for index, record in enumerate(records):
+        if record.get("wr", world_revision) != world_revision:
+            errors.append(f"record {index}: world revision {record.get('wr')} != {world_revision}")
+        if cell_size:
+            expected_x = math.floor(record["p"][0] / cell_size)
+            expected_y = math.floor(record["p"][1] / cell_size)
+            if record.get("cx", expected_x) != expected_x or record.get("cy", expected_y) != expected_y:
+                errors.append(f"record {index}: cell does not match position")
+        sequence = record.get("seq")
+        if sequence is not None and last_sequence is not None and sequence <= last_sequence:
+            errors.append(f"record {index}: sequence {sequence} is not increasing")
+        if sequence is not None:
+            last_sequence = sequence
+        epoch = record.get("epoch")
+        if epoch is not None and last_epoch is not None and epoch < last_epoch:
+            errors.append(f"record {index}: authority epoch went backwards")
+        if epoch is not None:
+            last_epoch = epoch
+    return errors
 
 
 def main():
@@ -180,9 +210,18 @@ def main():
             print(f"banked {n} samples -> {out}")
         board = run(records, kind, args.rate)
         print_board(f"trace {args.trace} / {ent}", board, truth=False)
-        if args.validate and outs:
-            validate(records, [o for o in outs if o["id"] == ent], kind, args.rate)
-        return
+        failed = False
+        if args.validate:
+            entity_outs = [o for o in outs if o["id"] == ent]
+            failed = not entity_outs or not validate(records, entity_outs, kind, args.rate)
+        metadata_errors = validate_trace_metadata(records)
+        if metadata_errors:
+            print("trace metadata: FAIL")
+            for error in metadata_errors:
+                print(f"- {error}")
+        else:
+            print("trace metadata: PASS")
+        return 1 if failed or metadata_errors else 0
 
     ap.print_help()
 
@@ -199,11 +238,16 @@ def validate(records, outs, kind, rate):
         mine = s.render(rt + s.delay)
         if mine is not None:
             errs.append(_dist(mine, real))
-    if errs:
-        errs.sort()
-        print(f"validate: python-baseline vs game render - mean {sum(errs)/len(errs):.3f}m, "
-              f"p95 {errs[int(0.95*(len(errs)-1))]:.3f}m over {len(errs)} frames "
-              f"(>0.5m p95 means the port has drifted from the C++ - fix the port first)")
+        if errs:
+                errs.sort()
+                mean = sum(errs) / len(errs)
+                p95 = errs[int(0.95 * (len(errs) - 1))]
+                print(f"validate: python-baseline vs game render - mean {mean:.3f}m, "
+                            f"p95 {p95:.3f}m over {len(errs)} frames "
+                            f"(>0.5m p95 means the port has drifted from the C++ - fix the port first)")
+                return p95 <= 0.5
+        print("validate: no comparable rendered frames")
+        return False
 
 
 def plot(path, truth, records, kind, rate, pname, map_calib=None):

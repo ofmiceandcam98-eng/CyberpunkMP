@@ -80,8 +80,16 @@ synthetic runs also score positional error against perfect truth.
 
 - `err_mean / err_p95` (m): distance from truth (synthetic only).
 - `pops`: frames that jumped further than physics allows (teleport-pop count).
+- `correction_m / max_correction_m` (m): total and largest movement beyond the
+  per-frame physical step budget.
 - `jerk`: mean second-difference of rendered position - the "does it look like a
   puppet on a string" number; lower is smoother.
 - `starve%`: frames with nothing to interpolate towards.
 - `delay_ms`: effective added latency (how far behind truth the render runs) - the
   price paid for the smoothness; every strategy is a trade along this axis.
+
+For a captured trace, `replay.py --trace trace.ndjson --validate` compares the Python
+baseline with recorded game output and also checks world revision, cell coordinates,
+monotonic sequence numbers, and non-decreasing vehicle authority epochs. It exits non-zero
+when the baseline drifts beyond 0.5m p95 or trace metadata is invalid. A trace with missing
+legacy metadata is accepted for compatibility; new traces should include all map-aware fields.

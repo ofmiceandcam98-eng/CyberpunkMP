@@ -11,7 +11,7 @@ import json
 import sys
 
 from netmodel import PROFILES
-from replay import run
+from replay import run, validate_trace_metadata
 from strategies import ALL
 import synth
 from authority import AuthorityModel
@@ -31,6 +31,14 @@ def measure(profile_name, kind):
 
 def check(results):
     failures = []
+
+    boundary_trace = [
+        {"p": [-60000.0, -60000.0, 0.0], "wr": 1, "cx": -1, "cy": -1, "seq": 1, "epoch": 0},
+        {"p": [-59999.0, -59999.0, 0.0], "wr": 1, "cx": -1, "cy": -1, "seq": 2, "epoch": 0},
+        {"p": [0.0, 0.0, 0.0], "wr": 1, "cx": 0, "cy": 0, "seq": 3, "epoch": 1},
+    ]
+    if validate_trace_metadata(boundary_trace):
+        failures.append("map boundary metadata failed negative-coordinate floor check")
 
     authority = AuthorityModel("driver-a")
     if not authority.accepts_movement("driver-a", 0):
