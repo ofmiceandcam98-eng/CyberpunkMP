@@ -3,6 +3,9 @@
 #include "GameServer.h"
 #include "PlayerComponent.h"
 #include "AttachmentComponent.h"
+#include "AuthorityComponent.h"
+
+#include <cmath>
 
 // Interest management.
 //
@@ -30,6 +33,12 @@ constexpr float kReducedRateRange = 600.f;
 // ~7 and ~2 updates a second, which is enough to keep a distant puppet honest.
 constexpr uint32_t kReducedRateDivisor = 4;
 constexpr uint32_t kDistantRateDivisor = 16;
+constexpr float kWorldCellSize = 60000.f;
+
+int32_t ToSnapshotCell(float aCoordinate)
+{
+    return static_cast<int32_t>(std::floor(aCoordinate / kWorldCellSize));
+}
 
 // Where the recipient effectively is, for measuring interest.
 //
@@ -130,6 +139,13 @@ void ReplicateMovementComponent(flecs::entity aEntity, const MovementComponent& 
     message.set_speed(aComponent.Velocity);
     message.set_locomotion(aComponent.Locomotion);
     message.set_upper_body(aComponent.UpperBody);
+    message.set_world_revision(1);
+    message.set_cell_x(ToSnapshotCell(aComponent.Position.x));
+    message.set_cell_y(ToSnapshotCell(aComponent.Position.y));
+    message.set_sequence(aComponent.Sequence);
+
+    if (const auto* pAuthority = aEntity.get<AuthorityComponent>())
+        message.set_authority_epoch(pAuthority->Epoch);
 
     const auto owner = aEntity.parent();
     const auto& from = aComponent.Position;

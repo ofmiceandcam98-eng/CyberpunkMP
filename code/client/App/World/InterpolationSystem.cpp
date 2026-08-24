@@ -34,15 +34,19 @@ std::ofstream& SyncTraceFile()
 }
 
 void SyncTraceIn(const uint64_t aId, const uint64_t aTick, const glm::vec3& aPos,
-                 const glm::vec3& aRot, const float aSpeed, const bool aIsVehicle)
+                 const glm::vec3& aRot, const float aSpeed, const bool aIsVehicle,
+                 const uint32_t aWorldRevision, const int32_t aCellX, const int32_t aCellY,
+                 const uint32_t aSequence, const uint32_t aAuthorityEpoch,
+                 const bool aCorrection)
 {
     if (!Settings::Get().syncTrace)
         return;
 
     SyncTraceFile() << fmt::format(
-        R"({{"k":"in","id":"{:x}","tick":{},"tr":{},"p":[{:.3f},{:.3f},{:.3f}],"r":[{:.4f},{:.4f},{:.4f}],"v":{:.3f},"veh":{}}})",
+        R"({{"k":"in","id":"{:x}","tick":{},"tr":{} ,"p":[{:.3f},{:.3f},{:.3f}],"r":[{:.4f},{:.4f},{:.4f}],"v":{:.3f},"veh":{},"wr":{},"cx":{},"cy":{},"seq":{},"epoch":{},"corr":{}}})",
         aId, aTick, NetworkWorldSystem::GetTick(), aPos.x, aPos.y, aPos.z,
-        aRot.x, aRot.y, aRot.z, aSpeed, aIsVehicle ? 1 : 0) << '\n';
+        aRot.x, aRot.y, aRot.z, aSpeed, aIsVehicle ? 1 : 0, aWorldRevision,
+        aCellX, aCellY, aSequence, aAuthorityEpoch, aCorrection ? 1 : 0) << '\n';
 }
 
 void SyncTraceOut(const uint64_t aId, const int64_t aRenderTick, const glm::vec3& aPos)
@@ -545,6 +549,36 @@ void InterpolationSystem::HandleNotifyEntityMove(const PacketEvent<server::Notif
     if (!pInterpolation)
         return;
 
+    const auto& settings = Core::Container::Get<NetworkService>()->GetServerSettings();
+    const auto* pEntityComponent = entity.get<EntityComponent>();
+    const bool isVehicle = pEntityComponent && pEntityComponent->IsVehicle;
+    const auto cellSize = settings.get_cell_size();
+    const auto expectedCellX = cellSize
+                                   ? static_cast<int32_t>(std::floor(position.x / static_cast<float>(cellSize)))
+                                   : 0;
+    const auto expectedCellY = cellSize
+                                   ? static_cast<int32_t>(std::floor(position.y / static_cast<float>(cellSize)))
+                                   : 0;
+
+    if (settings.get_cell_size() == 0 ||
+        aMessage.get_world_revision() != 1 ||
+        aMessage.get_cell_x() != expectedCellX ||
+        aMessage.get_cell_y() != expectedCellY)
+    {
+        spdlog::warn("[Interpolation] dropped map-invalid snapshot for {}: revision {}, cell ({}, {}), expected ({}, {})",
+                     aMessage.get_id(), aMessage.get_world_revision(),
+                     aMessage.get_cell_x(), aMessage.get_cell_y(), expectedCellX, expectedCellY);
+        return;
+    }
+
+    if (pInterpolation->HasSequence &&
+        aMessage.get_sequence() <= pInterpolation->LastSequence)
+        return;
+
+    if (isVehicle && pInterpolation->HasAuthorityEpoch &&
+        aMessage.get_authority_epoch() < pInterpolation->LastAuthorityEpoch)
+        return;
+
     // Drop anything that arrives out of order. The buffer is usually non-empty so its
     // last sample is the newest thing we hold, but once it drains the newest thing we
     // hold is the anchor - and without that second check a late packet could reopen a
@@ -561,13 +595,25 @@ void InterpolationSystem::HandleNotifyEntityMove(const PacketEvent<server::Notif
 
     pInterpolation->TimePoints.push_back(InterpolationComponent::Timepoint{
         position, rotation, aMessage.get_speed(), aMessage.get_tick(),
+        aMessage.get_cell_x(), aMessage.get_cell_y(), aMessage.get_sequence(),
+        aMessage.get_authority_epoch(), aMessage.get_correction(),
         aMessage.get_locomotion(), aMessage.get_upper_body()});
+    pInterpolation->LastSequence = aMessage.get_sequence();
+    pInterpolation->HasSequence = true;
+    if (isVehicle)
+    {
+        pInterpolation->LastAuthorityEpoch = aMessage.get_authority_epoch();
+        pInterpolation->HasAuthorityEpoch = true;
+    }
 
     if (Settings::Get().syncTrace)
     {
         const auto* pEntityComponent = entity.get<EntityComponent>();
         SyncTraceIn(aMessage.get_id(), aMessage.get_tick(), position, rotation,
-                    aMessage.get_speed(), pEntityComponent && pEntityComponent->IsVehicle);
+                    aMessage.get_speed(), pEntityComponent && pEntityComponent->IsVehicle,
+                    aMessage.get_world_revision(), aMessage.get_cell_x(), aMessage.get_cell_y(),
+                    aMessage.get_sequence(), aMessage.get_authority_epoch(),
+                    aMessage.get_correction());
     }
 }
 

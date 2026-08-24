@@ -45,7 +45,7 @@ hand; it is deliberately not something the launcher offers players). The client 
 writes `logs/sync-trace-<timestamp>.ndjson` next to its other logs inside the mod
 folder, and it ships to the NAS with the rest of the session logs. Two record kinds:
 
-    {"k":"in", "id":"e6", "tick":1787..., "tr":1787..., "p":[x,y,z], "r":[rx,ry,rz], "v":speed, "veh":0}
+    {"k":"in", "id":"e6", "tick":1787..., "tr":1787..., "p":[x,y,z], "r":[rx,ry,rz], "v":speed, "veh":0, "wr":1, "cx":0, "cy":0, "seq":42, "epoch":0, "corr":0}
     {"k":"out","id":"e6", "rt":1787...,  "p":[x,y,z]}
 
 `in` = a movement sample as received (tick = sender's synced clock, tr = local receive

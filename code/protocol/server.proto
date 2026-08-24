@@ -253,6 +253,13 @@ message NotifyEntityMove {
     uint64 tick = 4;
     float speed = 5;
     common.Vector3 full_rotation = 6;
+    // Server-derived spatial and ordering metadata. The client never supplies these.
+    uint32 world_revision = 13;
+    sint32 cell_x = 14;
+    sint32 cell_y = 15;
+    uint32 sequence = 16;
+    uint32 authority_epoch = 17;
+    bool correction = 18;
 
     // Relayed verbatim from MoveEntityRequest: the mover's PlayerStateMachine
     // locomotion and upper-body states, so receivers animate what the sender is

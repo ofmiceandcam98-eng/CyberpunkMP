@@ -8,6 +8,11 @@ struct InterpolationComponent
         glm::vec3 Rotation{};
         float Velocity{0.f};
         uint64_t Tick{0};
+        int32_t CellX{0};
+        int32_t CellY{0};
+        uint32_t Sequence{0};
+        uint32_t AuthorityEpoch{0};
+        bool Correction{false};
 
         // The mover's PlayerStateMachine states (gamePSMLocomotionStates /
         // gamePSMUpperBodyStates), carried per-sample so the pose travels with the
@@ -39,4 +44,8 @@ struct InterpolationComponent
     // one value, which made every comparison against render time meaningless. See the
     // note in InterpolateEntity.
     int64_t LastRenderTick{0};
+    uint32_t LastSequence{0};
+    uint32_t LastAuthorityEpoch{0};
+    bool HasSequence{false};
+    bool HasAuthorityEpoch{false};
 };
