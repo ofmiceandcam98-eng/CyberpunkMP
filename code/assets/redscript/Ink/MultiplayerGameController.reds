@@ -5,6 +5,33 @@ import CyberpunkMP.*
 import CyberpunkMP.World.*
 import CyberpunkMP.Plugins.*
 
+/**
+ * Drives the "who else is talking" readout, a few times a second, for as long as the
+ * process lives.
+ *
+ * Not a method the controller reschedules on itself: DelayCallback needs a concrete class
+ * to instantiate, and the controller is torn down and rebuilt across a disconnect/reconnect
+ * while this poll (armed once, see OnConnectedToServer) is meant to keep running - it reads
+ * IsConnected() itself and simply has nothing to show while that is false, the same
+ * survives-a-reconnect shape as MpStatusEffectPoll in Combat.reds.
+ */
+public class MpVoiceSpeakingPoll extends DelayCallback {
+    public let controller: wref<MultiplayerGameController>;
+
+    public func Call() -> Void {
+        if IsDefined(this.controller) {
+            this.controller.MpVoiceUpdateOthersTalking();
+        }
+
+        // A fresh instance, not this one rescheduled - see MpSelectorPoll/MpStatusEffectPoll
+        // for the same shape. Every other poll in this codebase reschedules by making a new
+        // DelayCallback rather than resubmitting itself.
+        let again = new MpVoiceSpeakingPoll();
+        again.controller = this.controller;
+        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(again, 0.3, false);
+    }
+}
+
 // based on NewHudPhoneGameController and PauseMenuBackgroundGameController
 public class MultiplayerGameController extends inkGameController {
     // Voice, kept here rather than on NetworkWorldSystem: that is a NATIVE class whose
@@ -25,6 +52,18 @@ public class MultiplayerGameController extends inkGameController {
 
     // The "you are talking" indicator. Built on first transmission, not at startup.
     private let m_voiceIndicator: wref<inkText>;
+
+    // Who ELSE is talking right now - built on first sighting of a remote speaker, not at
+    // startup. Separate widget from m_voiceIndicator: your own state and everyone else's
+    // can be true at once, and collapsing them into one line would make one of the two
+    // disappear whenever both are.
+    private let m_othersTalkingIndicator: wref<inkText>;
+
+    // MpVoiceSpeakingPoll reschedules itself forever once armed (see MpStatusEffectPoll for
+    // why - it has to survive a reconnect). This guards against arming a second one: unlike
+    // that poll, this one is armed from OnConnectedToServer, which runs on every connection
+    // state change, not once at startup.
+    private let m_voicePollArmed: Bool = false;
 
     public let m_audioSystem: wref<AudioSystem>;
     public let m_uiSystem: wref<UISystem>;
@@ -312,6 +351,16 @@ public class MultiplayerGameController extends inkGameController {
             this.m_player.RegisterInputListener(this, n"UIEmote");
             this.m_player.UnregisterInputListener(this, n"UIJob");
             this.m_player.RegisterInputListener(this, n"UIJob");
+
+            // Armed once per PROCESS, not once per connect - MpVoiceSpeakingPoll
+            // reschedules itself forever (see its own note), so arming it again on a
+            // reconnect would run two copies doing the same lookup twice a second.
+            if !this.m_voicePollArmed {
+                this.m_voicePollArmed = true;
+                let poll = new MpVoiceSpeakingPoll();
+                poll.controller = this;
+                GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(poll, 0.3, false);
+            }
         } else {
             this.GetWidget(n"hud") as inkCompoundWidget.RemoveChild(this.GetWidget(n"hud/chat"));
 
@@ -1132,6 +1181,94 @@ public class MultiplayerGameController extends inkGameController {
         this.m_voiceIndicator.SetTintColor(new HDRColor(2.0, 1.75, 0.25, 1.0));
         this.m_voiceIndicator.SetText(s"[ TALKING ]  \(this.MpVoiceRangeName())");
         this.m_voiceIndicator.SetVisible(true);
+    }
+
+    /**
+     * Who else is currently audible, listed by name - Mumble's "who is talking" readout.
+     *
+     * Polled rather than event-driven: a speaker starts and stops mid-frame on the AUDIO
+     * thread (see VoiceClient's speaking-hold window), and there is no per-frame script
+     * event for that. A few times a second is plenty for something read by eye.
+     *
+     * Called by MpVoiceSpeakingPoll, not scheduled here - see that class for why it lives
+     * on its own rather than as a method this reschedules itself.
+     */
+    public func MpVoiceUpdateOthersTalking() -> Void {
+        let network = GameInstance.GetNetworkWorldSystem();
+
+        if !IsDefined(network) || !network.IsConnected() {
+            if IsDefined(this.m_othersTalkingIndicator) {
+                this.m_othersTalkingIndicator.SetVisible(false);
+            }
+            return;
+        }
+
+        let appearance = network.GetAppearanceSystem();
+        let count = network.VoiceActiveSpeakerCount();
+        let names: array<String>;
+        let index: Uint32 = 0u;
+
+        while index < count {
+            let entityId = network.GetEntityIdByServerId(network.VoiceActiveSpeakerId(index));
+
+            // Empty means "not a network player" (GetNetworkPlayerName's own contract - see
+            // Scanner.reds) rather than an error. It also silently absorbs the one frame of
+            // race between a speaker's audio arriving and their puppet finishing spawning.
+            let name = appearance.GetNetworkPlayerName(entityId);
+            if !Equals(name, "") {
+                ArrayPush(names, name);
+            }
+
+            index += 1u;
+        }
+
+        if ArraySize(names) == 0 {
+            if IsDefined(this.m_othersTalkingIndicator) {
+                this.m_othersTalkingIndicator.SetVisible(false);
+            }
+            return;
+        }
+
+        if !IsDefined(this.m_othersTalkingIndicator) {
+            let root = this.GetRootCompoundWidget();
+            if !IsDefined(root) {
+                return;
+            }
+
+            let text = new inkText();
+            text.SetName(n"mp_voice_others_indicator");
+            text.SetFontFamily("base\\gameplay\\gui\\fonts\\raj\\raj.inkfontfamily");
+            text.SetFontStyle(n"Medium");
+            text.SetFontSize(16);
+            text.SetAnchor(inkEAnchor.BottomLeft);
+            text.SetAnchorPoint(0.0, 1.0);
+
+            // Sits just above the "you are talking" line rather than on top of it - both
+            // can be visible at once, saying you and one other person are both on air.
+            text.SetMargin(new inkMargin(60.0, 0.0, 0.0, 225.0));
+            text.Reparent(root);
+
+            this.m_othersTalkingIndicator = text;
+        }
+
+        let line: String = names[0];
+        let i = 1;
+
+        // Built with interpolation, one name at a time, never with String + String or
+        // String += String - neither has a proven working use anywhere else in this
+        // codebase (the one place "+" was tried on a String, in ChatHotkeyController.reds,
+        // is commented out), so this does not risk being the first thing to find out
+        // whether that operator actually compiles.
+        while i < ArraySize(names) {
+            line = s"\(line), \(names[i])";
+            i += 1;
+        }
+
+        // A cooler tint than the self-indicator's warm yellow - the two are readable apart
+        // at a glance, which matters exactly when both are showing.
+        this.m_othersTalkingIndicator.SetTintColor(new HDRColor(0.4, 0.85, 1.0, 1.0));
+        this.m_othersTalkingIndicator.SetText(s"[ ON AIR ]  \(line)");
+        this.m_othersTalkingIndicator.SetVisible(true);
     }
 
     // Stop transmitting whatever the mode and whatever the key is doing.

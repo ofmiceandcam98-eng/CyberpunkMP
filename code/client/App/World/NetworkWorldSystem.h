@@ -234,7 +234,18 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     void VoiceSetPlaybackVolume(uint32_t aPercent);
 
     // How many people are audible right now, for the speaking indicator.
+    //
+    // Snapshots the current speaker set so the count and the indexed getter below agree
+    // with each other even though the render thread is appending to the real list between
+    // the two calls a script makes - without this, index N could stop existing by the time
+    // VoiceActiveSpeakerId(N) runs.
     uint32_t VoiceActiveSpeakerCount() const;
+
+    // The Nth speaker from the snapshot the last VoiceActiveSpeakerCount() call took - this
+    // is the SERVER id (same space as GetEntityIdByServerId), not an index into anything
+    // engine-side. Out of range returns 0, which GetEntityIdByServerId already treats as
+    // "nobody".
+    uint64_t VoiceActiveSpeakerId(uint32_t aIndex) const;
 
     // ---------------------------------------------------------------------------
     // Combat, reported from the game's own damage pipeline.
@@ -473,6 +484,12 @@ private:
     // thread does what.
     VoiceClient m_voiceClient;
 
+    // Snapshot for VoiceActiveSpeakerCount/VoiceActiveSpeakerId - see the note on the
+    // first. Plain std::vector, matching VoiceClient::GetActiveSpeakers()'s own return
+    // type exactly - Vector<uint64_t> is a different type (Core's StlAllocator) and does
+    // not implicitly convert from it.
+    mutable std::vector<uint64_t> m_voiceActiveSpeakersSnapshot;
+
     // Numbers our outgoing frames so receivers can drop ones that arrive out of order.
     // Wraps deliberately - only differences between neighbours are ever compared.
     uint32_t m_voiceSequence{0};
@@ -639,6 +656,7 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(SaveCharacterAppearance);
     RTTI_METHOD(IsConnected);
     RTTI_METHOD(GetEntityIdByServerId);
+    RTTI_METHOD(VoiceActiveSpeakerId);
     RTTI_METHOD(GetAppearanceSystem);
     RTTI_METHOD(GetInterpolationSystem);
     RTTI_METHOD(GetChatSystem);
