@@ -3232,9 +3232,13 @@ async function launchGame () {
       })
 
       // The exit we can watch here is cmd's, not the game's - it leaves as soon as
-      // ShellExecute hands off, always with 0, so onExit stays quiet and crash capture
-      // for this session comes from the shipped logs instead. watchForGameExit() still
-      // tracks the real process by name either way.
+      // ShellExecute hands off, always with 0, and MUST NOT be logged through onExit:
+      // onExit unconditionally writes "game exited with code N" to the trail log
+      // before checking anything, so wiring it here logged the SHELL's exit (0,
+      // 1-4s after launch) as if it were the game's - phonix's two suspected crashes
+      // that night recorded a clean-quit line instead of nothing. watchForGameExit()
+      // still tracks the real process by name either way, unaffected by which path
+      // started it.
       retry.on('error', (err2) => {
         sendLaunchError(
           `Windows refused to start the game twice (${err.code}, then ${err2.code}). ` +
@@ -3244,7 +3248,9 @@ async function launchGame () {
           'themselves are fine.'
         )
       })
-      retry.on('exit', onExit)
+      retry.on('exit', (code) => {
+        launcherLog(`shell wrapper exited (${code}) - not the game; watching the real process separately`)
+      })
       retry.unref()
       return
     }

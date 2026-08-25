@@ -2490,6 +2490,18 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         if (record.rfind("Character.", 0) != 0)
             record = "Character." + record;
 
+        // Catches exactly what produced five ghost NPCs on the test server: the usage
+        // line's own placeholder (`Character.<record>`) pasted verbatim instead of a
+        // real record name. `<`/`>` never appear in an actual TweakDBID record name, so
+        // this is a pure placeholder-paste signature - refuse rather than warn, because
+        // the warning already existed below and did not stop it happening once.
+        if (record.find('<') != std::string::npos || record.find('>') != std::string::npos)
+        {
+            Tell(acSender, fmt::format("'{}' looks like the usage line's placeholder, not a real record - "
+                                       "nothing declared. Usage: /npc <Character.record> [name]", target));
+            return true;
+        }
+
         const std::string name = rest.empty() ? "NPC" : rest;
 
         pNpcs->Spawn(record, name, pMovement->Position, pMovement->Rotation.z);
