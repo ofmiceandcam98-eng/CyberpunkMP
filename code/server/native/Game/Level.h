@@ -116,6 +116,20 @@ private:
 public:
     void RemoveOwnedVehicles(flecs::entity aPlayer) noexcept;
 
+    // Clears every vehicle left in the world once the LAST player has gone.
+    //
+    // RemoveOwnedVehicles deliberately parks an ownerless car rather than deleting it,
+    // because a parked car should not evaporate out from under the people standing next
+    // to it just because its driver's connection dropped. That reasoning holds only while
+    // there is somebody there to see it. With nobody online the car is not scenery for
+    // anyone - it is a landmine for the next person to join.
+    //
+    // Reproduced 2026-08-26: quit while sitting in a car, rejoin, and the client dies 1.6s
+    // after MakeRemoteDriven on the replayed copy. Nothing on disk hints at it - the car
+    // lives only in the live flecs world and vehicles.json stays empty - so the symptom is
+    // "joining crashes me" with no visible cause. See the crash entry in docs/MAP.md.
+    void ClearAbandonedVehicles() noexcept;
+
 protected:
 
     static server::NotifyCharacterLoad Serialize(flecs::entity aEntity) noexcept;

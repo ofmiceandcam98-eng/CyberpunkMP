@@ -549,6 +549,21 @@ void GameServer::OnDisconnection(ConnectionId aConnectionId, EDisconnectReason a
         player.destruct();
 
         spdlog::info("{}/{} player(s) online", pPlayerManager->Count(), m_config.MaxPlayer);
+
+        // Last one out clears the cars.
+        //
+        // RemoveOwnedVehicles parks an ownerless car instead of deleting it, so other
+        // players do not watch a parked car vanish. Once nobody is online there is no
+        // "other players", and what is left is a car that will be replayed to whoever
+        // joins next - which is the reproduced join crash (quit in a car, rejoin, dead
+        // 1.6s after MakeRemoteDriven). Clearing here removes the trigger for the common
+        // case without a client update or a protocol change, so it protects players who
+        // have not updated too.
+        if (pPlayerManager->Count() == 0)
+        {
+            if (auto* pLevel = GetWorld()->get_mut<Level>())
+                pLevel->ClearAbandonedVehicles();
+        }
     }
 }
 

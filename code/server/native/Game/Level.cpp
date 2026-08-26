@@ -394,6 +394,25 @@ void Level::RemoveOwnedVehicles(flecs::entity aPlayer) noexcept
     }
 }
 
+void Level::ClearAbandonedVehicles() noexcept
+{
+    // Only ever called with the world empty, so every vehicle still standing is by
+    // definition abandoned - there is no occupant left to check for and no client left to
+    // surprise. Collected before removing: destroying entities from inside the iteration
+    // would invalidate it, the same reason RemoveOwnedVehicles collects first.
+    Vector<flecs::entity> abandoned;
+
+    GetWorld()->each([&abandoned](flecs::entity aEntity, const VehicleComponent&) { abandoned.push_back(aEntity); });
+
+    if (abandoned.empty())
+        return;
+
+    for (auto vehicle : abandoned)
+        Remove(vehicle);
+
+    spdlog::info("Cleared {} abandoned vehicle(s) - no players left to own them", abandoned.size());
+}
+
 void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterRequest>& aMessage) noexcept
 {
     auto player = GetWorld()->get<PlayerManager>()->GetByConnectionId(aMessage.ConnectionId);
@@ -914,7 +933,10 @@ void Level::HandleMoveEntityRequest(PacketEvent<client::MoveEntityRequest>& aMes
     }
 
     const auto* pOldCell = target.get<CellComponent>();
-    const auto oldCellPosition = pOldCell ? pOldCell->pCell->GetPosition() : GridCell::TPosition{};
+    // {0, 0} rather than {}: Vector2 declares only a (x, y) constructor, so it has no
+    // default one and TPosition{} does not compile. The value is unused when pOldCell is
+    // null - the comparison below is short-circuited by !pOldCell - it just has to exist.
+    const auto oldCellPosition = pOldCell ? pOldCell->pCell->GetPosition() : GridCell::TPosition{0, 0};
     const auto newCellPosition = ToCell(component.Position);
 
     target.set(component);
