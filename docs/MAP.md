@@ -110,7 +110,22 @@ Last full revision: 2026-08-22, after v0.3.106 (player combat).
   engine vcall on it faults. Second cluster: remote APPEARANCE apply (`AddItemToSlot
   failed` x106/evening for one player) and Cam's post-spawn cyberware/inventory restore
   (dead ~2s after 'queued 70 piece(s)') - possibly the same not-fully-built-entity
-  class. Needs a dedicated session in VehicleSystem.cpp: gate DoMount/MakeRemoteDriven
+  **REPRODUCED ON DEMAND 2026-08-26, and the trigger is mundane: DISCONNECT WHILE IN A
+  VEHICLE, THEN REJOIN.** Cam spawned a car at 04:45:14 (`Vehicle e3 spawned by character
+  5000000da (driver seat)`) and quit at 04:45:52 while still in it. The car stayed in the
+  server's live flecs world - `vehicles.json` was `[]`, so nothing was persisted and
+  nothing on disk hinted at it. On his 04:51 rejoin the server replayed it, and the client
+  log is the whole fingerprint end to end with no other player anywhere near:
+  `HandleVehicleLoadMessage` (04:51:04.588) -> `OnVehicleReady` -> `MakeRemoteDriven:
+  SetIsPlayerControlled / engine vcall / engineData set / SetKinematic / done`
+  (04:51:05.857) -> dead at 04:51:07.5, i.e. 1.6s after `done`. So the not-fully-built
+  entity is the OCCUPANT, and the specific case is an occupant that no longer exists at
+  all - the driver disconnected. That also retires the "why only Cam" puzzle: he was the
+  only one rejoining into a world holding his own orphaned car. Immediate operational
+  relief is a server restart (clears the live world; `Loaded 0 vehicle(s)` on boot,
+  players.json untouched), but every disconnect-in-a-car re-arms it for the next joiner.
+  Fix must handle a driver id that resolves to nothing, not merely a slow-to-build one.
+  Needs a dedicated session in VehicleSystem.cpp: gate DoMount/MakeRemoteDriven
   on entity readiness beyond OnVehicleReady, and treat a frozen-warned id as NOT ready.
   **Test-box flavor NARROWED by experiment (2026-08-23 night session, 10 crashes):**
   ghosts purged - still crashed; parked-vehicle replay absent - still crashed; creator
