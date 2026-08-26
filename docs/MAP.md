@@ -88,13 +88,26 @@ Last full revision: 2026-08-22, after v0.3.106 (player combat).
   Design consequence: bullets, explosions, collisions and environment ALL converge on the
   same Health pool, so one listener catches every source - collision damage needs no special
   case to synchronise, only to assign blame.
-  **THE OPEN QUESTION, and the whole design rests on it:** does the number the game REPORTS
-  equal the health it actually SPENDS? `code/assets/redscript/VehicleDamageProbe.reds` wraps
-  DamagePipelineFinalized, samples the pool either side, and prints MATCH / MISMATCH / NO
-  POOL CHANGE. Solo, one session, shoot one parked street car. Compile-checked on Cam's 2.31
-  install; never run. Answer it before ANY vehicle damage is sent on the wire - v0.3.104
-  shipped quickhack damage the server added on top of a figure the game had already applied,
-  and this is that same question answered by assumption instead of measurement.
+  **THE OPEN QUESTION IS ANSWERED - 2026-08-26, measured on Cam's install. The reported
+  value is EXACT and the server should validate against it, never recompute it.** One
+  shotgun blast at a parked street car:
+  - **14 hits inside ONE millisecond** (18:32:10.997-.998), each reporting ~8 damage
+  - health 1050.319946 -> 932.885620, so **spent 117.434326**
+  - **sum of the 14 reported values = 117.434414** - agreement to 0.000088, float noise
+  So `evt.attackComputed.GetTotalAttackValue(Health)` is trustworthy. Also confirmed live:
+  the attacker resolves (`by PLAYER`), a street car has ~1050 HP, and
+  `DamagePipelineFinalized` fires BEFORE the pool settles - all 14 read the same "health
+  before", and the probe's 0.15s delayed readback is what caught the settled value.
+  **Protocol consequence, and it is a real design input:** damage arrives PER HIT, not per
+  shot. One trigger pull can be 14 events in a millisecond, so the wire format must batch
+  or tolerate bursts - 14 packets per shotgun blast is not acceptable.
+  **Trap recorded because it nearly produced a wrong conclusion from correct data:** the
+  probe's first verdict compared ONE hit against the WHOLE burst's delta and printed
+  MISMATCH fourteen times. The data was perfect; the comparison was wrong. A single hit is
+  expected to be far smaller than the total. Verdict logic since corrected to say BURST.
+  Still to answer, and it needs two humans: does a REMOTE vehicle (kinematic, physics
+  suppressed by MakeRemoteDriven) receive the damage pipeline at all, and on whose machine?
+  That decides whether the shooter or the owner reports damage.
   Second unknown the probe also settles: whether a REMOTE vehicle (kinematic, physics
   suppressed by MakeRemoteDriven) receives the damage pipeline at all, which decides whether
   the shooter or the owner reports it.

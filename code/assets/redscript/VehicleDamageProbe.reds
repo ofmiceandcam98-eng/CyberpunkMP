@@ -139,14 +139,27 @@ public class MpVehicleHealthReadback extends DelayCallback {
     let after = pools.GetStatPoolValue(id, gamedataStatPoolType.Health, false);
     let spent = this.Before - after;
 
-    // The line that decides the architecture. If spent and reported agree, the reported
-    // value is usable and the server can validate an event against it. If they do not, the
-    // pool delta is the only truth and the reported figure must never be broadcast.
-    let verdict: String = "MISMATCH - only the pool delta is true";
-    if AbsF(spent - this.Reported) < 0.5 {
-      verdict = "MATCH - the reported value is usable";
-    } else if spent == 0.0 {
-      verdict = "NO POOL CHANGE - this vehicle spent no health (armour, invulnerable, or not simulated here)";
+    // ANSWERED 2026-08-26: the reported value is exact. A shotgun blast produced 14 hits
+    // inside ONE millisecond, each reporting ~8 damage, and their SUM (117.434414) matched
+    // the pool delta (117.434326) to float noise.
+    //
+    // The first version of this verdict compared a single hit against the whole burst's
+    // delta and printed MISMATCH fourteen times - a wrong conclusion from correct data,
+    // which is exactly the failure this probe exists to prevent. One trigger pull is many
+    // damage events, so a single hit is EXPECTED to be smaller than the total.
+    //
+    // Without shared state across the callbacks this cannot sum them itself, so it says
+    // what it can prove and names the arithmetic to do rather than guessing.
+    let verdict: String = "MATCH - the reported value is usable";
+
+    if spent == 0.0 {
+      verdict = "NO POOL CHANGE - spent no health (armour, invulnerable, or not simulated here)";
+    } else if AbsF(spent - this.Reported) >= 0.5 {
+      if spent > this.Reported {
+        verdict = s"BURST - this is one hit of several. Sum every reported value at this timestamp; it should equal \(spent)";
+      } else {
+        verdict = "REPORTED EXCEEDS SPENT - the pool delta is the only truth here, do NOT broadcast the reported value";
+      }
     }
 
     network.ScriptLog(s"[VehProbe] settled: health \(this.Before) -> \(after), spent \(spent), reported \(this.Reported) => \(verdict)");
