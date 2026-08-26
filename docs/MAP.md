@@ -69,6 +69,35 @@ Last full revision: 2026-08-22, after v0.3.106 (player combat).
      they cannot be read statically - every hit logs `[HitShape] '<name>'`. Solo: shoot
      any NPC.
   4. Two-client validation of the whole thing. Nothing has crossed between two machines.
+- **Vehicle damage: the native path is PROVEN, the probe is written, nothing has been run.**
+  Read from the game's own sources at `<game>\tools\redmod\scripts` - every claim below has
+  a file and line, none of it is inferred. Vehicle health is a stat pool:
+  `gamedataStatPoolType.Health` on the vehicle's own EntityID, owned by StatPoolsSystem.
+  Read `GetStatPoolValue(id, Health, false)`, set `RequestSettingStatPoolValue(...)`, observe
+  `RequestRegisteringListener(id, Health, listener)` → `OnStatPoolValueChanged(old, new,
+  percToPoints)` (vehicleComponent.script :79, :4543, :4545, :6304). Damage arrives as
+  `gameHitEvent` and **`VehicleObject` already overrides `DamagePipelineFinalized`**
+  (vehicles.script:1123) - the game announcing it finished calculating. Attacker is
+  `evt.attackData.GetInstigator()`, proven in use at vehicles.script:1137; weapon is
+  `attackData.GetWeapon()` → WeaponObject → `GetWeaponRecord()` (attackData.script:219 -
+  GetWeaponRecord is NOT on AttackData, which cost a compile); amount is
+  `evt.attackComputed.GetTotalAttackValue(Health)`, the same call Combat.reds:97 already
+  uses for players. Destruction: `gameVehicleDestructionEvent` (hitEvents.script:51),
+  destroyed = health custom limit forced to 0.0, stages via `EvaluateDamageLevel` →
+  `m_damageLevel` 0-3. **No CET, no WolvenKit, no native work needed for the core loop.**
+  Design consequence: bullets, explosions, collisions and environment ALL converge on the
+  same Health pool, so one listener catches every source - collision damage needs no special
+  case to synchronise, only to assign blame.
+  **THE OPEN QUESTION, and the whole design rests on it:** does the number the game REPORTS
+  equal the health it actually SPENDS? `code/assets/redscript/VehicleDamageProbe.reds` wraps
+  DamagePipelineFinalized, samples the pool either side, and prints MATCH / MISMATCH / NO
+  POOL CHANGE. Solo, one session, shoot one parked street car. Compile-checked on Cam's 2.31
+  install; never run. Answer it before ANY vehicle damage is sent on the wire - v0.3.104
+  shipped quickhack damage the server added on top of a figure the game had already applied,
+  and this is that same question answered by assumption instead of measurement.
+  Second unknown the probe also settles: whether a REMOTE vehicle (kinematic, physics
+  suppressed by MakeRemoteDriven) receives the damage pipeline at all, which decides whether
+  the shooter or the owner reports it.
 - **Late-join vehicles** (885f252): join while someone drives → you must see the car,
   and parked cars. **test.14 is DEAD** (2026-08-23, zeldfep hit both failure modes):
   its protocol predates the combat flag-day while the test server runs e15f6f5, AND
@@ -96,6 +125,38 @@ Last full revision: 2026-08-22, after v0.3.106 (player combat).
   `logs/clients/zeldfep/launcher-trail.log` on the NAS: no arrival line = browser/registry
   on his machine (browser protocol-block most likely); arrival + failure = the reason is
   in the line.
+
+### Vehicle architecture (audited 2026-08-26 — read before touching the vehicle system)
+- **The live vehicle and the persistent record used to be strangers.** `VehicleComponent`
+  held only TweakDBID - the MODEL - so a spawned car knew it was "a Hella" and never "YOUR
+  Hella", and `Level.cpp` referenced the persistence layer zero times. Garages, damage that
+  persists, theft, cargo and recovery were each blocked on that one missing link, not on the
+  features. **FIXED c13231a:** `VehicleComponent.RecordId` is bound at spawn. Built clean,
+  NOT yet live-tested - summon an owned car and check the spawn log names a record.
+  Trap for anyone extending it: match on `ModelName`, never on `VehicleRecord::Model` -
+  /givecar sets Model to `std::hash<std::string>` of the record name, which is not a
+  TweakDBID and never equals what the client sends, so binding on it compiles, runs, and
+  matches nothing forever. The id is recomputed from ModelName with `TweakDBIDFromName`.
+- **Parentage is AUTHORITY, not ownership, and that is deliberate.** `child_of(player)`
+  answers "whose machine simulates this", `HandleMoveEntityRequest` refuses movement from
+  anyone but the parent's connection, and `TransferAuthority` re-parents plus bumps an epoch
+  so late packets from the old simulator are dropped (revoke before assign, so the failure
+  mode is a brief freeze rather than two simulators fighting). Keep that mechanism. What it
+  should stop doing is doubling as the vehicle's identity and lifetime.
+- **Already true, do not "fix" it again:** `ReleaseVehicleIfEmpty` PARKS rather than
+  destroys - the destruction it used to do was a workaround for a different bug (entering a
+  car spawned a fresh entity every time; seven copies once stacked in one road), and that is
+  prevented at the other end now.
+- **Persisted today:** id, owner, model, ModelName, plate, price, and a SALE lock (not a
+  door lock). **Not persisted:** position, rotation, health, damage, driver, garage/stored
+  state, destroyed state, customization.
+- **Honest limit on the whole system:** the server is authoritative over identity and
+  permission, not physics. It relays positions and sanity-checks them; it does not simulate
+  vehicles and realistically cannot. Anywhere a brief says "server-authoritative physics",
+  what is achievable is server-authoritative STATE with validated client motion.
+- **Design call nobody has made:** the phone lists MODELS and cannot list instances, so
+  "summon my second Quadra" has no native expression. The server must decide which instance
+  a model-summon resolves to - nearest stored, last driven, or explicit via /garage.
 
 ### Known bugs, diagnosed, unfixed
 - **THE crash: 0xC0000005 in the remote-vehicle-mount path - cross-machine fingerprint
