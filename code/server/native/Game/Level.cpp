@@ -394,50 +394,6 @@ void Level::RemoveOwnedVehicles(flecs::entity aPlayer) noexcept
     }
 }
 
-// Which owned vehicle this newly-spawned car IS, or empty if it is nobody's.
-//
-// The player summons through the game's own phone, which lists MODELS and cannot list
-// instances - owning three Quadras puts one Quadra in the menu. So the client can only
-// ever tell us "a Quadra just appeared", and deciding WHICH Quadra is the server's job.
-// Level.cpp never used to consult the store at all, which is why that decision was never
-// made and every spawned car was anonymous.
-//
-// Matching is on the record NAME, deliberately, not on VehicleRecord::Model. Model is set
-// by /givecar to std::hash<std::string> of the record name, which is not a TweakDBID and
-// never equals what the client sends - matching on it would silently bind nothing, ever.
-// ModelName holds the real record name, so the id is recomputed from it with the same
-// CRC32 the game uses (TweakDBIDFromName, anchored by its own static_assert).
-//
-// One live entity per record: a record already bound to a car standing in the world is
-// skipped, so summoning while your Quadra is already parked somewhere gives you the OTHER
-// Quadra rather than a second copy of the same one.
-static std::string BindOwnedRecord(flecs::world& aWorld, const std::string& acDiscordId,
-                                   const uint64_t aTweakDbId) noexcept
-{
-    if (acDiscordId.empty() || aTweakDbId == 0)
-        return {};
-
-    // Records already standing in the world, so one is never handed out twice.
-    Set<std::string> bound;
-    aWorld.each(
-        [&bound](flecs::entity, const VehicleComponent& aVehicle)
-        {
-            if (!aVehicle.RecordId.empty())
-                bound.insert(aVehicle.RecordId);
-        });
-
-    for (const auto& record : GServer->GetVehicles().OwnedBy(acDiscordId))
-    {
-        if (record.ModelName.empty() || bound.count(record.Id))
-            continue;
-
-        if (TweakDBIDFromName(record.ModelName.c_str(), record.ModelName.size()) == aTweakDbId)
-            return record.Id;
-    }
-
-    return {};
-}
-
 void Level::ClearAbandonedVehicles() noexcept
 {
     // Only ever called with the world empty, so every vehicle still standing is by
@@ -2028,22 +1984,11 @@ void Level::HandleEnterVehicleRequest(PacketEvent<client::EnterVehicleRequest>& 
         // AuthorityComponent from birth: the creator is the first simulator (they are the
         // parent, and their client's movement arrives with epoch 0, which matches). Every
         // later change of hands goes through TransferAuthority.
-        // Bound BEFORE the entity is built, so the car is never briefly anonymous - a car
-        // that exists without knowing which record it is cannot be told apart from one that
-        // genuinely belongs to nobody.
-        const auto recordId = BindOwnedRecord(*GetWorld(), pPlayer ? pPlayer->DiscordId : std::string{},
-                                              aMessage.get_vehicle_id());
-
-        vehicle = GetWorld()->entity().child_of(player).set<MovementComponent>({pos, rot, {}}).set<VehicleComponent>({aMessage.get_vehicle_id(), recordId}).set<AuthorityComponent>({});
+        vehicle = GetWorld()->entity().child_of(player).set<MovementComponent>({pos, rot, {}}).set<VehicleComponent>({aMessage.get_vehicle_id()}).set<AuthorityComponent>({});
 
         // Named "Vehicle ... spawned", not "Player ... spawned" - this line kept being
         // misread as a player spawn in log forensics.
-        //
-        // The record id rides along because "which car is this" is the question the logs
-        // could never answer: every spawn line looked identical whether it was somebody's
-        // owned Quadra or a boosted street car.
-        spdlog::info("Vehicle {:x} spawned by character {:x} (driver seat), record {}", vehicle.id(),
-                     aMessage.get_id(), recordId.empty() ? "none - unowned" : recordId.c_str());
+        spdlog::info("Vehicle {:x} spawned by character {:x} (driver seat)", vehicle.id(), aMessage.get_id());
     }
 
     // One person per seat.
