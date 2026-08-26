@@ -124,6 +124,20 @@ Last full revision: 2026-08-22, after v0.3.106 (player combat).
   only one rejoining into a world holding his own orphaned car. Immediate operational
   relief is a server restart (clears the live world; `Loaded 0 vehicle(s)` on boot,
   players.json untouched), but every disconnect-in-a-car re-arms it for the next joiner.
+  **PARTLY FIXED AND LIVE 2026-08-26 (0e00c77, verified in the running binary):** the
+  server now clears every remaining vehicle when the player count hits zero
+  (`Level::ClearAbandonedVehicles`, called from `GameServer::OnDisconnection`). Parking an
+  ownerless car is still right while somebody is online to see it; with nobody online it is
+  only a landmine for the next joiner. Server-only, so no protocol change, no flag day, and
+  it protects players who have not updated. **STILL OPEN:** A disconnects in a car while B
+  stays online, then C joins - the car legitimately survives and C can still hit it. That
+  needs the CLIENT fault located, and note what the evidence rules out: `MakeRemoteDriven`
+  already null-checks and Cam's log shows every step completing through `done`, so a
+  readiness gate THERE is a confident no-op. The fault is 1.6s later and silent; every
+  reachable path in InterpolationSystem (stub gate, `TimePoints.empty()` extrapolation,
+  `ahead > maxExtrapolationMs`) is already guarded. Next step is step-logging across that
+  window, the same bisection MakeRemoteDriven's own comment describes - now practical
+  because the repro is deterministic.
   Fix must handle a driver id that resolves to nothing, not merely a slow-to-build one.
   Needs a dedicated session in VehicleSystem.cpp: gate DoMount/MakeRemoteDriven
   on entity readiness beyond OnVehicleReady, and treat a frozen-warned id as NOT ready.
