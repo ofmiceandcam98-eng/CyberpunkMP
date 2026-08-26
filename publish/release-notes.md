@@ -4,6 +4,17 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.111
+
+**The join crash is fixed for anyone playing alone, and this build carries the tracing to finish the rest.**
+
+- **Quitting while sitting in a car no longer breaks your next join.** The car stayed in the server's world with nobody driving it, and got handed to the next person who joined — killing their game about a second and a half after they loaded in. Nothing on the server or on disk showed it existed, so it looked like joining was simply broken. The fix landed on the server, so **it already protects you and does not need this update**.
+- **Still possible in one narrower case:** if someone disconnects from their car while another player stays online, that car legitimately survives — and can still take out the next person who joins. That one is not fixed yet.
+- **This build adds tracing for exactly that case.** If it happens to you, your log now records how far the game got before it died, which is the piece nobody has ever had. Nothing is asked of you — it records itself, no setting to turn on.
+- Also fixed: a server build break, and `/character new` now asks before retiring your character (it used to retire it the moment you typed it, even mid-session, which cost a character during testing).
+
+If you crash on joining, please send the log — `tools\CollectCrash.ps1` gathers it in one step. Run it **before** relaunching; relaunching overwrites the evidence.
+
 ## What changed — v0.3.108
 
 Launcher only — no game or server changes, nothing to re-test in a session.
