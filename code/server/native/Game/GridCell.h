@@ -22,11 +22,15 @@ struct GridCell
             func(pChar);
     }
 
-    template <class T, class... Args> void ForEach(T func)
+    // At least one filter type, deliberately: with `class... Args` allowed to be empty
+    // this overload has the same signature as the unfiltered one above, so a plain
+    // ForEach(lambda) matched both and every such call was an ambiguous-overload error.
+    // Requiring a First makes "no filter" and "filtered" two distinct signatures again.
+    template <class T, class First, class... Rest> void ForEach(T func)
     {
         for (auto pChar : m_entities)
         {
-            if(pChar.has<Args...>())
+            if (pChar.has<First, Rest...>())
                 func(pChar);
         }
     }
