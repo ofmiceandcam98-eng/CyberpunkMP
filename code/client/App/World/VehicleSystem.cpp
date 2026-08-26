@@ -235,10 +235,40 @@ void VehicleSystem::OnVehicleExit()
     const auto exitedVehicle = m_mountedServerId ? m_mountedServerId : m_vehicleRemoteId;
     const auto exitedSlot = m_mountedSlot;
 
+    // Were we mounted at all? Every enter branch sets m_mountedSlot, and only this
+    // function clears it, so it answers that question even for the branch where the
+    // server id is not known yet (a car we spawned ourselves, whose id arrives later via
+    // HandleAuthorityAssigned).
+    const bool wasMounted =
+        m_mountedSlot != 0 || m_mountedServerId.has_value() || m_vehicleRemoteId.has_value() ||
+        m_vehicleGameId.has_value();
+
     m_vehicleGameId = std::nullopt;
     m_vehicleRemoteId = std::nullopt;
     m_mountedServerId = std::nullopt;
     m_mountedSlot = 0;
+
+    // The engine fires this callback MORE THAN ONCE when something yanks the player out
+    // of a seat rather than them stepping out - a server teleport is the case that bit.
+    //
+    // Live trace (2026-08-26, Cam on a motorcycle): mount at 15:16:49, the reconnect
+    // restore-teleport lands at 15:16:53.115, and OnVehicleExit fires at .115 AND .123.
+    // The first call is correct and names the bike. The second runs after the state above
+    // has been cleared, so it built an ExitVehicleRequest carrying NO vehicle_id and NO
+    // sit_id - and the server's stale-exit guard only applies when has_vehicle_id() is
+    // true, deliberately ("requests without the fields keep the old unconditional
+    // behaviour", for older clients). So the fieldless second exit sailed past the guard
+    // and unconditionally detached him. He was left unmounted but still standing on the
+    // bike, unable to move, and the session died shortly after.
+    //
+    // Suppressing it here rather than tightening the server guard is deliberate: a
+    // fieldless exit is genuinely ambiguous, older clients still legitimately send them,
+    // and the client is the only side that knows whether it had a mount to leave.
+    if (!wasMounted)
+    {
+        spdlog::info("[VehicleSystem] OnVehicleExit: not mounted - ignoring a repeat exit");
+        return;
+    }
 
     spdlog::info("[VehicleSystem] OnVehicleExit");
     const auto pNetworkService = Core::Container::Get<NetworkService>();
