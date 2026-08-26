@@ -159,6 +159,45 @@ static void DriveEntity(const DriverComponent& aDriver, const EntityComponent& a
     }
 }
 
+// Traces a DRIVERLESS network vehicle through this function, to bisect the join crash.
+//
+// Scope is deliberately narrow. A car whose driver disconnected is the only entity class
+// that reproduces the crash (docs/MAP.md: quit in a car, rejoin, dead ~1.6s after
+// MakeRemoteDriven), and there is at most a handful in a world - so this is cheap, while
+// tracing every remote player every frame would be thousands of lines a minute and would
+// bury the one that matters.
+//
+// NOT behind a launch flag, on purpose. The last two attempts to capture this produced
+// empty sessions: the redscript side logged through FTLog, which reaches no file anyone
+// collects, and every surviving log came from a run where the flag was not passed. A
+// diagnostic that has to be armed in advance is a diagnostic that is off when it matters.
+//
+// `aStage` names the point reached. The LAST stage printed before the log stops is the
+// killer - the same bisection MakeRemoteDriven's own step logging describes.
+static void TraceDriverless(flecs::entity aEntity, const EntityComponent& aEntityComponent,
+                            InterpolationComponent& aInterpolation, int64_t aRenderTick,
+                            const char* aStage)
+{
+    if (!aEntityComponent.IsVehicle || aEntity.has<DriverComponent>())
+        return;
+
+    // The first frames are where the crash lives, so they all print. After that it settles
+    // into a heartbeat: enough to bracket the moment of death, not enough to drown the log.
+    constexpr uint32_t cAlwaysFirst = 12;
+    constexpr int64_t cHeartbeatMs = 250;
+
+    const bool early = aInterpolation.TraceCount < cAlwaysFirst;
+    if (!early && (aRenderTick - aInterpolation.LastTraceTick) < cHeartbeatMs)
+        return;
+
+    ++aInterpolation.TraceCount;
+    aInterpolation.LastTraceTick = aRenderTick;
+
+    spdlog::info("[OrphanVehicle] {:x} #{} {} - samples {}, prevTick {}, renderTick {}",
+                 aEntityComponent.Id.hash, aInterpolation.TraceCount, aStage,
+                 aInterpolation.TimePoints.size(), aInterpolation.PreviousFrame.Tick, aRenderTick);
+}
+
 void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComponent, InterpolationComponent& aInterpolation, float aSimulationDelay, Red::vehicle::IMoveSystem* apMoveSystem)
 {
     // Render time, in the integer domain the ticks actually live in.
@@ -190,6 +229,8 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
     // are small - are allowed to become float.
     const int64_t renderTick =
         static_cast<int64_t>(NetworkWorldSystem::GetTick()) - static_cast<int64_t>(aSimulationDelay);
+
+    TraceDriverless(aEntity, aEntityComponent, aInterpolation, renderTick, "enter");
 
     // Advance the segment. Everything that is now behind render time becomes the anchor
     // we interpolate FROM; the first sample still ahead of it is what we interpolate TO.
@@ -254,7 +295,10 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
     }
 
     if (aEntity.has<AttachedComponent>())
+    {
+        TraceDriverless(aEntity, aEntityComponent, aInterpolation, renderTick, "exit: attached");
         return;
+    }
 
     const auto& first = aInterpolation.PreviousFrame;
 
@@ -269,7 +313,11 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
         // A difference, so float is safe here - this is milliseconds, not epoch time.
         const float ahead = static_cast<float>(renderTick - static_cast<int64_t>(first.Tick));
         if (ahead <= 0.f || ahead > maxExtrapolationMs)
+        {
+            TraceDriverless(aEntity, aEntityComponent, aInterpolation, renderTick,
+                            "exit: extrapolation window closed");
             return;
+        }
 
         // Velocity is metres per second and the tick is milliseconds.
         const glm::vec3 heading{-std::sin(first.Rotation.z), std::cos(first.Rotation.z), 0.f};
@@ -296,7 +344,11 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
                                              ? static_cast<float>(std::max(
                                                    renderTick - aInterpolation.LastRenderTick, INT64_C(0)))
                                              : 16.f;
+                TraceDriverless(aEntity, aEntityComponent, aInterpolation, renderTick,
+                                "extrapolate: about to ForceMoveTo");
                 ForceMoveTo(vehicle, transform, frameDelta);
+                TraceDriverless(aEntity, aEntityComponent, aInterpolation, renderTick,
+                                "extrapolate: ForceMoveTo survived");
                     aInterpolation.LastRenderTick = renderTick;
             }
         }
@@ -403,11 +455,15 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
             static Core::RawFunc<457775029UL, void (*)(Red::vehicle::BaseObject*, const Red::WorldTransform&, bool)> ForceTransform;
             static Core::RawFunc<2592348558UL, void (*)(Red::vehicle::BaseObject*, uint32_t, bool)> EnablePhysics;
 
+            TraceDriverless(aEntity, aEntityComponent, aInterpolation, renderTick,
+                            "interpolate: about to SetSimpleMovement");
             SetSimpleMovement(apMoveSystem, aEntityComponent.Id, true);
 
             // modeled after DriveToPoint::OnUpdate_Internal, 3713079867
             if ((vehicle->physicsState & 0x100) == 0)
             {
+                TraceDriverless(aEntity, aEntityComponent, aInterpolation, renderTick,
+                                "interpolate: about to EnablePhysics");
                 EnablePhysics(vehicle, 0x100, false);
             }
 
@@ -420,7 +476,11 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
                                                renderTick - aInterpolation.LastRenderTick, INT64_C(0)))
                                          : 16.f;
 
+            TraceDriverless(aEntity, aEntityComponent, aInterpolation, renderTick,
+                            "interpolate: about to ForceMoveTo");
             ForceMoveTo(vehicle, transform, frameDelta);
+            TraceDriverless(aEntity, aEntityComponent, aInterpolation, renderTick,
+                            "interpolate: ForceMoveTo survived");
             //ForceTransform(vehicle, transform, true);
         }
     }

@@ -56,4 +56,16 @@ struct InterpolationComponent
     int64_t RecoveryStartTick{0};
     bool HasLastRenderedPosition{false};
     bool WasExtrapolating{false};
+
+    // Crash bisection for the driverless-vehicle join crash (docs/MAP.md).
+    //
+    // A car whose driver disconnected is replayed to the next joiner, and the client dies
+    // ~1.6s after MakeRemoteDriven finishes - silently, with every reachable guard in
+    // InterpolateEntity already passing. Nothing says which path it took or how far it got,
+    // so the trace below records both, and the LAST line before silence names the killer.
+    //
+    // Carried per entity rather than in a static map so it costs nothing to look up and
+    // dies with the entity. Rate limited by tick, because this runs every frame.
+    int64_t LastTraceTick{0};
+    uint32_t TraceCount{0};
 };

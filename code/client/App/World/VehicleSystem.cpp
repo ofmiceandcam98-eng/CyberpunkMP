@@ -383,6 +383,22 @@ void VehicleSystem::OnVehicleReady(const Red::EntityID& aVehicleEntityId)
     // simulate, whether or not anyone has been mounted into it yet.
     MakeRemoteDriven(Red::Cast<Red::vehicle::WheeledBaseObject>(worldSystem->GetEntity(aVehicleEntityId)));
 
+    // What we just built, recorded once per vehicle.
+    //
+    // For the driverless-car join crash (docs/MAP.md) this is the last description of the
+    // object before the ~1.6s of silence that ends the process, and it answers the
+    // questions the crash logs could not: does it have an entity stub (the gate at the top
+    // of InterpolateEntity turns on that), and what physics state did MakeRemoteDriven
+    // leave it in. Cheap - once per network vehicle spawn, a handful per session.
+    if (const auto pVehicle = Red::Cast<Red::vehicle::BaseObject>(worldSystem->GetEntity(aVehicleEntityId)))
+    {
+        const auto pStubSystem = Red::GetGameSystem<Red::game::IEntityStubSystem>();
+        const bool hasStub = pStubSystem && pStubSystem->FindStub(aVehicleEntityId) != nullptr;
+
+        spdlog::info("[VehicleSystem] OnVehicleReady: entity {:x} physicsState {:#x}, stub {}",
+                     aVehicleEntityId.hash, pVehicle->physicsState, hasStub ? "present" : "MISSING");
+    }
+
     auto mirror = worldSystem->FindEntity(aVehicleEntityId);
     if (!mirror)
     {
