@@ -59,7 +59,25 @@ public class MpSelectorPoll extends DelayCallback {
         this.attempts += 1;
 
         if this.attempts >= 10 {
-            FTLogError(s"[CyberpunkMP] the server never said what character this account has - is it up?");
+            // FALL BACK, do not strand them.
+            //
+            // This is the failure the selector was switched off for: the main menu is the
+            // one screen where being wrong means nobody can play at all, and the original
+            // version simply logged and returned - leaving the player staring at a menu
+            // that had silently decided to do nothing, with no feedback and no way in.
+            //
+            // Two and a half seconds without an answer means the server is down, slow, or
+            // unreachable. None of those should cost someone their session, so this drops
+            // to exactly the behaviour that shipped before the selector: load the last save
+            // and let the server sort out appearance and position on arrival.
+            FTLogError(s"[CyberpunkMP] the server never said what character this account has - entering the old way");
+
+            let network = GameInstance.GetNetworkWorldSystem();
+            if IsDefined(network) {
+                network.RequestJoin();
+                this.controller.GetSystemRequestsHandler().LoadLastCheckpoint(false);
+            }
+
             return;
         }
 
@@ -335,31 +353,33 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
             return true;
         }
 
-        // THE CHARACTER SELECTOR IS OFF FOR NOW - this is the original path.
+        // THE CHARACTER SELECTOR IS ON (2026-08-26).
         //
-        // Load the save, connect once the world is up. Straight in, no selector.
+        // Ask the server WHICH character this account owns before loading anything, then
+        // route accordingly: play as it if there is one, run creation only if there is not.
         //
-        // The selector below it is built and compiles: MpSelectorPoll asks the server what
-        // character this account owns before loading anything, MpBuildPanel draws it, and
-        // the trash can deletes it. What it has never had is a live session - and this is
-        // the main menu, the one screen where being wrong means nobody can play at all.
-        // It went out in v0.3.89 and rode along to v0.3.92 without ever being exercised,
-        // which is the actual mistake being undone here.
+        // Why this had to change. The old path went straight to LoadLastCheckpoint, which
+        // loads the player's last SINGLEPLAYER save purely as a vehicle into the world. For
+        // someone who has never played singleplayer there is no save to load, so MULTIPLAYER
+        // did nothing useful and the only entry that worked was MULTIPLAYER - NEW CHARACTER
+        // - which is why players were creating a fresh character every session instead of
+        // keeping the one they made. The server has known who they are the whole time; the
+        // menu simply never asked.
         //
-        // TO TURN IT BACK ON: replace the two lines below with
-        //
-        //     if !network.IsConnected() { network.Connect(); }
-        //     let poll = new MpSelectorPoll();
-        //     poll.controller = this;
-        //     poll.attempts = 0;
-        //     GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(poll, 0.25, false);
-        //
-        // Nothing else has to change: the native half (held spawn, EnterWorld, character
-        // status) stays wired and is harmless while unused, and the in-world controller
-        // already handles both routes.
-        network.RequestJoin();
+        // It was switched off in v0.3.92 for a good reason: it had never been exercised
+        // live, and this is the one screen where being wrong means nobody can play at all.
+        // That risk is now covered rather than avoided - MpSelectorPoll falls back to this
+        // exact old behaviour if the server has not answered within 2.5 seconds, so a down
+        // or slow server costs a short pause instead of a session.
+        if !network.IsConnected() {
+            network.Connect();
+        }
 
-        this.GetSystemRequestsHandler().LoadLastCheckpoint(false);
+        let poll = new MpSelectorPoll();
+        poll.controller = this;
+        poll.attempts = 0;
+
+        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(poll, 0.25, false);
         return true;
     }
 
