@@ -1841,9 +1841,21 @@ void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::
         // the save arrive to no record at all: fresh name prompt, arrivals spawn, a
         // genuinely new person. Reliable messages on one connection stay ordered, so the
         // retire always lands before the appearance.
+        //
+        // "/character new confirm", not "/character new". The bare command became a
+        // CONFIRMATION PROMPT on 2026-08-26 - typing it while spawned used to retire the
+        // character you were standing in, so it now asks first. This caller is not a
+        // person who might have fumbled a command; it is the creator flow, which has
+        // already had the player press MULTIPLAYER - NEW CHARACTER and walk through the
+        // whole creator. The intent is not in doubt here, so it answers the prompt.
+        //
+        // Missing this is what made a "new character" arrive wearing the old one's
+        // clothes: the retire was refused, the save copied the surviving record, and the
+        // player was handed back their previous perks, cyberware and inventory on top of
+        // whatever their new lifepath gave them.
         {
             client::ChatMessageRequest retire;
-            retire.set_message("/character new");
+            retire.set_message("/character new confirm");
             Core::Container::Get<NetworkService>()->Send(retire);
         }
 
