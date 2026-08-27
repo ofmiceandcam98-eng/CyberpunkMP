@@ -126,6 +126,29 @@ message ItemStack {
     uint32 quantity = 2;
 }
 
+/**
+ * "Here is what you own now" - sent when the server changes a character's possessions
+ * behind the player's back, rather than in reply to anything they did.
+ *
+ * It exists because of the starter kit. The spawn response carries possessions, but a
+ * brand new character is granted their kit AFTER that has already been sent: the client
+ * spawns, reports what it is carrying, and only then does the server know the lifepath and
+ * decide what the character should own. Without this the kit sat in the character record
+ * until the next join, the player spent their first session with nothing, and the
+ * possessions autosave then wrote that empty inventory back over the kit.
+ *
+ * Deliberately the same shape as the spawn response's possessions, and the client feeds it
+ * into the same restore that is already pending, so there is one path that hands a player
+ * their things rather than two that can disagree.
+ */
+message NotifyPossessions {
+    repeated ItemStack inventory = 1;
+    int64 money = 2;
+
+    // Why, for the log. "starter kit" today; an admin grant would be the next one.
+    string reason = 3;
+}
+
 message SpawnCharacterResponse{
     uint64 id = 1;
     uint64 cookie = 2;
@@ -620,5 +643,6 @@ message Protocol {
         NotifyStatusEffect notify_status_effect = 29;
         NotifyQuickhackUpload notify_quickhack_upload = 30;
         NotifyQuickhackResult notify_quickhack_result = 31;
+        NotifyPossessions notify_possessions = 32;
     }
 }

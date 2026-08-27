@@ -1783,6 +1783,41 @@ void NetworkWorldSystem::HandleNotifyMoney(const PacketEvent<server::NotifyMoney
     Red::CallVirtual(Red::GetGameSystem<NetworkWorldSystem>(), "ApplyServerMoney");
 }
 
+void NetworkWorldSystem::HandleNotifyPossessions(const PacketEvent<server::NotifyPossessions>& aMessage)
+{
+    // The server changing what we own, rather than answering something we asked.
+    //
+    // Today that means the starter kit. A new character is granted their kit AFTER the
+    // spawn response has gone out, so the possessions the client discarded on arrival were
+    // the retired character's and the real ones arrive here, a moment later.
+    //
+    // Fed into the SAME restore that is already pending rather than applied directly. The
+    // restore waits for the world to settle before it touches anything, and doing it here
+    // instead would mean two code paths handing a player their things - which is how you
+    // get one of them quietly disagreeing with the other.
+    m_restoreInventory.clear();
+    m_restoreInventory.reserve(aMessage.get_inventory().size());
+
+    for (const auto& stack : aMessage.get_inventory())
+        m_restoreInventory.push_back(stack);
+
+    m_restoreMoney = aMessage.get_money();
+
+    // A new character discarded its payload on arrival and would otherwise discard this one
+    // too. This IS the character's possessions, so the discard has done its job.
+    m_newCharacterPending = false;
+
+    // Re-arm if the restore has already run. On the creating session it has not - the
+    // grant lands within a second or two of the spawn - but a later grant (an admin
+    // handing something over) must not silently do nothing.
+    m_restorePending = true;
+    m_restoreTicks = 0;
+
+    spdlog::info("[Inventory] server granted possessions: {} stack(s), {} eddies ({})",
+                 m_restoreInventory.size(), m_restoreMoney,
+                 aMessage.get_reason().empty() ? "no reason given" : aMessage.get_reason().c_str());
+}
+
 void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::SpawnCharacterResponse>& aMessage)
 {
     // Step logging, because this path went SILENT and silence was all we had.
@@ -2351,6 +2386,7 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleSpawnCharacterResponse>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleOpenCharacterCreator>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleNotifyMoney>(this);
+    pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleNotifyPossessions>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleRequestCharacterName>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleWorldState>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleInteraction>(this);

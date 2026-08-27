@@ -485,6 +485,39 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
 
             spdlog::info("[StarterKit]   starterKitGranted=true");
 
+            // Hand it to the client NOW, not on their next join.
+            //
+            // The spawn response has already gone out by this point - it carried whatever
+            // the retired character owned, which the client correctly discarded. So without
+            // this the kit sits in the record, the player spends their first session naked
+            // and broke, and ninety seconds later the possessions autosave captures that
+            // empty inventory and writes it back over the kit. That is exactly what
+            // happened to Cam on 27 August: granted at 15:01:27, overwritten at 15:02:57.
+            //
+            // The client still has its restore pending at this moment - it waits for the
+            // world to settle before applying anything - so this lands in time to be part
+            // of that same restore rather than a second, competing one.
+            // Built as a vector and set in one go - the generator here is netpack, not
+            // protobuf, so there is no add_inventory() to append with. Same shape as
+            // Level.cpp's spawn response, deliberately.
+            Vector<server::ItemStack> stacks;
+            stacks.reserve(character.Inventory.size());
+
+            for (const auto& item : character.Inventory)
+            {
+                server::ItemStack entry;
+                entry.set_id(item.Id);
+                entry.set_quantity(item.Quantity);
+                stacks.push_back(entry);
+            }
+
+            server::NotifyPossessions possessions;
+            possessions.set_inventory(stacks);
+            possessions.set_money(character.Money);
+            possessions.set_reason("starter kit");
+
+            GServer->Send(pPlayer->Connection, possessions);
+
             // Recorded separately from the ordinary save audit above, which compared the
             // client's numbers. This is the server handing money out, and it should read
             // that way in the log rather than looking like a player's balance changing.

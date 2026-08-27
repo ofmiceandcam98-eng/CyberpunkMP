@@ -90,7 +90,24 @@ public class ChatController extends inkHUDGameController {
         let root = this.GetRootWidget();
         if IsDefined(root) {
             if IsDefined(network) {
-                network.ScriptLog(s"[ChatVisible] root visible=\(root.IsVisible()) opacity=\(root.GetOpacity())");
+                // Position and affine state, not just visible/opacity.
+                //
+                // The earlier round of this printed visible=true opacity=1 on the root and
+                // size=0x0 on the wrappers, and I read the zero size as the fault. That was
+                // probably wrong: an ink canvas that sizes to its children reports 0x0 as a
+                // matter of course, and a zero-sized canvas does not clip what is inside it.
+                //
+                // What actually needs explaining is a widget that says it is visible and is
+                // not drawn. That is position, scale, or the layer it sits on - none of
+                // which the old line showed. Cam reports the whole custom HUD appears the
+                // moment he enters a vehicle, so the useful measurement is this same line
+                // before and after that, and whichever number changes is the answer.
+                let pos = root.GetTranslation();
+                let scale = root.GetScale();
+                let sz = root.GetSize();
+                network.ScriptLog(s"[ChatVisible] root visible=\(root.IsVisible()) opacity=\(root.GetOpacity())" +
+                    s" pos=(\(pos.X), \(pos.Y)) scale=(\(scale.X), \(scale.Y)) size=(\(sz.X)x\(sz.Y))" +
+                    s" affectsLayout=\(root.GetAffectsLayoutWhenHidden())");
             }
             root.SetVisible(true);
             root.SetOpacity(1.0);

@@ -392,6 +392,7 @@ protected:
 
     // The server correcting our balance - a purchase, a sale, an admin adjustment.
     void HandleNotifyMoney(const PacketEvent<server::NotifyMoney>& aMessage);
+    void HandleNotifyPossessions(const PacketEvent<server::NotifyPossessions>& aMessage);
 
     // Set while a freshly created character is waiting to be sent to the server.
     bool m_newCharacterPending{false};
