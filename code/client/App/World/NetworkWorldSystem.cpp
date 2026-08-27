@@ -2209,6 +2209,39 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
     if (Settings::IsDisabled())
         return;
 
+    // Let flecs speak. Nothing was listening, which is why the crashes are silent.
+    //
+    // flecs reports its own fatal misuse - "invalid move assignment for %s", the illegal
+    // ctor/move handlers in addons/cpp/lifecycle_traits.hpp - through ecs_os_api.log_, and
+    // this project never set that callback on either half. So the library was formatting a
+    // message that names the exact offending component and writing it into a null handler
+    // before aborting. Every one of these crashes ends with the client simply gone and the
+    // log stopping mid-line, and this is why.
+    //
+    // The %s in that message is the type name. Routing this means the next occurrence tells
+    // us WHICH component is being moved illegally instead of leaving it to be inferred from
+    // a faulting address - which has been wrong three times, because the address is where
+    // the damage was touched, never where it was done.
+    {
+        ecs_os_set_api_defaults();
+        ecs_os_api_t api = ecs_os_get_api();
+
+        api.log_ = [](int32_t aLevel, const char* acpFile, int32_t aLine, const char* acpMessage)
+        {
+            const char* file = acpFile ? acpFile : "?";
+            const char* msg = acpMessage ? acpMessage : "";
+
+            // Negative levels are errors and fatals in flecs; everything else is chatter we
+            // do not want a line of per frame.
+            if (aLevel < 0)
+                spdlog::error("[flecs] {}:{} {}", file, aLine, msg);
+            else if (aLevel == 0)
+                spdlog::warn("[flecs] {}", msg);
+        };
+
+        ecs_os_set_api(&api);
+    }
+
     // Components that OWN MEMORY, declared before anything can touch one.
     //
     // NetworkWorldSystem IS a flecs::world, and until now the client registered nothing at
