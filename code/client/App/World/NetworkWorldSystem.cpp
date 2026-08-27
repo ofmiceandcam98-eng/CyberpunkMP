@@ -2271,6 +2271,38 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
     component<EntityComponent>();
     component<SpawningComponent>();
 
+    // Registering a component is not enough on its own - the type has to be one flecs can
+    // actually move, or flecs quietly installs ecs_move_illegal/ecs_move_ctor_illegal and
+    // aborts the moment an entity carrying it changes archetype:
+    //
+    //     template <typename T, if_not_t< std::is_move_assignable<T>::value > = 0>
+    //     ecs_move_t move() { return ecs_move_illegal; }
+    //
+    // Asserting it here means a component that cannot survive an archetype change fails the
+    // BUILD, naming itself, instead of killing the client seconds after a player spawns and
+    // leaving a faulting address that says nothing about which type was at fault.
+    static_assert(std::is_move_assignable_v<InterpolationComponent>,
+                  "InterpolationComponent must be move assignable or flecs will abort on archetype change");
+    static_assert(std::is_move_constructible_v<InterpolationComponent>,
+                  "InterpolationComponent must be move constructible");
+    static_assert(std::is_move_assignable_v<DriverComponent>,
+                  "DriverComponent must be move assignable or flecs will abort on archetype change");
+    static_assert(std::is_move_constructible_v<DriverComponent>,
+                  "DriverComponent must be move constructible");
+    static_assert(std::is_move_assignable_v<EntityComponent>,
+                  "EntityComponent must be move assignable or flecs will abort on archetype change");
+    static_assert(std::is_move_constructible_v<EntityComponent>,
+                  "EntityComponent must be move constructible");
+    static_assert(std::is_move_assignable_v<SpawningComponent>,
+                  "SpawningComponent must be move assignable or flecs will abort on archetype change");
+    static_assert(std::is_move_constructible_v<SpawningComponent>,
+                  "SpawningComponent must be move constructible");
+    static_assert(std::is_default_constructible_v<InterpolationComponent> &&
+                  std::is_default_constructible_v<DriverComponent> &&
+                  std::is_default_constructible_v<EntityComponent> &&
+                  std::is_default_constructible_v<SpawningComponent>,
+                  "flecs default-constructs components when an entity moves between archetypes");
+
     const auto pNetworkService = Core::Container::Get<NetworkService>();
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleCharacterLoad>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleEntityUnload>(this);
