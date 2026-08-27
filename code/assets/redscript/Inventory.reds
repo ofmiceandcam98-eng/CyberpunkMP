@@ -280,12 +280,56 @@ public class MpInventory {
       }
     }
 
+    // Take back what the server does NOT say you own.
+    //
+    // This is what makes the restore AUTHORITATIVE instead of additive, and it is the half
+    // that was missing. The loop above only ever hands items out, so anything the shared
+    // world template happened to carry stayed with the player forever - every account
+    // inherited the template's weapons, clothing, ammo and consumables, and the server's
+    // "130 stacks" arrived as "0 stacks given" because the template had already supplied
+    // them. The template is meant to be the technical shell the game boots into, not a
+    // source of anybody's belongings.
+    //
+    // Money already worked this way (it gives OR removes the difference, just below), so
+    // this brings items into line with the rule money has followed all along.
+    //
+    // GUARDED ON THE SERVER ACTUALLY HAVING AN INVENTORY. If the record is empty this does
+    // nothing, deliberately: an empty list is far more likely to be a character whose
+    // inventory has not been captured yet than a player who genuinely owns nothing, and
+    // stripping somebody bare on a bad read is not recoverable. A real empty character is
+    // stripped the first time the server does know their inventory, which is the safe way
+    // round to be wrong.
+    let removed = 0;
+
+    if count > 0u {
+      let moneyTdbid = ItemID.GetTDBID(MarketSystem.Money());
+
+      for item in existing {
+        if IsDefined(item) {
+          let heldId = item.GetID();
+          let heldTdbid = ItemID.GetTDBID(heldId);
+
+          // Money is settled separately below as a balance. Removing it here would fight
+          // that and double-count the difference.
+          if heldTdbid != moneyTdbid {
+            let owned = MpInventory.ServerWants(network, TDBID.ToNumber(heldTdbid));
+            let excess = transaction.GetItemQuantity(player, heldId) - owned;
+
+            if excess > 0 {
+              transaction.RemoveItem(player, heldId, excess);
+              removed += 1;
+            }
+          }
+        }
+      }
+    }
+
     MpInventory.RestoreAttributes(network, player);
     MpInventory.RestorePerks(network, player);
     MpVehicles.Restore(network);
     MpInventory.EquipCyberware(network, player, transaction);
 
-    network.ScriptLog(s"restore DONE: \(restored) stack(s) given, money \(held) -> \(stored)");
+    network.ScriptLog(s"restore DONE: \(restored) stack(s) given, \(removed) stack(s) taken back, money \(held) -> \(stored)");
   }
 
   /**
@@ -360,6 +404,27 @@ public class MpInventory {
     let index: Uint32 = 0u;
     let asked = 0;
 
+    // Clear first, so what the server holds REPLACES what the save happened to carry.
+    //
+    // Two problems, one fix. The shared world template comes with its own perks, and
+    // nothing took them away - so every account inherited them on top of their own. Worse,
+    // the buy loop below starts at level 0 and buys `wanted` times no matter what the
+    // player already has, so a perk the template had ALREADY bought got bought again: the
+    // template did not merely persist, it compounded.
+    //
+    // RemoveAllPerks.Set(owner, unequip, free) - verified against
+    // playerDevelopmentSystemRequests.script:150. Free, because this is a restore and not
+    // a respec the player paid for; unequipping too, so perk-granted items go with it
+    // rather than lingering as orphans.
+    //
+    // Same guard as the inventory: only when the server actually has perks on record. An
+    // empty list is far more likely to be a character that has not been captured yet than
+    // one who genuinely has none, and wiping somebody's build on a bad read is not
+    // recoverable.
+    let wipe = new RemoveAllPerks();
+    wipe.Set(player, true, true);
+    development.QueueRequest(wipe);
+
     while index < count {
       let perkType = IntEnum<gamedataNewPerkType>(Cast<Int32>(network.GetRestorePerkType(index)));
       let wanted = network.GetRestorePerkLevel(index);
@@ -386,6 +451,30 @@ public class MpInventory {
   }
 
   /** How many of this TweakDBID the player already holds, from the snapshot above. */
+  /**
+   * How many of this item the SERVER says you own. Zero means it does not own it at all.
+   *
+   * The inverse of HeldCount, and the thing that makes the restore authoritative rather
+   * than additive: without it the restore could only ever hand items OUT, so anything the
+   * template save happened to include stayed forever. Same linear scan for the same
+   * reason - the restore list is the server's whole inventory for this character, walked
+   * once per held stack, which is the same order of comparisons the give loop already does.
+   */
+  public static func ServerWants(network: ref<NetworkWorldSystem>, wanted: Uint64) -> Int32 {
+    let count = network.GetRestoreCount();
+    let index: Uint32 = 0u;
+
+    while index < count {
+      if Equals(network.GetRestoreId(index), wanted) {
+        return Cast<Int32>(network.GetRestoreQuantity(index));
+      }
+
+      index += 1u;
+    }
+
+    return 0;
+  }
+
   public static func HeldCount(ids: array<Uint64>, counts: array<Int32>, wanted: Uint64) -> Int32 {
     let i = 0;
 
