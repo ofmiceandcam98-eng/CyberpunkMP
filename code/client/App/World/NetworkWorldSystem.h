@@ -86,6 +86,12 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     void AddInventoryItem(uint64_t aId, uint32_t aQuantity);
     void EndInventoryCapture(int64_t aMoney);
 
+    // The lifepath chosen in the creator, pushed over from script during capture.
+    //
+    // Carries the game's own gamedataLifePath value unchanged rather than a name or a
+    // mod-specific enum, so nothing translates it twice. The server does the mapping once.
+    void SetLifepath(uint32_t aLifepath);
+
     // Number back to TweakDBID, because redscript cannot.
     //
     // TDBID exposes ToNumber and no inverse - the conversion is one-way in script. A
@@ -416,6 +422,12 @@ protected:
     uint32_t m_restoreReadyAt{0};
     int64_t m_capturedMoney{0};
     bool m_hasCapturedPossessions{false};
+
+    // gamedataLifePath as an integer. The sentinel means script never reported one, which
+    // the server reads as unsupported and answers by granting no kit at all - deliberately,
+    // because the wrong lifepath's gear is a silent bug and an empty inventory is a loud one.
+    static constexpr uint32_t kLifepathUnknown = 0xFFFFFFFFu;
+    uint32_t m_capturedLifepath{kLifepathUnknown};
     void HandleTeleport(const PacketEvent<server::NotifyTeleport>& aMessage);
 
     // The server's metronome: shared clock and sky. Applied on arrival, then re-asserted
@@ -565,6 +577,7 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(BeginInventoryCapture);
     RTTI_METHOD(AddInventoryItem);
     RTTI_METHOD(EndInventoryCapture);
+    RTTI_METHOD(SetLifepath);
     RTTI_METHOD(TdbidFromNumber);
     RTTI_METHOD(AddProficiency);
     RTTI_METHOD(AddAttribute);

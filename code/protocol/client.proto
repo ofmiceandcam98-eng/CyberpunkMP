@@ -116,6 +116,15 @@ message SaveCharacterRequest {
     // turned back into one on 2.31.
     repeated string vehicles = 10;
 
+    // The lifepath chosen in the creator, as the game's own gamedataLifePath value:
+    // 0 Corporate, 1 Nomad, 2 StreetKid. Sent raw rather than as a name so the client is
+    // not translating an enum the server then has to translate back.
+    //
+    // The server decides the starting kit from this, so it is only meaningful on the save
+    // that CREATES a character. A later save carries it too, but by then the kit has been
+    // granted and StarterKitGranted stops it counting twice.
+    uint32 lifepath = 11;
+
     // True when the save happened by itself - the ninety-second timer, or leaving.
     //
     // The server confirms a save in chat, which is right when somebody asked for one and

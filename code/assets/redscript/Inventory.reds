@@ -156,6 +156,29 @@ public class MpInventory {
     let chrome: array<wref<gameItemData>>;
     transaction.GetItemListByTag(player, n"Cyberware", chrome);
 
+    // The lifepath, read here because this already runs on every save and needs no new
+    // hook of its own.
+    //
+    // PlayerDevelopmentSystem.GetLifePath(owner) is the game's own accessor - see
+    // tools/redmod/scripts/cyberpunk/systems/playerDevelopmentSystem.script - and it
+    // returns gamedataLifePath { Corporate, Nomad, StreetKid, Count, Invalid }. Note the
+    // order: Nomad is 1 and StreetKid is 2, and the game says Corporate, not Corpo. The
+    // raw enum value goes over the wire so the server maps it once and nobody translates
+    // a name back and forth.
+    //
+    // If the system is missing the call is simply skipped, which leaves the native at its
+    // unknown sentinel and grants no kit - better than sending a plausible wrong number.
+    let devSystem = GameInstance.GetScriptableSystemsContainer(GetGameInstance())
+        .Get(n"PlayerDevelopmentSystem") as PlayerDevelopmentSystem;
+
+    if IsDefined(devSystem) {
+        let lifePath = devSystem.GetLifePath(player);
+        network.SetLifepath(Cast<Uint32>(EnumInt(lifePath)));
+        network.ScriptLog(s"capture: lifepath \(EnumInt(lifePath))");
+    } else {
+        network.ScriptLog("capture: PlayerDevelopmentSystem missing - no lifepath reported");
+    }
+
     network.ScriptLog(s"capture DONE: \(counted) stack(s), \(ArraySize(chrome)) cyberware, \(money) eddies");
 
     // Say so on screen.

@@ -5,6 +5,7 @@
 #include "Components/MovementComponent.h"
 #include "Components/AppearanceComponent.h"
 #include "CharacterRecord.h"
+#include "StarterKit.h"
 #include "Components/CharacterComponent.h"
 #include "Game/Level.h"
 #include "Game/WorldClock.h"
@@ -433,6 +434,64 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
     {
         spdlog::info("{} stored {} attribute(s) and {} perk(s)", pPlayer->Username,
                      character.Attributes.size(), character.Perks.size());
+    }
+
+    // The lifepath starter kit, granted once, at creation, by the server.
+    //
+    // Placed after everything the client sent has been copied in, because for a brand new
+    // character it deliberately OVERRIDES that. What the client reports at this moment is
+    // whatever save it happened to load - V's full loadout, cyberware and eddies - and a
+    // new character is not supposed to inherit any of it. They get their lifepath's own
+    // clothes, one ordinary sidearm, a hundred rounds and 20,000 eddies. Nothing else.
+    //
+    // Gated on StarterKitGranted rather than on Initialised or SpawnedBefore because those
+    // answer different questions. The kit is granted once per CHARACTER: the obvious wrong
+    // place for it is the join path, which would hand out a fresh outfit and another
+    // 20,000 eddies every time somebody reconnected.
+    if (!character.StarterKitGranted)
+    {
+        const auto lifepath = StarterKit::FromWire(aMessage.get_lifepath());
+        const auto kit = StarterKit::For(lifepath);
+
+        if (kit.empty())
+        {
+            // Only the three the game offers are supported. An unrecognised value grants
+            // nothing rather than picking a kit - the wrong lifepath's gear is a silent
+            // bug, whereas arriving with nothing is one somebody reports in a minute.
+            spdlog::warn("[StarterKit] {} finished the creator with an unsupported lifepath "
+                         "({}) - granting no kit, character keeps nothing",
+                         pPlayer->Username, aMessage.get_lifepath());
+        }
+        else
+        {
+            const int64_t moneyBefore = character.Money;
+
+            character.Inventory.clear();
+            character.Inventory.reserve(kit.size());
+
+            for (const auto& item : kit)
+                character.Inventory.push_back({item.Id, item.Quantity});
+
+            character.Money = StarterKit::kStartingMoney;
+            character.Lifepath = StarterKit::ToString(lifepath);
+            character.StarterKitGranted = true;
+
+            spdlog::info("[StarterKit] {} - character '{}', lifepath {}, {} eddies",
+                         pPlayer->Username, character.Name, character.Lifepath,
+                         character.Money);
+
+            for (const auto& item : kit)
+                spdlog::info("[StarterKit]   {} x{} (0x{:016X})", item.Name, item.Quantity, item.Id);
+
+            spdlog::info("[StarterKit]   starterKitGranted=true");
+
+            // Recorded separately from the ordinary save audit above, which compared the
+            // client's numbers. This is the server handing money out, and it should read
+            // that way in the log rather than looking like a player's balance changing.
+            auto& audit = GServer->GetAuditLog();
+            audit.RecordMoney(pPlayer->DiscordId, pPlayer->DiscordId, "starterkit.grant",
+                              moneyBefore, character.Money);
+        }
     }
 
     store.SaveCharacter(pPlayer->DiscordId, pPlayer->Username, character);

@@ -89,6 +89,20 @@ struct CharacterRecord
     // without anything having to remember to reset it.
     bool SpawnedBefore{false};
 
+    // Which of the game's three lifepaths this character chose, as "corpo", "streetkid" or
+    // "nomad" - see StarterKit::ToString. Stored rather than derived because the choice
+    // lives in the player's save on the client, and the server has to be able to answer
+    // "what is this character" without a client being connected to ask.
+    std::string Lifepath;
+
+    // Whether this character has already been handed their lifepath's starting kit.
+    //
+    // Separate from Initialised on purpose. The kit is granted once per CHARACTER, at
+    // creation, and the obvious wrong place to do it is on join - which would top a player
+    // up with a fresh outfit, pistol and 20,000 eddies every single time they reconnected.
+    // Anything that grants the kit must check this first and set it in the same breath.
+    bool StarterKitGranted{false};
+
     /**
      * What the character owns, held by the server rather than by the player's save.
      *
@@ -244,6 +258,7 @@ struct CharacterRecord
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(CharacterRecord, Slot, Name, Appearance, IsMale,
                                                 Level, AttributePoints, PerkPoints, Initialised,
                                                 NameChosen, SpawnedBefore, CharacterId,
+                                                Lifepath, StarterKitGranted,
                                                 Inventory, Money, Proficiencies,
                                                 Attributes, Perks, Vehicles,
                                                 PhoneNumber, Contacts, AllowedQuests,

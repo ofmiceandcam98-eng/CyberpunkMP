@@ -680,6 +680,11 @@ int32_t NetworkWorldSystem::GetRestoreAttributeValue(uint32_t aIndex) const
     return aIndex < m_restoreAttributes.size() ? m_restoreAttributes[aIndex].get_value() : 0;
 }
 
+void NetworkWorldSystem::SetLifepath(const uint32_t aLifepath)
+{
+    m_capturedLifepath = aLifepath;
+}
+
 void NetworkWorldSystem::BeginInventoryCapture()
 {
     m_capturedVehicles.clear();
@@ -930,6 +935,7 @@ void NetworkWorldSystem::PollAppearanceChanges()
     client::SaveCharacterRequest request;
     request.set_ccstate(m_pendingAppearance);
     request.set_is_male(m_pendingIsMale);
+    request.set_lifepath(m_capturedLifepath);
 
     // Ask the script side to read the inventory first.
     //
@@ -1017,6 +1023,7 @@ void NetworkWorldSystem::SaveCharacterAppearance(bool aAutomatic)
     client::SaveCharacterRequest request;
     request.set_ccstate(writer.bytes);
     request.set_is_male(stateHandle->instance->isBodyGenderMale);
+    request.set_lifepath(m_capturedLifepath);
 
     // Ask the script side to read the inventory first.
     //

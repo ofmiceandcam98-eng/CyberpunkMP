@@ -55,6 +55,10 @@ public native class NetworkWorldSystem extends IGameSystem {
     public native func AddInventoryItem(id: Uint64, quantity: Uint32) -> Void;
     public native func EndInventoryCapture(money: Int64) -> Void;
 
+    // The chosen lifepath, as the game's own gamedataLifePath value put through EnumInt.
+    // The server turns it into a starting kit; nothing on this side needs to know which.
+    public native func SetLifepath(value: Uint32) -> Void;
+
     // TDBID exposes ToNumber and no inverse - the conversion is one-way in script, so the
     // rebuild happens in C++ where a TweakDBID is just its number.
     public native func TdbidFromNumber(value: Uint64) -> TweakDBID;
