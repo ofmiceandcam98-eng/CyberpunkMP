@@ -365,29 +365,25 @@ public class MpInventory {
       let current: array<wref<gameItemData>>;
       transaction.GetItemList(player, current);
 
-      // CYBERWARE IS NOT LOOT. Never strip it.
+      // CYBERWARE IS STRIPPED TOO. A new character starts with none and earns it.
       //
-      // The removal pass excluded only money, so it was taking the character's chrome as
-      // well - and on 27 August Cam came out of the creator with no head and no arms while
-      // his hair and facial hair were still there. The appearance was applying correctly;
-      // something the body needs had been taken off it.
+      // Zeldfep's call on 27 August, and it overrides the previous reading of this. It had
+      // briefly been kept, because stripping it coincided with Cam coming out of the
+      // creator with no head and no arms - but that link was never actually confirmed, and
+      // "you start with nothing and buy your own chrome" is the design decision, not an
+      // inference for me to make.
       //
-      // Cyberware was never in scope anyway. The brief was that a new character should not
-      // inherit the loaded save's inventory, weapons or cars - it said nothing about
-      // removing their body, and "only what they start with" cannot sensibly mean less
-      // than a working character.
-      //
-      // Collected by tag, which is how the game itself finds chrome (player.script uses
-      // GetItemListByTag the same way) and how the capture above already does it.
+      // If the head and arms go missing again, this is the first suspect and the strip log
+      // below is how to check it: it prints the equipment AREAS the removal touched, and
+      // ArmsCW appearing there while the arms are gone would settle it. Do NOT quietly
+      // re-protect cyberware to fix that - narrow it to the specific body-critical pieces
+      // and say so, because "no cyberware at start" is a rule about the game, not a bug.
       let chrome: array<wref<gameItemData>>;
       transaction.GetItemListByTag(player, n"Cyberware", chrome);
 
+      // Nothing is protected. Kept as an empty list rather than deleting the mechanism,
+      // so re-protecting a specific piece later is one ArrayPush rather than a rewrite.
       let protectedIds: array<ItemID>;
-      for piece in chrome {
-        if IsDefined(piece) {
-          ArrayPush(protectedIds, piece.GetID());
-        }
-      }
 
       let doomedIds: array<ItemID>;
       let doomedCounts: array<Int32>;
@@ -448,7 +444,7 @@ public class MpInventory {
         a += 1;
       }
 
-      network.ScriptLog(s"strip: kept \(ArraySize(protectedIds)) cyberware piece(s); removed from equip areas: \(areaList)");
+      network.ScriptLog(s"strip: \(ArraySize(chrome)) cyberware piece(s) present, \(ArraySize(protectedIds)) kept; removed from equip areas: \(areaList)");
     }
 
     // A starter kit is meant to be WORN.
