@@ -49,15 +49,54 @@ public class MpVehicles {
    * Idempotent - EnablePlayerVehicle either unlocks a model or finds it already unlocked -
    * so unlike items and money this needs no difference calculation.
    *
-   * Nothing is ever disabled. A model the server did not mention is left alone rather than
-   * taken away: the list says what this account has earned, not an exhaustive statement of
-   * what it may have. Taking cars off somebody because a lookup failed is not a
-   * recoverable mistake.
+   * The server's list IS exhaustive now, and anything else is locked.
+   *
+   * This used to leave unmentioned models alone, for a reason that was right at the time:
+   * taking cars off somebody because a lookup failed is not a recoverable mistake. But
+   * every player loads the same world template, and that template comes with its own
+   * garage - so "leave it alone" meant every account inherited the template's cars and saw
+   * them in their phone despite the server considering none of them owned.
+   *
+   * The failed-lookup worry is answered properly now rather than avoided:
+   * IsCharacterStatusKnown() says whether the server actually replied, so a client that
+   * never heard back changes nothing at all.
+   *
+   * ORDER MATTERS - locking runs BEFORE unlocking, deliberately. The server stores names
+   * as strings and the game hands them back as CNames; if those ever disagree, locking
+   * first means the enable pass immediately puts back anything wrongly taken, and the
+   * mistake lasts microseconds. The other order would leave a car the player genuinely
+   * owns locked until their next join.
    */
+  /**
+   * Does the server say this account owns this model?
+   *
+   * A linear scan of the restore list, which is the whole of what the server holds for
+   * this character - a handful of entries against a handful of unlocked models, so the
+   * cost is nothing and the alternative is a lookup structure that would have to be built
+   * every join anyway.
+   */
+  public static func ServerOwns(network: ref<NetworkWorldSystem>, name: String) -> Bool {
+    let count = network.GetRestoreVehicleCount();
+    let index: Uint32 = 0u;
+
+    while index < count {
+      if Equals(network.GetRestoreVehicle(index), name) {
+        return true;
+      }
+
+      index += 1u;
+    }
+
+    return false;
+  }
+
   public static func Restore(network: ref<NetworkWorldSystem>) -> Void {
     let count = network.GetRestoreVehicleCount();
 
-    if count == 0u {
+    // NOT `if count == 0 then return`. A character who owns no cars is exactly the one who
+    // must not keep the template's - returning early here left a brand new player with a
+    // phone full of vehicles the server has never heard of.
+    if !network.IsCharacterStatusKnown() {
       return;
     }
 
@@ -66,6 +105,24 @@ public class MpVehicles {
     if !IsDefined(vehicleSystem) {
       network.ScriptLog("restore: no vehicle system - vehicles not restored");
       return;
+    }
+
+    // Take the template's garage away first (see the note above on why this order).
+    let held: array<PlayerVehicle>;
+    vehicleSystem.GetPlayerUnlockedVehicles(held);
+
+    let locked = 0;
+
+    for entry in held {
+      let name = NameToString(entry.name);
+
+      if !MpVehicles.ServerOwns(network, name) {
+        // despawnIfDisabling: a car already sitting in the world is not left standing
+        // there unowned once its unlock is gone.
+        if vehicleSystem.EnablePlayerVehicle(name, false, true) {
+          locked += 1;
+        }
+      }
     }
 
     let index: Uint32 = 0u;
@@ -79,6 +136,6 @@ public class MpVehicles {
       index += 1u;
     }
 
-    network.ScriptLog(s"restore: \(unlocked) vehicle(s) unlocked of \(count) stored");
+    network.ScriptLog(s"restore: \(unlocked) vehicle(s) unlocked of \(count) stored, \(locked) not-owned locked");
   }
 }
