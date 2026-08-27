@@ -31,27 +31,25 @@ WorldClock::WorldClock(World* apWorld) noexcept
                  GetGameTimeSeconds() / 86400, (GetGameTimeSeconds() % 86400) / 3600,
                  (GetGameTimeSeconds() % 3600) / 60, m_timeScale, m_weatherId);
 
-    // The iterator is drained even though the clock does not read it.
+    // DO NOT add `while (aIt.next()) {}` here. It was tried on 27 August and reverted.
     //
-    // .run() leaves the driving to the callback: run_delegate::invoke clears
-    // EcsIterIsValid, calls the function and returns without finalising anything. An
-    // iterator that is never iterated is never finalised, and the flecs stack cursor it
-    // holds is never released - so this leaked one every frame, forever, on a system whose
-    // whole job is to tick.
+    // The reasoning looked sound: .run() leaves iteration to the callback -
+    // run_delegate::invoke clears EcsIterIsValid, calls the function and returns without
+    // finalising - so a callback that never iterates never finalises its iterator, and the
+    // flecs stack cursor it holds is never released.
     //
-    // It is what was killing the CLIENT: the cursor chain fills with stale entries until
-    // flecs_stack_restore_cursor walks into one whose page is gone. Here it is worse in
-    // principle and quieter in practice, because a server is expected to stay up for days
-    // and this runs on every OnUpdate. Found on 27 August while tracking the client crash.
+    // Draining it hung the client instead. The game thread stopped dead while the network
+    // thread kept answering pings, which is what an unterminated loop looks like from
+    // outside: these systems declare no components, and next() on that iterator did not
+    // return false the way the documented pattern assumes.
+    //
+    // It also did not fix the crash it was meant to fix - that crash arrived unchanged,
+    // at the same instruction, with the drain in place.
     m_tickSystem = apWorld->system("World clock")
                        .kind(flecs::OnUpdate)
                        .run(
                            [this](flecs::iter& aIt)
                            {
-                               while (aIt.next())
-                               {
-                               }
-
                                Tick();
                            });
     m_tickSystem.child_of(apWorld->entity("systems"));

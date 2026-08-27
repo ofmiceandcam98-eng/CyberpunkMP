@@ -27,17 +27,9 @@ void WorldScriptInstance::Initialize()
     .kind(flecs::OnUpdate)
     .run([this](flecs::iter& iter)
     {
-        // delta_time is read BEFORE draining, deliberately - once the iterator finalises,
-        // reading it back is no longer safe.
-        const float delta = iter.delta_time();
+                const float delta = iter.delta_time();
 
-        // Drained for the same reason as the world clock: an un-iterated .run() iterator is
-        // never finalised and leaks its flecs stack cursor, every frame. See WorldClock.cpp
-        // for what that leak eventually does.
-        while (iter.next())
-        {
-        }
-
+        // Do NOT drain this iterator - see the note in WorldClock.cpp.
         if (m_callback != nullptr)
             m_callback(delta);
     });
