@@ -1757,23 +1757,41 @@ void NetworkWorldSystem::HandleNotifyMoney(const PacketEvent<server::NotifyMoney
 
 void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::SpawnCharacterResponse>& aMessage)
 {
+    // Step logging, because this path went SILENT and silence was all we had.
+    //
+    // 2026-08-26, 19:38: the client connected, sent its spawn request, and the server
+    // answered - its log shows "Puppet da spawned" and "spawns with 130 stored item
+    // stack(s)". The client then printed nothing at all from this handler, sat doing its
+    // once-a-second appearance poll for seven seconds, and died. Not a hang and not the
+    // restore, which never ran. With no line between "Connected" and death there was no
+    // way to tell whether this handler was even entered, let alone where it stopped.
+    //
+    // The last step printed before the log stops names the killer - the same bisection
+    // that found the vehicle-mount crash. Cheap: this runs once per join.
+    spdlog::info("[SpawnResponse] entered");
+
     if (!aMessage.has_id())
     {
         spdlog::error("Failed to spawn our character on the server...");
         return;
     }
 
+    spdlog::info("[SpawnResponse] id {:x} - setting remote player id", aMessage.get_id());
     SetRemotePlayerId(aMessage.get_id());
+    spdlog::info("[SpawnResponse] remote player id set");
 
     // Which doors the server says are open.
     //
     // Applied for everybody, not only characters with stored possessions - an unlocked
     // building belongs to the world, not to a character, and a new player should walk
     // into the same city as everyone else.
+    spdlog::info("[SpawnResponse] reading world facts");
     m_worldFacts = aMessage.get_facts();
 
     if (!m_worldFacts.empty())
         spdlog::info("[World] server sent {} fact(s) to apply", m_worldFacts.size());
+
+    spdlog::info("[SpawnResponse] facts done - has_possessions={}", aMessage.get_has_possessions());
 
     // Put back what this character owns.
     //
@@ -1794,6 +1812,7 @@ void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::
         // Not applied here. This handler runs before the local player's puppet is built,
         // so script would find no player and return. Update retries until there is one.
         m_restorePending = true;
+        spdlog::info("[SpawnResponse] possessions buffered - restore armed");
     }
     else
     {
