@@ -12,7 +12,19 @@ ServerListSystem::ServerListSystem(gsl::not_null<World*> apWorld)
     : m_pWorld(apWorld)
     , m_nextAnnounce{}
 {
-    m_updateSystem = apWorld->system("Server list Update").kind(flecs::OnUpdate).run([this](flecs::iter& iter) { Tick(); });
+    // Drained for the same reason as the world clock - an un-iterated .run() iterator is
+    // never finalised and leaks its flecs stack cursor, every frame. See WorldClock.cpp.
+    m_updateSystem = apWorld->system("Server list Update")
+                         .kind(flecs::OnUpdate)
+                         .run(
+                             [this](flecs::iter& aIt)
+                             {
+                                 while (aIt.next())
+                                 {
+                                 }
+
+                                 Tick();
+                             });
 
     m_serverListObserver = apWorld->observer<PlayerComponent>("Server list player Observer")
                                .event(flecs::OnSet)

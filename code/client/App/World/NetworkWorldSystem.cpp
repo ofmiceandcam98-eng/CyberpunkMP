@@ -2451,6 +2451,13 @@ void NetworkWorldSystem::OnConnected()
         .interval(1.f / pNetworkService->GetServerSettings().get_update_rate())
         .run([this](flecs::iter& it)
         {
+            // DRAIN THE ITERATOR. This is not a formality - see the note on the appearance
+            // watch below. Without it this system leaks a flecs stack cursor every tick,
+            // and this one ticks at the server update rate.
+            while (it.next())
+            {
+            }
+
             UpdatePlayerLocation();
         });
 
@@ -2460,6 +2467,30 @@ void NetworkWorldSystem::OnConnected()
         .interval(1.f)
         .run([this](flecs::iter& it)
         {
+            // DRAIN THE ITERATOR FIRST, even though nothing here reads it.
+            //
+            // This is the crash. With .run() flecs hands the callback the iterator and
+            // leaves the driving to you - run_delegate::invoke clears EcsIterIsValid, calls
+            // the function, and returns without finalising anything. An iterator that is
+            // never iterated is never finalised, and the flecs stack cursor it holds is
+            // never released. Three systems here did that, so the client leaked cursors
+            // from the moment it connected - this one every second, the location update at
+            // the server tick rate.
+            //
+            // The cursor chain fills with stale entries until flecs_stack_restore_cursor
+            // walks into one whose page is gone. That is every crash of 27 August: the
+            // faulting instruction is that function's last store, mov [rcx+0x10], ax, with
+            // rcx null - "cursor->page->sp = cursor->sp" against a page that no longer
+            // exists. Before flecs was moved onto mimalloc the recycled bytes were garbage
+            // and it read 0x11/0x13 instead; same bug, different rubbish in the slot.
+            //
+            // Draining it is the documented form and finalises the iterator on the way out.
+            // It costs nothing: these systems declare no components, so there is nothing to
+            // iterate and next() returns false immediately.
+            while (it.next())
+            {
+            }
+
             PollAppearanceChanges();
             PollEquipmentChanges();
         });
@@ -2479,6 +2510,13 @@ void NetworkWorldSystem::OnConnected()
         .interval(90.f)
         .run([this](flecs::iter& it)
         {
+            // Drained before anything else, because this one returns early on the quiet
+            // path and would otherwise leak a cursor on every tick that decided to do
+            // nothing. See the appearance watch above for what that leak causes.
+            while (it.next())
+            {
+            }
+
             const auto& service = Core::Container::Get<NetworkService>();
             if (!service || !service->IsConnected())
                 return;
