@@ -83,6 +83,10 @@ public native class NetworkWorldSystem extends IGameSystem {
     public native func GetRestoreQuantity(index: Uint32) -> Uint32;
     public native func GetRestoreMoney() -> Int32;
 
+    // "Put the restored items ON" - true only for a starter-kit grant.
+    public native func ShouldEquipRestored() -> Bool;
+    public native func ClearEquipRestored() -> Void;
+
     // FTLog goes somewhere we cannot read. This lands in CyberpunkMP.log.
     public native func ScriptLog(text: String) -> Void;
     public native func ConsumeJoinRequest() -> Bool;

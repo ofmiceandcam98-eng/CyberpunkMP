@@ -147,6 +147,10 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // Int32 rather than Int64: redscript has no cast between them, and eddies do not
     // come close to two billion. The record and the wire keep the wider type.
     int32_t GetRestoreMoney() const;
+
+    // "Put the restored items ON" - true only for a starter kit.
+    bool ShouldEquipRestored() const { return m_restoreShouldEquip; }
+    void ClearEquipRestored() { m_restoreShouldEquip = false; }
     bool ConsumeJoinRequest();
 
     // ---------------------------------------------------------------------------
@@ -424,6 +428,10 @@ protected:
     int64_t m_capturedMoney{0};
     bool m_hasCapturedPossessions{false};
 
+    // Set only for a starter-kit grant - see HandleNotifyPossessions. Cleared once the
+    // restore has acted on it, so a later restore does not re-dress the player.
+    bool m_restoreShouldEquip{false};
+
     // gamedataLifePath as an integer. The sentinel means script never reported one, which
     // the server reads as unsupported and answers by granting no kit at all - deliberately,
     // because the wrong lifepath's gear is a silent bug and an empty inventory is a loud one.
@@ -601,6 +609,8 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(GetRestoreId);
     RTTI_METHOD(GetRestoreQuantity);
     RTTI_METHOD(GetRestoreMoney);
+    RTTI_METHOD(ShouldEquipRestored);
+    RTTI_METHOD(ClearEquipRestored);
     RTTI_METHOD(ConsumeJoinRequest);
     RTTI_METHOD(IsCharacterStatusKnown);
     RTTI_METHOD(HasCharacter);

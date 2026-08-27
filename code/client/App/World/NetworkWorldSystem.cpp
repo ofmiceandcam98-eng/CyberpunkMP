@@ -1803,6 +1803,14 @@ void NetworkWorldSystem::HandleNotifyPossessions(const PacketEvent<server::Notif
 
     m_restoreMoney = aMessage.get_money();
 
+    // A starter kit is meant to be WORN, not carried.
+    //
+    // GiveItemByTDBID puts things in the inventory and stops there, so a new character
+    // arrived with the right clothes and gun sitting in a bag and had to dress themselves
+    // before they could do anything. Only the kit sets this: a returning player's restore
+    // must not re-equip a hundred items and overwrite what they chose to wear.
+    m_restoreShouldEquip = aMessage.get_reason() == "starter kit";
+
     // A new character discarded its payload on arrival and would otherwise discard this one
     // too. This IS the character's possessions, so the discard has done its job.
     m_newCharacterPending = false;

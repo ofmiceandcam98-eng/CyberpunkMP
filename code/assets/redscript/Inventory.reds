@@ -365,23 +365,69 @@ public class MpInventory {
       let current: array<wref<gameItemData>>;
       transaction.GetItemList(player, current);
 
+      // CYBERWARE IS NOT LOOT. Never strip it.
+      //
+      // The removal pass excluded only money, so it was taking the character's chrome as
+      // well - and on 27 August Cam came out of the creator with no head and no arms while
+      // his hair and facial hair were still there. The appearance was applying correctly;
+      // something the body needs had been taken off it.
+      //
+      // Cyberware was never in scope anyway. The brief was that a new character should not
+      // inherit the loaded save's inventory, weapons or cars - it said nothing about
+      // removing their body, and "only what they start with" cannot sensibly mean less
+      // than a working character.
+      //
+      // Collected by tag, which is how the game itself finds chrome (player.script uses
+      // GetItemListByTag the same way) and how the capture above already does it.
+      let chrome: array<wref<gameItemData>>;
+      transaction.GetItemListByTag(player, n"Cyberware", chrome);
+
+      let protectedIds: array<ItemID>;
+      for piece in chrome {
+        if IsDefined(piece) {
+          ArrayPush(protectedIds, piece.GetID());
+        }
+      }
+
       let doomedIds: array<ItemID>;
       let doomedCounts: array<Int32>;
+
+      // What the strip actually takes, by equipment area.
+      //
+      // Names cannot be logged - TDBID.ToStringDEBUG returns empty strings on 2.31 - and
+      // the raw ids are unreadable, but the equipment AREA is an enum and says plainly
+      // whether something being removed belongs on the character rather than in a pocket.
+      // Two guesses at what took the head and arms have already been wrong; this stops the
+      // third from being a guess.
+      let removedAreas: array<Int32>;
 
       for item in current {
         if IsDefined(item) {
           let heldId = item.GetID();
           let heldTdbid = ItemID.GetTDBID(heldId);
 
+          // Nested rather than an early `continue` - redscript has no continue statement,
+          // and using one fails the whole compilation with UNRESOLVED_REF, which takes
+          // every script in the mod down with it rather than just this file.
+          let isProtected = ArrayContains(protectedIds, heldId);
+
           // Money is settled separately below as a balance. Removing it here would fight
           // that and double-count the difference.
-          if heldTdbid != moneyTdbid {
+          if heldTdbid != moneyTdbid && !isProtected {
             let owned = MpInventory.ServerWants(network, TDBID.ToNumber(heldTdbid));
             let excess = transaction.GetItemQuantity(player, heldId) - owned;
 
             if excess > 0 {
               ArrayPush(doomedIds, heldId);
               ArrayPush(doomedCounts, excess);
+
+              let record = RPGManager.GetItemRecord(heldId);
+              if IsDefined(record) && IsDefined(record.EquipArea()) {
+                let area = EnumInt(record.EquipArea().Type());
+                if !ArrayContains(removedAreas, area) {
+                  ArrayPush(removedAreas, area);
+                }
+              }
             }
           }
         }
@@ -394,6 +440,52 @@ public class MpInventory {
         removed += 1;
         doomed += 1;
       }
+
+      let areaList = "";
+      let a = 0;
+      while a < ArraySize(removedAreas) {
+        areaList += s"\(removedAreas[a]) ";
+        a += 1;
+      }
+
+      network.ScriptLog(s"strip: kept \(ArraySize(protectedIds)) cyberware piece(s); removed from equip areas: \(areaList)");
+    }
+
+    // A starter kit is meant to be WORN.
+    //
+    // GiveItemByTDBID puts things in the inventory and stops, so a new character arrived
+    // with the right clothes and gun in a bag and had to dress themselves first. Only the
+    // kit does this - a returning player's restore must not re-equip a hundred items and
+    // overwrite whatever they chose to wear.
+    //
+    // Same EquipRequest/QueueRequest shape as EquipCyberware below, which is how this
+    // project already asks the equipment system for something.
+    if network.ShouldEquipRestored() {
+      let equipment = EquipmentSystem.GetInstance(player);
+      if IsDefined(equipment) {
+        let wearable: array<wref<gameItemData>>;
+        transaction.GetItemList(player, wearable);
+
+        let dressed = 0;
+        for candidate in wearable {
+          if IsDefined(candidate) {
+            let candidateId = candidate.GetID();
+            if MpInventory.ServerWants(network, TDBID.ToNumber(ItemID.GetTDBID(candidateId))) > 0 {
+              let request = new EquipRequest();
+              request.itemID = candidateId;
+              request.owner = player;
+              equipment.QueueRequest(request);
+              dressed += 1;
+            }
+          }
+        }
+
+        network.ScriptLog(s"starter kit: queued \(dressed) item(s) to equip");
+      } else {
+        network.ScriptLog("starter kit: no equipment system - items left in the inventory");
+      }
+
+      network.ClearEquipRestored();
     }
 
     MpInventory.RestoreAttributes(network, player);
