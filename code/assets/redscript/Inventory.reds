@@ -293,15 +293,22 @@ public class MpInventory {
     // Money already worked this way (it gives OR removes the difference, just below), so
     // this brings items into line with the rule money has followed all along.
     //
-    // GUARDED ON THE SERVER ACTUALLY HAVING AN INVENTORY. If the record is empty this does
-    // nothing, deliberately: an empty list is far more likely to be a character whose
-    // inventory has not been captured yet than a player who genuinely owns nothing, and
-    // stripping somebody bare on a bad read is not recoverable. A real empty character is
-    // stripped the first time the server does know their inventory, which is the safe way
-    // round to be wrong.
+    // GUARDED ON THE SERVER HAVING ANSWERED, not on the list being non-empty.
+    //
+    // The distinction matters and the first version got it wrong. Guarding on "the server
+    // sent at least one item" protects against a failed read, but it also means a BRAND NEW
+    // character - whose record is legitimately empty - keeps everything the template gave
+    // them. That is precisely the player this whole change is for: a fresh character should
+    // start with what they chose in creation and nothing else, not the template's weapons
+    // and ammo.
+    //
+    // IsCharacterStatusKnown() answers the real question - did the server tell us who this
+    // character is - and it is true for an empty inventory as readily as a full one. So a
+    // fresh character is stripped to their own belongings, while a client that never heard
+    // back still touches nothing.
     let removed = 0;
 
-    if count > 0u {
+    if network.IsCharacterStatusKnown() {
       let moneyTdbid = ItemID.GetTDBID(MarketSystem.Money());
 
       for item in existing {
@@ -390,7 +397,15 @@ public class MpInventory {
   public static func RestorePerks(network: ref<NetworkWorldSystem>, player: ref<GameObject>) -> Void {
     let count = network.GetRestorePerkCount();
 
-    if count == 0u {
+    // NOT `if count == 0 then return`. A character with no perks on record is the exact
+    // case that needs the wipe most: a brand new player should face a BLANK perk tree and
+    // spend their points on what they want, not inherit whatever build the shared template
+    // was saved with. Returning early here left them with the template's perks and no way
+    // to refund them.
+    //
+    // The wipe below runs whenever the server has answered; the buy-back loop after it
+    // simply has nothing to do when the list is empty, which is the correct outcome.
+    if !network.IsCharacterStatusKnown() {
       return;
     }
 
@@ -417,10 +432,8 @@ public class MpInventory {
     // a respec the player paid for; unequipping too, so perk-granted items go with it
     // rather than lingering as orphans.
     //
-    // Same guard as the inventory: only when the server actually has perks on record. An
-    // empty list is far more likely to be a character that has not been captured yet than
-    // one who genuinely has none, and wiping somebody's build on a bad read is not
-    // recoverable.
+    // Guarded above on the server having ANSWERED, not on the list being non-empty - a
+    // character with no perks on record is exactly the one who most needs the blank tree.
     let wipe = new RemoveAllPerks();
     wipe.Set(player, true, true);
     development.QueueRequest(wipe);
