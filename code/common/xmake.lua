@@ -1,6 +1,20 @@
 add_requires("hopscotch-map", "snappy", "gamenetworkingsockets", "catch2 2.13.9", "libuv", "openssl", "spdlog")
 add_requireconfs("*.protobuf*", { build = true })
-add_requireconfs("mimalloc", {configs = {rltgenrandom = true}})
+-- secure = true builds mimalloc with guard pages and encoded free lists.
+--
+-- Turned on to find the corruption behind the 27 August crashes: the client dies a few
+-- seconds after a new character is created, inside this DLL, holding values that cannot be
+-- pointers (0x11, 0x13) or a null. The faulting address is wherever the damaged block was
+-- next touched, not where it was damaged, so reasoning backwards from it kept producing
+-- plausible wrong answers.
+--
+-- Secure mode makes mimalloc notice the write itself - an overflow runs into a guard page,
+-- and a corrupted free-list link fails its check - so the report names the moment instead
+-- of the aftermath. Paired with mi_register_error in MimallocAllocator.cpp, which routes
+-- that report into the log.
+--
+-- It costs some speed. Revert this line once the corruption is found and fixed.
+add_requireconfs("mimalloc", {configs = {rltgenrandom = true, secure = true}})
 
 if is_plat("windows") then
     add_requires("minhook", "mem", "xbyak")
