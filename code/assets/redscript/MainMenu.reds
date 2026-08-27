@@ -450,6 +450,22 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
 
         let network = GameInstance.GetNetworkWorldSystem();
         if IsDefined(network) {
+            // Connect NOW, the same as the MULTIPLAYER entry does.
+            //
+            // RequestJoin only ARMS the join - it records that the player intends to be in
+            // multiplayer once a world exists. It does not open the connection. This branch
+            // never opened one, so pressing NEW CHARACTER dropped the player into the
+            // creator and the whole of the game with no server attached, and they had to
+            // connect by hand mid-session to actually be in multiplayer.
+            //
+            // It also matters for the retire below: the retire and the appearance save are
+            // sent over this connection once the player is standing in the world. No
+            // connection at the menu means a longer window in which anything that goes
+            // wrong leaves the old character un-retired.
+            if !network.IsConnected() {
+                network.Connect();
+            }
+
             network.RequestJoin();
 
             // Says out loud that what arrives next REPLACES the stored character.
