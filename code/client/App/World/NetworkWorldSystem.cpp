@@ -1,5 +1,8 @@
 #include "NetworkWorldSystem.h"
 
+// For routing flecs's own allocations onto our allocator - see OnInitialize.
+#include <mimalloc.h>
+
 #include <App/Settings.h>
 
 #include "App/Network/NetworkService.h"
@@ -2238,6 +2241,27 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
             else if (aLevel == 0)
                 spdlog::warn("[flecs] {}", msg);
         };
+
+        // Put flecs on OUR allocator, which is the one built with guard pages.
+        //
+        // The heap tripwire was watching the wrong heap. ecs_os_set_api_defaults() leaves
+        // flecs on the system allocator, so secure mimalloc never covered a single flecs
+        // allocation - including the stack cursors the client keeps dying inside. That is
+        // why the run of 13:54 crashed with nothing to say for itself: mimalloc was
+        // guarding memory that was never involved.
+        //
+        // Routed here so a corrupted flecs structure runs into a guard page and reports,
+        // instead of being read back later as a small integer pretending to be a pointer.
+        api.malloc_ = [](ecs_size_t aSize) -> void*
+        { return mi_malloc(static_cast<size_t>(aSize)); };
+
+        api.calloc_ = [](ecs_size_t aSize) -> void*
+        { return mi_calloc(1, static_cast<size_t>(aSize)); };
+
+        api.realloc_ = [](void* apPtr, ecs_size_t aSize) -> void*
+        { return mi_realloc(apPtr, static_cast<size_t>(aSize)); };
+
+        api.free_ = [](void* apPtr) { mi_free(apPtr); };
 
         ecs_os_set_api(&api);
     }
