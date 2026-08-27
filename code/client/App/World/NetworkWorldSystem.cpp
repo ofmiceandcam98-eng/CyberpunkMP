@@ -2512,9 +2512,7 @@ void NetworkWorldSystem::OnConnected()
         .interval(1.f / pNetworkService->GetServerSettings().get_update_rate())
         .run([this](flecs::iter& it)
         {
-            // Release the iterator - see the note on the appearance watch below.
-            it.fini();
-
+            // Do NOT release this iterator - see the appearance watch below.
             UpdatePlayerLocation();
         });
 
@@ -2524,32 +2522,24 @@ void NetworkWorldSystem::OnConnected()
         .interval(1.f)
         .run([this](flecs::iter& it)
         {
-            // RELEASE THE ITERATOR. fini(), not a drain loop - the difference matters.
+            // DO NOT release this iterator, by fini() OR by draining. Both were tried on
+            // 27 August; both were reverted the same hour.
             //
-            // .run() leaves iteration to the callback: run_delegate::invoke clears
-            // EcsIterIsValid, calls the function, and returns without finalising anything.
-            // A callback that never iterates never finalises its iterator, so the flecs
-            // stack cursor it holds is never released. Three systems here and three on the
-            // server did exactly that, leaking a cursor every tick from the moment the
-            // client connected.
+            // The theory is sound and flecs states it in its own source - FLECS_STACK_LEAK_MSG
+            // says "a stack allocator leak is most likely due to an unterminated iteration:
+            // call ecs_iter_fini to fix" - and .run() genuinely does leave finalising to the
+            // callback: run_delegate::invoke clears EcsIterIsValid, calls the function, and
+            // returns without finalising. What actually happened:
             //
-            // flecs says so itself, in the function the client keeps dying inside:
+            //   while (it.next()) {}  ->  HUNG the client. These systems declare no
+            //                             components and next() never returns false.
+            //   it.fini();            ->  SEGFAULTED the SERVER. Exit 139, crash-looping
+            //                             roughly a minute after each start, production down
+            //                             until it was reverted.
             //
-            //     "a stack allocator leak is most likely due to an unterminated
-            //      iteration: call ecs_iter_fini to fix"
-            //
-            // and flecs::iter::fini's own doc adds "failing to call this operation on an
-            // unfinished iterator will throw a fatal LEAK_DETECTED error". Both only speak
-            // in a FLECS_DEBUG build, which is why this went unheard for a day.
-            //
-            // The first attempt at this used `while (it.next()) {}` and HUNG the client -
-            // the game thread stopped dead while the network thread kept answering pings.
-            // These systems declare no components and next() does not terminate for them.
-            // ecs_iter_fini does not iterate at all: it clears the field caches and calls
-            // flecs_stack_restore_cursor, which is precisely and only what is needed.
-            //
-            // Called FIRST so the callbacks that return early still release it.
-            it.fini();
+            // The conclusion the evidence supports: flecs finalises these iterators itself
+            // somewhere after the callback returns, so doing it here is a double release.
+            // Neither instrument is the way to whatever the cursor problem actually is.
 
             PollAppearanceChanges();
             PollEquipmentChanges();
@@ -2570,11 +2560,7 @@ void NetworkWorldSystem::OnConnected()
         .interval(90.f)
         .run([this](flecs::iter& it)
         {
-            // Released FIRST, before the early returns below - see the appearance watch
-            // above. This one decides to do nothing on most ticks, so releasing it at the
-            // end would leak on every quiet pass.
-            it.fini();
-
+            // Do NOT release this iterator - see the appearance watch above.
             const auto& service = Core::Container::Get<NetworkService>();
             if (!service || !service->IsConnected())
                 return;

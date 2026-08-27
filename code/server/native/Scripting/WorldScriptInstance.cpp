@@ -29,9 +29,7 @@ void WorldScriptInstance::Initialize()
     {
                 const float delta = iter.delta_time();
 
-        // Released with fini() after delta_time is read - see WorldClock.cpp.
-        iter.fini();
-
+        // Do NOT release this iterator - see WorldClock.cpp. fini() segfaulted the server.
         if (m_callback != nullptr)
             m_callback(delta);
     });
