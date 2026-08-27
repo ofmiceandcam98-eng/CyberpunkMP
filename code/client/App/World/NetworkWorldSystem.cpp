@@ -935,7 +935,6 @@ void NetworkWorldSystem::PollAppearanceChanges()
     client::SaveCharacterRequest request;
     request.set_ccstate(m_pendingAppearance);
     request.set_is_male(m_pendingIsMale);
-    request.set_lifepath(m_capturedLifepath);
 
     // Ask the script side to read the inventory first.
     //
@@ -954,6 +953,16 @@ void NetworkWorldSystem::PollAppearanceChanges()
     // Sent only when a capture actually ran. An empty list is ambiguous - it reads as
     // "owns nothing" and as "nobody looked" - and the server treats absence as "leave what
     // is stored alone" rather than emptying somebody's pockets.
+    // AFTER the capture above, never before it.
+    //
+    // The first version set this beside set_is_male, several lines ahead of
+    // CallVirtual("CaptureInventory") - the call that actually fills it in. So the request
+    // always carried the "never reported" sentinel: the server logged "unsupported
+    // lifepath (4294967295)" and granted no kit, while the client's own log showed it had
+    // read the lifepath correctly (capture: lifepath 1, Nomad) a moment later. Both halves
+    // were right; only the order was wrong.
+    request.set_lifepath(m_capturedLifepath);
+
     if (m_hasCapturedPossessions)
     {
         request.set_inventory(m_capturedInventory);
@@ -1023,7 +1032,6 @@ void NetworkWorldSystem::SaveCharacterAppearance(bool aAutomatic)
     client::SaveCharacterRequest request;
     request.set_ccstate(writer.bytes);
     request.set_is_male(stateHandle->instance->isBodyGenderMale);
-    request.set_lifepath(m_capturedLifepath);
 
     // Ask the script side to read the inventory first.
     //
@@ -1042,6 +1050,16 @@ void NetworkWorldSystem::SaveCharacterAppearance(bool aAutomatic)
     // Sent only when a capture actually ran. An empty list is ambiguous - it reads as
     // "owns nothing" and as "nobody looked" - and the server treats absence as "leave what
     // is stored alone" rather than emptying somebody's pockets.
+    // AFTER the capture above, never before it.
+    //
+    // The first version set this beside set_is_male, several lines ahead of
+    // CallVirtual("CaptureInventory") - the call that actually fills it in. So the request
+    // always carried the "never reported" sentinel: the server logged "unsupported
+    // lifepath (4294967295)" and granted no kit, while the client's own log showed it had
+    // read the lifepath correctly (capture: lifepath 1, Nomad) a moment later. Both halves
+    // were right; only the order was wrong.
+    request.set_lifepath(m_capturedLifepath);
+
     if (m_hasCapturedPossessions)
     {
         request.set_inventory(m_capturedInventory);
