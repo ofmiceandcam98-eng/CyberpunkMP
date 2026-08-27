@@ -71,13 +71,33 @@ public class ChatController extends inkHUDGameController {
     // a parent or the render order rather than anything in this file. Guessing again
     // without them would cost another round trip.
     private func ForceVisible() -> Void {
+        // Reported through ScriptLog, NOT FTLog.
+        //
+        // These diagnostics were written precisely so nobody would have to guess which
+        // widget is wrong - and then sent to FTLog, which reaches no file this project
+        // collects. So they have been running invisibly ever since, and the guessing
+        // continued anyway. Cam spent an evening locked out of his own character by an
+        // input box that had focus but never appeared, with this answer being printed into
+        // the void the whole time.
+        //
+        // Reading them: a null means the widget path is wrong; a zero size means layout; and
+        // correct-looking values everywhere mean the problem is a PARENT or the render
+        // order rather than anything in this file. That last case is the live suspect -
+        // the box becomes visible the moment the player enters a vehicle, which changes
+        // HUD context without this code running at all.
+        let network = GameInstance.GetNetworkWorldSystem();
+
         let root = this.GetRootWidget();
         if IsDefined(root) {
-            FTLog(s"[ChatController] root visible=\(root.IsVisible()) opacity=\(root.GetOpacity())");
+            if IsDefined(network) {
+                network.ScriptLog(s"[ChatVisible] root visible=\(root.IsVisible()) opacity=\(root.GetOpacity())");
+            }
             root.SetVisible(true);
             root.SetOpacity(1.0);
         } else {
-            FTLogError(s"[ChatController] no root widget");
+            if IsDefined(network) {
+                network.ScriptLog("[ChatVisible] NO ROOT WIDGET - the controller is not attached");
+            }
         }
 
         let names = ["wrapper", "wrapper/chat", "wrapper/chat/bg", "wrapper/input_box"];
@@ -85,10 +105,14 @@ public class ChatController extends inkHUDGameController {
             let widget = this.GetWidget(StringToName(name));
             if IsDefined(widget) {
                 let size = widget.GetSize();
-                FTLog(s"[ChatController] '\(name)' visible=\(widget.IsVisible()) opacity=\(widget.GetOpacity()) size=\(size.X)x\(size.Y)");
+                if IsDefined(network) {
+                    network.ScriptLog(s"[ChatVisible] '\(name)' visible=\(widget.IsVisible()) opacity=\(widget.GetOpacity()) size=\(size.X)x\(size.Y)");
+                }
                 widget.SetVisible(true);
             } else {
-                FTLogWarning(s"[ChatController] '\(name)' does not resolve");
+                if IsDefined(network) {
+                    network.ScriptLog(s"[ChatVisible] '\(name)' DOES NOT RESOLVE - wrong path");
+                }
             }
         }
     }
