@@ -311,6 +311,20 @@ public class MpInventory {
     if network.IsCharacterStatusKnown() {
       let moneyTdbid = ItemID.GetTDBID(MarketSystem.Money());
 
+      // DECIDE FIRST, REMOVE AFTER. Never both in the same loop.
+      //
+      // `existing` holds wref<gameItemData> - weak references INTO the inventory. Calling
+      // RemoveItem while walking them destroys the very objects being dereferenced, and
+      // the next iteration reads freed memory. That crashed the game immediately after the
+      // restore on 2026-08-26, with the log ending right after "restore DONE" and no TDR
+      // to blame it on.
+      //
+      // The server already had this lesson written down - RemoveOwnedVehicles collects into
+      // a vector before destroying, "destroying entities from inside the iteration would
+      // invalidate it" - and this is the same mistake on the script side.
+      let doomedIds: array<ItemID>;
+      let doomedCounts: array<Int32>;
+
       for item in existing {
         if IsDefined(item) {
           let heldId = item.GetID();
@@ -323,11 +337,19 @@ public class MpInventory {
             let excess = transaction.GetItemQuantity(player, heldId) - owned;
 
             if excess > 0 {
-              transaction.RemoveItem(player, heldId, excess);
-              removed += 1;
+              ArrayPush(doomedIds, heldId);
+              ArrayPush(doomedCounts, excess);
             }
           }
         }
+      }
+
+      // The iteration is over; `existing` is no longer touched, so removing is safe.
+      let doomed = 0;
+      while doomed < ArraySize(doomedIds) {
+        transaction.RemoveItem(player, doomedIds[doomed], doomedCounts[doomed]);
+        removed += 1;
+        doomed += 1;
       }
     }
 
