@@ -2261,7 +2261,24 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
         api.realloc_ = [](void* apPtr, ecs_size_t aSize) -> void*
         { return mi_realloc(apPtr, static_cast<size_t>(aSize)); };
 
-        api.free_ = [](void* apPtr) { mi_free(apPtr); };
+        // Poisoned on the way out, same as MimallocAllocator::Free and for the same reason.
+        //
+        // This is the free that matters: flecs allocates its stack cursors here, and a
+        // cursor read after being freed is exactly what the crash looks like. Filling with
+        // 0xDD turns "cursor->page was null" into "cursor->page was 0xDDDDDDDDDDDDDDDD",
+        // which distinguishes a use-after-free from an object that was never initialised.
+        // Those two need opposite fixes and nothing so far separates them.
+        api.free_ = [](void* apPtr)
+        {
+            if (apPtr != nullptr)
+            {
+                const size_t size = mi_malloc_size(apPtr);
+                if (size > 0 && size < (64u * 1024u * 1024u))
+                    std::memset(apPtr, 0xDD, size);
+            }
+
+            mi_free(apPtr);
+        };
 
         ecs_os_set_api(&api);
     }

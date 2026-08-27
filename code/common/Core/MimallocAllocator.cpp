@@ -2,6 +2,7 @@
 
 #include <mimalloc.h>
 #include <spdlog/spdlog.h>
+#include <cstring>
 
 namespace
 {
@@ -67,6 +68,36 @@ void* MimallocAllocator::Allocate(const size_t aSize) noexcept
 
 void MimallocAllocator::Free(void* apData) noexcept
 {
+    // Poison before freeing, to tell two very different bugs apart.
+    //
+    // The client keeps dying at the same instruction with a null pointer where a flecs
+    // stack cursor's page should be. Null has two completely different explanations and
+    // they need opposite fixes:
+    //
+    //   - the object was FREED and its memory zeroed or reused, i.e. use-after-free
+    //   - the object was never fully INITIALISED and the field was legitimately null
+    //
+    // Nothing seen so far separates them. mimalloc cannot help by itself: a use-after-free
+    // is invisible to it because the block is simply handed to the next allocation.
+    //
+    // Filling with 0xDD makes the difference unmistakable. A pointer read out of freed
+    // memory becomes 0xDDDDDDDDDDDDDDDD, so the fault address turns into something like
+    // 0xDDDDDDDDDDDDDDED instead of 0x10, and the crash names its own cause. If the
+    // address stays small and null-based after this, the memory was never freed and the
+    // hunt moves to whoever built that object.
+    //
+    // Diagnostic only. Take it out once the cause is known - it writes over every freed
+    // block in the process.
+    if (apData != nullptr)
+    {
+        const size_t size = mi_malloc_size(apData);
+
+        // Guard the size: mi_malloc_size returns 0 for a pointer mimalloc does not own,
+        // and writing to one of those would be a new bug rather than a diagnostic.
+        if (size > 0 && size < (64u * 1024u * 1024u))
+            std::memset(apData, 0xDD, size);
+    }
+
     mi_free(apData);
 }
 
