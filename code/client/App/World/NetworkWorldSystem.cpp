@@ -1834,9 +1834,26 @@ void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::
             m_restorePerks.clear();
             m_restoreVehicles.clear();
             m_restoreMoney = 0;
-            m_restorePending = false;
 
-            spdlog::info("[SpawnResponse] NEW character - discarding the retired character's possessions");
+            // STILL PENDING, deliberately. Empty the payload, do not skip the phase.
+            //
+            // The first version set m_restorePending = false here, which looked harmless -
+            // there is nothing to restore, so why wait. But that flag is not only a
+            // to-do marker: PollEquipmentChanges and the possessions autosave both check
+            // it and stand down while it is set, precisely so nothing reads or writes the
+            // player while the world is still assembling around them.
+            //
+            // Clearing it early let the equipment poll start touching a player who had
+            // just been created and was still being built, seconds after spawn, and the
+            // client died there twice - both times a few appearance polls after a NEW
+            // character landed, with the server healthy and no GPU timeout.
+            //
+            // Leaving it set keeps the normal settle-then-apply sequence exactly as it is.
+            // The restore still runs, finds nothing to give, and clears the flag itself on
+            // the way out - which is the same path every other character takes.
+            m_restorePending = true;
+
+            spdlog::info("[SpawnResponse] NEW character - possessions discarded, restore will run empty");
         }
         else
         {
