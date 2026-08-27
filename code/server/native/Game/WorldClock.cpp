@@ -31,25 +31,23 @@ WorldClock::WorldClock(World* apWorld) noexcept
                  GetGameTimeSeconds() / 86400, (GetGameTimeSeconds() % 86400) / 3600,
                  (GetGameTimeSeconds() % 3600) / 60, m_timeScale, m_weatherId);
 
-    // DO NOT add `while (aIt.next()) {}` here. It was tried on 27 August and reverted.
+    // fini(), not a drain loop. The distinction is the whole point - see the long note on
+    // the appearance watch in the client's NetworkWorldSystem.cpp.
     //
-    // The reasoning looked sound: .run() leaves iteration to the callback -
-    // run_delegate::invoke clears EcsIterIsValid, calls the function and returns without
-    // finalising - so a callback that never iterates never finalises its iterator, and the
-    // flecs stack cursor it holds is never released.
+    // .run() leaves iteration to the callback, and run_delegate::invoke returns without
+    // finalising anything, so a callback that never iterates leaks the flecs stack cursor
+    // its iterator holds. This system's entire job is to tick, so it leaked one every
+    // frame on a process expected to stay up for days.
     //
-    // Draining it hung the client instead. The game thread stopped dead while the network
-    // thread kept answering pings, which is what an unterminated loop looks like from
-    // outside: these systems declare no components, and next() on that iterator did not
-    // return false the way the documented pattern assumes.
-    //
-    // It also did not fix the crash it was meant to fix - that crash arrived unchanged,
-    // at the same instruction, with the drain in place.
+    // `while (aIt.next()) {}` was tried first and HUNG the client - these systems declare
+    // no components and next() does not terminate for them. ecs_iter_fini does not iterate
+    // at all; it releases the caches and restores the cursor, which is all that is wanted.
     m_tickSystem = apWorld->system("World clock")
                        .kind(flecs::OnUpdate)
                        .run(
                            [this](flecs::iter& aIt)
                            {
+                               aIt.fini();
                                Tick();
                            });
     m_tickSystem.child_of(apWorld->entity("systems"));

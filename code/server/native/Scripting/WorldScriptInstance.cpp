@@ -29,7 +29,9 @@ void WorldScriptInstance::Initialize()
     {
                 const float delta = iter.delta_time();
 
-        // Do NOT drain this iterator - see the note in WorldClock.cpp.
+        // Released with fini() after delta_time is read - see WorldClock.cpp.
+        iter.fini();
+
         if (m_callback != nullptr)
             m_callback(delta);
     });

@@ -12,13 +12,14 @@ ServerListSystem::ServerListSystem(gsl::not_null<World*> apWorld)
     : m_pWorld(apWorld)
     , m_nextAnnounce{}
 {
-    // Do NOT drain this iterator - see the note in WorldClock.cpp. Tried 27 August, hung
-    // the client, reverted.
+    // Released with fini(), not drained - see WorldClock.cpp. A drain loop hangs; this
+    // one leaks a flecs stack cursor every frame if it is left out.
     m_updateSystem = apWorld->system("Server list Update")
                          .kind(flecs::OnUpdate)
                          .run(
                              [this](flecs::iter& aIt)
                              {
+                                 aIt.fini();
                                  Tick();
                              });
 

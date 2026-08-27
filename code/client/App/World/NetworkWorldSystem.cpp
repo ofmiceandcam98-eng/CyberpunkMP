@@ -2512,7 +2512,9 @@ void NetworkWorldSystem::OnConnected()
         .interval(1.f / pNetworkService->GetServerSettings().get_update_rate())
         .run([this](flecs::iter& it)
         {
-            // Do NOT drain this iterator - see the note on the appearance watch below.
+            // Release the iterator - see the note on the appearance watch below.
+            it.fini();
+
             UpdatePlayerLocation();
         });
 
@@ -2522,27 +2524,33 @@ void NetworkWorldSystem::OnConnected()
         .interval(1.f)
         .run([this](flecs::iter& it)
         {
-            // DO NOT add `while (it.next()) {}` here. Tried 27 August, reverted the same
-            // hour, and the reasons are worth keeping because the idea looks correct.
+            // RELEASE THE ITERATOR. fini(), not a drain loop - the difference matters.
             //
-            // The reasoning: .run() leaves iteration to the callback. run_delegate::invoke
-            // clears EcsIterIsValid, calls the function, and returns without finalising
-            // anything, so a callback that never iterates never finalises its iterator and
-            // the flecs stack cursor it holds is never released. Three systems here and
-            // three on the server did exactly that.
+            // .run() leaves iteration to the callback: run_delegate::invoke clears
+            // EcsIterIsValid, calls the function, and returns without finalising anything.
+            // A callback that never iterates never finalises its iterator, so the flecs
+            // stack cursor it holds is never released. Three systems here and three on the
+            // server did exactly that, leaking a cursor every tick from the moment the
+            // client connected.
             //
-            // What actually happened when all six were drained:
-            //   1. The crash did NOT change. Same instruction, same null, same timing.
-            //   2. The client HUNG. The game thread stopped dead mid-session while the
-            //      network thread kept answering pings at 0% loss - an unterminated loop
-            //      seen from outside. These systems declare no components, and next() on
-            //      that iterator does not return false the way the documented pattern
-            //      assumes it will.
+            // flecs says so itself, in the function the client keeps dying inside:
             //
-            // So the leak may well be real, but draining is not the way to close it, and a
-            // hang is worse than the crash it failed to fix. If this is revisited, prove
-            // next() terminates for a no-component system FIRST, on one system, in a
-            // session you are willing to lose.
+            //     "a stack allocator leak is most likely due to an unterminated
+            //      iteration: call ecs_iter_fini to fix"
+            //
+            // and flecs::iter::fini's own doc adds "failing to call this operation on an
+            // unfinished iterator will throw a fatal LEAK_DETECTED error". Both only speak
+            // in a FLECS_DEBUG build, which is why this went unheard for a day.
+            //
+            // The first attempt at this used `while (it.next()) {}` and HUNG the client -
+            // the game thread stopped dead while the network thread kept answering pings.
+            // These systems declare no components and next() does not terminate for them.
+            // ecs_iter_fini does not iterate at all: it clears the field caches and calls
+            // flecs_stack_restore_cursor, which is precisely and only what is needed.
+            //
+            // Called FIRST so the callbacks that return early still release it.
+            it.fini();
+
             PollAppearanceChanges();
             PollEquipmentChanges();
         });
@@ -2562,7 +2570,11 @@ void NetworkWorldSystem::OnConnected()
         .interval(90.f)
         .run([this](flecs::iter& it)
         {
-            // Do NOT drain this iterator - see the note on the appearance watch above.
+            // Released FIRST, before the early returns below - see the appearance watch
+            // above. This one decides to do nothing on most ticks, so releasing it at the
+            // end would leak on every quiet pass.
+            it.fini();
+
             const auto& service = Core::Container::Get<NetworkService>();
             if (!service || !service->IsConnected())
                 return;
