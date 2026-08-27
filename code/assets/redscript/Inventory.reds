@@ -345,10 +345,30 @@ public class MpInventory {
       // The server already had this lesson written down - RemoveOwnedVehicles collects into
       // a vector before destroying, "destroying entities from inside the iteration would
       // invalidate it" - and this is the same mistake on the script side.
+      // AND RE-READ THE LIST FIRST. The half the note above missed.
+      //
+      // `existing` was filled in at the top of this function, and by the time we get here
+      // it is stale: the give pass above has called GiveItemByTDBID, and the money pass has
+      // called GiveItem or RemoveItem on the eddies stack. Both mutate the very inventory
+      // these weak references point into, so walking the old array afterwards dereferences
+      // entries the item system has already moved or destroyed.
+      //
+      // Not deferring the removals - that part was right and stays. This is the earlier
+      // mistake in the same function: deciding not to touch the list WHILE removing, but
+      // still trusting a snapshot taken before two other passes rearranged it.
+      //
+      // It fits what the crashes actually show. The client dies two to four seconds after
+      // "restore DONE" reading a tiny bogus pointer (0x11, 0x13) inside our own DLL, which
+      // is freed-and-reused memory rather than a missing null check, and the 02:25 run went
+      // through the money path - "money 300 -> 0" - so a mutation definitely happened
+      // between the snapshot and this loop.
+      let current: array<wref<gameItemData>>;
+      transaction.GetItemList(player, current);
+
       let doomedIds: array<ItemID>;
       let doomedCounts: array<Int32>;
 
-      for item in existing {
+      for item in current {
         if IsDefined(item) {
           let heldId = item.GetID();
           let heldTdbid = ItemID.GetTDBID(heldId);
