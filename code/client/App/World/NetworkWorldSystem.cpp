@@ -2184,6 +2184,35 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
     if (Settings::IsDisabled())
         return;
 
+    // Components that OWN MEMORY, declared before anything can touch one.
+    //
+    // NetworkWorldSystem IS a flecs::world, and until now the client registered nothing at
+    // all - so every component was registered implicitly, by whichever code path happened
+    // to touch it first, and a component discovered that way is treated as plain data.
+    // flecs then memcpy's it on an archetype move and never runs a destructor.
+    //
+    // Two of ours cannot survive that. InterpolationComponent holds a List<Timepoint>
+    // (std::list, on every networked entity, growing as position updates arrive) and
+    // DriverComponent holds a std::shared_ptr. memcpy'ing either duplicates an owning
+    // pointer without telling the owner: the list's nodes get freed twice, the shared_ptr
+    // refcount goes wrong, and the heap is quietly corrupted. The crash lands later, in
+    // whatever unlucky code next walks a free list - which is why nothing logs near it.
+    //
+    // That is Cam's crash of 27 August: four dumps, all EXCEPTION_ACCESS_VIOLATION inside
+    // this DLL at the same instruction, reading [rax+0x12] where rax held 0x11 and 0x13 -
+    // small integers being used as pointers, the signature of freed and reused memory
+    // rather than a missing null check.
+    //
+    // This is the same bug the server hit and the server's World.cpp already carries the
+    // matching list, ending with the note that anything non-trivial added later belongs on
+    // it. The client simply never had one. The tags and POD components are listed too, so
+    // the rule is "every component goes here" and nobody has to make the judgement call
+    // again after adding a std::string to one of them.
+    component<InterpolationComponent>();
+    component<DriverComponent>();
+    component<EntityComponent>();
+    component<SpawningComponent>();
+
     const auto pNetworkService = Core::Container::Get<NetworkService>();
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleCharacterLoad>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleEntityUnload>(this);
