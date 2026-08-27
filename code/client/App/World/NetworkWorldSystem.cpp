@@ -1811,8 +1811,38 @@ void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::
 
         // Not applied here. This handler runs before the local player's puppet is built,
         // so script would find no player and return. Update retries until there is one.
-        m_restorePending = true;
-        spdlog::info("[SpawnResponse] possessions buffered - restore armed");
+        // A REPLACEMENT character has nothing to inherit.
+        //
+        // Ordering problem, seen live: the server answers the spawn with the OLD
+        // character's possessions before the client has told it to retire that character -
+        // the retire goes out moments later, once the player is standing in the world. So
+        // the client was handed the previous character's inventory, perks and cyberware
+        // and dutifully restored all of it onto somebody who had just been created. Cam
+        // made a Street Kid and arrived with 9 perks, 14 cyberware and Corpo clothes.
+        //
+        // Retiring earlier is not available: the connection and the world both have to
+        // exist first. But the client already knows this is a replacement - the player
+        // pressed MULTIPLAYER - NEW CHARACTER - so it can simply decline the inheritance.
+        // A brand new character has nothing legitimate to restore.
+        //
+        // Their real belongings are captured and stored a moment later by the appearance
+        // save, which is what makes the new character persistent from that point on.
+        if (m_newCharacterPending)
+        {
+            m_restoreInventory.clear();
+            m_restoreAttributes.clear();
+            m_restorePerks.clear();
+            m_restoreVehicles.clear();
+            m_restoreMoney = 0;
+            m_restorePending = false;
+
+            spdlog::info("[SpawnResponse] NEW character - discarding the retired character's possessions");
+        }
+        else
+        {
+            m_restorePending = true;
+            spdlog::info("[SpawnResponse] possessions buffered - restore armed");
+        }
     }
     else
     {
