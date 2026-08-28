@@ -407,9 +407,34 @@ public class MpInventory {
           // every script in the mod down with it rather than just this file.
           let isProtected = ArrayContains(protectedIds, heldId);
 
+          // BODY SLOTS ARE NOT LOOT.
+          //
+          // The strip was taking whatever sat in the RightArm slot, which the area log
+          // caught red-handed: "removed from equip areas: ... 33" with 33 = RightArm.
+          // That is a body slot, not an inventory item and not cyberware - and it fits
+          // exactly what Cam saw, arms gone and a pistol floating where his hands were.
+          //
+          // Deliberately NOT the cyberware areas. Zeldfep's rule stands: a new character
+          // starts with no chrome, so ArmsCW, HandsCW, EyesCW, LegsCW and the rest are
+          // still stripped. RightArm and LeftArm are separate equipment areas from those,
+          // so protecting them hands nobody an implant.
+          //
+          // Head is NOT on this list on purpose. It holds headgear - hats and the like -
+          // which is ordinary clothing and should be stripped, and the area log shows it
+          // was never removed anyway, so whatever happened to the head is a different
+          // question from whatever happened to the arms.
+          let bodySlot = false;
+          let itemRecord = RPGManager.GetItemRecord(heldId);
+          if IsDefined(itemRecord) && IsDefined(itemRecord.EquipArea()) {
+            let itemArea = itemRecord.EquipArea().Type();
+            bodySlot = Equals(itemArea, gamedataEquipmentArea.RightArm)
+                    || Equals(itemArea, gamedataEquipmentArea.LeftArm)
+                    || Equals(itemArea, gamedataEquipmentArea.BaseFists);
+          }
+
           // Money is settled separately below as a balance. Removing it here would fight
           // that and double-count the difference.
-          if heldTdbid != moneyTdbid && !isProtected {
+          if heldTdbid != moneyTdbid && !isProtected && !bodySlot {
             let owned = MpInventory.ServerWants(network, TDBID.ToNumber(heldTdbid));
             let excess = transaction.GetItemQuantity(player, heldId) - owned;
 
@@ -444,7 +469,7 @@ public class MpInventory {
         a += 1;
       }
 
-      network.ScriptLog(s"strip: \(ArraySize(chrome)) cyberware piece(s) present, \(ArraySize(protectedIds)) kept; removed from equip areas: \(areaList)");
+      network.ScriptLog(s"strip: body slots kept; \(ArraySize(chrome)) cyberware piece(s) present, \(ArraySize(protectedIds)) kept; removed from equip areas: \(areaList)");
     }
 
     // A starter kit is meant to be WORN.
