@@ -115,8 +115,19 @@ struct DiscordConfig
             acLowerName == "administrator")
             return EPermissionLevel::kAdmin;
 
+        // "support" sits here deliberately.
+        //
+        // Cam created a support role in Discord on 2026-08-28 and said the multi-character
+        // slots are for "support, admins and up". There is no kSupport level and adding one
+        // would renumber a ladder that permission checks already read as `>= kModerator`
+        // everywhere - so support IS the moderator rung, which was otherwise unused.
+        //
+        // Listed by name rather than left to roles.json because of the rule this whole
+        // function exists for: a role that does nothing until somebody finds its snowflake
+        // does nothing, in practice, forever. Cam made the role; it should just work.
         if (acLowerName == "mod" || acLowerName == "mods" || acLowerName == "moderator" ||
-            acLowerName == "moderators" || acLowerName == "staff")
+            acLowerName == "moderators" || acLowerName == "staff" ||
+            acLowerName == "support")
             return EPermissionLevel::kModerator;
 
         return EPermissionLevel::kPlayer;

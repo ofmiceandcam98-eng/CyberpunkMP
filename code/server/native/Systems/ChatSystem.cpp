@@ -1492,6 +1492,116 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
     // the Discord account that owns it, and the id that outlives both - and until now there
     // was no way to get from any one to the others. That made the character id useless in
     // practice: nothing could tell you what it was.
+    /**
+     * /rename <character-id> <new name> - repair a character's name. Admins and above.
+     *
+     * This exists because the mod broke people's names. The server asks for a character
+     * name right after spawn, and until 96da4bf the chat box was being drawn off in the
+     * corner of the screen - so players typed blind into a field they could not see, and a
+     * name is chosen ONCE. Cam's own character came out as "JulianJulian Vale", doubled
+     * because he could not see what he had already entered. The once-only lock that makes
+     * names meaningful is exactly what makes a typo permanent, so there has to be a way to
+     * fix one.
+     *
+     * Keyed on the CHARACTER id, not the Discord account. Cam: "just in case they rename
+     * their discord account." A display name is not an identifier.
+     *
+     * Deliberately does NOT clear NameChosen. This repairs a name; it does not hand the
+     * player a fresh naming attempt, which would turn an admin tool into a way to rename
+     * yourself repeatedly by asking.
+     */
+    if (command == "/rename")
+    {
+        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
+            return deny(EPermissionLevel::kAdmin);
+
+        const auto idStart = acLine.find(' ');
+        std::string rest = (idStart == std::string::npos) ? std::string{} : acLine.substr(idStart + 1);
+
+        while (!rest.empty() && rest.front() == ' ')
+            rest.erase(rest.begin());
+
+        const auto split = rest.find(' ');
+
+        if (split == std::string::npos)
+        {
+            Tell(acSender, "Usage: /rename <character-id> <new name>");
+            Tell(acSender, "The character id is shown by /whois - it does not change when somebody renames their Discord.");
+            return true;
+        }
+
+        const std::string characterId = rest.substr(0, split);
+        std::string wanted = rest.substr(split + 1);
+
+        while (!wanted.empty() && wanted.front() == ' ')
+            wanted.erase(wanted.begin());
+
+        while (!wanted.empty() && wanted.back() == ' ')
+            wanted.pop_back();
+
+        if (wanted.empty())
+        {
+            Tell(acSender, "Usage: /rename <character-id> <new name>");
+            return true;
+        }
+
+        // Same guards the player-facing /name applies. An admin should not be able to put a
+        // name on somebody else's character that the owner could not have chosen.
+        if (wanted.front() == '/')
+        {
+            Tell(acSender, "That looks like a command, not a name.");
+            return true;
+        }
+
+        if (wanted.size() > 32)
+            wanted.resize(32);
+
+        auto& store = GServer->GetPlayerStore();
+
+        std::string ownerDiscordId;
+        std::string ownerUsername;
+        const auto* pCharacter = store.FindCharacterById(characterId, &ownerDiscordId, &ownerUsername);
+
+        if (!pCharacter)
+        {
+            Tell(acSender, fmt::format("No character with id '{}'.", characterId));
+            return true;
+        }
+
+        const std::string previous = pCharacter->Name.empty() ? std::string("unnamed") : pCharacter->Name;
+
+        // Copy the stored record and change only the name. SaveCharacter replaces the record
+        // wholesale with what it is given, so building one from scratch here would silently
+        // reset every field this command does not mention - which is how SpawnedBefore got
+        // wiped by face edits once already.
+        CharacterRecord updated = *pCharacter;
+        updated.Name = wanted;
+
+        store.SaveCharacter(ownerDiscordId, ownerUsername, updated);
+
+        spdlog::info("{} renamed character {} ('{}') to '{}' - owner {}", acSender.Username, characterId,
+                     previous, wanted, ownerUsername);
+
+        Tell(acSender, fmt::format("Character {} renamed: '{}' -> '{}'.", characterId, previous, wanted));
+
+        // Tell the owner, if they are online. Somebody else changing your character's name
+        // without a word is worse than the typo it fixed.
+        //
+        // The world is walked rather than indexed - PlayerManager has no lookup by Discord
+        // id, and this is the same walk the vehicle-sale notification does for the same
+        // reason. A handful of players is a walk of a handful.
+        m_pWorld->each(
+            [this, &ownerDiscordId, &wanted](flecs::entity, const PlayerComponent& acOther)
+            {
+                if (acOther.DiscordId != ownerDiscordId)
+                    return;
+
+                Tell(acOther, fmt::format("An admin corrected your character's name to '{}'.", wanted));
+            });
+
+        return true;
+    }
+
     if (command == "/whois")
     {
         if (!acSender.HasAtLeast(EPermissionLevel::kModerator))

@@ -234,6 +234,45 @@ struct PlayerStore
      * numbers and the person behind a number is a separate question - one that has a
      * different answer after a character is retired.
      */
+    /**
+     * A character by its own id, across every account.
+     *
+     * Keyed on CharacterId rather than the Discord account deliberately. Cam's reason:
+     * "just in case they rename their discord account". A display name is not an identifier
+     * - it changes whenever somebody feels like it - and an admin repairing a mangled
+     * character name needs to name the CHARACTER, not the person who happens to own it
+     * today.
+     *
+     * Returns the owner's Discord id through apOwnerDiscordId, because SaveCharacter is
+     * keyed on the account and the caller will need it to write the change back.
+     */
+    const CharacterRecord* FindCharacterById(const std::string& acCharacterId,
+                                             std::string* apOwnerDiscordId = nullptr,
+                                             std::string* apOwnerUsername = nullptr) const
+    {
+        if (acCharacterId.empty())
+            return nullptr;
+
+        for (const auto& record : m_records)
+        {
+            for (const auto& character : record.Characters)
+            {
+                if (character.CharacterId != acCharacterId)
+                    continue;
+
+                if (apOwnerDiscordId)
+                    *apOwnerDiscordId = record.DiscordId;
+
+                if (apOwnerUsername)
+                    *apOwnerUsername = record.Username;
+
+                return &character;
+            }
+        }
+
+        return nullptr;
+    }
+
     const CharacterRecord* FindCharacterByPhoneNumber(const std::string& acNumber,
                                                       std::string* apOwnerDiscordId = nullptr) const
     {
