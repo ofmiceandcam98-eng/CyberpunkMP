@@ -3,6 +3,11 @@
 // For routing flecs's own allocations onto our allocator - see OnInitialize.
 #include <mimalloc.h>
 
+// For the crash/terminate reporting in OnInitialize.
+#include <csignal>
+#include <exception>
+#include <cstdlib>
+
 #include <App/Settings.h>
 
 #include "App/Network/NetworkService.h"
@@ -2281,6 +2286,38 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
                                const auto* pRec = apInfo->ExceptionRecord;
                                const auto code = pRec->ExceptionCode;
 
+                               // C++ EXCEPTIONS ARE LOGGED TOO, and that is the point now.
+                               //
+                               // The first version of this filtered 0xE06D7363 out as noise.
+                               // That was the mistake: the handler was installed, no fatal
+                               // SEH exception ever arrived, and the process still died -
+                               // no dump, no CrashInfo entry, no Windows record, no assert.
+                               // Nothing was crashing, so something is TERMINATING.
+                               //
+                               // An uncaught C++ exception leaving a noexcept function calls
+                               // std::terminate and then abort, which ends the process with
+                               // no fatal SEH exception at all - exactly the shape observed,
+                               // and exactly what the old filter hid.
+                               //
+                               // Rate-limited rather than filtered, because the game throws
+                               // these routinely and the interesting one is whichever is
+                               // last before the log stops.
+                               if (code == 0xE06D7363)
+                               {
+                                   static std::atomic<uint32_t> s_cppSeen{0};
+                                   const auto n = ++s_cppSeen;
+
+                                   if (n <= 20 || (n % 100) == 0)
+                                   {
+                                       spdlog::warn("[Crash] C++ exception #{} at 0x{:016X}, thread {}",
+                                                    n, reinterpret_cast<uint64_t>(pRec->ExceptionAddress),
+                                                    GetCurrentThreadId());
+                                       spdlog::default_logger()->flush();
+                                   }
+
+                                   return EXCEPTION_CONTINUE_SEARCH;
+                               }
+
                                // Only the ones that actually end a process.
                                const bool fatal = code == EXCEPTION_ACCESS_VIOLATION ||
                                                   code == EXCEPTION_STACK_OVERFLOW ||
@@ -2336,7 +2373,53 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
                                return EXCEPTION_CONTINUE_SEARCH;
                            });
 
-                       spdlog::info("[Crash] vectored handler installed");
+                       // The termination paths themselves, which raise no SEH exception at
+                       // all and are therefore invisible to the handler above.
+                       //
+                       // This is where the evidence points. The vectored handler was
+                       // installed and never fired, yet the process died - so nothing threw.
+                       // std::terminate and abort both end a process quietly, and both are
+                       // reachable from an uncaught C++ exception or a failed assertion in
+                       // any library in the address space, ours included.
+                       std::set_terminate(
+                           []()
+                           {
+                               spdlog::error("[Crash] std::terminate called on thread {}", GetCurrentThreadId());
+
+                               if (const auto e = std::current_exception())
+                               {
+                                   try
+                                   {
+                                       std::rethrow_exception(e);
+                                   }
+                                   catch (const std::exception& ex)
+                                   {
+                                       spdlog::error("[Crash]   uncaught std::exception: {}", ex.what());
+                                   }
+                                   catch (...)
+                                   {
+                                       spdlog::error("[Crash]   uncaught non-std exception");
+                                   }
+                               }
+                               else
+                               {
+                                   spdlog::error("[Crash]   no in-flight exception - terminate called directly");
+                               }
+
+                               spdlog::default_logger()->flush();
+                               std::abort();
+                           });
+
+                       std::signal(SIGABRT,
+                                   [](int)
+                                   {
+                                       spdlog::error("[Crash] SIGABRT on thread {} - something called abort()",
+                                                     GetCurrentThreadId());
+                                       spdlog::default_logger()->flush();
+                                       std::_Exit(3);
+                                   });
+
+                       spdlog::info("[Crash] vectored handler + terminate/abort hooks installed");
                    });
 
     // Let flecs speak. Nothing was listening, which is why the crashes are silent.
