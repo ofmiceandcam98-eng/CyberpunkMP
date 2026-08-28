@@ -371,6 +371,11 @@ void NetworkWorldSystem::Update(uint64_t aTick)
             {
                 m_restorePending = false;
 
+                // From here the player standing in the world IS the server's character, so
+                // it is safe to save what they are carrying. Cleared again by any world
+                // detach - see OnBeforeWorldDetach.
+                m_characterLive = true;
+
                 spdlog::info("[Inventory] applying possessions now");
 
                 if (!Red::CallVirtual(Red::GetGameSystem<NetworkWorldSystem>(), "RestorePossessions"))
@@ -916,6 +921,14 @@ void NetworkWorldSystem::PollEquipmentChanges()
     if (!apprSystem)
         return;
 
+    // Not after a world reload. What is wearing these clothes may be the local save's
+    // template rather than the server's character - the same reason the possessions
+    // autosave and the disconnect save are gated. This one is only equipment, so it would
+    // have dressed Cam's stored character in the template's outfit rather than replacing
+    // it outright, but it is the same mistake at a smaller scale.
+    if (!MaySaveCharacter())
+        return;
+
     auto items = apprSystem->GetPlayerItems(player);
 
     // An empty read is "nobody looked", not "wearing nothing" - the same ambiguity the
@@ -995,6 +1008,21 @@ void NetworkWorldSystem::PollAppearanceChanges()
 
     if (m_pendingAppearance.empty())
         return;
+
+    // Same rule as the other three save paths. A mirror or a ripperdoc visit is a genuine
+    // appearance change worth storing - but only for the character the server actually gave
+    // us. After a world reload the face in that mirror belongs to the local save's V, and
+    // storing it would put a stranger's head on somebody's character.
+    //
+    // The pending bytes are dropped with it. Holding them would only mean sending the same
+    // wrong face at the next opportunity.
+    if (!MaySaveCharacter())
+    {
+        spdlog::warn("[Character] appearance change ignored - the world was reloaded since the "
+                     "restore, so this is not the server's character");
+        m_pendingAppearance.clear();
+        return;
+    }
 
     client::SaveCharacterRequest request;
     request.set_ccstate(m_pendingAppearance);
@@ -1342,6 +1370,26 @@ void NetworkWorldSystem::OnBeforeWorldDetach(RED4ext::world::RuntimeScene* aScen
     // 01:30 crash-on-quit ends exactly one line into the detach with no stage named,
     // which is why every stage announces itself here: the next teardown death names
     // its killer instead of ending the log mid-sentence.
+    // The character we restored does NOT survive this.
+    //
+    // This is what destroyed Cam's character on 27 August. He connected, the server
+    // restored him correctly (13 stacks, 20000 eddies), and then he pressed join from the
+    // main menu - which detaches the world and reloads it from the local save. The player
+    // standing there afterwards was the singleplayer template, not his character. Seventy
+    // seconds later the disconnect save captured THAT and sent it to the server:
+    //
+    //   22:10:41  server sent  13 stack(s) and 20000 eddies   <- his character
+    //   22:11:53  captured    409 stack(s) and   872 eddies   <- the template
+    //   22:11:53  sent 9141 bytes of appearance to the server <- overwritten
+    //
+    // He lost a character and had to build it again. Nothing checked that the body being
+    // saved was still the one the server handed us; the only guard was m_restorePending,
+    // which the restore had already cleared an hour earlier.
+    //
+    // So a detach revokes the claim. Saving is allowed again only when a restore completes
+    // and makes it true once more.
+    m_characterLive = false;
+
     spdlog::info("[Detach] stand-down: silencing the animation hook");
     App::PuppetRegistry::Clear();
     App::PuppetRegistry::ClearDrivers();
@@ -2764,10 +2812,24 @@ void NetworkWorldSystem::Disconnect()
     // timer, which is why the timer exists as well as this.
     const auto& service = Core::Container::Get<NetworkService>();
 
-    if (service && service->IsConnected() && !m_restorePending)
+    if (service && service->IsConnected() && !m_restorePending && MaySaveCharacter())
     {
         spdlog::info("[Inventory] saving on disconnect");
         SaveCharacterAppearance(true);
+    }
+    else if (service && service->IsConnected() && !MaySaveCharacter())
+    {
+        // Refusing to save is the RIGHT outcome here, not a failure.
+        //
+        // This is the exact line that would have saved Cam's character on 27 August. The
+        // world had been detached and reloaded from his local save, so the body about to be
+        // captured was the singleplayer template - and saving it replaced a real character
+        // with 409 stacks of somebody else's inventory.
+        //
+        // Losing the last few minutes of a session is recoverable. Overwriting the stored
+        // character is not.
+        spdlog::warn("[Inventory] NOT saving on disconnect - the world was reloaded since the "
+                     "restore, so what is loaded is not the server's character");
     }
 
     Core::Container::Get<NetworkService>()->Close();
@@ -2867,6 +2929,13 @@ void NetworkWorldSystem::OnConnected()
             // and it would do it every ninety seconds, quietly, with a healthy-looking
             // number in the log. This is the same race the first-spawn save had to avoid.
             if (m_restorePending)
+                return;
+
+            // Nor after a world reload. m_restorePending only covers the window before the
+            // FIRST restore lands; it says nothing about a detach an hour later, which is
+            // how the template's inventory came to be written over Cam's character. See
+            // OnBeforeWorldDetach.
+            if (!MaySaveCharacter())
                 return;
 
             SaveCharacterAppearance(true);

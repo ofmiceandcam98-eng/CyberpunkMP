@@ -428,6 +428,32 @@ protected:
     int64_t m_capturedMoney{0};
     bool m_hasCapturedPossessions{false};
 
+    // True while the player standing in the world IS the character the server restored.
+    //
+    // Set when a restore completes; cleared by ANY world detach. A detach means the engine
+    // is about to rebuild the world from the local save, and what walks out of that is the
+    // player's singleplayer V - not their server character - even though we are still
+    // connected and everything else still looks normal.
+    //
+    // This exists because that difference destroyed Cam's character on 27 August. He
+    // connected, was restored correctly, pressed join from the main menu (detach, reload),
+    // and seventy seconds later the disconnect save captured the singleplayer template and
+    // sent it to the server as him: 13 stacks and 20000 eddies replaced by 409 stacks and
+    // 872. m_restorePending did not catch it - that only covers the window before the FIRST
+    // restore lands, and this happened long after.
+    bool m_characterLive{false};
+
+    // Whether it is safe to tell the server what this player is carrying or wearing.
+    //
+    // One rule in one place, because the three save paths (disconnect, the ninety-second
+    // autosave, and the equipment watch) each had their own ad-hoc guard and none of them
+    // covered a reload. A deliberate creation is the one case where saving a body the
+    // server never gave us is exactly the point.
+    bool MaySaveCharacter() const
+    {
+        return m_characterLive || m_newCharacterPending;
+    }
+
     // Set only for a starter-kit grant - see HandleNotifyPossessions. Cleared once the
     // restore has acted on it, so a later restore does not re-dress the player.
     bool m_restoreShouldEquip{false};
