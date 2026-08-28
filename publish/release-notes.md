@@ -4,6 +4,15 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.113
+
+**The chat box is on screen from the moment you spawn.**
+
+- **Chat no longer waits until you get in a car.** It was never hidden — the whole custom HUD was being drawn in the top-left corner, off where you'd never look, and the only thing that ever moved it into place was the animation that plays when you enter a vehicle. Now that positioning happens the moment you connect.
+- **This is why some character names came out wrong.** The server asks you to choose your character's name right after you spawn, and a name is chosen only once. People were typing into a box that wasn't on screen — which is how one character ended up named "JulianJulian Vale". An admin command to repair names is coming.
+
+Known and still being worked on: your character's face and body still load from your local save rather than from the server, so you may not look like the character you made. Your inventory, money and equipment are correct — it is specifically the body. Not forgotten, and not a quick fix.
+
 ## What changed — v0.3.112
 
 **You must update to play.** The server moved ahead of v0.3.111, so older installs are turned away with "your mod is built against a different protocol". Updating is the fix.
