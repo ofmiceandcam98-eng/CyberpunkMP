@@ -375,6 +375,19 @@ public class MultiplayerGameController extends inkGameController {
             hudTargets.Select(this.GetWidget(n"hud"));
             this.PlayLibraryAnimationOnTargets(n"from_vehicle", hudTargets);
 
+            // Hardest difficulty, pinned for as long as they are connected.
+            //
+            // Armed here rather than at startup because it must NOT touch a singleplayer
+            // session - somebody's own game is theirs. The poll stops itself the moment the
+            // connection drops and leaves their setting exactly as they had it.
+            let network = GameInstance.GetNetworkWorldSystem();
+            if IsDefined(network) {
+                MpForceHardestDifficulty(network, true);
+
+                let difficultyLock = new MpDifficultyLock();
+                GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(difficultyLock, 10.0, false);
+            }
+
             this.m_player.UnregisterInputListener(this, n"UIConnectToServer");
 
             this.m_player.UnregisterInputListener(this, n"UIDisconnectFromServer");
