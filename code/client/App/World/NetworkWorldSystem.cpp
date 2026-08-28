@@ -4,6 +4,8 @@
 #include <mimalloc.h>
 
 // For the crash/terminate reporting in OnInitialize.
+#include <set>
+#include <mutex>
 #include <csignal>
 #include <exception>
 #include <cstdlib>
@@ -216,6 +218,17 @@ Red::EntityID NetworkWorldSystem::GetEntityIdByServerId(uint64_t aServerId) cons
 
 flecs::entity NetworkWorldSystem::FindEntity(Red::EntityID aId) const
 {
+    // Same thread census as progress() - see the note there. FindEntity is reachable
+    // from game hooks, which is exactly where an off-thread caller would come from.
+    {
+        static std::mutex s_lock;
+        static std::set<uint32_t> s_seen;
+        const auto tid = GetCurrentThreadId();
+        std::lock_guard guard(s_lock);
+        if (s_seen.insert(tid).second)
+            spdlog::warn("[Thread] FindEntity called from thread {}", tid);
+    }
+
     auto entity = query<EntityComponent>().find(
         [aId](const EntityComponent& component)
         {
@@ -360,6 +373,31 @@ void NetworkWorldSystem::Update(uint64_t aTick)
     if (m_worldState &&
         std::chrono::steady_clock::now() - m_lastWorldStateApply > std::chrono::seconds(30))
         ApplyWorldState();
+
+    // WHICH THREAD IS THIS? Logged once per distinct thread, not per frame.
+    //
+    // The 21:10:54 crash caught TWO threads - 147148 and 101680 - at the same
+    // instruction, in the same millisecond, with the SAME RCX. RCX is the ecs_stack_t*,
+    // so both were inside flecs_stack_restore_cursor on the same stack allocator at
+    // once. That is a data race on a structure with no locking, and it explains the
+    // small-integer pointers, the absence of any assert, and why survival ranged from
+    // two seconds to six minutes.
+    //
+    // I had ruled a race out earlier by reading the code - no thread in NetworkService,
+    // packet handlers dispatched before progress() in the same callback - and concluded
+    // "single-threaded with respect to flecs". That was an argument, not a measurement,
+    // and it was wrong. This is the measurement.
+    {
+        static std::mutex s_seenLock;
+        static std::set<uint32_t> s_seen;
+
+        const auto tid = GetCurrentThreadId();
+
+        std::lock_guard lock(s_seenLock);
+        if (s_seen.insert(tid).second)
+            spdlog::warn("[Thread] progress() called from thread {} (distinct threads so far: {})",
+                         tid, s_seen.size());
+    }
 
     const auto service = Core::Container::Get<NetworkService>();
     if (service && service->IsConnected())
