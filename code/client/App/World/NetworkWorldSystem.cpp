@@ -1241,6 +1241,54 @@ static bool CallCustomizationFunction(Red::game::ui::CharacterCustomizationSyste
     return ExecuteFunction(apSystem, pFunc, nullptr, args);
 }
 
+/**
+ * The customization state the GAME uses during gameplay.
+ *
+ * Not the same thing as GetCustomizationState(), which reads the raw pointer at
+ * (ccSystem + 0x78). That one is null in ordinary play - which is what every
+ * "CustomizationState was null" line in the logs has been telling us - and I took it as
+ * proof that no state exists outside the creator. It is not.
+ *
+ * The game's own code disagrees. equipmentSystem.script:4992 calls GetState() while
+ * working out a hair suffix for an equipped item, which happens constantly during normal
+ * play, and then reads tags off the result. So a state IS reachable in-game; it is just
+ * reachable through the RTTI accessor rather than that offset.
+ *
+ * Returns an empty handle if the call fails or the state is genuinely absent.
+ */
+static Red::Handle<Red::game::ui::CharacterCustomizationState> GetLiveCustomizationState(
+    Red::game::ui::CharacterCustomizationSystem* apSystem)
+{
+    Red::Handle<Red::game::ui::CharacterCustomizationState> state;
+
+    if (!apSystem)
+        return state;
+
+    auto* pRtti = Red::CRTTISystem::Get();
+    if (!pRtti)
+        return state;
+
+    auto* pClass = pRtti->GetClass("gameuiICharacterCustomizationSystem");
+    if (!pClass)
+        return state;
+
+    auto* pFunc = pClass->GetFunction("GetState");
+    if (!pFunc)
+    {
+        spdlog::error("[Character] gameuiICharacterCustomizationSystem has no function 'GetState'");
+        return state;
+    }
+
+    RED4ext::StackArgs_t args;
+    if (!ExecuteFunction(apSystem, pFunc, &state, args))
+    {
+        spdlog::error("[Character] GetState could not be called");
+        return {};
+    }
+
+    return state;
+}
+
 void NetworkWorldSystem::ApplyStoredAppearance()
 {
     // Nothing stored is the normal case for a brand new character: the creator has just
@@ -1307,25 +1355,37 @@ void NetworkWorldSystem::ApplyStoredAppearance()
         return;
     }
 
-    // The state does not exist during ordinary gameplay. GetCustomizationState() returns
-    // (ccSystem + 0x78), which is never null, but the instance behind it is - that is what
-    // "CustomizationState was null" in the logs has always meant. InitializeState is what
-    // builds one, and without it there is nothing to deserialise into.
-    spdlog::info("[Character] InitializeState BEGIN");
+    // Ask the game for the state the way the GAME asks for it.
+    //
+    // The previous attempt called InitializeState first, on the theory that no state exists
+    // outside the creator - because GetCustomizationState(), which reads (ccSystem + 0x78),
+    // is null during play. The engine refused InitializeState every time, and I read that
+    // as "this cannot be done in gameplay".
+    //
+    // That was wrong, and the game's own scripts say so. equipmentSystem.script:4992 calls
+    // GetState() to work out a hair suffix while equipping an item - ordinary gameplay, many
+    // times a session - and then reads tags off what comes back. A state IS reachable in
+    // play; it is reachable through the RTTI accessor, not through that offset.
+    //
+    // So: no InitializeState. Just take the live state and write into it.
+    spdlog::info("[Character] GetState BEGIN");
 
-    if (!CallCustomizationFunction(ccSystem, "InitializeState"))
+    auto liveState = GetLiveCustomizationState(ccSystem);
+
+    if (!liveState)
     {
-        fail("InitializeState could not be called");
+        fail("GetState returned nothing - no live customization state to write into");
         return;
     }
 
-    spdlog::info("[Character] InitializeState COMPLETE");
+    spdlog::info("[Character] GetState COMPLETE - live state present");
 
-    auto stateHandle = GetCustomizationState(ccSystem);
+    // Kept in the same shape as before so the stages below read unchanged.
+    auto* stateHandle = &liveState;
 
     if (!stateHandle || !stateHandle->instance)
     {
-        fail("InitializeState left no state behind");
+        fail("GetState returned a handle with no instance");
         return;
     }
 
