@@ -741,3 +741,23 @@ All quarantined, not deleted, to C:UsersCamCyberpunkMP_mod_quarantine_20260822 w
 LAUNCHER FIX (committed on feat): mods:delete called rmSync per recorded file and never touched directories, so any mod owning a folder left that folder behind wearing its name - indistinguishable from still being installed, and exactly the "I removed it but it is still there" report. pruneEmptyDirs now walks every ancestor of every removed file, deepest first, removing only what readdirSync says is empty, and never the shared roots (archive/pc/mod, r6/scripts, red4ext/plugins, bin/x64/plugins) which the game expects to exist. Wired into both the trash button and the uninstall purge. Tested against a replica of this machine including a folder shared with a neighbour mod, 8/8.
 
 STILL OPEN, and it is the half that actually bit here: the record is the only mod->file map, so anything installed outside the launcher is invisible to it forever, and clearing the record orphans everything it knew. A "files in mod surfaces that no record claims" scan would have caught all three items above. That is the natural companion to your prerequisite-ownership guard - if you are already recording ownership at install, the same index gives you the orphan scan nearly free.
+
+---
+
+### 2026-08-24 — Copilot
+
+Re-audited `docs/CRASH-FIX-BRIEF.md` against current `main` before touching anything - several Tier 4 items it lists as unfixed (MultiMovementController::Attach/GetDeltaTransform null-guards, VehicleSystem::OnVehicleReady physics-off for every vehicle) were ALREADY fixed on main by the time I checked. Always diff the brief against current code before acting on it; it is a snapshot, not live state.
+
+**Fixed and build-verified** (`xmake build -j 4 Client` -> 100%, no new warnings/errors):
+- `AppearanceSystem.cpp` `ApplyAppearance`: `new_keys` Span pointed into a stack-lifetime `DynArray` (`keys`) handed to `ScheduleSynchronizedAppearanceChanges`, which takes a completion callback - if it reads the span asynchronously that is a use-after-free, worse on female states (more customization groups -> more keys). Moved `keys` onto the heap via `shared_ptr`, captured alongside `stateHandle`/`object` in the completion lambda so it outlives whatever reads it.
+- `Game/Utils.h` `CMPReader::Serialize`: silently left destination bytes untouched past the end of the buffer (uninitialized memory handed to the customization parser) and `IsOK()` was hardcoded true. Now zero-fills on under-run, tracks it, `IsOK()` reflects reality, and `ApplyAppearance` aborts the apply (falls back to default appearance) instead of building a puppet off a corrupt deserialize.
+- `AddItemToSlot failed` / `GiveItem failed` logs (~106 hits in one evening, per the 2026-08-23 entry above, with zero identifying info): now log entity id, item TweakDBID, slot.
+
+**Deliberately NOT implemented, per Cam's instruction to keep these off main for now:**
+- **Tier 1** - the EntityStatus (`Attached`) readiness gate across InterpolationSystem's controller attach and NetworkWorldSystem's 200ms promotion poll. This is the actual class-level fix the brief argues for, but it touches multiple hot paths with only "entity pointer non-null" gating today, and I have no way to run the live 2-player repro myself.
+- **Tier 3** - the restore-storm gate. Confirmed for real this time (not assumed): `MpInventory.EquipCyberware` in `Inventory.reds` queues equips via `equipment.QueueRequest` - asynchronous - but the C++ side clears `m_restorePending` the instant the synchronous part of `RestorePossessions` returns, before those queued equips land. Needs a script->native "restore actually landed" signal; touches session-lifecycle state used elsewhere so I did not wire it blind.
+
+If either of these gets picked up: land it on a branch and ship it through the existing pre-release/test-build path (PR #6's dev-launcher server-selector + one-click test-build install, already live) rather than a main-line release, until it has a live two-player validation run - same discipline the brief's own Validation section asks for.
+
+Signed: Copilot
+CONFIDENCE: VERIFIED (code read + local build) for what changed; INFERRED for the crash-reduction impact - unproven without a live repro session.

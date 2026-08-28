@@ -1,5 +1,7 @@
 #include "App/World/AppearanceSystem.h"
 
+#include <memory>
+
 #include "RED4ext/Scripting/Natives/gameIEntityStubSystem.hpp"
 #include "RED4ext/Scripting/Natives/gameITransactionSystem.hpp"
 #include "RED4ext/Scripting/Natives/gameItemModParams.hpp"
@@ -237,11 +239,18 @@ void AddItems(Red::Handle<Red::game::Object> & object, Red::DynArray<Red::TweakD
             auto added = system->AddItemToSlot(context);
             if (!added)
             {
-                spdlog::info("AddItemToSlot failed");
+                // Previously logged nothing identifying - every failure looked the same
+                // in the log and this line was seen ~106 times in one evening with no way
+                // to tell which item/slot/puppet was involved. A dropped equip here leaves
+                // the puppet's async garment part-entities attached to a still-assembling
+                // entity, a plausible delayed 0xC0000005 source.
+                spdlog::warn("[Appearance] AddItemToSlot failed: entity {:x}, item {:016x}, slot {:016x}",
+                             object->id.hash, static_cast<uint64_t>(item), static_cast<uint64_t>(placementSlot));
             }
         } else
         {
-            spdlog::info("GiveItem failed");
+            spdlog::warn("[Appearance] GiveItem failed: entity {:x}, item {:016x}",
+                          object->id.hash, static_cast<uint64_t>(item));
         }
     }
 }
@@ -328,6 +337,20 @@ bool AppearanceSystem::ApplyAppearance(Red::Handle<Red::game::Object> object)
     {
         auto reader = CMPReader(bytes);
         CharacterCustomizationState_Serialize(stateHandle.instance, &reader);
+
+        // A short or mis-sized ccstate blob used to deserialize "successfully" into
+        // garbage customization arrays (Serialize silently stopped writing once the
+        // buffer ran out). Now that a real under-run is reported, refuse to build a
+        // puppet's appearance from it - a default appearance is a visible, harmless
+        // fallback; garbage customization keys feeding into the appearance job later
+        // is a plausible crash input, and worse on the bigger female payloads.
+        if (!reader.IsOK() || reader.GetOffset() != bytes.size())
+        {
+            spdlog::error("[Appearance] ccstate for entity {:x} did not deserialize cleanly "
+                           "(consumed {}/{} bytes, ok={}) - aborting apply, appearance stays default",
+                           object.instance->id.hash, reader.GetOffset(), bytes.size(), reader.IsOK());
+            return false;
+        }
     }
 
     // shouldn't be needed
@@ -498,11 +521,23 @@ bool AppearanceSystem::ApplyAppearance(Red::Handle<Red::game::Object> object)
             .start = nullptr,
             .end = nullptr
         };
+
+        // keys was a stack-lifetime DynArray: this Span pointed into its heap-allocated
+        // entries, which is fine ONLY if ScheduleSynchronizedAppearanceChanges reads the
+        // span before returning. If it defers reading the spans until the change actually
+        // executes (plausible - it takes a completion callback, i.e. it is async), this
+        // read freed memory seconds later - a use-after-free that reproduces more on
+        // female states (more customization groups -> more keys -> bigger, differently
+        // reused allocations), matching the female-biased crash signature. Moving keys
+        // onto the heap and keeping it alive in the SAME capture as stateHandle/object
+        // (already tied to completion) makes the span's backing memory outlive the
+        // engine's read regardless of when that read happens.
+        auto keysStorage = std::make_shared<Red::DynArray<Red::world::EntityAppearanceChangeParameter::Key>>(std::move(keys));
         Span<Red::world::EntityAppearanceChangeParameter::Key> new_keys = {
-            .start = keys.entries,
-            .end = &keys.entries[keys.size]
+            .start = keysStorage->entries,
+            .end = &keysStorage->entries[keysStorage->size]
         };
-        const std::function<void (void)> callback = [stateHandle = std::move(stateHandle), object = std::move(object)](void) 
+        const std::function<void (void)> callback = [stateHandle = std::move(stateHandle), object = std::move(object), keysStorage](void)
         {
             // AddItems(object, items, stateHandle.instance);
 

@@ -112,10 +112,22 @@ const SERVER_EXE = 'Server.Loader.exe'
 function defaultServerDir () {
   if (process.env.MP_SERVER_DIR) return process.env.MP_SERVER_DIR
 
-  const devGuess = path.resolve(__dirname, '..', '..', 'build', 'windows', 'x64', 'release')
-  if (existsSync(path.join(devGuess, SERVER_EXE))) return devGuess
+  const candidates = [
+    path.resolve(__dirname, '..', '..', '..', '..', 'build', 'windows', 'x64', 'release'),
+    path.resolve(__dirname, '..', '..', 'build', 'windows', 'x64', 'release'),
+    path.resolve(__dirname, '..', '..', '..', 'build', 'windows', 'x64', 'release'),
+    path.resolve(process.cwd(), 'build', 'windows', 'x64', 'release'),
+    path.resolve(process.cwd(), '..', 'build', 'windows', 'x64', 'release')
+  ]
 
-  return 'C:\\Users\\Cam\\OneDrive\\Documents\\GitHub\\CyberpunkMP\\build\\windows\\x64\\release'
+  for (const candidate of candidates) {
+    if (existsSync(path.join(candidate, SERVER_EXE))) return candidate
+  }
+
+  // Keep the default in the repo/build layout rather than pinning one developer's
+  // profile path. A missing install is a real, diagnosable state; a machine-specific
+  // fallback is not a valid default.
+  return path.resolve(__dirname, '..', '..', 'build', 'windows', 'x64', 'release')
 }
 
 // -skipStartScreen is the game's own documented launch option: boot lands on the main
@@ -5809,9 +5821,21 @@ const { autoUpdater } = electronUpdater
 let updateReady = false
 
 function initAutoUpdater () {
-  // In development there is no app-update.yml, and electron-updater throws rather than
-  // shrugging. Nothing to update when running from source anyway.
-  if (!app.isPackaged) return
+  // The launcher may be launched from source during development, but the GitHub-based
+  // instance update path is real only in packaged builds. A dev override makes it
+  // possible to exercise the updater against a release without shipping a full app.
+  const shouldAttemptUpdater = app.isPackaged || process.env.NCO_FORCE_UPDATER === '1'
+  if (!shouldAttemptUpdater) return
+
+  // Explicitly pin the update channel to the GitHub release feed. This keeps the app from
+  // silently drifting to a different feed or a stale local config when a release is being
+  // tested from a fresh checkout.
+  autoUpdater.setFeedURL({
+    provider: 'github',
+    owner: 'ofmiceandcam98-eng',
+    repo: 'CyberpunkMP',
+    private: false
+  })
 
   autoUpdater.autoDownload = true
 
@@ -5848,7 +5872,7 @@ function initAutoUpdater () {
     send('launcher-update', { state: 'current' })
   })
 
-  autoUpdater.checkForUpdates().catch(() => {})
+  autoUpdater.checkForUpdatesAndNotify().catch(() => {})
 }
 
 // Restart into the new version on demand. quitAndInstall closes the app and runs the

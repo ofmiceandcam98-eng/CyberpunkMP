@@ -192,6 +192,10 @@ public native class NetworkWorldSystem extends IGameSystem {
     // How many people are audible right now, for the speaking indicator.
     public native func VoiceActiveSpeakerCount() -> Uint32;
 
+    // The Nth speaker from the snapshot the last VoiceActiveSpeakerCount() call took -
+    // call Count first, every time, or this reads a stale/empty list.
+    public native func VoiceActiveSpeakerId(index: Uint32) -> Uint64;
+
     // Whether --hackable-puppets was passed. See Hackable.reds for what it turns on and
     // why it is off by default.
     public native func HackablePuppetsEnabled() -> Bool;

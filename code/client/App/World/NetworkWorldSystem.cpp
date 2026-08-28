@@ -1841,7 +1841,16 @@ void NetworkWorldSystem::VoiceSetPlaybackVolume(uint32_t aPercent)
 
 uint32_t NetworkWorldSystem::VoiceActiveSpeakerCount() const
 {
-    return static_cast<uint32_t>(m_voiceClient.GetActiveSpeakers().size());
+    m_voiceActiveSpeakersSnapshot = m_voiceClient.GetActiveSpeakers();
+    return static_cast<uint32_t>(m_voiceActiveSpeakersSnapshot.size());
+}
+
+uint64_t NetworkWorldSystem::VoiceActiveSpeakerId(uint32_t aIndex) const
+{
+    if (aIndex >= m_voiceActiveSpeakersSnapshot.size())
+        return 0;
+
+    return m_voiceActiveSpeakersSnapshot[aIndex];
 }
 
 bool NetworkWorldSystem::HackablePuppetsEnabled() const

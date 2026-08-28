@@ -146,9 +146,19 @@ public:
 
     virtual void Serialize(uint8_t * aBytes, unsigned __int64 aSize) 
     { // 10
+        // Previously left aBytes untouched once the buffer ran out - the destination is
+        // whatever the caller happened to have on its stack/heap, so a short read fed the
+        // customization-state parser uninitialized memory as if it were real data, with
+        // no signal anything had gone wrong. A mis-sized or truncated ccstate blob (more
+        // likely on the bigger female payloads) would silently become garbage
+        // customization arrays that the appearance job walks later. Zero-fill the rest
+        // and flag it instead.
         for (uint64_t i = 0; i < aSize; i++) {
             if (offset < bytes.size()) {
                 aBytes[i] = bytes[offset++];
+            } else {
+                aBytes[i] = 0;
+                underrun = true;
             }
         }
     }
@@ -212,7 +222,9 @@ public:
 
     virtual bool IsOK(void) const 
     { // 90
-        return true;
+        // Was hardcoded true regardless of what Serialize actually did. Now reflects
+        // whether every requested byte came from real data.
+        return !underrun;
     }
 
     virtual bool sub_98(void) const 
@@ -228,5 +240,6 @@ public:
     IMapper * mapper = NULL; // 10
     Vector<uint8_t> bytes;
     uint64_t offset = 0;
+    bool underrun = false;
 
 };

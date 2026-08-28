@@ -15,6 +15,21 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 If you crash on joining, please send the log — `tools\CollectCrash.ps1` gathers it in one step. Run it **before** relaunching; relaunching overwrites the evidence.
 
+## What changed — v0.3.110
+
+Launcher only — no game or server changes.
+
+- **Fixed the GitHub-release update path for packaged launchers.** The app now explicitly pins the GitHub release feed for electron-updater and uses the real `checkForUpdatesAndNotify()` flow, so an installed launcher instance can actually update itself from the latest GitHub release instead of only comparing version metadata.
+- **Removed the machine-specific default path.** The launcher no longer assumes Cam's Windows profile when no saved install path exists; it resolves generic repo/build locations instead.
+- **Added a proper release build script.** `npm run dist:release` publishes the packaged Windows installer through the GitHub update channel.
+
+## What changed — v0.3.109
+
+Launcher only — no game or server changes.
+
+- **Fixed the machine-specific fallback path.** The launcher no longer assumes Cam's Windows profile when no saved install path is present. It now resolves the local repo/build layout generically, so it works on any machine and no longer silently points at the wrong server/game folder.
+- **Portable startup path is now reliable.** The fallback logic checks repo/build candidates before using any default, which prevents a broken install when the launcher is opened on a second PC or a fresh checkout.
+
 ## What changed — v0.3.108
 
 Launcher only — no game or server changes, nothing to re-test in a session.
