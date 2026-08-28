@@ -411,21 +411,15 @@ void NetworkWorldSystem::Update(uint64_t aTick)
     // packet handlers dispatched before progress() in the same callback - and concluded
     // "single-threaded with respect to flecs". That was an argument, not a measurement,
     // and it was wrong. This is the measurement.
-    {
-        static std::mutex s_seenLock;
-        static std::set<uint32_t> s_seen;
-
-        const auto tid = GetCurrentThreadId();
-
-        // Publish it so the tripwires can check themselves against it. Whichever thread
-        // drives progress() is the only one allowed to touch the world.
-        App::FlecsThread::MarkCurrent();
-
-        std::lock_guard lock(s_seenLock);
-        if (s_seen.insert(tid).second)
-            spdlog::warn("[Thread] progress() called from thread {} (distinct threads so far: {})",
-                         tid, s_seen.size());
-    }
+    // Whichever thread drives progress() owns the world. Published so the tripwires can
+    // check themselves against it.
+    //
+    // The census that used to sit here - a mutex and a std::set, taken on EVERY frame to
+    // notice new thread ids - has done its job and gone. It is what proved the race was
+    // real, and a per-frame lock is not something to leave in the update loop once the
+    // answer is known. The tripwire in FlecsThread::Assert is the part still worth paying
+    // for: one relaxed atomic load on functions that are not called every frame.
+    App::FlecsThread::MarkCurrent();
 
     const auto service = Core::Container::Get<NetworkService>();
     if (service && service->IsConnected())
@@ -2847,24 +2841,19 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
         api.realloc_ = [](void* apPtr, ecs_size_t aSize) -> void*
         { return mi_realloc(apPtr, static_cast<size_t>(aSize)); };
 
-        // Poisoned on the way out, same as MimallocAllocator::Free and for the same reason.
+        // The 0xDD poisoning that used to live here is GONE.
         //
-        // This is the free that matters: flecs allocates its stack cursors here, and a
-        // cursor read after being freed is exactly what the crash looks like. Filling with
-        // 0xDD turns "cursor->page was null" into "cursor->page was 0xDDDDDDDDDDDDDDDD",
-        // which distinguishes a use-after-free from an object that was never initialised.
-        // Those two need opposite fixes and nothing so far separates them.
-        api.free_ = [](void* apPtr)
-        {
-            if (apPtr != nullptr)
-            {
-                const size_t size = mi_malloc_size(apPtr);
-                if (size > 0 && size < (64u * 1024u * 1024u))
-                    std::memset(apPtr, 0xDD, size);
-            }
-
-            mi_free(apPtr);
-        };
+        // It filled every freed flecs allocation with 0xDD so a cursor read after being
+        // freed would say "0xDDDDDDDDDDDDDDDD" instead of looking like an uninitialised
+        // object. It was hunting a use-after-free, and it never found one - because there
+        // was none. The crash was two threads in the stack allocator at once, fixed by
+        // keeping flecs on one thread (see ServerIdRegistry.h), and poisoning could not
+        // have seen that: those cursors are carved from live stack pages and never freed.
+        //
+        // Removed rather than left in, because it memset the WHOLE block on every single
+        // free, which is real cost on a path flecs uses constantly. The routing onto
+        // mimalloc stays - that is a deliberate choice, not an instrument.
+        api.free_ = [](void* apPtr) { mi_free(apPtr); };
 
         ecs_os_set_api(&api);
     }
