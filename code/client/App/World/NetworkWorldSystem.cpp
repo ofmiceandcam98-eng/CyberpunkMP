@@ -1612,6 +1612,33 @@ void NetworkWorldSystem::OnBeforeWorldDetach(RED4ext::world::RuntimeScene* aScen
     // saved was still the one the server handed us; the only guard was m_restorePending,
     // which the restore had already cleared an hour earlier.
     //
+    // SAVE FIRST. This is the last moment the body in the world is still yours.
+    //
+    // A detach is the final instant before the engine rebuilds everything from the local
+    // save, so right here the player standing there is still the server's character - and a
+    // moment later they are the singleplayer V. That makes this both the safest place to
+    // save and the last useful one.
+    //
+    // It has to happen here rather than only in Disconnect(), because not every exit goes
+    // through Disconnect() first. Quitting to desktop and quitting to the main menu tear the
+    // world down on the engine's schedule; if the detach ran first, the guard below would
+    // (correctly) refuse the later save and the session's progress would be lost. Cam asked
+    // for exactly this - "make sure the game saves when you quit the game" - and without it
+    // the fix for the overwrite bug would have quietly introduced a losing-your-shopping bug.
+    //
+    // Note this also makes the ORIGINAL data loss impossible twice over: pressing join from
+    // the main menu now saves the real character here, before the reload, instead of saving
+    // the template seventy seconds later.
+    {
+        const auto& service = Core::Container::Get<NetworkService>();
+
+        if (service && service->IsConnected() && !m_restorePending && MaySaveCharacter())
+        {
+            spdlog::info("[Inventory] saving before the world is torn down");
+            SaveCharacterAppearance(true);
+        }
+    }
+
     // So a detach revokes the claim. Saving is allowed again only when a restore completes
     // and makes it true once more.
     m_characterLive = false;

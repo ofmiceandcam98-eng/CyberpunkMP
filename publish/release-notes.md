@@ -4,6 +4,20 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.112
+
+**You must update to play.** The server moved ahead of v0.3.111, so older installs are turned away with "your mod is built against a different protocol". Updating is the fix.
+
+**Two crashes are gone, and a bug that was quietly destroying characters is fixed.**
+
+- **Crashing when you fire a weapon is fixed.** Every shot asked the game a question about what you hit, from whichever background thread the game happened to use — and two of those threads could collide inside the mod's world data at the same instant. It looked random because it *was* random: some sessions died in two seconds, some lasted six minutes. Same cause behind the crash when getting on a bike or into a car.
+- **Your character can no longer be overwritten by your singleplayer save.** This is the important one. If you joined, then went back to the main menu and joined again, the game reloaded your own Cyberpunk save — and when you next disconnected, the mod saved *that* character over your real one. Everything you owned was replaced by whatever your singleplayer V was carrying. It has cost at least one character. The mod now refuses to save at all when it cannot be sure the body it is looking at is the one the server gave you: losing a few minutes is recoverable, losing your character is not.
+- **You now play as your own character, not the V in your save.** The server has always known what your character looks like — that is why everyone *else* saw you correctly — but it never told your own game, so you walked around as whoever your local save happened to contain. It does now.
+- **Quitting saves your character.** Your progress is now written the moment the world starts shutting down — quitting to desktop, quitting to the main menu, or disconnecting — rather than relying on one exit path that not every quit actually takes.
+- **Smoother.** The instrumentation added while hunting the crash above has been taken back out, including a check that ran on every single frame.
+
+Nothing is asked of you for any of this. If you still hit a crash, send the log — `tools\CollectCrash.ps1` gathers it in one step. Run it **before** relaunching; relaunching overwrites the evidence.
+
 ## What changed — v0.3.111
 
 **The join crash is fixed for anyone playing alone, and this build carries the tracing to finish the rest.**
