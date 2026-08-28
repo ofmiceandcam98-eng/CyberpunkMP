@@ -2255,6 +2255,90 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
     if (Settings::IsDisabled())
         return;
 
+    // Our own crash reporter, because the game's has stopped producing one.
+    //
+    // Every termination since the instrumented flecs build went in has written NO minidump,
+    // NO CrashInfo.json entry and NO Windows error record - while every crash before it
+    // wrote all three. Clearing the report queue (it was at 160 reports and 4.5GB) did not
+    // bring them back, so it is not a storage cap. Whatever is killing the process is not
+    // reaching the game's own handler, and without a dump there is nothing to read.
+    //
+    // A vectored handler sees the exception before any of that and needs nobody's
+    // cooperation. It only reports: it returns EXCEPTION_CONTINUE_SEARCH so the normal
+    // handling still runs, and it swallows nothing.
+    //
+    // Filtered hard on purpose. A vectored handler fires for EVERY exception in the
+    // process, including the C++ and debugger ones the game raises as a matter of course,
+    // and logging those would bury the one line that matters.
+    static std::once_flag s_crashHandlerOnce;
+    std::call_once(s_crashHandlerOnce,
+                   []()
+                   {
+                       AddVectoredExceptionHandler(
+                           1 /* call first */,
+                           [](PEXCEPTION_POINTERS apInfo) -> LONG
+                           {
+                               const auto* pRec = apInfo->ExceptionRecord;
+                               const auto code = pRec->ExceptionCode;
+
+                               // Only the ones that actually end a process.
+                               const bool fatal = code == EXCEPTION_ACCESS_VIOLATION ||
+                                                  code == EXCEPTION_STACK_OVERFLOW ||
+                                                  code == EXCEPTION_ILLEGAL_INSTRUCTION ||
+                                                  code == EXCEPTION_PRIV_INSTRUCTION ||
+                                                  code == EXCEPTION_INT_DIVIDE_BY_ZERO ||
+                                                  code == EXCEPTION_ARRAY_BOUNDS_EXCEEDED ||
+                                                  code == 0xC0000409 /* __fastfail / stack cookie */ ||
+                                                  code == 0xC0000374 /* heap corruption */;
+
+                               if (!fatal)
+                                   return EXCEPTION_CONTINUE_SEARCH;
+
+                               const auto* pCtx = apInfo->ContextRecord;
+
+                               spdlog::error("[Crash] code 0x{:08X} at 0x{:016X}, thread {}",
+                                             code, reinterpret_cast<uint64_t>(pRec->ExceptionAddress),
+                                             GetCurrentThreadId());
+
+                               if (code == EXCEPTION_ACCESS_VIOLATION && pRec->NumberParameters >= 2)
+                               {
+                                   const char* op = pRec->ExceptionInformation[0] == 0   ? "read"
+                                                    : pRec->ExceptionInformation[0] == 1 ? "write"
+                                                                                         : "execute";
+                                   spdlog::error("[Crash]   tried to {} 0x{:X}", op,
+                                                 pRec->ExceptionInformation[1]);
+                               }
+
+                               spdlog::error("[Crash]   RIP={:016X} RSP={:016X} RBP={:016X}",
+                                             pCtx->Rip, pCtx->Rsp, pCtx->Rbp);
+                               spdlog::error("[Crash]   RAX={:016X} RCX={:016X} RDX={:016X}",
+                                             pCtx->Rax, pCtx->Rcx, pCtx->Rdx);
+                               spdlog::error("[Crash]   R8 ={:016X} R9 ={:016X} RBX={:016X}",
+                                             pCtx->R8, pCtx->R9, pCtx->Rbx);
+
+                               // The module and offset, so the address means something
+                               // without a dump to attribute it against.
+                               HMODULE mod{};
+                               if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                                          GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                                      static_cast<LPCSTR>(pRec->ExceptionAddress), &mod))
+                               {
+                                   char path[MAX_PATH]{};
+                                   GetModuleFileNameA(mod, path, MAX_PATH);
+                                   const auto rva = reinterpret_cast<uint64_t>(pRec->ExceptionAddress) -
+                                                    reinterpret_cast<uint64_t>(mod);
+                                   spdlog::error("[Crash]   in {}+0x{:X}", path, rva);
+                               }
+
+                               spdlog::default_logger()->flush();
+
+                               // Report only. Let the game handle it as it normally would.
+                               return EXCEPTION_CONTINUE_SEARCH;
+                           });
+
+                       spdlog::info("[Crash] vectored handler installed");
+                   });
+
     // Let flecs speak. Nothing was listening, which is why the crashes are silent.
     //
     // flecs reports its own fatal misuse - "invalid move assignment for %s", the illegal
