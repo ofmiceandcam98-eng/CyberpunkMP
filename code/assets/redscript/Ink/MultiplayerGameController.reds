@@ -205,6 +205,44 @@ public class MultiplayerGameController extends inkGameController {
 
 // Hotkey
 
+    /**
+     * Puts the HUD where it belongs, once the chat widget actually exists.
+     *
+     * The invisible-chat-box bug. The native ancestry walk showed every ancestor visible
+     * with opacity 1, and the 'hud' canvas sitting at pos=(0,0) - its authored position -
+     * until an OnVehicleEnter moved it to (47,1688). So the whole custom HUD was drawing in
+     * the top-left corner until the player got into a car.
+     *
+     * The first fix played from_vehicle when the connection came up. Cam tested it: "chat
+     * menu still is invisible after launching into a new character". It fired, and it did
+     * nothing, because AsyncSpawnFromLocal is ASYNC - at that moment the chat widget did not
+     * exist yet and 'hud' had not been laid out, so the animation had nothing to move.
+     *
+     * This is the callback for that spawn, so it runs when there IS something to position.
+     * The animation is used rather than a hardcoded (47,1688) because the offset belongs to
+     * the asset - hardcoding it would drift the next time the layout is edited.
+     *
+     * This is not cosmetic. The server asks for a character name at spawn and a name is
+     * chosen ONCE, so people were typing blind into a box they could not see - which is how
+     * "JulianJulian Vale" happened.
+     */
+    protected cb func OnChatSpawned(widget: ref<inkWidget>, userData: ref<IScriptable>) -> Bool {
+        let hudTargets = new inkWidgetsSet();
+        hudTargets.Select(this.GetWidget(n"hud"));
+        this.PlayLibraryAnimationOnTargets(n"from_vehicle", hudTargets);
+
+        let network = GameInstance.GetNetworkWorldSystem();
+        if IsDefined(network) {
+            let hud = this.GetWidget(n"hud");
+            if IsDefined(hud) {
+                let pos = hud.GetTranslation();
+                network.ScriptLog(s"[Hud] chat spawned - played from_vehicle, hud now at (\(pos.X), \(pos.Y))");
+            } else {
+                network.ScriptLog("[Hud] chat spawned but there is no 'hud' widget to position");
+            }
+        }
+    }
+
     protected cb func OnHotKeySpawn(widget: ref<inkWidget>, userData: ref<IScriptable>) -> Bool {
         this.m_phoneIconWidget = widget;
         this.m_phoneIconWidget.SetVisible(false);
@@ -342,7 +380,9 @@ public class MultiplayerGameController extends inkGameController {
         // long enough to finish. Always unregister before registering.
         if (connected) {
             this.ShowServerList(false);
-            this.AsyncSpawnFromLocal(this.GetWidget(n"hud"), n"chat");
+            // The callback form, deliberately. The HUD can only be positioned once the chat
+            // widget actually exists - see OnChatSpawned.
+            this.AsyncSpawnFromLocal(this.GetWidget(n"hud"), n"chat", this, n"OnChatSpawned");
 
             // Put the HUD where it belongs, NOW, instead of waiting for a car.
             //
@@ -371,9 +411,6 @@ public class MultiplayerGameController extends inkGameController {
             // choose their character name at spawn, and a name is chosen ONCE - so people
             // have been typing blind into a box they cannot see. Cam's character is called
             // "JulianJulian Vale" because of it.
-            let hudTargets = new inkWidgetsSet();
-            hudTargets.Select(this.GetWidget(n"hud"));
-            this.PlayLibraryAnimationOnTargets(n"from_vehicle", hudTargets);
 
             // Hardest difficulty, pinned for as long as they are connected.
             //
@@ -384,7 +421,9 @@ public class MultiplayerGameController extends inkGameController {
             if IsDefined(network) {
                 MpForceHardestDifficulty(network, true);
 
+                // The lock owns the original list so it can hand it back on disconnect.
                 let difficultyLock = new MpDifficultyLock();
+                difficultyLock.originalValues = MpRestrictDifficultyToHardest(network, difficultyLock.originalValues);
                 GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(difficultyLock, 10.0, false);
             }
 

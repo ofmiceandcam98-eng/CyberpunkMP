@@ -19,35 +19,79 @@ import CyberpunkMP.World.*
  * work today and break the day a patch adds one, so the index is looked up BY NAME through
  * GetIndexFor("VeryHard") and the constant below is only a fallback.
  *
- * WHY FORCING RATHER THAN HIDING THE OPTION
+ * HOW IT IS ENFORCED
  *
- * The difficulty control is built natively - it does not exist anywhere in the game's
- * redscript, so there is no option list to filter and no menu class to wrap. What CAN be
- * reached is the setting itself. So the setting is pinned instead: set on connect, and
- * re-set on a slow poll, so lowering it in the menu lasts a couple of seconds and then
- * snaps back.
+ * The difficulty control is built natively - it exists nowhere in the game's redscript, so
+ * there is no menu class to wrap. What CAN be reached is the setting, and
+ * ConfigVarListString exposes SetValues - so the LIST is cut down to a single entry and
+ * VeryHard becomes the only thing that can be seen or picked.
  *
- * That is honestly a pin rather than a removal, and it is worth being precise about the
- * difference: a determined player can see the option and watch it revert. What they cannot
- * do is play on it.
+ * The first version only pinned the value on a poll. Cam tested it: "it still offers you to
+ * pick a difficulty, very hard should be the only one that shows and works". He was right -
+ * a menu that lets you choose Easy and silently undoes it two seconds later looks broken
+ * rather than deliberate. The pin stays as a backstop for a value stored before this ran.
  *
  * ONLY WHILE CONNECTED. Somebody's singleplayer game is theirs - the poll stops the moment
  * they disconnect and their own setting is left exactly as they had it.
  */
 public class MpDifficultyLock extends DelayCallback {
+    // The choices the player had before we cut them down, so they can be handed back.
+    //
+    // This matters more than it looks. SetValues writes to the player's OWN settings - it
+    // is not a per-session overlay - so a restriction left in place would follow them into
+    // their singleplayer game and leave them permanently unable to pick anything but
+    // VeryHard there. Taking away a menu on our server is the intent; taking it away in
+    // somebody's own game is an overstep.
+    public let originalValues: array<String>;
+
     public func Call() -> Void {
         let network = GameInstance.GetNetworkWorldSystem();
 
         if !IsDefined(network) || !network.IsConnected() {
-            return; // disconnected - stop re-scheduling, leave their setting alone
+            // Disconnected. Give the choices back and stop - no re-schedule.
+            MpRestoreDifficultyChoices(this.originalValues);
+            return;
         }
 
-        MpForceHardestDifficulty(network, false);
+        this.originalValues = MpRestrictDifficultyToHardest(network, this.originalValues);
 
         // Ten seconds. Frequent enough that nobody plays a fight on Easy, slow enough that
         // it is not a settings write every frame.
         GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(this, 10.0, false);
     }
+}
+
+/**
+ * Puts the full difficulty list back after a session ends.
+ *
+ * Called when the lock notices the connection has gone. If nothing was ever restricted the
+ * array is empty and this does nothing.
+ */
+public func MpRestoreDifficultyChoices(original: array<String>) -> Void {
+  if ArraySize(original) <= 1 {
+    return;
+  }
+
+  let settings = GameInstance.GetSettingsSystem(GetGameInstance());
+  if !IsDefined(settings) {
+    return;
+  }
+
+  let option = settings.GetVar(n"/gameplay/difficulty", n"GameDifficulty") as ConfigVarListString;
+  if !IsDefined(option) {
+    return;
+  }
+
+  option.SetValues(original);
+
+  // Left ON the hardest rather than snapped back to whatever they had. They played the
+  // session on it; silently dropping them to Easy on disconnect would be its own surprise.
+  let hardest = option.GetIndexFor("VeryHard");
+  if hardest >= 0 {
+    option.SetIndex(hardest);
+  }
+
+  FTLog(s"[Difficulty] session over - difficulty choices restored (\(ArraySize(original)) options)");
 }
 
 /**
@@ -94,4 +138,57 @@ public func MpForceHardestDifficulty(network: ref<NetworkWorldSystem>, announce:
   option.SetIndex(hardest);
 
   network.ScriptLog(s"difficulty: forced \(was) -> \(option.GetValueFor(hardest)) - this server is hardest-only");
+}
+
+/**
+ * Leaves VeryHard as the ONLY value the difficulty option offers.
+ *
+ * The first version of this just pinned the value on a ten-second poll, and Cam tested it
+ * and said what it actually needed: "it still offers you to pick a difficulty, 'very hard'
+ * should be the only one that shows and works". He was right - a menu that lets you choose
+ * Easy and then silently undoes it two seconds later is worse than no choice at all,
+ * because it looks broken rather than deliberate.
+ *
+ * ConfigVarListString exposes SetValues, so the list itself can be cut down to one entry
+ * rather than policed after the fact. The pin above stays as a backstop for the value that
+ * was already stored before this ran.
+ *
+ * Returns the list as it was BEFORE restricting, so the caller can hand it back on
+ * disconnect - see MpRestoreDifficultyChoices. SetValues writes to the player's own
+ * settings, so a restriction left in place would follow them into their singleplayer game.
+ * `known` is that same list coming back in on later polls, so it is captured once.
+ */
+public func MpRestrictDifficultyToHardest(network: ref<NetworkWorldSystem>, known: array<String>) -> array<String> {
+  let settings = GameInstance.GetSettingsSystem(GetGameInstance());
+  if !IsDefined(settings) {
+    return known;
+  }
+
+  let option = settings.GetVar(n"/gameplay/difficulty", n"GameDifficulty") as ConfigVarListString;
+  if !IsDefined(option) {
+    return known;
+  }
+
+  let values = option.GetValues();
+
+  // Already restricted - nothing to do, and re-running SetValues every ten seconds would be
+  // a settings write per poll for no reason. Hand back whatever was captured the first time.
+  if ArraySize(values) <= 1 {
+    return known;
+  }
+
+  let hardestName = "VeryHard";
+  if !ArrayContains(values, hardestName) {
+    hardestName = values[ArraySize(values) - 1];
+  }
+
+  let only: array<String>;
+  ArrayPush(only, hardestName);
+
+  option.SetValues(only);
+  option.SetIndex(0);
+
+  network.ScriptLog(s"difficulty: menu restricted to \(hardestName) only - was offering \(ArraySize(values)) choices");
+
+  return values;
 }
