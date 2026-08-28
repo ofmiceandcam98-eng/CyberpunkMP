@@ -470,6 +470,74 @@ public class MpInventory {
       }
 
       network.ScriptLog(s"strip: body slots kept; \(ArraySize(chrome)) cyberware piece(s) present, \(ArraySize(protectedIds)) kept; removed from equip areas: \(areaList)");
+
+      // NOW THE EQUIPPED HALF. Everything above only touched the backpack.
+      //
+      // GetItemList enumerates carried items. Equipped weapons and INSTALLED cyberware
+      // live in equipment slots and are invisible to it, which is why Cam finished a
+      // "stripped" character still holding an assault rifle, a shotgun, an SMG and three
+      // pieces of chrome - and why the log cheerfully reported "0 cyberware piece(s)
+      // present" while he was wearing three. The strip was doing exactly what it was
+      // written to do and only half of what it needed to.
+      //
+      // Read through the paperdoll, the same way AppearanceSystem.reds already reads what
+      // a player is wearing, then unequip before removing: RemoveItem on something still
+      // in a slot leaves the slot pointing at an item that no longer exists.
+      let equipData = EquipmentSystem.GetData(player);
+      let equipment = EquipmentSystem.GetInstance(player);
+
+      if IsDefined(equipData) && IsDefined(equipment) {
+        let areas: array<gamedataEquipmentArea> = [gamedataEquipmentArea.Outfit];
+        let paperdoll: array<SEquipArea> = equipData.GetPaperDollEquipAreas();
+
+        let p = 0;
+        while p < ArraySize(paperdoll) {
+          ArrayPush(areas, paperdoll[p].areaType);
+          p += 1;
+        }
+
+        let stripped = 0;
+        let q = 0;
+
+        while q < ArraySize(areas) {
+          let area = areas[q];
+
+          // The body is not loot - same three slots the backpack pass protects. Taking
+          // what sits in RightArm is what left Cam with no arms and a floating pistol.
+          let isBody = Equals(area, gamedataEquipmentArea.RightArm)
+                    || Equals(area, gamedataEquipmentArea.LeftArm)
+                    || Equals(area, gamedataEquipmentArea.BaseFists);
+
+          if !isBody {
+            let equipped = equipData.GetVisualItemInSlot(area);
+            let equippedTdbid = ItemID.GetTDBID(equipped);
+
+            // ServerWants covers the starter kit, so the clothes and gun just handed over
+            // are not stripped straight back off again.
+            if TDBID.IsValid(equippedTdbid)
+               && MpInventory.ServerWants(network, TDBID.ToNumber(equippedTdbid)) <= 0 {
+              let unequip = new UnequipRequest();
+              unequip.owner = player;
+              unequip.areaType = area;
+              unequip.slotIndex = 0;
+              equipment.QueueRequest(unequip);
+
+              let held = transaction.GetItemQuantity(player, equipped);
+              if held > 0 {
+                transaction.RemoveItem(player, equipped, held);
+              }
+
+              stripped += 1;
+            }
+          }
+
+          q += 1;
+        }
+
+        network.ScriptLog(s"strip: \(stripped) equipped item(s) removed from slots");
+      } else {
+        network.ScriptLog("strip: no equipment system - equipped items left alone");
+      }
     }
 
     // A starter kit is meant to be WORN.
