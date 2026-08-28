@@ -2415,6 +2415,54 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
                                    {
                                        spdlog::error("[Crash] SIGABRT on thread {} - something called abort()",
                                                      GetCurrentThreadId());
+
+                                       // WHO called it. This is the whole question now.
+                                       //
+                                       // The 21:03:35 run proved the process is aborted, not
+                                       // crashed - no SEH exception reached the vectored
+                                       // handler, and no std::terminate ran, so it is a
+                                       // DIRECT abort() call. Only a few things do that here:
+                                       // flecs's ecs_os_abort, mimalloc on a fatal heap
+                                       // error, or a CRT assertion. Neither our [Heap]
+                                       // handler nor a flecs assert logged anything, so
+                                       // elimination cannot separate them - but the return
+                                       // addresses can.
+                                       //
+                                       // Module+RVA rather than symbols, because the PDB
+                                       // will not load (dbghelp reports SymType None even
+                                       // with a matching GUID). Whichever module owns these
+                                       // frames is the culprit, and
+                                       // tools/AnalyseCrashDump.ps1 can name the function
+                                       // from the RVA the same way it does for a dump.
+                                       void* frames[48]{};
+                                       const auto captured =
+                                           RtlCaptureStackBackTrace(0, 48, frames, nullptr);
+
+                                       for (USHORT i = 0; i < captured; ++i)
+                                       {
+                                           HMODULE mod{};
+                                           if (GetModuleHandleExA(
+                                                   GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                                       GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                                   static_cast<LPCSTR>(frames[i]), &mod))
+                                           {
+                                               char path[MAX_PATH]{};
+                                               GetModuleFileNameA(mod, path, MAX_PATH);
+
+                                               const char* name = strrchr(path, '\\');
+                                               name = name ? name + 1 : path;
+
+                                               spdlog::error("[Crash]   #{:02} {}+0x{:X}", i, name,
+                                                             reinterpret_cast<uint64_t>(frames[i]) -
+                                                                 reinterpret_cast<uint64_t>(mod));
+                                           }
+                                           else
+                                           {
+                                               spdlog::error("[Crash]   #{:02} 0x{:016X} <no module>", i,
+                                                             reinterpret_cast<uint64_t>(frames[i]));
+                                           }
+                                       }
+
                                        spdlog::default_logger()->flush();
                                        std::_Exit(3);
                                    });
