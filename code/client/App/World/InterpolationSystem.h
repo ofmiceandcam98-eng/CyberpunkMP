@@ -23,7 +23,10 @@ protected:
 private:
     bool m_ready{false};
     flecs::system m_interpolator;
-    flecs::observer m_entityObserver;
+    // The OnAdd EntityComponent observer that lived here was removed on 27 August - see
+    // the note in OnWorldAttached. InterpolationComponent is added explicitly at the two
+    // sites that create EntityComponent instead, so nothing mutates during observer
+    // dispatch. The member is gone with it rather than left dangling and unassigned.
 };
 
 RTTI_DEFINE_CLASS(InterpolationSystem, { 

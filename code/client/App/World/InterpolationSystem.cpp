@@ -517,19 +517,32 @@ void InterpolationSystem::OnWorldAttached(RED4ext::world::RuntimeScene* aScene)
 {
     spdlog::info("[InterpolationSystem] OnWorldAttached");
 
-    static std::once_flag s_flag;
-    std::call_once(s_flag, [this]()
-    {
-        const auto pSystem = Red::GetGameSystem<NetworkWorldSystem>();
-
-        m_entityObserver = pSystem->observer<EntityComponent>()
-           .event(flecs::OnAdd)
-           .write<InterpolationComponent>()
-           .each([](flecs::entity aEntity, EntityComponent&)
-           {
-               aEntity.add<InterpolationComponent>();
-           });
-    });
+    // The OnAdd observer that used to live here is gone. InterpolationComponent is now
+    // added explicitly wherever EntityComponent is, which is only two places.
+    //
+    // What it was: observer<EntityComponent>().event(flecs::OnAdd) whose callback did
+    // aEntity.add<InterpolationComponent>() - a structural change performed DURING OnAdd
+    // dispatch, which moves the entity to a new archetype while flecs is still notifying
+    // about the previous one.
+    //
+    // Why it was removed, on 27 August, while hunting a crash inside
+    // flecs_stack_restore_cursor: it was the only remaining path in the client that
+    // mutated during observer dispatch, and one of its two triggers runs UNDEFERRED.
+    // VehicleSystem::OnVehicleReady is an RTTI_METHOD called from redscript, not from a
+    // system, so ecs_emplace_id there takes its immediate branch - which ends with
+    // flecs_defer_end(), flushing the command queue and dispatching this observer inline,
+    // whereupon the callback made a further structural change. flecs's own error text in
+    // that function warns about modifying components inside an OnAdd(T) observer.
+    //
+    // Adding it at the two emplace sites is equivalent and has none of that: no observer
+    // iterator, no cursor, no mutation mid-dispatch. NetworkWorldSystem.cpp already did
+    // exactly this for its own spawn path, so this makes the three sites consistent.
+    //
+    // NOT yet proven to be the crash. It is the last candidate standing after the page
+    // and worker iterator paths, manual fini, the .run() leak and ten others were ruled
+    // out with source evidence. If the crash survives this, instrument cursor
+    // create/restore with a generation counter - and do NOT use FLECS_DEBUG, which
+    // changes ecs_stack_cursor_t's layout.
 
     m_ready = true;
 }

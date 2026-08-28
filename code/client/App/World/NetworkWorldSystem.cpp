@@ -2595,6 +2595,17 @@ void NetworkWorldSystem::OnConnected()
 
                 aEntity.emplace<EntityComponent>(aSpawning.Id, false, aSpawning.Controller);
 
+                // Added here rather than by an OnAdd observer - see InterpolationSystem.cpp
+                // for why that observer was removed. The interpolator matches
+                // <EntityComponent, InterpolationComponent>, so both must be present.
+                aEntity.add<InterpolationComponent>();
+
+                // Added here rather than by an OnAdd observer - see InterpolationSystem.cpp.
+                // The interpolator matches <EntityComponent, InterpolationComponent>, so both
+                // have to be present, and doing it in one place avoids a structural change
+                // during observer dispatch.
+                aEntity.add<InterpolationComponent>();
+
                 // Driver puppets get their animation writer bound here, on the main
                 // thread, with no engine hook involved - the driver re-binds itself if
                 // a mount rebuilds the component later.

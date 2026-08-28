@@ -443,6 +443,17 @@ void VehicleSystem::OnVehicleReady(const Red::EntityID& aVehicleEntityId)
     // spawning with nothing queued used to keep SpawningComponent forever, and stayed
     // half-resolvable to everything keyed on EntityComponent.
     mirror.emplace<EntityComponent>(aVehicleEntityId, true, nullptr);
+
+    // Added here rather than by an OnAdd observer - see InterpolationSystem.cpp. This is
+    // the site that mattered: OnVehicleReady is an RTTI_METHOD called from redscript, not
+    // from a system, so the emplace above is NOT deferred - ecs_emplace_id takes its
+    // immediate branch, which ends in flecs_defer_end() and dispatches observers inline.
+    mirror.add<InterpolationComponent>();
+
+    // Added here rather than by an OnAdd observer - see InterpolationSystem.cpp. This site
+    // matters most: OnVehicleReady is called from redscript, so the emplace above is NOT
+    // deferred and flecs dispatches observers inline from it.
+    mirror.add<InterpolationComponent>();
     mirror.remove<SpawningComponent>();
 
     const auto pending = m_pendingMounts.find(serverId);
