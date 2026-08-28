@@ -2280,7 +2280,21 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
             // Negative levels are errors and fatals in flecs; everything else is chatter we
             // do not want a line of per frame.
             if (aLevel < 0)
+            {
                 spdlog::error("[flecs] {}:{} {}", file, aLine, msg);
+
+                // FLUSH IMMEDIATELY. A flecs assert calls this and then ecs_os_abort(),
+                // and abort() does not unwind, does not run destructors and does not flush
+                // spdlog - so the one message worth having is left sitting in a buffer that
+                // is never written.
+                //
+                // That is almost certainly what happened on 27 August. Two consecutive
+                // terminations produced NO crash dump at all, where all fifteen before them
+                // produced one every time - which is what an abort looks like rather than an
+                // access violation - and yet the log showed nothing. A fired assert plus a
+                // lost buffer explains both halves at once.
+                spdlog::default_logger()->flush();
+            }
             else if (aLevel == 0)
                 spdlog::warn("[flecs] {}", msg);
         };
