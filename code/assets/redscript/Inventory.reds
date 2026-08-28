@@ -574,6 +574,27 @@ public class MpInventory {
         network.ScriptLog("starter kit: no equipment system - items left in the inventory");
       }
 
+      // Arm the one-shot settlement.
+      //
+      // HERE and nowhere else. ShouldEquipRestored() is true only for a starter kit, which
+      // means only for a character being created - so this cannot arm on a reconnect, on an
+      // ordinary restore, or on an admin grant. That is the whole safety property: a
+      // cleanup that could arm twice would eventually delete something a player bought.
+      //
+      // The engine grants its own vanilla loadout up to a minute and a half after this
+      // point (see MpStarterSettlement). Nothing here can see it yet, which is exactly why
+      // the strip above keeps missing it.
+      let settle = new MpStarterSettlement();
+      let settleList: array<wref<gameItemData>>;
+      transaction.GetItemList(player, settleList);
+      settle.baseline = ArraySize(settleList);
+      settle.stable = 0;
+      settle.sawGrant = false;
+      settle.attempts = 0;
+      GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(settle, 2.0, false);
+
+      network.ScriptLog(s"settlement: armed, watching for the engine's starting loadout (baseline \(ArraySize(settleList)) stack(s))");
+
       network.ClearEquipRestored();
     }
 
@@ -807,4 +828,195 @@ public func MpShowSaved() -> Void {
   GameInstance.GetBlackboardSystem(GetGameInstance())
     .Get(GetAllBlackboardDefs().UI_Notifications)
     .SetVariant(GetAllBlackboardDefs().UI_Notifications.WarningMessage, ToVariant(message), true);
+}
+
+/**
+ * Removes the loadout the ENGINE hands a brand new character, once, and never again.
+ *
+ * The problem this exists for, measured on 2026-08-28:
+ *
+ *   04:51:08  strip: 0 cyberware present; starter kit: queued 5 item(s) to equip
+ *   04:51:08  restore DONE: money 121994 -> 20000     <- correct: 5 items, no chrome
+ *   04:52:36  capture DONE: 124 stack(s), 14 cyberware, 20000 eddies
+ *
+ * Our strip runs, the kit lands correctly, and then EIGHTY-EIGHT SECONDS LATER the game
+ * grants its own vanilla Phantom Liberty starting loadout - three guns, fourteen pieces of
+ * chrome, a wardrobe. The possessions autosave then captures that and writes it to the
+ * server as the character's real inventory, which is why it survives every reconnect.
+ *
+ * The strip cannot catch it by running earlier or more often. It has to WAIT for it.
+ *
+ * WHY THIS IS ONE-SHOT, AND WHY THAT MATTERS MORE THAN THE FEATURE
+ *
+ * Cam's rule, verbatim: "make sure any new weapon, clothing, cyberware, money or any item a
+ * person grabs or buys stays on them, it shouldnt disappear."
+ *
+ * So the obvious implementation - "remove anything the server does not know about" on a
+ * timer, or on every inventory change, or on every reconnect - is FORBIDDEN. It would
+ * delete the gun somebody just bought, every time, and it would look exactly like the
+ * server eating their money. This runs during the creating session only, stops the moment
+ * it has acted, and is never armed again for that character. After it, the server follows
+ * the player; it never leads.
+ *
+ * WHY IT DETECTS RATHER THAN SLEEPS
+ *
+ * Eighty-eight seconds is an observation, not a contract - it is whatever that machine did
+ * once. So this watches the stack count instead: it waits for the count to GROW past what
+ * the kit left, then waits for it to stop moving, and only then acts. A slower machine gets
+ * the same result, and a grant that never comes costs nothing but a few polls.
+ */
+public class MpStarterSettlement extends DelayCallback {
+    // What the kit left behind. Growth past this is the engine's grant arriving.
+    public let baseline: Int32;
+
+    // Consecutive polls with no change. Two in a row means the grant has finished landing
+    // rather than still being written.
+    public let stable: Int32;
+
+    public let sawGrant: Bool;
+
+    // Hard stop. Three minutes of polling, then give up quietly - an armed cleanup that
+    // never fires is a bug; one that fires an hour into a session is a disaster.
+    public let attempts: Int32;
+
+    public func Call() -> Void {
+        let network = GameInstance.GetNetworkWorldSystem();
+
+        if !IsDefined(network) || !network.IsConnected() {
+            return; // session gone - do not reschedule, do not clean
+        }
+
+        let player = GetPlayer(GetGameInstance());
+        let transaction = GameInstance.GetTransactionSystem(GetGameInstance());
+
+        if !IsDefined(player) || !IsDefined(transaction) {
+            this.Reschedule();
+            return;
+        }
+
+        let items: array<wref<gameItemData>>;
+        transaction.GetItemList(player, items);
+        let count = ArraySize(items);
+
+        this.attempts += 1;
+
+        if this.attempts > 90 {
+            network.ScriptLog(s"settlement: gave up after \(this.attempts) polls - the engine never granted a starting loadout (count stayed \(count))");
+            return;
+        }
+
+        if count > this.baseline {
+            this.sawGrant = true;
+        }
+
+        // Still moving? Wait. The grant arrives over several frames and cleaning halfway
+        // through would leave part of it behind for the autosave to store.
+        if count != this.baseline {
+            this.stable = 0;
+            this.baseline = count;
+            this.Reschedule();
+            return;
+        }
+
+        this.stable += 1;
+
+        if !this.sawGrant || this.stable < 2 {
+            this.Reschedule();
+            return;
+        }
+
+        MpSettleStarterLoadout(network, player, transaction);
+    }
+
+    private func Reschedule() -> Void {
+        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(this, 2.0, false);
+    }
+}
+
+/**
+ * The one cleanup. Called by MpStarterSettlement once the engine's grant has landed and
+ * stopped moving; never called from anywhere else, and never twice.
+ *
+ * Removes exactly what the server does not know this character owns. At this instant the
+ * server's record IS the starter kit, so that is a precise statement rather than a guess -
+ * and it is only true for this moment, which is why nothing else may reuse it.
+ *
+ * Collect-then-remove, in two passes, for the reason the strip documents: RemoveItem
+ * mutates the very list being walked, and destroying the objects being dereferenced
+ * mid-iteration is how that goes wrong.
+ */
+public func MpSettleStarterLoadout(network: ref<NetworkWorldSystem>, player: ref<PlayerPuppet>, transaction: ref<TransactionSystem>) -> Void {
+  let items: array<wref<gameItemData>>;
+  transaction.GetItemList(player, items);
+
+  let moneyTdbid = ItemID.GetTDBID(MarketSystem.Money());
+
+  let doomedIds: array<ItemID>;
+  let doomedCounts: array<Int32>;
+
+  for item in items {
+    if IsDefined(item) {
+      let heldId = item.GetID();
+      let heldTdbid = ItemID.GetTDBID(heldId);
+
+      // Money is never taken here. The restore has already set the balance the server
+      // wants, and removing eddies as "unrecognised" would read as the server robbing them.
+      if heldTdbid != moneyTdbid {
+        // Body slots stay. Arms and fists are the player's own limbs, not equipment - the
+        // strip learned this the hard way when Cam ended up a floating torso with a pistol.
+        let bodySlot = false;
+        let itemRecord = RPGManager.GetItemRecord(heldId);
+        if IsDefined(itemRecord) && IsDefined(itemRecord.EquipArea()) {
+          let itemArea = itemRecord.EquipArea().Type();
+          bodySlot = Equals(itemArea, gamedataEquipmentArea.RightArm)
+                  || Equals(itemArea, gamedataEquipmentArea.LeftArm)
+                  || Equals(itemArea, gamedataEquipmentArea.BaseFists);
+        }
+
+        if !bodySlot {
+          let owned = MpInventory.ServerWants(network, TDBID.ToNumber(heldTdbid));
+          let excess = transaction.GetItemQuantity(player, heldId) - owned;
+
+          if excess > 0 {
+            ArrayPush(doomedIds, heldId);
+            ArrayPush(doomedCounts, excess);
+          }
+        }
+      }
+    }
+  }
+
+  let doomed = 0;
+  let removed = 0;
+  while doomed < ArraySize(doomedIds) {
+    transaction.RemoveItem(player, doomedIds[doomed], doomedCounts[doomed]);
+    removed += 1;
+    doomed += 1;
+  }
+
+  // Chrome the engine installed with its loadout. Cam's rule is that nobody starts with
+  // cyberware - "they have to get it on their own" - and the vanilla corpo start hands over
+  // fourteen pieces.
+  let chrome: array<wref<gameItemData>>;
+  transaction.GetItemListByTag(player, n"Cyberware", chrome);
+
+  let chromeIds: array<ItemID>;
+  for piece in chrome {
+    if IsDefined(piece) {
+      let pieceId = piece.GetID();
+      if MpInventory.ServerWants(network, TDBID.ToNumber(ItemID.GetTDBID(pieceId))) <= 0 {
+        ArrayPush(chromeIds, pieceId);
+      }
+    }
+  }
+
+  let c = 0;
+  let pulled = 0;
+  while c < ArraySize(chromeIds) {
+    transaction.RemoveItem(player, chromeIds[c], 1);
+    pulled += 1;
+    c += 1;
+  }
+
+  network.ScriptLog(s"settlement: removed \(removed) engine-granted stack(s) and \(pulled) cyberware piece(s) - this character is now INITIALIZED and will never be cleaned again");
 }
