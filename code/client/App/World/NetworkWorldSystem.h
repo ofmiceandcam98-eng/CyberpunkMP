@@ -332,6 +332,11 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // knows not to announce it in chat.
     void SaveCharacterAppearance(bool aAutomatic = false);
 
+    // Replaces the loaded body with the character the server stored. See the definition -
+    // this is what makes pressing MULTIPLAYER give you your own character rather than
+    // whoever is in your Cyberpunk save.
+    void ApplyStoredAppearance();
+
     // Watches for the player finishing a mirror or creator session, and saves it for them.
     void PollAppearanceChanges();
 
@@ -416,6 +421,18 @@ protected:
     // What the server sent on spawn, held until script has applied it.
     Vector<server::ItemStack> m_restoreInventory;
     int64_t m_restoreMoney{0};
+
+    // This character's stored appearance, held until there is a player to put it on.
+    //
+    // Arrives as a NotifyAppearanceUpdate addressed to our own id, right behind the spawn
+    // response. Buffered for the same reason the inventory is: at that moment the player's
+    // puppet is still being built, so there is nobody to put a face on yet. Consumed and
+    // cleared by ApplyStoredAppearance on the settle path.
+    //
+    // Empty means the server had nothing stored - a new character - and the body the creator
+    // just made is kept. The body gender is not carried separately; it is inside the blob as
+    // isBodyGenderMale, which is where the save path reads it from too.
+    Vector<uint8_t> m_restoreAppearance;
 
     // Set when the server has sent possessions and script has not applied them yet.
     //

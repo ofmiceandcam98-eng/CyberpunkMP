@@ -376,6 +376,11 @@ void NetworkWorldSystem::Update(uint64_t aTick)
                 // detach - see OnBeforeWorldDetach.
                 m_characterLive = true;
 
+                // The face BEFORE the belongings. Restoring the inventory first would dress
+                // the local save's V in this character's clothes for a frame, and the strip
+                // pass reads equipment slots - better it reads them off the right body.
+                ApplyStoredAppearance();
+
                 spdlog::info("[Inventory] applying possessions now");
 
                 if (!Red::CallVirtual(Red::GetGameSystem<NetworkWorldSystem>(), "RestorePossessions"))
@@ -1086,6 +1091,83 @@ void NetworkWorldSystem::PollAppearanceChanges()
 }
 
 /**
+ * Makes the local player BE the character the server stored, rather than whoever the
+ * Cyberpunk save on disk happened to contain.
+ *
+ * This is the half that was never built. The server has always decoded the stored blob and
+ * handed it to every other client - so everyone else saw the right person - but it never
+ * sent it back to the owner, and SetCharacterStatus only recorded flags and logged. The
+ * result on 27 August: Cam pressed MULTIPLAYER and played as the female template from his
+ * local save, at her last position, holding her inventory, while everyone else saw the male
+ * character he had actually made.
+ *
+ * The engine cannot be asked to load a world without a save, so a wrong body always arrives
+ * first and has to be replaced afterwards. Every step below is checked and logs what it
+ * found, because a half-applied appearance is worse than none and this runs on the live
+ * player rather than on a spare puppet.
+ */
+void NetworkWorldSystem::ApplyStoredAppearance()
+{
+    // Nothing stored is the normal case for a brand new character: the creator has just
+    // built a body and it is the correct one. Leave it alone.
+    if (m_restoreAppearance.empty())
+        return;
+
+    // Taken, not copied. This runs once per spawn; a retry with the same bytes would be a
+    // second rebuild of the same body for no benefit.
+    const auto bytes = std::move(m_restoreAppearance);
+    m_restoreAppearance.clear();
+
+    auto ccSystem = Red::GetGameSystem<Red::game::ui::CharacterCustomizationSystem>();
+
+    if (!ccSystem)
+    {
+        spdlog::error("[Character] no CharacterCustomizationSystem - cannot apply the stored appearance");
+        return;
+    }
+
+    // The state does not exist during ordinary gameplay. GetCustomizationState() returns
+    // (ccSystem + 0x78), which is never null, but the instance behind it is - that is what
+    // "CustomizationState was null" in the logs has always meant. InitializeState is what
+    // builds one, and without it there is nothing to deserialise into.
+    if (!Red::CallVirtual(ccSystem, "InitializeState"))
+    {
+        spdlog::error("[Character] InitializeState could not be called - stored appearance not applied");
+        return;
+    }
+
+    auto stateHandle = GetCustomizationState(ccSystem);
+
+    if (!stateHandle || !stateHandle->instance)
+    {
+        spdlog::error("[Character] InitializeState left no state behind - stored appearance not applied");
+        return;
+    }
+
+    // Serialising a NULL instance crashes the game, which is why the check above is not
+    // decoration. CharacterCustomizationState_Serialize runs both directions: a CMPWriter
+    // serialises out, a CMPReader reads in. This is the same call AppearanceSystem uses to
+    // dress a remote puppet, pointed at the local player's live state instead.
+    auto reader = CMPReader(bytes);
+    CharacterCustomizationState_Serialize(stateHandle->instance, &reader);
+
+    // Rebuild the body from what was just read in.
+    if (!Red::CallVirtual(ccSystem, "ReFinalizeState"))
+    {
+        spdlog::error("[Character] ReFinalizeState could not be called - the state was loaded but the "
+                      "body was not rebuilt from it");
+        return;
+    }
+
+    // Read back out of the state rather than carried alongside it. The blob is the authority
+    // on which body this is - that is the field the save path reports too - so a separate
+    // copy would only be something to disagree with it.
+    spdlog::info("[Character] applied {} bytes of stored appearance - now playing as the server's "
+                 "character ({})",
+                 bytes.size(), stateHandle->instance->isBodyGenderMale ? "male" : "female");
+}
+
+/**
  * Sends the player's current appearance to the server as their character.
  *
  * Kept as a manual override - PollAppearanceChanges is what actually saves in normal use.
@@ -1768,6 +1850,30 @@ void NetworkWorldSystem::SendCombatEvent(uint64_t aTargetServerId, uint32_t aSou
 
 void NetworkWorldSystem::HandleAppearanceUpdate(const PacketEvent<server::NotifyAppearanceUpdate>& aMessage)
 {
+    // An update about OURSELVES is the server telling us which character we are playing.
+    //
+    // There is no puppet under our own id - the local player is the game's V, not one of our
+    // mirrors - so the lookup below would find nothing and log "arrived before its puppet"
+    // forever. This is the message that fixes pressing MULTIPLAYER and getting whoever
+    // happened to be in your Cyberpunk save.
+    if (m_remotePlayerId && aMessage.get_id() == *m_remotePlayerId)
+    {
+        const auto& blob = aMessage.get_ccstate();
+
+        if (blob.empty())
+            return; // clothing-only update about ourselves; nothing to rebuild
+
+        // Buffered, not applied here. This lands with the spawn response, before the
+        // player's puppet has finished being built - ApplyStoredAppearance runs on the same
+        // settle path as the inventory restore, once there is somebody to apply it to.
+        m_restoreAppearance = blob;
+
+        spdlog::info("[Character] server sent {} bytes of our own stored appearance - will apply "
+                     "once the player exists",
+                     blob.size());
+        return;
+    }
+
     const auto entity = GetEntityByServerId(aMessage.get_id());
 
     if (!entity)

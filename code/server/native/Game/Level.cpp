@@ -822,6 +822,38 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
     response.set_id(pComponent->Puppet);
     GServer->Send(aMessage.ConnectionId, response);
 
+    // Tell this player who THEY are, not just everybody else.
+    //
+    // The stored appearance above has always gone out to every other client - which is why
+    // remote players looked correct - but never back to its owner. So the one person who
+    // never saw their own character was the person playing it: Cam pressed MULTIPLAYER on
+    // 27 August and walked out as the female template from his local save, at her last
+    // position, holding her inventory, while everyone else saw the male character he had
+    // actually made.
+    //
+    // Reusing NotifyAppearanceUpdate rather than adding fields to the spawn response, which
+    // was the first attempt. netpack prefixes each message with a presence bitfield sized to
+    // its optional fields - SpawnCharacterResponse reads 6 bits - so adding two would make
+    // it 8 and every field after them would misalign on any client that had not been
+    // rebuilt in lockstep. This message already carries exactly what is needed (an id, the
+    // equipment and the ccstate) and the body gender is inside the blob, so nothing on the
+    // wire changes and older clients are unaffected.
+    //
+    // Addressed to the player's OWN id. The client recognises it as itself and applies the
+    // appearance to the local player instead of looking for a puppet under that id.
+    if (!appearance.empty())
+    {
+        server::NotifyAppearanceUpdate own;
+        own.set_id(pComponent->Puppet);
+        own.set_equipment(equipment);
+        own.set_ccstate(appearance);
+
+        GServer->Send(aMessage.ConnectionId, own);
+
+        spdlog::info("Sent {} their own stored appearance ({} bytes) so they play as their character",
+                     pComponent->Username, appearance.size());
+    }
+
     Add(player);
 }
 
