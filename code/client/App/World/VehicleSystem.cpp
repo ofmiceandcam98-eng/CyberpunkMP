@@ -15,6 +15,7 @@
 #include "App/Components/InterpolationComponent.h"
 #include "App/Components/DriverComponent.h"
 #include "App/World/PuppetRegistry.h"
+#include "App/World/ServerIdRegistry.h"
 
 
 // Puts a network vehicle fully under remote control: no local player input, no local
@@ -353,6 +354,12 @@ bool VehicleSystem::HandleVehicleLoadMessage(const PacketEvent<server::NotifyVeh
         return false;
 
     // spdlog::info("[VehicleSystem] * Spawned: {}, {}", aMessage.get_id(), id.hash);
+
+    // Record the engine-entity -> server-id mapping on the main thread, so the hit hook
+    // can resolve a shot car from a job thread without running a flecs query there. See
+    // ServerIdRegistry.h - that query was the data race behind the crash loop.
+    App::ServerIdRegistry::Add(id.hash, aMessage.get_id());
+
     worldSystem->make_alive(aMessage.get_id()).emplace<SpawningComponent>(id, nullptr,
                                                                             aMessage.get_authority_epoch());
 

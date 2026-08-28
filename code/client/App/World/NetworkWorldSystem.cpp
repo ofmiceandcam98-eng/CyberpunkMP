@@ -6,6 +6,7 @@
 // For the crash/terminate reporting in OnInitialize.
 #include <set>
 #include <mutex>
+#include <atomic>
 #include <csignal>
 #include <exception>
 #include <cstdlib>
@@ -31,12 +32,17 @@
 #include "App/Components/InterpolationComponent.h"
 #include "App/Components/DriverComponent.h"
 #include "App/World/PuppetRegistry.h"
+#include "App/World/ServerIdRegistry.h"
 #include "Game/Utils.h"
 #include "Game/CharacterCustomizationSystem.h"
 
 #include "ChatSystem.h"
 
 static uint64_t GTick = 0;
+
+// The thread that drives progress(), published by the census there and checked by
+// FindEntity. Only that thread may touch the flecs world - see ServerIdRegistry.h.
+static std::atomic<uint32_t> g_flecsMainThread{0};
 
 uint64_t NetworkWorldSystem::GetTick()
 {
@@ -136,6 +142,15 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
     if (usesDriver)
         App::PuppetRegistry::AddDriver(id.hash);
 
+    // Same reason, different hook. The hit hook asks GetServerIdByEntity to turn an engine
+    // entity into a server id, and it asks from the job threads; answering with a flecs
+    // query from there was the data race behind the crash loop. Record the mapping here,
+    // on the main thread, so that lookup never has to touch the world.
+    //
+    // make_alive(aServerId) below gives the mirror exactly aServerId as its flecs id, which
+    // is what the old query returned via entity.id() - so this registers the same answer.
+    App::ServerIdRegistry::Add(id.hash, aServerId);
+
     auto spawned = make_alive(aServerId);
 
     spawned.emplace<SpawningComponent>(id, nullptr, usesDriver);
@@ -169,6 +184,7 @@ void NetworkWorldSystem::DeSpawn(uint64_t aServerId) const
     {
         App::PuppetRegistry::Remove(pEntity->Id.hash);
         App::PuppetRegistry::RemoveDriver(pEntity->Id.hash);
+        App::ServerIdRegistry::Remove(pEntity->Id.hash);
         const auto handle = Red::GetGameSystem<NetworkWorldSystem>();
         Red::Detail::CallFunctionWithArgs(m_pDeletePuppet, handle, pEntity->Id);
     }
@@ -176,6 +192,7 @@ void NetworkWorldSystem::DeSpawn(uint64_t aServerId) const
     {
         App::PuppetRegistry::Remove(pEntity->Id.hash);
         App::PuppetRegistry::RemoveDriver(pEntity->Id.hash);
+        App::ServerIdRegistry::Remove(pEntity->Id.hash);
         const auto handle = Red::GetGameSystem<NetworkWorldSystem>();
         Red::Detail::CallFunctionWithArgs(m_pDeletePuppet, handle, pEntity->Id);
     }
@@ -216,17 +233,32 @@ Red::EntityID NetworkWorldSystem::GetEntityIdByServerId(uint64_t aServerId) cons
     return 0;
 }
 
+// MAIN THREAD ONLY. This builds flecs queries, which take a cursor from the stage's
+// unlocked iterator stack - calling it from a job thread races the main thread's system
+// iteration. That was the crash loop; see ServerIdRegistry.h for the full account.
+//
+// The off-thread caller has been removed: GetServerIdByEntity now answers from the
+// registry. The tripwire below stays for one release to prove the two remaining callers
+// (VehicleSystem's OnVehicleEnter and OnVehicleReady, both RTTI methods called from
+// redscript) really are on the main thread, rather than assuming it - assuming it by
+// reading the code is exactly the mistake that cost a day here.
 flecs::entity NetworkWorldSystem::FindEntity(Red::EntityID aId) const
 {
-    // Same thread census as progress() - see the note there. FindEntity is reachable
-    // from game hooks, which is exactly where an off-thread caller would come from.
     {
-        static std::mutex s_lock;
-        static std::set<uint32_t> s_seen;
         const auto tid = GetCurrentThreadId();
-        std::lock_guard guard(s_lock);
-        if (s_seen.insert(tid).second)
-            spdlog::warn("[Thread] FindEntity called from thread {}", tid);
+        const auto mainThread = g_flecsMainThread.load(std::memory_order_relaxed);
+
+        if (mainThread != 0 && tid != mainThread)
+        {
+            // Loud, because it means an off-thread path survived the fix and this build
+            // can still take the crash.
+            static std::mutex s_lock;
+            static std::set<uint32_t> s_offThread;
+            std::lock_guard guard(s_lock);
+            if (s_offThread.insert(tid).second)
+                spdlog::error("[Thread] FindEntity called OFF the flecs thread: {} (flecs thread is {})", tid,
+                              mainThread);
+        }
     }
 
     auto entity = query<EntityComponent>().find(
@@ -392,6 +424,10 @@ void NetworkWorldSystem::Update(uint64_t aTick)
         static std::set<uint32_t> s_seen;
 
         const auto tid = GetCurrentThreadId();
+
+        // Publish it so FindEntity can check itself against it. Whichever thread drives
+        // progress() is the only one allowed to touch the world.
+        g_flecsMainThread.store(tid, std::memory_order_relaxed);
 
         std::lock_guard lock(s_seenLock);
         if (s_seen.insert(tid).second)
@@ -1327,6 +1363,7 @@ void NetworkWorldSystem::OnBeforeWorldDetach(RED4ext::world::RuntimeScene* aScen
     spdlog::info("[Detach] stand-down: silencing the animation hook");
     App::PuppetRegistry::Clear();
     App::PuppetRegistry::ClearDrivers();
+    App::ServerIdRegistry::Clear();
 
     spdlog::info("[Detach] stand-down: stopping interpolation");
     m_interpolationSystem->OnDisconnected();
@@ -1631,15 +1668,24 @@ bool NetworkWorldSystem::HackablePuppetsEnabled() const
 
 uint64_t NetworkWorldSystem::GetServerIdByEntity(Red::EntityID aEntityId) const
 {
-    const auto entity = FindEntity(aEntityId);
-
-    // Zero rather than an error. Most things hit in this game are ordinary NPCs, props and
-    // scenery, and the hit hook runs for all of them - "not one of ours" is the common
-    // case, not a failure.
-    if (!entity || !entity.is_alive())
-        return 0;
-
-    return entity.id();
+    // NO FLECS HERE. This runs on the game's job threads.
+    //
+    // It used to answer with query<EntityComponent>().find(...), and the hit hook that
+    // calls it is dispatched from the game's job system. A thread census on 27 August
+    // logged FindEntity arriving from FOURTEEN distinct threads in one session, none of
+    // them the thread running progress().
+    //
+    // Building a flecs query takes a cursor from the stage's iterator stack, which has no
+    // locking by design. So those worker threads were rewinding the same cursor chain the
+    // main thread was iterating through, and the result was two threads faulting at the
+    // same instruction inside flecs_stack_restore_cursor, in the same millisecond, with
+    // the same ecs_stack_t* in RCX. That is the crash that survived six other fixes.
+    //
+    // The registry is a lock-free table maintained on the main thread - the same shape as
+    // PuppetRegistry next door, which exists because the animation hook had this exact
+    // problem first. A mutex is not used for the same reason it is not used there: this
+    // fires for every bullet in the scene.
+    return App::ServerIdRegistry::Find(aEntityId.hash);
 }
 
 void NetworkWorldSystem::SendCombatEvent(uint64_t aTargetServerId, uint32_t aSourceType, uint32_t aAttackType,
@@ -2913,6 +2959,7 @@ void NetworkWorldSystem::OnDisconnected(Client::EDisconnectReason aReason)
 
     App::PuppetRegistry::Clear();
     App::PuppetRegistry::ClearDrivers();
+    App::ServerIdRegistry::Clear();
 
     if (m_updatePlayerLocation)
         m_updatePlayerLocation.destruct();
