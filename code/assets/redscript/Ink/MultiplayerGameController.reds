@@ -343,6 +343,38 @@ public class MultiplayerGameController extends inkGameController {
         if (connected) {
             this.ShowServerList(false);
             this.AsyncSpawnFromLocal(this.GetWidget(n"hud"), n"chat");
+
+            // Put the HUD where it belongs, NOW, instead of waiting for a car.
+            //
+            // This is the invisible-chat-box bug, and it was never a visibility problem.
+            // The native ancestry walk added for it reported every ancestor as
+            // visible=true opacity=1 with a layer, all the way up to Base Window - and
+            // showed the 'hud' canvas sitting at pos=(0,0), then at pos=(47,1688) thirteen
+            // seconds later, right after an OnVehicleEnter:
+            //
+            //   04:53:03  [1] 'hud' size=0x0 pos=(0,0)       <- chat not visible
+            //   04:53:07      [VehicleSystem] OnVehicleEnter
+            //   04:53:16  [1] 'hud' size=0x0 pos=(47,1688)   <- chat in place
+            //
+            // (0,0) is exactly how the asset authors it. The ONLY things that ever move it
+            // are the to_vehicle / from_vehicle animations in OnPlayerEnteredVehicle below,
+            // so until a player got into a car the whole custom HUD was drawing in the
+            // top-left corner. "It appears when I get in a car" was the animation finally
+            // running, nothing more.
+            //
+            // from_vehicle is the on-foot resting position, so playing it here is the same
+            // instruction the game gives when somebody steps out of a car - the asset's own
+            // idea of where this belongs, rather than a hardcoded offset that would drift
+            // the moment the layout is edited.
+            //
+            // This matters more than a missing chat box. The server asks a new player to
+            // choose their character name at spawn, and a name is chosen ONCE - so people
+            // have been typing blind into a box they cannot see. Cam's character is called
+            // "JulianJulian Vale" because of it.
+            let hudTargets = new inkWidgetsSet();
+            hudTargets.Select(this.GetWidget(n"hud"));
+            this.PlayLibraryAnimationOnTargets(n"from_vehicle", hudTargets);
+
             this.m_player.UnregisterInputListener(this, n"UIConnectToServer");
 
             this.m_player.UnregisterInputListener(this, n"UIDisconnectFromServer");
