@@ -434,6 +434,33 @@ protected:
     // isBodyGenderMale, which is where the save path reads it from too.
     Vector<uint8_t> m_restoreAppearance;
 
+    // How far the local appearance restore has got, so it happens exactly once.
+    //
+    // InitializeState and ReFinalizeState rebuild the LIVE player's body. Running them a
+    // second time because a duplicate update arrived, or because the settle loop ticked
+    // again, would tear down and rebuild a body that is already correct.
+    //
+    // Failed is distinct from NotStarted on purpose: it means the engine refused, and the
+    // player is currently wearing the wrong face. That must not be mistaken for "no
+    // appearance was ever sent", which is the ordinary state of a brand new character.
+    enum class AppearanceRestore : uint32_t
+    {
+        NotStarted,
+        Applying,
+        Applied,
+        Failed,
+    };
+
+    AppearanceRestore m_appearanceRestore{AppearanceRestore::NotStarted};
+
+    // Which character the buffered appearance belongs to, as a revision token.
+    //
+    // The remote player id is reassigned on every spawn - one of Cam's sessions went from
+    // 2000000dc to 3000000dc - so comparing against the current one is enough to tell a
+    // late update for a character we have left from one for the character we are playing,
+    // without adding anything to the wire.
+    uint64_t m_appearanceRestoreFor{0};
+
     // Set when the server has sent possessions and script has not applied them yet.
     //
     // The spawn response arrives before the player's puppet is built, so calling straight

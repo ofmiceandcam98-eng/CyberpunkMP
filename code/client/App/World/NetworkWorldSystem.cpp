@@ -1113,16 +1113,62 @@ void NetworkWorldSystem::ApplyStoredAppearance()
     if (m_restoreAppearance.empty())
         return;
 
+    // Once per character, never once per frame.
+    //
+    // InitializeState and ReFinalizeState rebuild the player's body. Running them again
+    // because a duplicate update arrived, or because the settle loop ticked twice, would
+    // tear down and rebuild a body that is already correct - and this is the one code path
+    // here that operates on the live player rather than a spare puppet.
+    if (m_appearanceRestore == AppearanceRestore::Applying ||
+        m_appearanceRestore == AppearanceRestore::Applied)
+    {
+        spdlog::info("[Character] stored appearance already {} - ignoring",
+                     m_appearanceRestore == AppearanceRestore::Applied ? "applied" : "in progress");
+        return;
+    }
+
+    // Refuse a blob that belongs to a different session's character.
+    //
+    // The remote player id is reassigned on every spawn - 2000000dc became 3000000dc within
+    // one of Cam's sessions - so it doubles as a revision token without touching the wire.
+    // A late update for the character somebody just left must not repaint the one they are
+    // now playing.
+    if (m_appearanceRestoreFor != 0 && m_remotePlayerId && m_appearanceRestoreFor != *m_remotePlayerId)
+    {
+        spdlog::warn("[Character] discarding a stored appearance for id {} - we are now playing {}",
+                     m_appearanceRestoreFor, *m_remotePlayerId);
+        m_restoreAppearance.clear();
+        m_appearanceRestoreFor = 0;
+        return;
+    }
+
     // Taken, not copied. This runs once per spawn; a retry with the same bytes would be a
     // second rebuild of the same body for no benefit.
     const auto bytes = std::move(m_restoreAppearance);
     m_restoreAppearance.clear();
 
+    m_appearanceRestore = AppearanceRestore::Applying;
+
+    // Stage by stage, deliberately verbose.
+    //
+    // Every step below is an engine call on the LIVE player, and none of it has run in
+    // production before. If this goes wrong the log has to say which stage, because a
+    // half-applied appearance looks like a dozen other bugs - wrong face, missing limbs,
+    // naked, or correct until something rebuilds it a second later. "It failed" is not a
+    // diagnosis; "it failed at ReFinalizeState" is.
+    spdlog::info("[Character] Local appearance restore BEGIN - {} bytes", bytes.size());
+
+    const auto fail = [this](const char* acpStage)
+    {
+        m_appearanceRestore = AppearanceRestore::Failed;
+        spdlog::error("[Character] Local appearance restore FAILED: {}", acpStage);
+    };
+
     auto ccSystem = Red::GetGameSystem<Red::game::ui::CharacterCustomizationSystem>();
 
     if (!ccSystem)
     {
-        spdlog::error("[Character] no CharacterCustomizationSystem - cannot apply the stored appearance");
+        fail("no CharacterCustomizationSystem");
         return;
     }
 
@@ -1130,17 +1176,21 @@ void NetworkWorldSystem::ApplyStoredAppearance()
     // (ccSystem + 0x78), which is never null, but the instance behind it is - that is what
     // "CustomizationState was null" in the logs has always meant. InitializeState is what
     // builds one, and without it there is nothing to deserialise into.
+    spdlog::info("[Character] InitializeState BEGIN");
+
     if (!Red::CallVirtual(ccSystem, "InitializeState"))
     {
-        spdlog::error("[Character] InitializeState could not be called - stored appearance not applied");
+        fail("InitializeState could not be called");
         return;
     }
+
+    spdlog::info("[Character] InitializeState COMPLETE");
 
     auto stateHandle = GetCustomizationState(ccSystem);
 
     if (!stateHandle || !stateHandle->instance)
     {
-        spdlog::error("[Character] InitializeState left no state behind - stored appearance not applied");
+        fail("InitializeState left no state behind");
         return;
     }
 
@@ -1148,22 +1198,35 @@ void NetworkWorldSystem::ApplyStoredAppearance()
     // decoration. CharacterCustomizationState_Serialize runs both directions: a CMPWriter
     // serialises out, a CMPReader reads in. This is the same call AppearanceSystem uses to
     // dress a remote puppet, pointed at the local player's live state instead.
+    spdlog::info("[Character] Deserialize ccstate BEGIN");
+
     auto reader = CMPReader(bytes);
     CharacterCustomizationState_Serialize(stateHandle->instance, &reader);
 
+    spdlog::info("[Character] Deserialize ccstate COMPLETE - body is {}",
+                 stateHandle->instance->isBodyGenderMale ? "male" : "female");
+
     // Rebuild the body from what was just read in.
+    spdlog::info("[Character] ReFinalizeState BEGIN");
+
     if (!Red::CallVirtual(ccSystem, "ReFinalizeState"))
     {
-        spdlog::error("[Character] ReFinalizeState could not be called - the state was loaded but the "
-                      "body was not rebuilt from it");
+        fail("ReFinalizeState could not be called - the state was loaded but the body was not "
+             "rebuilt from it");
         return;
     }
 
-    // Read back out of the state rather than carried alongside it. The blob is the authority
-    // on which body this is - that is the field the save path reports too - so a separate
-    // copy would only be something to disagree with it.
-    spdlog::info("[Character] applied {} bytes of stored appearance - now playing as the server's "
-                 "character ({})",
+    spdlog::info("[Character] ReFinalizeState COMPLETE");
+
+    m_appearanceRestore = AppearanceRestore::Applied;
+
+    // Deliberately NOT phrased as "the character now looks right".
+    //
+    // Every call above returning true proves the engine accepted the instructions, not that
+    // the player on screen is the right person. Those are different claims and only one of
+    // them can be checked from here.
+    spdlog::info("[Character] Local appearance restore COMPLETE - {} bytes applied ({}). This is "
+                 "technical success only; the body on screen still has to be looked at.",
                  bytes.size(), stateHandle->instance->isBodyGenderMale ? "male" : "female");
 }
 
@@ -1471,6 +1534,14 @@ void NetworkWorldSystem::OnBeforeWorldDetach(RED4ext::world::RuntimeScene* aScen
     // So a detach revokes the claim. Saving is allowed again only when a restore completes
     // and makes it true once more.
     m_characterLive = false;
+
+    // The appearance restore starts over with the next spawn. The body it applied is being
+    // destroyed along with the rest of the world, so "already Applied" would be a lie the
+    // moment the new one loads - and it would suppress the restore that the reloaded player
+    // actually needs.
+    m_appearanceRestore = AppearanceRestore::NotStarted;
+    m_appearanceRestoreFor = 0;
+    m_restoreAppearance.clear();
 
     spdlog::info("[Detach] stand-down: silencing the animation hook");
     App::PuppetRegistry::Clear();
@@ -1863,10 +1934,24 @@ void NetworkWorldSystem::HandleAppearanceUpdate(const PacketEvent<server::Notify
         if (blob.empty())
             return; // clothing-only update about ourselves; nothing to rebuild
 
+        // A duplicate must not queue a second rebuild of a body that is already correct.
+        // Applying is one-shot per character - see ApplyStoredAppearance.
+        if (m_appearanceRestore == AppearanceRestore::Applied &&
+            m_appearanceRestoreFor == *m_remotePlayerId)
+        {
+            spdlog::info("[Character] ignoring a duplicate appearance for our own character");
+            return;
+        }
+
         // Buffered, not applied here. This lands with the spawn response, before the
         // player's puppet has finished being built - ApplyStoredAppearance runs on the same
         // settle path as the inventory restore, once there is somebody to apply it to.
         m_restoreAppearance = blob;
+
+        // Which character these bytes belong to. The id is reassigned every spawn, so it
+        // serves as a revision token and lets a late update for a character we have already
+        // left be thrown away rather than painted onto the current one.
+        m_appearanceRestoreFor = *m_remotePlayerId;
 
         spdlog::info("[Character] server sent {} bytes of our own stored appearance - will apply "
                      "once the player exists",
