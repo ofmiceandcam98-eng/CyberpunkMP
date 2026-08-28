@@ -1393,6 +1393,31 @@ void NetworkWorldSystem::ApplyStoredAppearance()
     // decoration. CharacterCustomizationState_Serialize runs both directions: a CMPWriter
     // serialises out, a CMPReader reads in. This is the same call AppearanceSystem uses to
     // dress a remote puppet, pointed at the local player's live state instead.
+    // Snapshot the live state BEFORE touching it, so a failed apply can be undone.
+    //
+    // This is not defensive decoration - the previous build did real damage without it.
+    // Deserialising sets isBodyGenderMale on a live state that the game reads for equipment
+    // and body-part resolution, and when ReFinalizeState then refused, the player was left
+    // half-converted: Cam got the template's body with male anatomy, no arms, and hair that
+    // appeared in the inventory screen and vanished on a motorcycle.
+    //
+    // A half-applied appearance is worse than none, and worse still here because of the
+    // standing rule - Cam, emphatically: "do NOT use Phantom Veronicas character for
+    // ANYTHING". Leaving somebody wearing a mangled version of the template is exactly what
+    // that forbids. So: if we cannot finish, we put it back the way we found it.
+    auto snapshot = CMPWriter();
+    CharacterCustomizationState_Serialize(stateHandle->instance, &snapshot);
+
+    const bool haveSnapshot = !snapshot.bytes.empty();
+
+    if (!haveSnapshot)
+    {
+        spdlog::warn("[Character] could not snapshot the live state - refusing to write, because a "
+                     "half-applied appearance cannot be undone");
+        m_appearanceRestore = AppearanceRestore::Failed;
+        return;
+    }
+
     spdlog::info("[Character] Deserialize ccstate BEGIN");
 
     auto reader = CMPReader(bytes);
@@ -1402,14 +1427,48 @@ void NetworkWorldSystem::ApplyStoredAppearance()
                  stateHandle->instance->isBodyGenderMale ? "male" : "female");
 
     // Rebuild the body from what was just read in.
-    spdlog::info("[Character] ReFinalizeState BEGIN");
+    // Commit. Three candidates, because the engine refuses ReFinalizeState during gameplay
+    // and the RTTI dump lists siblings that have never been tried:
+    //
+    //   ReFinalizeState                    - what the body-morph menu calls
+    //   FinalizeState                      - what the creator's summary menu calls
+    //   InitializeOptionsFromFinalizedState
+    //
+    // Whichever one the engine accepts is the one that rebuilds the body. Trying them in
+    // order costs nothing on the failing path, and each is logged so the next run says which
+    // was accepted rather than leaving it to be inferred.
+    spdlog::info("[Character] commit BEGIN - trying ReFinalizeState, FinalizeState, "
+                 "InitializeOptionsFromFinalizedState");
 
-    if (!CallCustomizationFunction(ccSystem, "ReFinalizeState"))
+    const char* committed = nullptr;
+
+    for (const char* candidate : {"ReFinalizeState", "FinalizeState", "InitializeOptionsFromFinalizedState"})
     {
-        fail("ReFinalizeState could not be called - the state was loaded but the body was not "
-             "rebuilt from it");
+        if (CallCustomizationFunction(ccSystem, candidate))
+        {
+            committed = candidate;
+            break;
+        }
+
+        spdlog::info("[Character] commit: {} refused", candidate);
+    }
+
+    if (!committed)
+    {
+        // PUT IT BACK. The state currently holds this character's appearance and the engine
+        // will not rebuild the body from it, so leaving it would hand the player a hybrid -
+        // the template's body wearing somebody else's gender. That is the exact failure Cam
+        // reported, and the exact thing the "never use her character" rule forbids.
+        auto undo = CMPReader(snapshot.bytes);
+        CharacterCustomizationState_Serialize(stateHandle->instance, &undo);
+
+        fail("no commit call was accepted (ReFinalizeState, FinalizeState and "
+             "InitializeOptionsFromFinalizedState all refused) - the live state has been put back "
+             "as it was, so nothing is half-applied");
         return;
     }
+
+    spdlog::info("[Character] commit COMPLETE - accepted by {}", committed);
 
     spdlog::info("[Character] ReFinalizeState COMPLETE");
 
