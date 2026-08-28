@@ -89,6 +89,14 @@ public native class NetworkWorldSystem extends IGameSystem {
 
     // FTLog goes somewhere we cannot read. This lands in CyberpunkMP.log.
     public native func ScriptLog(text: String) -> Void;
+
+    // Walk UP the widget tree from `widget` and log every ancestor.
+    //
+    // Native because redscript cannot: inkWidget in 2.31 exposes Reparent and no
+    // GetParentWidget, so script can only ever walk DOWN. That gap is why the chat-box bug
+    // has been guessed at rather than measured - every probe so far could only confirm that
+    // the widget itself is correct, which it is.
+    public native func LogWidgetAncestry(widget: ref<inkWidget>, label: String) -> Void;
     public native func ConsumeJoinRequest() -> Bool;
 
     // What the SERVER says this account owns. Never derived from the save on disk - that

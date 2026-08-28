@@ -641,6 +641,93 @@ int32_t NetworkWorldSystem::GetRestoreMoney() const
     return static_cast<int32_t>(m_restoreMoney);
 }
 
+/**
+ * Walks UP from a widget and reports every ancestor, because redscript cannot.
+ *
+ * The chat box does not draw until the player gets into a vehicle. Everything measured so
+ * far says the widget itself is fine - the [ChatVisible] probe reports the chat root as
+ * visible=true opacity=1 pos=(0,0) scale=(1,1) size=1000x1000, and decoding the assets with
+ * WolvenKit confirms that IS the authored state: size 1000x1000, Fixed, Fill/Fill, opacity
+ * 1. The prototype_hud entry is not the problem either - multiplayer_ui carries the most
+ * permissive context list in the whole file (every real gameuiContext, every scene tier)
+ * and is otherwise field-for-field identical to new_phone, which works.
+ *
+ * So a correct, visible widget is not being drawn, and ChatController's own comment named
+ * the remaining suspect months ago: "correct-looking values everywhere mean the problem is
+ * a PARENT or the render order rather than anything in this file". Its probe never checked,
+ * because inkWidget in 2.31 exposes Reparent and no GetParentWidget - the script API can
+ * walk DOWN the tree and not up.
+ *
+ * Native can. parentWidget is a real field at 0x168, and layerProxy at 0x148 says which
+ * layer a widget belongs to - a null one on our side while the HUD around us has one would
+ * explain "visible but never rendered" exactly.
+ *
+ * Read the output as a chain from the widget outwards. The first ancestor with visible=0,
+ * opacity=0, a zero scale, or layer=none is the answer. If every ancestor looks correct all
+ * the way to the top, then the widget tree is not the problem and the fault is the HUD
+ * layer this entry was spawned into - which is a different thing to go and measure, and at
+ * least it would be named.
+ */
+void NetworkWorldSystem::LogWidgetAncestry(const Red::Handle<Red::ink::Widget>& aWidget,
+                                           const Red::CString& acLabel) const
+{
+    if (!aWidget)
+    {
+        spdlog::warn("[Ancestry] {}: no widget", acLabel.c_str());
+        return;
+    }
+
+    spdlog::info("[Ancestry] {} - walking up", acLabel.c_str());
+
+    auto current = aWidget;
+
+    // Bounded. A parent chain should be a handful of levels deep; anything longer means a
+    // cycle, and this is diagnostic code walking live engine state - it does not get to
+    // hang the game thread to prove a point.
+    for (uint32_t depth = 0; depth < 32 && current; ++depth)
+    {
+        // Non-const: GetNativeType() is a non-const member, and the class name is the most
+        // useful column here - it says whether an ancestor is a canvas, a layer root or
+        // something unexpected.
+        auto* pWidget = current.instance;
+        if (!pWidget)
+            break;
+
+        const auto& transform = pWidget->renderTransform;
+
+        spdlog::info("[Ancestry]   [{}] '{}' ({}) visible={} opacity={:.2f} size={:.0f}x{:.0f} "
+                     "desired={:.0f}x{:.0f} pos=({:.0f},{:.0f}) scale=({:.2f},{:.2f}) layer={}",
+                     depth,
+                     pWidget->name.ToString(),
+                     pWidget->GetNativeType() ? pWidget->GetNativeType()->GetName().ToString() : "?",
+                     pWidget->visible,
+                     pWidget->opacity,
+                     pWidget->size.X, pWidget->size.Y,
+                     pWidget->desiredSize.X, pWidget->desiredSize.Y,
+                     transform.translation.X, transform.translation.Y,
+                     transform.scale.X, transform.scale.Y,
+                     pWidget->layerProxy ? "yes" : "NONE");
+
+        // Lock the parent pointer while reading it. The engine reparents widgets from its
+        // own threads, and this walk is long enough to be caught mid-change - parentLock is
+        // the lock the engine itself keeps for exactly this field.
+        Red::Handle<Red::ink::Widget> parent;
+        {
+            const auto weak = current->parentWidget;
+            parent = weak.Lock();
+        }
+
+        if (!parent)
+        {
+            spdlog::info("[Ancestry]   [{}] '{}' is the TOP - no parent above it", depth,
+                         pWidget->name.ToString());
+            break;
+        }
+
+        current = parent;
+    }
+}
+
 void NetworkWorldSystem::ScriptLog(const Red::CString& acText) const
 {
     spdlog::info("[script] {}", acText.c_str());

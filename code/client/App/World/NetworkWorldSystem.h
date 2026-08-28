@@ -7,6 +7,7 @@
 #include "RED4ext/Scripting/Natives/Generated/game/bb/ScriptID_Int32.hpp"
 #include "Network/Client.h"
 #include "Red/TypeInfo/Macros/Definition.hpp"
+#include <RED4ext/Scripting/Natives/inkWidget.hpp>
 #include "AppearanceSystem.h"
 #include "App/Voice/VoiceAudioManager.h"
 #include "App/Voice/VoiceClient.h"
@@ -137,6 +138,11 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // RED4ext log, not redscript's own. Every script-side message written tonight went
     // into the void, so "the restore did not run" and "I cannot see the restore run" were
     // indistinguishable, and an evening went on the difference.
+    // Walk UP the widget tree and report every ancestor - see the definition. redscript
+    // cannot do this: inkWidget in 2.31 has Reparent and no GetParentWidget, so script can
+    // only walk down. This is what the HUD bug needs and nothing else could provide.
+    void LogWidgetAncestry(const Red::Handle<Red::ink::Widget>& aWidget, const Red::CString& acLabel) const;
+
     void ScriptLog(const Red::CString& acText) const;
 
     // Applying what the server sent back. Mirrors the capture side: native holds the data
@@ -691,6 +697,7 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(GetRestoreAttributeCount);
     RTTI_METHOD(GetRestoreAttributeType);
     RTTI_METHOD(GetRestoreAttributeValue);
+    RTTI_METHOD(LogWidgetAncestry);
     RTTI_METHOD(ScriptLog);
     RTTI_METHOD(GetRestoreCount);
     RTTI_METHOD(GetRestoreId);

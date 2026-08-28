@@ -109,6 +109,20 @@ public class ChatController extends inkHUDGameController {
                     s" pos=(\(pos.X), \(pos.Y)) scale=(\(scale.X), \(scale.Y)) size=(\(sz.X)x\(sz.Y))" +
                     s" affectsLayout=\(root.GetAffectsLayoutWhenHidden())");
             }
+            // The measurement this bug has been missing.
+            //
+            // Everything above reports the chat root as correct, and decoding the assets
+            // confirms that IS how it was authored - so a correct, visible widget is not
+            // being drawn. The comment above already named the remaining suspect: a PARENT
+            // or the render order. This is the first probe that can actually look there,
+            // because walking up needs a native helper.
+            //
+            // Read it as a chain outwards from chat. The first ancestor with visible=0,
+            // opacity=0, a zero scale or layer=NONE is the answer.
+            if IsDefined(network) {
+                network.LogWidgetAncestry(root, "chat root");
+            }
+
             root.SetVisible(true);
             root.SetOpacity(1.0);
         } else {
