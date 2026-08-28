@@ -1187,6 +1187,60 @@ void NetworkWorldSystem::PollAppearanceChanges()
  * found, because a half-applied appearance is worse than none and this runs on the live
  * player rather than on a spare puppet.
  */
+/**
+ * Calls a method on the character-customization system by name.
+ *
+ * Red::CallVirtual cannot reach these. The RTTI dump this mod prints at startup says why:
+ *
+ *   gameuiCharacterCustomizationSystem  : 0 function(s)
+ *   gameuiICharacterCustomizationSystem : 24 function(s)
+ *
+ * Every method - InitializeState, ReFinalizeState, GetState, all of them - lives on the
+ * INTERFACE, and the concrete class the game hands back has an empty function list of its
+ * own. CallVirtual looks the name up on the object's own type, finds nothing, and returns
+ * false without calling anything. That is exactly what happened on Cam's first test:
+ *
+ *   [Character] InitializeState BEGIN
+ *   [Character] Local appearance restore FAILED: InitializeState could not be called
+ *
+ * So the function is resolved against the interface class explicitly and invoked on the
+ * instance, the same way OnConnected/OnDisconnected are called further down this file.
+ *
+ * Returns false and says which half failed - a name that does not resolve is a different
+ * problem from a call the engine refused, and last time the two were indistinguishable.
+ */
+static bool CallCustomizationFunction(Red::game::ui::CharacterCustomizationSystem* apSystem,
+                                      const char* acpName)
+{
+    if (!apSystem)
+        return false;
+
+    auto* pRtti = Red::CRTTISystem::Get();
+    if (!pRtti)
+    {
+        spdlog::error("[Character] no RTTI system - cannot call {}", acpName);
+        return false;
+    }
+
+    auto* pClass = pRtti->GetClass("gameuiICharacterCustomizationSystem");
+    if (!pClass)
+    {
+        spdlog::error("[Character] no RTTI class gameuiICharacterCustomizationSystem - cannot call {}",
+                      acpName);
+        return false;
+    }
+
+    auto* pFunc = pClass->GetFunction(acpName);
+    if (!pFunc)
+    {
+        spdlog::error("[Character] gameuiICharacterCustomizationSystem has no function '{}'", acpName);
+        return false;
+    }
+
+    RED4ext::StackArgs_t args;
+    return ExecuteFunction(apSystem, pFunc, nullptr, args);
+}
+
 void NetworkWorldSystem::ApplyStoredAppearance()
 {
     // Nothing stored is the normal case for a brand new character: the creator has just
@@ -1259,7 +1313,7 @@ void NetworkWorldSystem::ApplyStoredAppearance()
     // builds one, and without it there is nothing to deserialise into.
     spdlog::info("[Character] InitializeState BEGIN");
 
-    if (!Red::CallVirtual(ccSystem, "InitializeState"))
+    if (!CallCustomizationFunction(ccSystem, "InitializeState"))
     {
         fail("InitializeState could not be called");
         return;
@@ -1290,7 +1344,7 @@ void NetworkWorldSystem::ApplyStoredAppearance()
     // Rebuild the body from what was just read in.
     spdlog::info("[Character] ReFinalizeState BEGIN");
 
-    if (!Red::CallVirtual(ccSystem, "ReFinalizeState"))
+    if (!CallCustomizationFunction(ccSystem, "ReFinalizeState"))
     {
         fail("ReFinalizeState could not be called - the state was loaded but the body was not "
              "rebuilt from it");
