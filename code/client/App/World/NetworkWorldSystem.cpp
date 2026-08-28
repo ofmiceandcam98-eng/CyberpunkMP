@@ -33,16 +33,13 @@
 #include "App/Components/DriverComponent.h"
 #include "App/World/PuppetRegistry.h"
 #include "App/World/ServerIdRegistry.h"
+#include "App/World/FlecsThread.h"
 #include "Game/Utils.h"
 #include "Game/CharacterCustomizationSystem.h"
 
 #include "ChatSystem.h"
 
 static uint64_t GTick = 0;
-
-// The thread that drives progress(), published by the census there and checked by
-// FindEntity. Only that thread may touch the flecs world - see ServerIdRegistry.h.
-static std::atomic<uint32_t> g_flecsMainThread{0};
 
 uint64_t NetworkWorldSystem::GetTick()
 {
@@ -244,22 +241,7 @@ Red::EntityID NetworkWorldSystem::GetEntityIdByServerId(uint64_t aServerId) cons
 // reading the code is exactly the mistake that cost a day here.
 flecs::entity NetworkWorldSystem::FindEntity(Red::EntityID aId) const
 {
-    {
-        const auto tid = GetCurrentThreadId();
-        const auto mainThread = g_flecsMainThread.load(std::memory_order_relaxed);
-
-        if (mainThread != 0 && tid != mainThread)
-        {
-            // Loud, because it means an off-thread path survived the fix and this build
-            // can still take the crash.
-            static std::mutex s_lock;
-            static std::set<uint32_t> s_offThread;
-            std::lock_guard guard(s_lock);
-            if (s_offThread.insert(tid).second)
-                spdlog::error("[Thread] FindEntity called OFF the flecs thread: {} (flecs thread is {})", tid,
-                              mainThread);
-        }
-    }
+    App::FlecsThread::Assert("NetworkWorldSystem::FindEntity");
 
     auto entity = query<EntityComponent>().find(
         [aId](const EntityComponent& component)
@@ -425,9 +407,9 @@ void NetworkWorldSystem::Update(uint64_t aTick)
 
         const auto tid = GetCurrentThreadId();
 
-        // Publish it so FindEntity can check itself against it. Whichever thread drives
-        // progress() is the only one allowed to touch the world.
-        g_flecsMainThread.store(tid, std::memory_order_relaxed);
+        // Publish it so the tripwires can check themselves against it. Whichever thread
+        // drives progress() is the only one allowed to touch the world.
+        App::FlecsThread::MarkCurrent();
 
         std::lock_guard lock(s_seenLock);
         if (s_seen.insert(tid).second)

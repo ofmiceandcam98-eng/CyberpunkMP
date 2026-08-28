@@ -16,6 +16,7 @@
 #include "App/Components/DriverComponent.h"
 #include "App/World/PuppetRegistry.h"
 #include "App/World/ServerIdRegistry.h"
+#include "App/World/FlecsThread.h"
 
 
 // Puts a network vehicle fully under remote control: no local player input, no local
@@ -174,7 +175,20 @@ void VehicleSystem::OnVehicleEnter(Red::EntityID aVehicle, const Red::TweakDBID&
     request.set_vehicle_id(aVehicleTdbid.value);
     request.set_sit_id(aName.hash);
 
-    const auto serverVehicle = handle->FindEntity(aVehicle);
+    // Registry, not FindEntity. OnVehicleEnter is NOT on the flecs thread.
+    //
+    // I shipped the GetServerIdByEntity fix believing this caller was main-thread because
+    // it is an RTTI method called from redscript, and left a tripwire in FindEntity rather
+    // than trust that reasoning. Cam got on a motorcycle and it fired immediately:
+    //
+    //   22:21:03.849 [VehicleSystem] OnVehicleEnter
+    //   22:21:03.849 [Thread] FindEntity called OFF the flecs thread: 167948
+    //                         (flecs thread is 165360)
+    //
+    // The mount flow is dispatched through the job system, so redscript being the caller
+    // says nothing about which thread arrives. Same bug as the hit hook, same fix - and
+    // the value here was only ever used as an id, never as an entity.
+    const auto serverVehicle = App::ServerIdRegistry::Find(aVehicle.hash);
     if (serverVehicle)
     {
         request.set_remote_vehicle_id(serverVehicle);
@@ -435,6 +449,20 @@ void VehicleSystem::OnVehicleReady(const Red::EntityID& aVehicleEntityId)
         spdlog::info("[VehicleSystem] OnVehicleReady: entity {:x} physicsState {:#x}, stub {}",
                      aVehicleEntityId.hash, pVehicle->physicsState, hasStub ? "present" : "MISSING");
     }
+
+    // Its own tripwire, with its own name.
+    //
+    // This one cannot be fixed by a registry lookup the way OnVehicleEnter was: it does not
+    // just READ the mirror, it emplaces EntityComponent, adds InterpolationComponent and
+    // removes SpawningComponent. Those are structural changes to the world. If this turns
+    // out to run off-thread as well, the fix is to marshal the whole promotion onto the
+    // main thread, not to swap the lookup.
+    //
+    // OnVehicleEnter's tripwire fired on thread 167948, and the first version of this check
+    // deduplicated on thread id alone - so if this ran on 167948 too, it was silenced. That
+    // is why the site name is now part of the key. This line is the question being asked
+    // properly.
+    App::FlecsThread::Assert("VehicleSystem::OnVehicleReady");
 
     auto mirror = worldSystem->FindEntity(aVehicleEntityId);
     if (!mirror)
