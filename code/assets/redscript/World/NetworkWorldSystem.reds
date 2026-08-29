@@ -90,6 +90,12 @@ public native class NetworkWorldSystem extends IGameSystem {
     // FTLog goes somewhere we cannot read. This lands in CyberpunkMP.log.
     public native func ScriptLog(text: String) -> Void;
 
+    // PHASE 1 EXPERIMENT - see LocalPuppet.reds and Settings.h. Off unless the game was
+    // launched with -mod-local-puppet, so the shipping player path is never under test.
+    public native func IsModLocalPuppetEnabled() -> Bool;
+    public native func IsModLocalPuppetFemale() -> Bool;
+    public native func GetLocalPuppetRecord() -> String;
+
     // Walk UP the widget tree from `widget` and log every ancestor.
     //
     // Native because redscript cannot: inkWidget in 2.31 exposes Reparent and no

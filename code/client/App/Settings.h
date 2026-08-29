@@ -131,6 +131,34 @@ struct Settings
     // The A/B lever for retiring the legacy idle-controller hijack.
     bool puppetDriverAll = false;
 
+    /**
+     * PHASE 1 EXPERIMENT - make the LOCAL player a mod-spawned puppet.
+     *
+     * Off by default and switched on per launch with -mod-local-puppet, so the shipping
+     * player path is never the thing under test. Everything about the vanilla V is left
+     * alone; the puppet is spawned BESIDE it and control is handed over, because whether
+     * the two can coexist is itself one of the questions.
+     *
+     * WHY THIS EXISTS. Every attempt to change the local player's body in-world failed:
+     * InitializeState, ReFinalizeState and FinalizeState are all refused during gameplay,
+     * and InitializeOptionsFromFinalizedState is accepted but does not rebuild the body -
+     * confirmed visually after a female appearance was applied and Cam did not become
+     * female. The appearance lives in the save and cannot be overwritten on a live V.
+     *
+     * Remote players never had this problem, because they are built the other way round:
+     * the gendered record is chosen BEFORE the puppet exists. This flag tests whether the
+     * local player can be built the same way, using
+     * PlayerSystem.LocalPlayerControlExistingObject - a public import the mod has never
+     * used, on the system that 542 call sites in the game's own scripts consult to ask
+     * who the local player is.
+     */
+    bool useModLocalPuppet = false;
+
+    // Which body the experiment spawns. -mod-local-puppet-female flips it, so the female
+    // case can be tested on its own - that one matters most, because a male puppet passing
+    // could be the vanilla V's body being mistaken for the puppet's.
+    bool modLocalPuppetFemale = false;
+
     // Apply the GameplayRestriction.FistFight status effect to remote puppets, which is
     // what ScriptedPuppet.IsAggressive() reads first - one of the two remaining obstacles
     // to a remote player being a legitimate quickhack target. See Hackable.reds.

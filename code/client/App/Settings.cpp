@@ -135,6 +135,18 @@ void Settings::Load()
     if (launchParameters.Get("-puppet-driver-all"))
         settings.puppetDriverAll = true;
 
+    if (launchParameters.Get("-mod-local-puppet"))
+    {
+        settings.useModLocalPuppet = true;
+
+        if (launchParameters.Get("-mod-local-puppet-female"))
+            settings.modLocalPuppetFemale = true;
+
+        spdlog::warn("[LocalPuppet] EXPERIMENT ON - the local player will be a mod-spawned {} puppet. "
+                     "The vanilla V is left in place; this is Phase 1 and nothing else has been migrated.",
+                     settings.modLocalPuppetFemale ? "female" : "male");
+    }
+
     if (launchParameters.Contains("-sync-trace"))
     {
         settings.syncTrace = true;

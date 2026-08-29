@@ -728,6 +728,32 @@ void NetworkWorldSystem::LogWidgetAncestry(const Red::Handle<Red::ink::Widget>& 
     }
 }
 
+bool NetworkWorldSystem::IsModLocalPuppetEnabled() const
+{
+    return Settings::Get().useModLocalPuppet;
+}
+
+bool NetworkWorldSystem::IsModLocalPuppetFemale() const
+{
+    return Settings::Get().modLocalPuppetFemale;
+}
+
+/**
+ * The record the experiment spawns its local puppet from.
+ *
+ * The SAME setting remote players use, deliberately. If the local puppet were built from
+ * some other record the experiment would prove nothing transferable - the whole argument
+ * for this architecture is that remote players already get a correct gendered body from
+ * this exact path.
+ */
+Red::CString NetworkWorldSystem::GetLocalPuppetRecord() const
+{
+    const auto& settings = Settings::Get();
+
+    return settings.modLocalPuppetFemale ? Red::CString(settings.puppetRecordFemale.c_str())
+                                         : Red::CString(settings.puppetRecordMale.c_str());
+}
+
 void NetworkWorldSystem::ScriptLog(const Red::CString& acText) const
 {
     spdlog::info("[script] {}", acText.c_str());
@@ -1470,7 +1496,6 @@ void NetworkWorldSystem::ApplyStoredAppearance()
 
     spdlog::info("[Character] commit COMPLETE - accepted by {}", committed);
 
-    spdlog::info("[Character] ReFinalizeState COMPLETE");
 
     m_appearanceRestore = AppearanceRestore::Applied;
 

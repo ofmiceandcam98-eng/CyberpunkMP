@@ -143,6 +143,12 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // only walk down. This is what the HUD bug needs and nothing else could provide.
     void LogWidgetAncestry(const Red::Handle<Red::ink::Widget>& aWidget, const Red::CString& acLabel) const;
 
+    // PHASE 1 EXPERIMENT - see Settings.h. Read by redscript so the experiment can gate
+    // itself without a second source of truth for the flag.
+    bool IsModLocalPuppetEnabled() const;
+    bool IsModLocalPuppetFemale() const;
+    Red::CString GetLocalPuppetRecord() const;
+
     void ScriptLog(const Red::CString& acText) const;
 
     // Applying what the server sent back. Mirrors the capture side: native holds the data
@@ -512,6 +518,30 @@ protected:
     // server never gave us is exactly the point.
     bool MaySaveCharacter() const
     {
+        // A FAILED appearance restore means the body standing here is the template's, not
+        // this character's - and saving it uploads Phantom Veronica into somebody's record.
+        //
+        // This is a closed loop and it was running in production. From Cam's 28 August log:
+        //
+        //   23:00:18  sent 9141 bytes of appearance to the server   <- the template's
+        //   23:00:21  Deserialize ccstate COMPLETE - body is female <- what came back
+        //   23:01:19  sent 9141 bytes of appearance to the server   <- again
+        //
+        // Restore fails -> the player is left as the template -> the appearance save
+        // uploads the template -> the stored record BECOMES the template -> the next
+        // restore faithfully applies it. Every session launders her a little deeper in,
+        // which is why 'Julian Voss' now has a female 9141-byte appearance stored against
+        // him.
+        //
+        // m_characterLive does not catch this: that guards a world RELOAD, and this is an
+        // ordinary connect where only the restore failed. Different failure, same damage.
+        //
+        // NotStarted is deliberately allowed through - it means the server sent nothing to
+        // restore, which is the normal state of a brand new character whose appearance we
+        // legitimately need to capture.
+        if (m_appearanceRestore == AppearanceRestore::Failed)
+            return false;
+
         return m_characterLive || m_newCharacterPending;
     }
 
@@ -698,6 +728,9 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(GetRestoreAttributeType);
     RTTI_METHOD(GetRestoreAttributeValue);
     RTTI_METHOD(LogWidgetAncestry);
+    RTTI_METHOD(IsModLocalPuppetEnabled);
+    RTTI_METHOD(IsModLocalPuppetFemale);
+    RTTI_METHOD(GetLocalPuppetRecord);
     RTTI_METHOD(ScriptLog);
     RTTI_METHOD(GetRestoreCount);
     RTTI_METHOD(GetRestoreId);

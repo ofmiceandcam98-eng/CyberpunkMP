@@ -419,6 +419,10 @@ public class MultiplayerGameController extends inkGameController {
             // connection drops and leaves their setting exactly as they had it.
             let network = GameInstance.GetNetworkWorldSystem();
             if IsDefined(network) {
+                MpQuestDebugDump(network);
+
+                // PHASE 1 EXPERIMENT. Returns immediately unless -mod-local-puppet was passed.
+                MpLocalPuppetExperiment(network);
                 MpForceHardestDifficulty(network, true);
 
                 // The lock owns the original list so it can hand it back on disconnect.
