@@ -8,6 +8,11 @@ from the ledger in the same commit; finding one adds it. A ledger that is not up
 the landing commit is how items get missed twice.
 
 Last full revision: 2026-08-22, after v0.3.106 (player combat).
+Partial pass 2026-08-29 (Copilot, VM checkout): reconciled THE crash entry against
+what actually shipped (v0.3.111-113) and the commits between 3bf2446 and d5d506f -
+nobody had touched this file across that whole run, which is exactly the "missed
+twice" failure mode this doc warns about. Did NOT re-audit combat/vehicle-damage/
+manifest/modlist sections below - those are as of 2026-08-26 still.
 
 ---
 
@@ -172,67 +177,53 @@ Last full revision: 2026-08-22, after v0.3.106 (player combat).
   a model-summon resolves to - nearest stored, last driven, or explicit via /garage.
 
 ### Known bugs, diagnosed, unfixed
-- **THE crash: 0xC0000005 in the remote-vehicle-mount path - cross-machine fingerprint
-  (2026-08-23 log sweep, all 9 players).** 20 access violations + 8 breakpoint exits
-  across 76 recorded launches, on five different machines, and every crash with a
-  shipped log dies within seconds of the same sequence: `[Interpolation] movement for
-  id N but no puppet is registered` (frozen-remote warning) -> `HandleVehicleEnterMessage:
-  queueing mount` -> `OnVehicleReady` -> `DoMount ... (network copy)` /
-  `MakeRemoteDriven: SetKinematic ... done` -> dead in 2-10s. rimtek's is explicit: the
-  frozen-warned id IS the vehicle being mounted into. Working theory: the queued mount
-  fires against an entity (vehicle or occupant puppet) that is not fully built, and an
-  engine vcall on it faults. Second cluster: remote APPEARANCE apply (`AddItemToSlot
-  failed` x106/evening for one player) and Cam's post-spawn cyberware/inventory restore
-  (dead ~2s after 'queued 70 piece(s)') - possibly the same not-fully-built-entity
-  **REPRODUCED ON DEMAND 2026-08-26, and the trigger is mundane: DISCONNECT WHILE IN A
-  VEHICLE, THEN REJOIN.** Cam spawned a car at 04:45:14 (`Vehicle e3 spawned by character
-  5000000da (driver seat)`) and quit at 04:45:52 while still in it. The car stayed in the
-  server's live flecs world - `vehicles.json` was `[]`, so nothing was persisted and
-  nothing on disk hinted at it. On his 04:51 rejoin the server replayed it, and the client
-  log is the whole fingerprint end to end with no other player anywhere near:
-  `HandleVehicleLoadMessage` (04:51:04.588) -> `OnVehicleReady` -> `MakeRemoteDriven:
-  SetIsPlayerControlled / engine vcall / engineData set / SetKinematic / done`
-  (04:51:05.857) -> dead at 04:51:07.5, i.e. 1.6s after `done`. So the not-fully-built
-  entity is the OCCUPANT, and the specific case is an occupant that no longer exists at
-  all - the driver disconnected. That also retires the "why only Cam" puzzle: he was the
-  only one rejoining into a world holding his own orphaned car. Immediate operational
-  relief is a server restart (clears the live world; `Loaded 0 vehicle(s)` on boot,
-  players.json untouched), but every disconnect-in-a-car re-arms it for the next joiner.
-  **PARTLY FIXED AND LIVE 2026-08-26 (0e00c77, verified in the running binary):** the
-  server now clears every remaining vehicle when the player count hits zero
-  (`Level::ClearAbandonedVehicles`, called from `GameServer::OnDisconnection`). Parking an
-  ownerless car is still right while somebody is online to see it; with nobody online it is
-  only a landmine for the next joiner. Server-only, so no protocol change, no flag day, and
-  it protects players who have not updated. **STILL OPEN:** A disconnects in a car while B
-  stays online, then C joins - the car legitimately survives and C can still hit it. That
-  needs the CLIENT fault located, and note what the evidence rules out: `MakeRemoteDriven`
-  already null-checks and Cam's log shows every step completing through `done`, so a
-  readiness gate THERE is a confident no-op. The fault is 1.6s later and silent; every
-  reachable path in InterpolationSystem (stub gate, `TimePoints.empty()` extrapolation,
-  `ahead > maxExtrapolationMs`) is already guarded. Next step is step-logging across that
-  window, the same bisection MakeRemoteDriven's own comment describes - now practical
-  because the repro is deterministic.
-  Fix must handle a driver id that resolves to nothing, not merely a slow-to-build one.
-  Needs a dedicated session in VehicleSystem.cpp: gate DoMount/MakeRemoteDriven
-  on entity readiness beyond OnVehicleReady, and treat a frozen-warned id as NOT ready.
-  **Test-box flavor NARROWED by experiment (2026-08-23 night session, 10 crashes):**
-  ghosts purged - still crashed; parked-vehicle replay absent - still crashed; creator
-  flow bypassed entirely (Initialised+NameChosen flipped server-side, guard live,
-  clean spawn 03:02:29) - still crashed in 25s. Creator EXONERATED. Last suspect
-  standing: the spawn-time appearance/cyberware APPLY of a FEMALE character (Cam +
-  phonix female, 12-13KB blobs, both crash-prone; every male player clean; matches
-  the AddItemToSlot cluster). Decisive next experiment: a female character on
-  zeldfep's machine - crash there too = female-apply convicted cross-machine, fix
-  goes to the apply path (defer/chunk/gate on entity readiness). **THE FIX BRIEF is
-  written: docs/CRASH-FIX-BRIEF.md** - ranked code pointers (readiness gate via
-  Codeware's entity-status byte, the OnVehicleReady pattern to copy, the span
-  lifetime hot candidate at AppearanceSystem.cpp:497, the restore-storm seam, the
-  90s-autosave outlier explanation), diagnostics to add, validation plan.
-- **EACCES shell-fallback destroys crash telemetry** (phonix, every launch): when spawn
-  falls back to the cmd/start shell, the trail's 'game exited with code' reports the
-  SHELL's exit (0, after 1-4s) - his two suspected crashes recorded nothing. Fix: when
-  the fallback path is used, do not log the wrapper's exit as the game's; poll the real
-  process or say 'exit unknown (shell fallback)'.
+- **THE crash: SOLVED 2026-08-26/27 - it was never entity readiness. It was a genuine
+  data race: two threads inside flecs' `flecs_stack_restore_cursor` on the same stack
+  allocator at the same instant** (`0da3c9b`, `559828f`, `0fa2bb9`). flecs's stack
+  allocator is deliberately unlocked - documented as per-stage, single-threaded - and the
+  game's own job system was calling into our flecs world off the main thread from THREE
+  places: the combat hit hook (every bullet), `VehicleSystem::OnVehicleEnter`, and
+  `OnVehicleReady`. All three were wrongly assumed main-thread "because they are RTTI
+  methods called from redscript" - a caller being redscript says nothing about which
+  thread the engine's job system dispatches it on, and that wrong assumption cost a full
+  day before someone measured instead of read. Fixed by removing flecs from every
+  off-thread path (a lock-free `ServerIdRegistry`, modelled on `PuppetRegistry`) rather
+  than locking the allocator - locking it would have cost frame rate on the hit hook,
+  which fires for every bullet in Night City. A second, unrelated structural bug
+  (`98b12fa`) was fixed alongside it: an `OnAdd` observer that added a component during
+  its own dispatch, which flecs's own source warns against.
+  **Confirms the vehicle-mount crash and the weapon-fire crash were the SAME bug** - the
+  v0.3.112 release notes say so directly ("Same cause behind the crash when getting on a
+  bike or into a car"), and `0fa2bb9`'s follow-up session recorded ZERO 0xC0000005 crashes
+  after the fix, on a session that used to reliably produce them within seconds.
+  **The entity-readiness theory in `docs/CRASH-FIX-BRIEF.md` and the female-appearance
+  correlation below were both red herrings** - real, honestly-reported dead ends, not
+  wrong observations, but not the cause. Do not resume that brief's Tier 1/Tier 3 work;
+  it was chasing the wrong mechanism. Treat CRASH-FIX-BRIEF.md as historical from here.
+  **STILL OPEN, and it is a DESIGN question now, not a crash:** A disconnects while
+  driving, B stays online, C joins later - the car legitimately survives (parking on
+  zero-players doesn't cover it) and hands C a car with no valid driver. Whether this
+  still misbehaves post-race-fix is UNMEASURED; worth one session confirming it merely
+  looks odd now rather than crashing, before spending time on it as a crash.
+  Historical shape of the investigation, kept for anyone re-deriving it: dies within
+  seconds of `[Interpolation] movement for id N but no puppet is registered` ->
+  `HandleVehicleEnterMessage: queueing mount` -> `OnVehicleReady` -> `DoMount` /
+  `MakeRemoteDriven: SetKinematic ... done`. Reproduced on demand 2026-08-26 via the
+  mundane trigger (disconnect while driving, then rejoin - the car survives in the live
+  flecs world with no persistence trail, gets replayed to the rejoiner, dead 1.6s after
+  `MakeRemoteDriven` finishes). A parallel, separately-chased correlation (never proven,
+  now understood to be the same race): remote APPEARANCE apply (`AddItemToSlot failed`
+  x106/evening for one player), matching a female-character bias that turned out to be
+  coincidental exposure to the race rather than a female-specific code path. Two things
+  landed from that investigation and remain true and useful regardless of the real cause:
+  `Level::ClearAbandonedVehicles` clears every vehicle server-side when the player count
+  hits zero (`0e00c77`), and the CRASH-FIX-BRIEF.md fixes I (Copilot) actually implemented
+  2026-08-24 - the AppearanceSystem span-lifetime UB and the CMPReader silent-corruption
+  fix - were real bugs worth having fixed even though they were not THE crash.
+- **EACCES shell-fallback destroys crash telemetry: FIXED** (`681e3af`, 2026-08-24/29,
+  Copilot). The shell wrapper's own near-instant exit (always code 0) is no longer logged
+  through the same path that writes "game exited with code N" - it has its own distinct
+  log line, and the real game process is still tracked separately by `watchForGameExit()`.
 - **Ghost remotes on join: SOLVED (2026-08-23) - they are /npc entries with garbage
   records.** The test server's npcs.json holds 7 NPCs; FIVE carry the literal string
   `Character.<record>` (the usage line's placeholder, typed verbatim and persisted),
@@ -242,14 +233,21 @@ Last full revision: 2026-08-22, after v0.3.106 (player combat).
   attach SECONDS before Cam's solo 0xC0000005 - garbage NPCs are now suspect #1 in
   the test-server flavor of THE crash. Live has NO npcs.json, so live ghosts (if the
   sweep's were live) have another source. Immediate cure: `/npc clear` (admin, in
-  game). Code fix owed: /npc must refuse records containing `<`/`>` (placeholder
-  paste) - the base-game-records warning added 2026-08-23 does not stop this.
-- **Parked persisted vehicles get MakeRemoteDriven on every join** (found in the same
-  logs): HandleVehicleLoadMessage -> OnVehicleReady -> MakeRemoteDriven runs for
-  Cam's parked, unoccupied Archer Hella (vehicles.json) on BOTH machines - a parked
-  replayed car must not be made kinematic/player-controlled; MakeRemoteDriven belongs
-  to occupied vehicles only. Client-code fix in VehicleSystem.cpp, pairs with the
-  readiness gating THE-crash entry already calls for.
+  game). Code fix: /npc now REFUSES records containing `<`/`>` (placeholder paste),
+  not just warns (`681e3af`, 2026-08-24/29) - the base-game-records warning added
+  2026-08-23 only ever described the problem, this actually stops it.
+- **Parked persisted vehicles + MakeRemoteDriven: DISAGREEMENT, unresolved, needs a
+  human call, not another edit.** This entry originally claimed a parked replayed car
+  must NOT be made kinematic and that MakeRemoteDriven belongs to occupied vehicles
+  only. Current `VehicleSystem.cpp::OnVehicleReady` argues the opposite on purpose, in
+  its own comment: physics-off (`MakeRemoteDriven`) runs for EVERY network-spawned
+  vehicle unconditionally, occupied or not, specifically so a parked copy can never
+  simulate physics against the local world's own copy of the same car. I (Copilot,
+  2026-08-24) read that comment and did not touch this, because the two positions
+  contradict each other and I could not tell which one was reasoning about a live bug
+  versus which one was the fix already applied. Whoever picks this up: check `git log`
+  on that function before changing it either direction - one of these two claims is
+  stale.
 - **Mod 22114 (70 files, still unnamed) verify-flip churn**: reinstalled 4x with
   IDENTICAL archive hashes yet verification keeps flipping back to broken on Cam's
   machine - something on disk rewrites or removes its files after install. Identify the
@@ -263,6 +261,12 @@ Last full revision: 2026-08-22, after v0.3.106 (player combat).
   immunity post-revive (gameGodModeType.Invulnerable window) and/or full-health revive;
   operational relief: `/setspawn` somewhere safe. Owner: whoever grabs it first — it
   spans Cam's creator flow and the Death.reds layers.
+- **Character face/body loads from the LOCAL save, not the server** (known, v0.3.113
+  release notes, unfixed). Inventory, money and equipment are correct - the server
+  clearly does know the character - but the player's OWN client never gets told to
+  apply it to their own puppet, so they see whatever their last singleplayer save
+  carried. Everyone ELSE already sees them correctly (that route works). Explicitly
+  called out as "not forgotten, and not a quick fix."
 - **Exit-grace 250m pop**: the 4s vehicle-exit grace freezes the puppet's interpolation
   target while the real player keeps moving → teleport-pop when grace ends
   (`[MultiMovement] delta runaway (250m)`, live). Fix: keep updating the target during
