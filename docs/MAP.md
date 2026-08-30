@@ -92,8 +92,13 @@ people to work that is already done.
     **not one EP1 fact** (`ep1_standalone=0 ep1_active=0 q301_active=0` against 1/1/1 in the
     control), and Songbird never called. Save `ManualSave-132` had a completely empty fact
     list.
-  - **NOT yet tested:** the shipped combination *with* `ep1.quest` added back — i.e. whether
-    Dogtown returns and the story stays away together. That is what players are testing now.
+  - **CONFIRMED WORKING 2026-08-30, shipped build, Cam's machine.** World on, story off,
+    together. The fact signature at spawn:
+    `ep1_installed=1` (only `ep1.quest` sets it — proof the EP1 world entry took),
+    `ep1_standalone=0`, `q301_active=0`, `q301_done=0`. No Songbird, empty quest log,
+    and **Dogtown still reachable**. This is the goal state from Cam's brief — *"we should
+    just spawn in the world, no opener, no songbird dialogue, no quests, nothing"* — reached
+    without completing, skipping or failing a single quest.
   - **Level 15 came from the story root.** Clean-start characters are level 1 with no base
     prologue quests marked done. The server will have to grant progression; it already
     grants the starter kit and eddies.
