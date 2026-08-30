@@ -261,12 +261,24 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   immunity post-revive (gameGodModeType.Invulnerable window) and/or full-health revive;
   operational relief: `/setspawn` somewhere safe. Owner: whoever grabs it first — it
   spans Cam's creator flow and the Death.reds layers.
-- **Character face/body loads from the LOCAL save, not the server** (known, v0.3.113
-  release notes, unfixed). Inventory, money and equipment are correct - the server
-  clearly does know the character - but the player's OWN client never gets told to
-  apply it to their own puppet, so they see whatever their last singleplayer save
-  carried. Everyone ELSE already sees them correctly (that route works). Explicitly
-  called out as "not forgotten, and not a quick fix."
+- **Character face/body loads from the LOCAL save, not the server: ACTIVELY BEING FIXED
+  BY CAM, 2026-08-28, not the stale "known/unfixed" state v0.3.113's notes still describe.**
+  Real progress since that release, in order: `54d9a85` wired the server to send the owner
+  their OWN stored appearance (previously it only ever went to everyone else) and the
+  client to attempt applying it locally. `78713d7` found `InitializeState` was never even
+  reached - every customization method lives on `gameuiICharacterCustomizationSystem`, the
+  INTERFACE, not the concrete class the game hands back (which has an empty function
+  list) - fixed the dispatch to resolve against the interface explicitly. `e795a52`
+  (latest) overturned the earlier conclusion that a live customization state requires the
+  creator: `equipmentSystem.script:4992` calls `GetState()` during ordinary gameplay, so
+  `GetLiveCustomizationState()` now resolves the same way instead of requiring
+  `InitializeState` at all.
+  **STILL UNPROVEN, and it is a pure visual check nothing here can substitute for:**
+  whether deserializing into that live state and calling `ReFinalizeState` actually
+  rebuilds the body mid-session. Cam's own words: "Phantom Veronica on screen is the only
+  test that counts." Needs one live join to answer. Do not restart this investigation from
+  scratch - the dispatch bug and the InitializeState/live-state question are BOTH already
+  closed; only the visual outcome of the final apply is open.
 - **Exit-grace 250m pop**: the 4s vehicle-exit grace freezes the puppet's interpolation
   target while the real player keeps moving → teleport-pop when grace ends
   (`[MultiMovement] delta runaway (250m)`, live). Fix: keep updating the target during
