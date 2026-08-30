@@ -8,6 +8,12 @@ from the ledger in the same commit; finding one adds it. A ledger that is not up
 the landing commit is how items get missed twice.
 
 Last full revision: 2026-08-22, after v0.3.106 (player combat).
+Partial pass 2026-08-30 (Claude Code): the character-start run. Dogtown solved and
+confirmed in game, the Phantom Liberty prologue traced to the gamedef and removed, the
+clean start shipped, phone calls stopped at the right layer, the manifest key minted and
+parked. Rewrote the appearance row - it was filed as "waiting on a test build" and has
+since shipped twice, so it is now a live bug rather than an undelivered fix. Did NOT
+re-audit combat/vehicle-damage/modlist below.
 Partial pass 2026-08-29 (Copilot, VM checkout): reconciled THE crash entry against
 what actually shipped (v0.3.111-113) and the commits between 3bf2446 and d5d506f -
 nobody had touched this file across that whole run, which is exactly the "missed
@@ -35,10 +41,25 @@ people to work that is already done.
     `CharacterSummary` (deliberately a list, "a list of length one costs nothing today and is
     the whole difference later"), and `CharacterRecord` already has `Slot` and `CharacterId`.
     What is missing is the client panel that draws four slots and says which are in use.
-- **Appearance fix waiting on a test build.** `e795a52` is committed and pushed but has never
-  been in a release, so the launcher cannot deliver it — see the appearance row below and the
-  "built and pushed is not deployed" debt. Nothing more can be learned until it is in front of
-  Cam's eyes.
+- **Appearance is DELIVERED and still wrong — this is the biggest open bug.** `e795a52` is
+  no longer stuck: two mod releases went out on 2026-08-30 and the payload was verified by
+  download. So the fix is in players' hands and the problem persists, which moves it from
+  "undelivered" to "does not work". What the 2026-08-29/30 logs actually show:
+  - **The restore runs on characters it promised to skip.** On a brand-new character the
+    log says `NEW character - possessions discarded, restore will run empty` and then
+    immediately `Deserialize ccstate COMPLETE - body is female`. It is applying the stored
+    blob over the character the player just made.
+  - **The stored blob is the contaminated one** — 9141 bytes, female — and it is
+    re-uploaded on every autosave and every disconnect (`sent 9141 bytes of appearance to
+    the server`), so the bad record keeps refreshing itself.
+  - **The commit is inert, which is why nobody is visibly Veronica.** `ReFinalizeState`
+    and `FinalizeState` are refused in gameplay; `InitializeOptionsFromFinalizedState` is
+    accepted and does not rebuild the body. So the restore "succeeds" and changes nothing —
+    it is noise that also gates saving (`MaySaveCharacter` refuses on a FAILED restore).
+  - Cam's report from the field: *"im not the character i just made, im some man but not my
+    male character."* Do not re-attempt the creator-only commit functions
+    (`InitializeState` / `ReFinalizeState` / `FinalizeState`) — all three are measured and
+    refused.
 - **The world-template plan (Cam, 2026-08-28), not started.** Phantom Veronica should
   propagate WORLD state and nothing else: doors she opened stay open for everyone (excluding
   housing and vehicles), quests she finished count as finished for everyone, then quests off
@@ -84,6 +105,37 @@ people to work that is already done.
   - **HAZARD:** `Ship.ps1:574` copies `distrib\launcher\mod\assets` wholesale and never
     cleans it. Anything left in `assets\Archives\` ships to every player — keep probes and
     experiments out of `distrib`.
+
+- **Manifest signing: key MINTED, deliberately PAUSED (2026-08-30). Read this before
+  touching it.** Cam's ed25519 keypair exists. The public half is
+  `ed25519-public:l9q5uBPf2IRZr1wyVzRCDIvF6LQdMl9r86VQUpyx89c=:38d98b61`. The secret is
+  parked at `~/.nco-manifest-key.paused` — moved OFF the path `Ship.ps1` reads, on purpose.
+  - **Why it is parked and not live.** `Ship.ps1:908` refuses to publish a manifest its own
+    pins cannot verify, but that checks `main.js` in the REPO, not the launcher a player is
+    running. A manifest signed by a key an installed launcher has never seen does not read
+    as "unsigned" — it reads as a **BAD SIGNATURE**, which "refuses Ready and never falls
+    back" (`main.js:867`). Signing before the pin has been delivered locks every player out
+    of the game.
+  - **The trap if you only half-resume.** Renaming the key back WITHOUT pinning it in
+    `MANIFEST_PUBKEYS` does not just fail to sign — it makes `Ship.ps1` die on the verify
+    step and **blocks every future ship**. Key present + pin absent is the one combination
+    that is worse than either alone.
+  - **The safe sequence, when there is budget to watch it:** rename the key back → add the
+    public line to `MANIFEST_PUBKEYS` in `main.js` → ship the LAUNCHER carrying that pin
+    while still unsigned (point `NCO_MANIFEST_KEY_FILE` at a path that does not exist) →
+    wait for players to update → only then let a ship sign. Two releases, and the gap
+    between them is the point.
+  - Paused at Cam's call: *"i dont have enough tokens to fully fix anything until wednesday
+    just in case we break anything doing this."* zeldfep's key (`882c415a`) is already
+    pinned and unaffected.
+- **The version number no longer identifies a build.** `Ship.ps1 -Mod` does NOT cut a new
+  version — it republishes mod assets into whatever release is already `latest`. **Three
+  different `ModPayload.zip` builds now exist under the tag `v0.3.113`** (28 Aug, and two on
+  30 Aug). Players still update correctly because the launcher compares the **asset id**,
+  not the version string, but `.nco-version` reads the same number for three builds, which
+  will mislead the first bug report that quotes it. Cutting a real `v0.3.114` needs a
+  `## What changed - v0.3.114` section in `publish\release-notes.md` and a FULL ship
+  (which also republishes the 103 MB installer). Held on the same 2026-08-30 budget call.
 
 **Landed since the last pass, so nobody re-opens them:** `/rename` for admins is IMPLEMENTED
 (`ChatSystem.cpp:1513`, `kAdmin`-gated, keyed on the character id, and deliberately does NOT
