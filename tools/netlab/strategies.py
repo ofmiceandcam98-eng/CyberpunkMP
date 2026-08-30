@@ -90,7 +90,12 @@ class AdaptiveDelay(Baseline):
         j = sorted(self.lateness)[int(0.95 * (len(self.lateness) - 1))]
         # one period so a segment always exists, p95 jitter so late packets still land
         # in time, floored at one period + 10 so lan players do not run at zero buffer.
-        return max(self.period + 10.0, j + self.period)
+        # Vehicles never extrapolate (see Baseline.render), so a single buffered sample
+        # with nothing queued behind it is a freeze, not a degraded-but-alive frame like
+        # it is for players - they need a second period of look-ahead margin so a next
+        # sample has almost always already landed by render time, or they starve solid.
+        margin = 2.0 if self.kind == "vehicle" else 1.0
+        return max(margin * self.period + 10.0, j + margin * self.period)
 
     def render(self, now):
         target = self._target_delay()

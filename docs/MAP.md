@@ -292,7 +292,15 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   teleport-pops; the `vehicle_dr` candidate (dead reckoning + projective blend) gets
   0 pops / 0.03% starvation / lower error, and is identical to baseline on clean
   links. `adaptive` delay looks right for players (30ms effective delay on LAN vs
-  80) but misbehaves on vehicles — LAB BUG, investigate before trusting it. NEXT:
+  80). FIXED (2026-08-30): its vehicle numbers were previously nonsense (94.6%
+  starvation, 65m mean error) because `_target_delay()` sized its buffer from jitter
+  alone, enough slack for players (who extrapolate through a gap) but not vehicles
+  (which freeze solid the instant a second sample isn't already queued - see
+  `Baseline.render`'s "vehicles never extrapolate" rule). Added a per-kind margin
+  (2 periods of look-ahead for vehicles instead of 1) in `strategies.py`; rimtek/vehicle
+  now starve%=38.2, err_mean=2.95 (beats baseline's 3.24), correction_m=45 (was 884).
+  Still loses to `vehicle_dr`, which remains the right candidate to port - `adaptive`
+  was never meant for vehicles, it's just no longer lying about it. NEXT:
   capture real traces — launch a far player's client with `-sync-trace` (dev flag,
   hand-added; writes NDJSON into the mod's logs, ships to the NAS automatically),
   then `replay.py --trace file --validate` to prove the lab's baseline matches the
