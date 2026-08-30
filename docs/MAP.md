@@ -142,6 +142,32 @@ people to work that is already done.
   `## What changed - v0.3.114` section in `publish\release-notes.md` and a FULL ship
   (which also republishes the 103 MB installer). Held on the same 2026-08-30 budget call.
 
+- **NOBODY COULD SEE ANYBODY, and it was never the puppet system. Fixed `ec2858d`,
+  awaiting a live run.** Stop looking at `PuppetDriver`, remote animation, or the
+  appearance path — none of them ever ran. `NetworkWorldSystem::Spawn` was **never called
+  once** in twenty-one session logs: no `[Spawn]` line of any kind, not even the "queued"
+  or "CreatePuppet failed" branches.
+  - **What was happening.** Since `f66a40a` (2026-08-24) the client re-derives each load's
+    cell from its position and drops it when its answer differs from the server's —
+    `[World] dropped map-invalid character load …`. That rejected EVERY character and
+    vehicle load for six days. Movement and appearance are separate messages so they kept
+    arriving, which is why the player list showed people, `/tp` moved them server-side, and
+    the client logged `movement for id … but no puppet is registered under it`. It looked
+    exactly like a spawn bug and was not one.
+  - **Two faults, both server-side.** The grid was declared twice — `Level.cpp` bins by
+    `sCellSize = 6000`, `GameServer.cpp` advertised `60000`, ten times out. And `ToCell`
+    used a float-to-int cast (truncates toward zero) while the client uses `std::floor`;
+    those agree only for positive coordinates and Night City is mostly negative. At
+    `x = -1769` the server sent cell `0` and the client expected `-1`.
+  - **Fix is server-side ONLY** — no client rebuild, no player update. `kCellSize`,
+    `kLoadRadius`, `kUnloadRadius` now live on `Level` as the contract they are;
+    `GameServer` advertises those constants; `ToCell` floors. **Never put a literal back in
+    either place** — the client is entitled to compute what the server computes.
+  - **Verify with:** `[Spawn] remote id … - ccstate N bytes` appearing and
+    `dropped map-invalid` stopping. If the drops stop and players are still invisible, that
+    is a different bug — the puppet spawn itself — and the `[Spawn]` line will name it.
+    Production deploys from this branch but the cron defers while anyone is online.
+
 **Landed since the last pass, so nobody re-opens them:** `/rename` for admins is IMPLEMENTED
 (`ChatSystem.cpp:1513`, `kAdmin`-gated, keyed on the character id, and deliberately does NOT
 clear `NameChosen` — it repairs a name rather than handing out a fresh naming attempt).

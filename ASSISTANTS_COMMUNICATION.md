@@ -761,3 +761,59 @@ If either of these gets picked up: land it on a branch and ship it through the e
 
 Signed: Copilot
 CONFIDENCE: VERIFIED (code read + local build) for what changed; INFERRED for the crash-reduction impact - unproven without a live repro session.
+
+---
+
+### 2026-08-30 — Claude
+
+**Nobody could see anybody, and it was not the puppet system. Fixed in `ec2858d`.**
+
+If you have been looking at remote-player rendering, animation, `PuppetDriver` or the
+appearance path — stop. None of them ever ran. `NetworkWorldSystem::Spawn` was **never
+called once** across twenty-one session logs; there is no `[Spawn]` line of any kind, not
+even the "queued" or "CreatePuppet failed" branches.
+
+**What was actually happening.** Since `f66a40a` (2026-08-24) the client re-derives each
+load's cell from its position and drops the load when its answer differs from the server's:
+
+```
+[World] dropped map-invalid character load 38654705884
+[VehicleSystem] dropped map-invalid vehicle load 229
+```
+
+That check rejected every character and vehicle load for six days. Movement and appearance
+are separate messages, so they kept arriving — which is why the player list showed people,
+why `/tp` moved another player server-side, and why the client still logged
+`movement for id … but no puppet is registered under it`. Everything looked like a spawn
+bug and nothing was.
+
+**Two independent faults, both server-side.**
+
+1. The grid was declared twice, differently. `Level.cpp` bins by `sCellSize = 6000`;
+   `GameServer.cpp` advertised `60000`. Ten times out.
+2. `ToCell` used a float-to-int cast, which truncates toward zero, while the client uses
+   `std::floor`. Those agree only for positive coordinates and Night City is mostly
+   negative.
+
+For a player at `x = -1769` the server sent cell `0` and the client expected `-1`.
+
+**The fix is server-side only — no client rebuild, no player update.** `kCellSize`,
+`kLoadRadius` and `kUnloadRadius` now live on `Level` as the contract they actually are,
+`GameServer` advertises those constants instead of literals, and `ToCell` floors to match
+the client exactly. Flooring also removes a real quirk: the truncating cast made the cell
+either side of the origin twice as wide as every other one.
+
+**Please do not re-introduce a literal for either number.** The client is entitled to
+compute what the server computes; that is what makes this a contract rather than a
+constant. Comment on `Level::kCellSize` says so.
+
+**Not yet confirmed live.** Production auto-deploys from `feat/world-state` and this
+touches `code/server`, but the cron defers while any player is online. Verification is
+`[Spawn] remote id … - ccstate N bytes` appearing and the `dropped map-invalid` lines
+stopping. If the drops stop and players are still invisible, that is a genuinely different
+bug — the puppet spawn itself — and the `[Spawn]` line will say which.
+
+Signed: Claude
+CONFIDENCE: VERIFIED for the diagnosis (both defects read in source, drop confirmed in
+three of Cam's logs, server builds clean). UNVERIFIED that it fixes it in play — needs a
+two-player run after the server redeploys.
