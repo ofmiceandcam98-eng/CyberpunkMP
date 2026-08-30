@@ -75,7 +75,11 @@ public class MpSelectorPoll extends DelayCallback {
             let network = GameInstance.GetNetworkWorldSystem();
             if IsDefined(network) {
                 network.RequestJoin();
-                this.controller.GetSystemRequestsHandler().LoadLastCheckpoint(false);
+
+                // Their own save here too. The fallback exists so a slow server costs a
+                // pause rather than a session - it should not also cost them their face by
+                // quietly dropping them into the template.
+                this.controller.MpLoadOwnCharacterSave();
             }
 
             return;
@@ -145,7 +149,18 @@ public func MpEnterWithCharacter() -> Void {
         // Arm the in-world half. The world still has to be loaded to have somewhere to
         // stand; what changed is that the server already knows who is arriving.
         network.RequestJoin();
-        this.GetSystemRequestsHandler().LoadLastCheckpoint(false);
+
+        // Their OWN character, not the world template.
+        //
+        // This used to be LoadLastCheckpoint(false), which loads save index 0 - whatever
+        // is newest. The launcher installs the template as MultiplayerStart, so whenever
+        // that file was the newest the player loaded as Phantom Veronica instead of
+        // themselves, and when one of their own autosaves was newer they loaded correctly.
+        // That coin-flip is why this looked like an appearance bug for a very long time.
+        //
+        // See OwnSave.reds. The template is still loaded for somebody who has no save of
+        // their own, which is the case it actually exists for.
+        this.MpLoadOwnCharacterSave();
         return;
     }
 
