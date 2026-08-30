@@ -7,11 +7,30 @@ void WorldFactStore::Load(const std::filesystem::path& acPath) noexcept
 
     if (!std::filesystem::exists(m_path))
     {
-        // Written empty rather than left missing, so the file is discoverable. Somebody
-        // looking for "where do I open a door" should find an empty list with a name that
-        // explains itself, not an absence they have to guess at.
+        // Written rather than left missing, so the file is discoverable. Somebody looking
+        // for "where do I open a door" should find a list with a name that explains
+        // itself, not an absence they have to guess at.
+        //
+        // It starts with one entry, because a server with none is a server where Dogtown
+        // is shut. Proven 2026-08-29 against the shipped EP1 quest graphs:
+        // ep1\openworld\combat_zone_gate\combat_zone_gate.questphase holds the gate's
+        // passage branches behind a pause condition on ep1_side_content >= 1, and reads
+        // no q301 fact at all - finishing Dog Eat Dog was never what opened the gate. The
+        // same fact is the root gate on every Dogtown community, the vendors, the world
+        // encounters and the mini world stories, so without it the district is both shut
+        // and empty. CDPR's own ep1_chicken_unlocks.questphase opens it exactly this way.
+        //
+        // Safe to set unconditionally: the game writes this fact = 1 in thirteen places
+        // across EP1 and never writes 0, and every use in the main quests is a setter
+        // rather than a condition, so nothing reads it to decide whether to start a
+        // story. It unlocks the place without starting Phantom Liberty.
+        //
+        // Seeded only when the file is being created. An existing server's list is its
+        // own - re-adding this on every load would quietly undo /fact remove.
+        m_facts.push_back({"ep1_side_content", 1});
+
         Save();
-        spdlog::info("No world facts yet - created {}", m_path.string());
+        spdlog::info("No world facts yet - created {} with Dogtown open (ep1_side_content)", m_path.string());
         return;
     }
 
