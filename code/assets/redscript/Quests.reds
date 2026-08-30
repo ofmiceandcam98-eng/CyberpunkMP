@@ -67,6 +67,41 @@ public final func SetCallInfo(contactName: script_ref<String>, contactEntry: wre
   wrappedMethod(contactName, contactEntry, journalMgr, isRejectable);
 }
 
+/*
+ * The phone itself. THIS is the one that actually stops calls.
+ *
+ * SetCallInfo above only refuses the incoming-call WIDGET. By the time it runs,
+ * PhoneSystem.OnTriggerCall has already played 'ui_phone_incoming_call', written
+ * PhoneCallInformation to the UI_ComDevice blackboard, and - for a player-triggered
+ * call - asked PhoneManager for ApplyPhoneCallRestriction(true). So the call is live,
+ * the player is restricted, and the only thing missing is the part that would have let
+ * them see it. That is precisely the "in a conversation they can neither see nor end"
+ * failure the comment above warns about, and it is why Cam still got the Songbird
+ * prologue with that wrap already shipping.
+ *
+ * PhoneSystem.OnTriggerCall (phoneSystem.script:155) is the single entry point the quest
+ * system uses to reach the phone. Its private TriggerCall - which is what sets the
+ * blackboard, the talking state and the restriction - is called from nowhere else.
+ * Refusing the request here means no sound, no blackboard entry, no restriction, no HUD:
+ * the call never happens rather than happening invisibly.
+ *
+ * This is deliberately EVERY call, not just incoming ones. Player-initiated calls are
+ * how gigs are accepted and how fixers are called back, which is the same singleplayer
+ * story arriving by a different door. Nothing on the server needs the phone - chat is a
+ * separate widget entirely, and the contacts list is already filtered by Phone.reds.
+ *
+ * Per-call connected check, like everything else here, so disconnecting restores the
+ * phone completely.
+ */
+@wrapMethod(PhoneSystem)
+private final func OnTriggerCall(request: ref<questTriggerCallRequest>) -> Void {
+  if MpQuestsSilenced() {
+    return;
+  }
+
+  wrappedMethod(request);
+}
+
 /**
  * Are we on a server right now?
  *
