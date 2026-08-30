@@ -18,6 +18,40 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
 
 ## 1. THE LEDGER
 
+### IN FLIGHT — what is being worked on right now (2026-08-30)
+Keep this block current; it is the first thing anyone should read. Cam: *"we should update
+the mental map pretty often."* A stale in-flight list is worse than none, because it sends
+people to work that is already done.
+
+- **The character selector is OFF, and two requested features are blocked behind it.**
+  `MainMenu.reds:331-342` disables the trash can and the panel, because both only make sense
+  once the menu has asked the server who this account is — and it no longer does. Consequence
+  worth knowing before anyone re-plans this:
+  - **Delete a character is BUILT.** `DeleteCharacter()` native, the
+    `OnMultiplayerDeleteCharacter` handler, and the confirm flow all exist and still compile.
+    **Uncommenting `MainMenu.reds:338-340` is all it takes to bring the entry back.**
+  - **Four character slots for admins (requested, NOT built)** needs the selector alive
+    first. The plumbing is already there: `AuthenticationResponse` carries a *list* of
+    `CharacterSummary` (deliberately a list, "a list of length one costs nothing today and is
+    the whole difference later"), and `CharacterRecord` already has `Slot` and `CharacterId`.
+    What is missing is the client panel that draws four slots and says which are in use.
+- **Appearance fix waiting on a test build.** `e795a52` is committed and pushed but has never
+  been in a release, so the launcher cannot deliver it — see the appearance row below and the
+  "built and pushed is not deployed" debt. Nothing more can be learned until it is in front of
+  Cam's eyes.
+- **The world-template plan (Cam, 2026-08-28), not started.** Phantom Veronica should
+  propagate WORLD state and nothing else: doors she opened stay open for everyone (excluding
+  housing and vehicles), quests she finished count as finished for everyone, then quests off
+  entirely — all gated on Dogtown being open. Mechanism already exists: `WorldFact` on
+  `SpawnCharacterResponse.facts`. `06af8b5` (open Dogtown on a fresh deployment) and
+  `51756fc` (stop quest calls at `PhoneSystem`) are the first pieces of this.
+
+**Landed since the last pass, so nobody re-opens them:** `/rename` for admins is IMPLEMENTED
+(`ChatSystem.cpp:1513`, `kAdmin`-gated, keyed on the character id, and deliberately does NOT
+clear `NameChosen` — it repairs a name rather than handing out a fresh naming attempt).
+Difficulty is pinned to Very Hard for every connected player (`d5d506f`, `77971ee`,
+`Difficulty.reds`, which reads the index by name rather than hardcoding 3).
+
 ### Standing decrees (law, not open items - violating one is a bug by definition)
 - **Boot policy** (2026-08-21): the game boots STRAIGHT TO THE MENU -
   `-skipStartScreen` + Fast Launch auto-install, both halves stay (main.js).
