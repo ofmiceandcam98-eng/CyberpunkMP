@@ -1,3 +1,4 @@
+#include <filesystem>
 #include "Settings.h"
 #include <RED4ext/LaunchParameters.hpp>
 
@@ -135,12 +136,69 @@ void Settings::Load()
     if (launchParameters.Get("-puppet-driver-all"))
         settings.puppetDriverAll = true;
 
-    if (launchParameters.Get("-mod-local-puppet"))
+    // A FILE, not only a launch argument.
+    //
+    // The launcher owns the command line - it passes the Discord token, the server address
+    // and the voice settings - so "just add a flag" would mean launching the game by hand
+    // without any of that, and the mod could not connect at all. A marker file beside the
+    // plugin is something Cam can create and delete without going near the launcher, and it
+    // survives the launcher rewriting its arguments.
+    //
+    // Both routes work; either one turns the experiment on.
+    // Several candidates, and the log says which were searched.
+    //
+    // The game's working directory is not somewhere anyone would guess, so "put a file
+    // next to the game" is not an instruction that can be followed without being told the
+    // path. Rather than pick one and hope, a handful of plausible places are checked and
+    // all of them are printed - so if the file is in the wrong one, the log shows where it
+    // should have gone instead of silently staying off.
+    const auto home = std::getenv("USERPROFILE");
+
+    std::vector<std::filesystem::path> candidates{
+        std::filesystem::current_path() / "mod-local-puppet.on",
+        std::filesystem::current_path().parent_path().parent_path() / "mod-local-puppet.on",
+    };
+
+    if (home)
+        candidates.push_back(std::filesystem::path(home) / "mod-local-puppet.on");
+
+    std::filesystem::path found;
+
+    for (const auto& candidate : candidates)
+    {
+        std::error_code ec;
+        if (std::filesystem::exists(candidate, ec))
+        {
+            found = candidate;
+            break;
+        }
+    }
+
+    const bool flagFile = !found.empty();
+
+    if (!flagFile && !launchParameters.Get("-mod-local-puppet"))
+    {
+        spdlog::info("[LocalPuppet] experiment OFF. To enable, create an empty file at any of:");
+        for (const auto& candidate : candidates)
+            spdlog::info("[LocalPuppet]   {}", candidate.string());
+    }
+
+    bool femaleFile = false;
+
+    if (flagFile)
+    {
+        std::error_code ec;
+        femaleFile = std::filesystem::exists(found.parent_path() / "mod-local-puppet-female.on", ec);
+    }
+
+    if (launchParameters.Get("-mod-local-puppet") || flagFile)
     {
         settings.useModLocalPuppet = true;
 
-        if (launchParameters.Get("-mod-local-puppet-female"))
+        if (launchParameters.Get("-mod-local-puppet-female") || femaleFile)
             settings.modLocalPuppetFemale = true;
+
+        spdlog::info("[LocalPuppet] enabled via {}", flagFile ? found.string() : std::string("launch argument"));
 
         spdlog::warn("[LocalPuppet] EXPERIMENT ON - the local player will be a mod-spawned {} puppet. "
                      "The vanilla V is left in place; this is Phase 1 and nothing else has been migrated.",
