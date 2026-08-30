@@ -421,6 +421,12 @@ public class MultiplayerGameController extends inkGameController {
             if IsDefined(network) {
                 MpQuestDebugDump(network);
 
+                // Songbird cannot reach a character whose save still has the prologue in
+                // it. Done HERE rather than with the server's world facts because those
+                // arrive with RestorePossessions, once the world exists - and the hook can
+                // fire before that. See MpSilenceStoryHolocalls in Quests.reds.
+                MpSilenceStoryHolocalls(network);
+
                 // PHASE 1 EXPERIMENT. Returns immediately unless -mod-local-puppet was passed.
                 MpLocalPuppetExperiment(network);
                 MpForceHardestDifficulty(network, true);
