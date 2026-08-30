@@ -279,6 +279,16 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   test that counts." Needs one live join to answer. Do not restart this investigation from
   scratch - the dispatch bug and the InitializeState/live-state question are BOTH already
   closed; only the visual outcome of the final apply is open.
+  **RULED OUT BY CAM 2026-08-30: the mod-spawned-puppet approach is NOT the way.** The
+  Phase 1 experiment (`2356232`, `LocalPuppet.reds`, the `-mod-local-puppet` flag and its
+  `IsModLocalPuppet*` natives) asked whether a mod-spawned puppet could BECOME the local
+  player, as an alternative to changing the vanilla V's body in place. Cam's call: *"we wont
+  be doing the mod-spawned puppet thing."* Do not revive it, and do not treat it as the
+  fallback when the `GetState` path is tested. The remaining route is the one already
+  written - write the stored ccstate into the live customization state and re-finalize.
+  The experiment code is now dead weight: it is off unless `-mod-local-puppet` is passed, so
+  it harms nothing shipping, but it should be removed rather than left to look like an open
+  option. See the "Local Puppet Migration" artifact for the reasoning it was built on.
 - **The template's inventory lands on the player. FIX WRITTEN 2026-08-28, UNTESTED
   (d926ca9).** Same disease as the row above - Phantom Veronica supplying identity instead of
   just the world. The strip runs, the kit lands correctly (5 items, 20,000 eddies, no chrome),
