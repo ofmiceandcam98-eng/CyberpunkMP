@@ -2041,6 +2041,15 @@ async function applyUpdate () {
 
   saveSettings({ installedStamp: info.remoteStamp, installedVersion: info.version })
 
+  // A normal update supersedes any test build - the payload just extracted IS the real
+  // release, byte for byte. Without this, installing a test build once left the
+  // Checkup's "Multiplayer mod" row and the pre-release panel's active-tag marker
+  // pointing at that old tag FOREVER, through every subsequent normal update: the game
+  // is correctly on the latest real release, but the launcher keeps reporting it as a
+  // test build because the one flag that says so is only ever cleared by the separate
+  // Restore button, never by the update path everyone actually uses.
+  saveSettings({ testBuildTag: undefined })
+
   // Stamped into the folder itself, not just into settings.
   //
   // Settings describe "the install the launcher knows about"; this describes THIS copy on
