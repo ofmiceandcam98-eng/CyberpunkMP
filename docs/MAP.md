@@ -8,10 +8,11 @@ from the ledger in the same commit; finding one adds it. A ledger that is not up
 the landing commit is how items get missed twice.
 
 Last full revision: 2026-08-22, after v0.3.106 (player combat).
-Ledger updated 2026-08-28 after the overnight session (v0.3.112 / v0.3.113): the flecs
-data race behind THE crash was found and fixed, character-overwrite and quit-save were
-fixed, the invisible chat box was solved, and three new items were opened. See the
-crash row, the new **Character identity** block, and the two new operational debts.
+Partial pass 2026-08-29 (Copilot, VM checkout): reconciled THE crash entry against
+what actually shipped (v0.3.111-113) and the commits between 3bf2446 and d5d506f -
+nobody had touched this file across that whole run, which is exactly the "missed
+twice" failure mode this doc warns about. Did NOT re-audit combat/vehicle-damage/
+manifest/modlist sections below - those are as of 2026-08-26 still.
 
 ---
 
@@ -176,102 +177,53 @@ crash row, the new **Character identity** block, and the two new operational deb
   a model-summon resolves to - nearest stored, last driven, or explicit via /garage.
 
 ### Known bugs, diagnosed, unfixed
-- **THE crash: 0xC0000005 in the remote-vehicle-mount path - cross-machine fingerprint
-  (2026-08-23 log sweep, all 9 players).** 20 access violations + 8 breakpoint exits
-  across 76 recorded launches, on five different machines, and every crash with a
-  shipped log dies within seconds of the same sequence: `[Interpolation] movement for
-  id N but no puppet is registered` (frozen-remote warning) -> `HandleVehicleEnterMessage:
-  queueing mount` -> `OnVehicleReady` -> `DoMount ... (network copy)` /
-  `MakeRemoteDriven: SetKinematic ... done` -> dead in 2-10s. rimtek's is explicit: the
-  frozen-warned id IS the vehicle being mounted into. Working theory: the queued mount
-  fires against an entity (vehicle or occupant puppet) that is not fully built, and an
-  engine vcall on it faults. Second cluster: remote APPEARANCE apply (`AddItemToSlot
-  failed` x106/evening for one player) and Cam's post-spawn cyberware/inventory restore
-  (dead ~2s after 'queued 70 piece(s)') - possibly the same not-fully-built-entity
-  **REPRODUCED ON DEMAND 2026-08-26, and the trigger is mundane: DISCONNECT WHILE IN A
-  VEHICLE, THEN REJOIN.** Cam spawned a car at 04:45:14 (`Vehicle e3 spawned by character
-  5000000da (driver seat)`) and quit at 04:45:52 while still in it. The car stayed in the
-  server's live flecs world - `vehicles.json` was `[]`, so nothing was persisted and
-  nothing on disk hinted at it. On his 04:51 rejoin the server replayed it, and the client
-  log is the whole fingerprint end to end with no other player anywhere near:
-  `HandleVehicleLoadMessage` (04:51:04.588) -> `OnVehicleReady` -> `MakeRemoteDriven:
-  SetIsPlayerControlled / engine vcall / engineData set / SetKinematic / done`
-  (04:51:05.857) -> dead at 04:51:07.5, i.e. 1.6s after `done`. So the not-fully-built
-  entity is the OCCUPANT, and the specific case is an occupant that no longer exists at
-  all - the driver disconnected. That also retires the "why only Cam" puzzle: he was the
-  only one rejoining into a world holding his own orphaned car. Immediate operational
-  relief is a server restart (clears the live world; `Loaded 0 vehicle(s)` on boot,
-  players.json untouched), but every disconnect-in-a-car re-arms it for the next joiner.
-  **PARTLY FIXED AND LIVE 2026-08-26 (0e00c77, verified in the running binary):** the
-  server now clears every remaining vehicle when the player count hits zero
-  (`Level::ClearAbandonedVehicles`, called from `GameServer::OnDisconnection`). Parking an
-  ownerless car is still right while somebody is online to see it; with nobody online it is
-  only a landmine for the next joiner. Server-only, so no protocol change, no flag day, and
-  it protects players who have not updated. **STILL OPEN:** A disconnects in a car while B
-  stays online, then C joins - the car legitimately survives and C can still hit it. That
-  needs the CLIENT fault located, and note what the evidence rules out: `MakeRemoteDriven`
-  already null-checks and Cam's log shows every step completing through `done`, so a
-  readiness gate THERE is a confident no-op. The fault is 1.6s later and silent; every
-  reachable path in InterpolationSystem (stub gate, `TimePoints.empty()` extrapolation,
-  `ahead > maxExtrapolationMs`) is already guarded. Next step is step-logging across that
-  window, the same bisection MakeRemoteDriven's own comment describes - now practical
-  because the repro is deterministic.
-  Fix must handle a driver id that resolves to nothing, not merely a slow-to-build one.
-  Needs a dedicated session in VehicleSystem.cpp: gate DoMount/MakeRemoteDriven
-  on entity readiness beyond OnVehicleReady, and treat a frozen-warned id as NOT ready.
-  **Test-box flavor NARROWED by experiment (2026-08-23 night session, 10 crashes):**
-  ghosts purged - still crashed; parked-vehicle replay absent - still crashed; creator
-  flow bypassed entirely (Initialised+NameChosen flipped server-side, guard live,
-  clean spawn 03:02:29) - still crashed in 25s. Creator EXONERATED. Last suspect
-  standing: the spawn-time appearance/cyberware APPLY of a FEMALE character (Cam +
-  phonix female, 12-13KB blobs, both crash-prone; every male player clean; matches
-  the AddItemToSlot cluster). Decisive next experiment: a female character on
-  zeldfep's machine - crash there too = female-apply convicted cross-machine, fix
-  goes to the apply path (defer/chunk/gate on entity readiness). **THE FIX BRIEF is
-  written: docs/CRASH-FIX-BRIEF.md** - ranked code pointers (readiness gate via
-  Codeware's entity-status byte, the OnVehicleReady pattern to copy, the span
-  lifetime hot candidate at AppearanceSystem.cpp:497, the restore-storm seam, the
-  90s-autosave outlier explanation), diagnostics to add, validation plan.
-  **ROOT CAUSE FOUND AND FIXED 2026-08-28 (559828f + 0fa2bb9). It was a DATA RACE in
-  flecs, and the theories above were chasing the wrong layer.** The dump is the proof -
-  two threads, same instruction, same millisecond, SAME `ecs_stack_t*` in RCX, DIFFERENT
-  cursors in RDX:
-  `thread 152696 RIP=..C548 RAX=0x13 RCX=..387C9CF0 RDX=..A8FC9200` /
-  `thread 147288 RIP=..C548 RAX=0x13 RCX=..387C9CF0 RDX=..A8FC90D8`.
-  Fault address `0x25` is `RAX + 0x12` - the `is_free` byte of `ecs_stack_cursor_t`, read
-  from a cursor pointer that is the integer 19. `GetServerIdByEntity` answered with
-  `query<EntityComponent>().find(...)`, and the hit hook calls it from the game's JOB
-  SYSTEM: a thread census logged `FindEntity` arriving from SIXTEEN distinct threads in
-  one 18-minute session, none of them the thread running `progress()`. Building a query
-  takes a cursor from the stage's iterator stack, which flecs leaves unlocked by design.
-  Cam's repro: *"crashed as soon as i shot my gun."*
-  **Explains what nothing else did:** the small integers where pointers belong, the assert
-  that never fired, poisoning finding nothing, survival ranging 2s-381s. It also covers the
-  vehicle fingerprint above - `VehicleSystem::OnVehicleEnter` was a SECOND off-thread
-  caller, caught by a tripwire within an hour of the first fix, so mount-path crashes and
-  shooting crashes were one bug entering through two doors.
-  **Fix:** `App::ServerIdRegistry` (client/App/World/ServerIdRegistry.h) - lock-free
-  EntityID→serverId table, written on the main thread at the same four points that already
-  maintain `PuppetRegistry`, read locklessly from anywhere. flecs is off the hook path
-  entirely. Lock-free rather than mutexed for the reason `PuppetRegistry`'s own comment
-  records: these hooks fire for every entity in the scene.
-  **Tripwire left in for one release:** `App::FlecsThread::Assert(site)` logs
-  `[Thread] <site> touched flecs OFF the flecs thread`, keyed on (call site, thread) -
-  keying on thread alone hid the second caller. `VehicleSystem::OnVehicleReady` is the last
-  unproven caller and carries its own labelled check; it MUTATES the world
-  (emplace/add/remove), so if it reports off-thread the fix is to marshal the whole
-  promotion to the main thread, not to swap the lookup.
-  **Lesson, because it cost a day:** the race was "eliminated" early by reading code - no
-  thread in NetworkService, handlers dispatched before `progress()` - and that argument was
-  wrong. Two `spdlog::warn` lines settled in one session what a day of reasoning did not.
-  **STILL OPEN from the original entry:** the disconnect-in-a-car / rejoin repro with a
-  third party online has NOT been re-tested since. If it still crashes it is a separate
-  readiness bug and the fix brief still applies.
-- **EACCES shell-fallback destroys crash telemetry** (phonix, every launch): when spawn
-  falls back to the cmd/start shell, the trail's 'game exited with code' reports the
-  SHELL's exit (0, after 1-4s) - his two suspected crashes recorded nothing. Fix: when
-  the fallback path is used, do not log the wrapper's exit as the game's; poll the real
-  process or say 'exit unknown (shell fallback)'.
+- **THE crash: SOLVED 2026-08-26/27 - it was never entity readiness. It was a genuine
+  data race: two threads inside flecs' `flecs_stack_restore_cursor` on the same stack
+  allocator at the same instant** (`0da3c9b`, `559828f`, `0fa2bb9`). flecs's stack
+  allocator is deliberately unlocked - documented as per-stage, single-threaded - and the
+  game's own job system was calling into our flecs world off the main thread from THREE
+  places: the combat hit hook (every bullet), `VehicleSystem::OnVehicleEnter`, and
+  `OnVehicleReady`. All three were wrongly assumed main-thread "because they are RTTI
+  methods called from redscript" - a caller being redscript says nothing about which
+  thread the engine's job system dispatches it on, and that wrong assumption cost a full
+  day before someone measured instead of read. Fixed by removing flecs from every
+  off-thread path (a lock-free `ServerIdRegistry`, modelled on `PuppetRegistry`) rather
+  than locking the allocator - locking it would have cost frame rate on the hit hook,
+  which fires for every bullet in Night City. A second, unrelated structural bug
+  (`98b12fa`) was fixed alongside it: an `OnAdd` observer that added a component during
+  its own dispatch, which flecs's own source warns against.
+  **Confirms the vehicle-mount crash and the weapon-fire crash were the SAME bug** - the
+  v0.3.112 release notes say so directly ("Same cause behind the crash when getting on a
+  bike or into a car"), and `0fa2bb9`'s follow-up session recorded ZERO 0xC0000005 crashes
+  after the fix, on a session that used to reliably produce them within seconds.
+  **The entity-readiness theory in `docs/CRASH-FIX-BRIEF.md` and the female-appearance
+  correlation below were both red herrings** - real, honestly-reported dead ends, not
+  wrong observations, but not the cause. Do not resume that brief's Tier 1/Tier 3 work;
+  it was chasing the wrong mechanism. Treat CRASH-FIX-BRIEF.md as historical from here.
+  **STILL OPEN, and it is a DESIGN question now, not a crash:** A disconnects while
+  driving, B stays online, C joins later - the car legitimately survives (parking on
+  zero-players doesn't cover it) and hands C a car with no valid driver. Whether this
+  still misbehaves post-race-fix is UNMEASURED; worth one session confirming it merely
+  looks odd now rather than crashing, before spending time on it as a crash.
+  Historical shape of the investigation, kept for anyone re-deriving it: dies within
+  seconds of `[Interpolation] movement for id N but no puppet is registered` ->
+  `HandleVehicleEnterMessage: queueing mount` -> `OnVehicleReady` -> `DoMount` /
+  `MakeRemoteDriven: SetKinematic ... done`. Reproduced on demand 2026-08-26 via the
+  mundane trigger (disconnect while driving, then rejoin - the car survives in the live
+  flecs world with no persistence trail, gets replayed to the rejoiner, dead 1.6s after
+  `MakeRemoteDriven` finishes). A parallel, separately-chased correlation (never proven,
+  now understood to be the same race): remote APPEARANCE apply (`AddItemToSlot failed`
+  x106/evening for one player), matching a female-character bias that turned out to be
+  coincidental exposure to the race rather than a female-specific code path. Two things
+  landed from that investigation and remain true and useful regardless of the real cause:
+  `Level::ClearAbandonedVehicles` clears every vehicle server-side when the player count
+  hits zero (`0e00c77`), and the CRASH-FIX-BRIEF.md fixes I (Copilot) actually implemented
+  2026-08-24 - the AppearanceSystem span-lifetime UB and the CMPReader silent-corruption
+  fix - were real bugs worth having fixed even though they were not THE crash.
+- **EACCES shell-fallback destroys crash telemetry: FIXED** (`681e3af`, 2026-08-24/29,
+  Copilot). The shell wrapper's own near-instant exit (always code 0) is no longer logged
+  through the same path that writes "game exited with code N" - it has its own distinct
+  log line, and the real game process is still tracked separately by `watchForGameExit()`.
 - **Ghost remotes on join: SOLVED (2026-08-23) - they are /npc entries with garbage
   records.** The test server's npcs.json holds 7 NPCs; FIVE carry the literal string
   `Character.<record>` (the usage line's placeholder, typed verbatim and persisted),
@@ -281,14 +233,21 @@ crash row, the new **Character identity** block, and the two new operational deb
   attach SECONDS before Cam's solo 0xC0000005 - garbage NPCs are now suspect #1 in
   the test-server flavor of THE crash. Live has NO npcs.json, so live ghosts (if the
   sweep's were live) have another source. Immediate cure: `/npc clear` (admin, in
-  game). Code fix owed: /npc must refuse records containing `<`/`>` (placeholder
-  paste) - the base-game-records warning added 2026-08-23 does not stop this.
-- **Parked persisted vehicles get MakeRemoteDriven on every join** (found in the same
-  logs): HandleVehicleLoadMessage -> OnVehicleReady -> MakeRemoteDriven runs for
-  Cam's parked, unoccupied Archer Hella (vehicles.json) on BOTH machines - a parked
-  replayed car must not be made kinematic/player-controlled; MakeRemoteDriven belongs
-  to occupied vehicles only. Client-code fix in VehicleSystem.cpp, pairs with the
-  readiness gating THE-crash entry already calls for.
+  game). Code fix: /npc now REFUSES records containing `<`/`>` (placeholder paste),
+  not just warns (`681e3af`, 2026-08-24/29) - the base-game-records warning added
+  2026-08-23 only ever described the problem, this actually stops it.
+- **Parked persisted vehicles + MakeRemoteDriven: DISAGREEMENT, unresolved, needs a
+  human call, not another edit.** This entry originally claimed a parked replayed car
+  must NOT be made kinematic and that MakeRemoteDriven belongs to occupied vehicles
+  only. Current `VehicleSystem.cpp::OnVehicleReady` argues the opposite on purpose, in
+  its own comment: physics-off (`MakeRemoteDriven`) runs for EVERY network-spawned
+  vehicle unconditionally, occupied or not, specifically so a parked copy can never
+  simulate physics against the local world's own copy of the same car. I (Copilot,
+  2026-08-24) read that comment and did not touch this, because the two positions
+  contradict each other and I could not tell which one was reasoning about a live bug
+  versus which one was the fix already applied. Whoever picks this up: check `git log`
+  on that function before changing it either direction - one of these two claims is
+  stale.
 - **Mod 22114 (70 files, still unnamed) verify-flip churn**: reinstalled 4x with
   IDENTICAL archive hashes yet verification keeps flipping back to broken on Cam's
   machine - something on disk rewrites or removes its files after install. Identify the
@@ -302,6 +261,24 @@ crash row, the new **Character identity** block, and the two new operational deb
   immunity post-revive (gameGodModeType.Invulnerable window) and/or full-health revive;
   operational relief: `/setspawn` somewhere safe. Owner: whoever grabs it first — it
   spans Cam's creator flow and the Death.reds layers.
+- **Character face/body loads from the LOCAL save, not the server: ACTIVELY BEING FIXED
+  BY CAM, 2026-08-28, not the stale "known/unfixed" state v0.3.113's notes still describe.**
+  Real progress since that release, in order: `54d9a85` wired the server to send the owner
+  their OWN stored appearance (previously it only ever went to everyone else) and the
+  client to attempt applying it locally. `78713d7` found `InitializeState` was never even
+  reached - every customization method lives on `gameuiICharacterCustomizationSystem`, the
+  INTERFACE, not the concrete class the game hands back (which has an empty function
+  list) - fixed the dispatch to resolve against the interface explicitly. `e795a52`
+  (latest) overturned the earlier conclusion that a live customization state requires the
+  creator: `equipmentSystem.script:4992` calls `GetState()` during ordinary gameplay, so
+  `GetLiveCustomizationState()` now resolves the same way instead of requiring
+  `InitializeState` at all.
+  **STILL UNPROVEN, and it is a pure visual check nothing here can substitute for:**
+  whether deserializing into that live state and calling `ReFinalizeState` actually
+  rebuilds the body mid-session. Cam's own words: "Phantom Veronica on screen is the only
+  test that counts." Needs one live join to answer. Do not restart this investigation from
+  scratch - the dispatch bug and the InitializeState/live-state question are BOTH already
+  closed; only the visual outcome of the final apply is open.
 - **Exit-grace 250m pop**: the 4s vehicle-exit grace freezes the puppet's interpolation
   target while the real player keeps moving → teleport-pop when grace ends
   (`[MultiMovement] delta runaway (250m)`, live). Fix: keep updating the target during
@@ -315,7 +292,15 @@ crash row, the new **Character identity** block, and the two new operational deb
   teleport-pops; the `vehicle_dr` candidate (dead reckoning + projective blend) gets
   0 pops / 0.03% starvation / lower error, and is identical to baseline on clean
   links. `adaptive` delay looks right for players (30ms effective delay on LAN vs
-  80) but misbehaves on vehicles — LAB BUG, investigate before trusting it. NEXT:
+  80). FIXED (2026-08-30): its vehicle numbers were previously nonsense (94.6%
+  starvation, 65m mean error) because `_target_delay()` sized its buffer from jitter
+  alone, enough slack for players (who extrapolate through a gap) but not vehicles
+  (which freeze solid the instant a second sample isn't already queued - see
+  `Baseline.render`'s "vehicles never extrapolate" rule). Added a per-kind margin
+  (2 periods of look-ahead for vehicles instead of 1) in `strategies.py`; rimtek/vehicle
+  now starve%=38.2, err_mean=2.95 (beats baseline's 3.24), correction_m=45 (was 884).
+  Still loses to `vehicle_dr`, which remains the right candidate to port - `adaptive`
+  was never meant for vehicles, it's just no longer lying about it. NEXT:
   capture real traces — launch a far player's client with `-sync-trace` (dev flag,
   hand-added; writes NDJSON into the mod's logs, ships to the NAS automatically),
   then `replay.py --trace file --validate` to prove the lab's baseline matches the
@@ -326,98 +311,6 @@ crash row, the new **Character identity** block, and the two new operational deb
   build (combat tip + -sync-trace) is STAGED but the test.15 pre-release is
   DELAYED on zeldfep's call (2026-08-22) - cut it when he says go; the test server
   is already rebuilt at e15f6f5 to pair with it.
-
-### Character identity: the template must stop being people's identity (opened 2026-08-28)
-The through-line behind three of these: **Phantom Veronica** — the template save, a female
-V at level 34 — supplies the WORLD (doors, quests, story position) and must never supply
-anybody's identity. Cam's rule: *"you should ONLY use the world around her, not her herself
-as a character."* Seeing her in-game IS the failure signal.
-
-- **You spawn as Phantom Veronica. FIX WRITTEN, NEVER RELEASED, UNTESTED (e795a52).**
-  The server has always decoded the stored appearance and handed it to every OTHER client —
-  which is why remotes looked right and the only person who never saw their own character
-  was the person playing it. It never sent it back to the owner, and `SetCharacterStatus`
-  only recorded flags. Server now sends it (`Level.cpp`, 32 additive lines) on
-  `NotifyAppearanceUpdate` addressed to the player's own id — **deliberately NOT new
-  `SpawnCharacterResponse` fields**: netpack prefixes each message with a presence bitfield
-  sized to its optional fields, that one reads 6 bits, and two more would make it 8 and
-  misalign every field after them on any client not rebuilt in lockstep. `.proto` files are
-  byte-for-byte unchanged and old clients are unaffected.
-  Client side took three wrong turns worth recording: (1) `InitializeState` is creator-only
-  — the engine refuses it in gameplay and the game itself calls it from only two pregame
-  menus; (2) the RTTI functions live on `gameuiICharacterCustomizationSystem`, the INTERFACE
-  — the concrete class has **0 functions**, so `Red::CallVirtual` never found them and
-  returned false without calling anything; (3) `GetCustomizationState()` reads
-  `(ccSystem + 0x78)` which IS null in play, but `equipmentSystem.script:4992` calls
-  `GetState()` during ordinary gameplay to compute a hair suffix — **the state is reachable,
-  through the RTTI accessor, not that offset.** Current code asks the way the game asks.
-  Staged logging brackets every step (`GetState BEGIN/COMPLETE`, `Deserialize ccstate`,
-  `ReFinalizeState`) and a failure names its stage. One-shot state machine + stale-update
-  rejection keyed on the remote player id (reassigned every spawn, so it doubles as a
-  revision token with nothing added to the wire).
-  **NEXT: it has never been in a release, so the launcher cannot deliver it. Test build,
-  then confirm ON SCREEN — `COMPLETE` in the log is not a character with the right face.**
-
-- **Veronica's inventory lands on the player. FIX WRITTEN, UNTESTED (d926ca9).**
-  The strip runs, the kit lands correctly (5 items, €$20,000, no chrome) — and ~88 seconds
-  later 124 stacks and 14 cyberware appear, and the 90s autosave writes them to the server
-  as the character's real inventory. **Not a vanilla engine grant** — a fresh start has none
-  of that, and the counts vary by session (409/60, then 124/14) where a fixed grant would
-  not. It is her save data arriving late.
-  Fix is `MpStarterSettlement` (Inventory.reds): waits for the stack count to grow past the
-  kit, waits for it to stop moving, cleans ONCE, disarms permanently. Detects rather than
-  sleeping — 88s is one machine's observation, not a contract.
-  **HARD CONSTRAINT, do not "improve" this into a recurring strip:** Cam's rule is *"any new
-  weapon, clothing, cyberware, money or any item a person grabs or buys stays on them."*
-  A cleanup on a timer / on inventory change / on reconnect would delete a gun somebody just
-  bought. It arms ONLY inside `ShouldEquipRestored()`, which is true only for a starter kit,
-  which is true only at character creation.
-  **NEXT: make a character, watch for `settlement: armed` → `INITIALIZED`, then buy
-  something, reconnect, confirm it survived.**
-
-- **Money does not persist. NOT STARTED.** 84 eddies picked up; every subsequent capture
-  read exactly `20000`. Nothing decayed — a gain never entered the record. Candidate: a
-  second restore ran mid-session (`restore DONE: money 20000 -> 20000`) and re-applied the
-  server's snapshot, which would also violate the items-must-stay rule. **Instrument every
-  boundary before touching it** — capture → send → record → save → reload → apply.
-
-- **Requested, not started:** `/rename` for admins (key on `CharacterId`, NOT the Discord
-  account — Discord names change; needed because the invisible chat box made people type
-  names blind, producing "JulianJulian Vale"); lock difficulty to hardest and remove in-game
-  switching; four character slots for admins with used/empty shown; delete a character.
-  Note the plumbing is half there already: `AuthenticationResponse` carries a *list* of
-  `CharacterSummary`, and `CharacterRecord` already has `Slot` and `CharacterId`.
-
-### Landed 2026-08-28 (kept brief; details in the rows above)
-- **Character overwrite — FIXED (fbdff4a).** Cam lost a character to this. He connected, was
-  restored correctly (13 stacks, €$20,000), pressed join from the main menu — which detaches
-  the world and rebuilds it from the LOCAL save — and 70s later the disconnect save captured
-  the template and sent it as him: `server sent 13 stack(s)` became `409 stack(s), 872
-  eddies`. `m_restorePending` could not catch it; it only covers the window before the first
-  restore. Now `m_characterLive`, set when a restore completes and cleared by ANY world
-  detach, gates all four save paths through one rule (`MaySaveCharacter()`).
-- **Quitting saves — FIXED (019a4cc).** The guard above created a second bug: the only exit
-  save lived in `Disconnect()`, and quit-to-desktop / quit-to-menu tear the world down on the
-  engine's schedule, so the guard (correctly) refused and the session was lost. The save now
-  runs at the TOP of `OnBeforeWorldDetach` — the last instant the body is still yours.
-- **The invisible chat box — SOLVED (96da4bf, shipped v0.3.113).** Never a visibility problem.
-  A native parent-chain walk (`LogWidgetAncestry`, added because `inkWidget` in 2.31 has
-  `Reparent` and no `GetParentWidget`, so script can only walk DOWN) showed every ancestor
-  visible with opacity 1 — and the `hud` canvas at `pos=(0,0)`, then `(47,1688)` thirteen
-  seconds later, right after an `OnVehicleEnter`. `(0,0)` is how the asset authors it, and the
-  ONLY things that ever moved it were the `to_vehicle`/`from_vehicle` animations. Nothing
-  played one at startup, so the whole custom HUD drew in the top-left corner until you got
-  into a car. Now a `from_vehicle` plays when the connection comes up.
-  **Not cosmetic:** the name prompt fires at spawn into a box that was not on screen, and a
-  name is chosen ONCE — that is where "JulianJulian Vale" came from.
-  Eliminated with evidence along the way, so nobody re-treads it: the widget matches its
-  authored state exactly, and `multiplayer_ui` in `prototype_hud.inkhud` carries the MOST
-  permissive context list of all 70 entries and is otherwise field-for-field identical to
-  `new_phone`. (Decoded with a WolvenKit CLI built from source — `dotnet build
-  WolvenKit.CLI`, then `convert serialize` — worth knowing that route exists.)
-- **Crash instruments removed (58c80f0)** now the race is understood: the `0xDD` free-poisoning
-  (memset of every freed flecs block) and the per-frame mutex+set census in `progress()`.
-  Kept: the `FlecsThread` tripwires, which cost one relaxed load off the per-frame path.
 
 ### Manifest system: built, waiting on two keys and one deploy
 - **Cam's signing key**: he runs `node tools/manifest/keygen.cjs`, posts the PUBLIC line
@@ -451,30 +344,6 @@ as a character."* Seeing her in-game IS the failure signal.
   naming. (4198 is CONFIRMED ArchiveXL and pulled — see modlist `_pulled`.)
 
 ### Operational debts
-- **"Built and pushed" is NOT "deployed" — three surfaces, and each one bit once on
-  2026-08-28.** Every time, a correct fix looked broken because the thing under test was not
-  the thing that was built. Verify the artifact contains the specific change, by string, not
-  by timestamp, before asking anyone to test.
-  1. **Redscript does not ship with the build.** The DLL is a symlink into
-     `build\windows\x64\release\`, so it goes live the instant it links. Redscript does not:
-     the plugin's `assets` folder is a JUNCTION to `distrib\launcher\mod\assets`, and
-     **`xmake install -o distrib Client` prints "install ok!" and leaves edited `.reds` at
-     their previous contents.** Force-copy
-     (`Copy-Item "code\assets\redscript\*" ... -Recurse -Force`) and then check the deployed
-     file. Never mirror/`/PURGE`: `distrib` legitimately carries `World\CharacterProfile.reds`
-     and `World\KiroshiScanner.reds`, which are not in `code`. `Ship.ps1` is safe — line 343
-     force-copies and 346-348 verify, so releases were never affected.
-  2. **The launcher writes THROUGH the symlink.** Installing a release replaces the dev build
-     with the release binary, so a fix built minutes earlier silently disappears and the game
-     logs behaviour from code no longer in the tree. Rebuild after any launcher install.
-  3. **A fix that exists only in git reaches nobody.** The appearance fix was committed,
-     pushed to main and verified in the local build — then v0.3.113 shipped without it,
-     because the release had already been cut. The launcher can only deliver what is in a
-     release.
-- **No manifest signing key** (`~/.nco-manifest-key`), so releases ship without
-  `server-manifest.json` and players get no manifest verification. NOT new — v0.3.107 through
-  v0.3.113 all lack it. `tools\manifest\keygen.cjs` fixes it permanently; it generates a key,
-  so it is Cam's to run.
 - **Live server runs feat-built code while `main` lags** — Cam deploys the live box by
   hand from feat; the NAS cron tracks main. Either merge feat→main at a stable point or
   keep the cron pointed where deploys actually come from. Divergence is how a "clean"
@@ -508,6 +377,7 @@ as a character."* Seeing her in-game IS the failure signal.
 | Combat | `code/server/native/Game/Level.cpp` (handlers) + `Components/{Health,Weapon,Quickhack}Component.h` + `code/assets/redscript/Combat.reds` | Detect → validate → broadcast → apply. Server owns health, magazine, RAM pool | **The game computes, the server bounds.** Weapon damage, quickhack damage and RAM cost all come from the client because they are native calculations needing a live StatsSystem — `GetCost()` runs `CalculateStatModifiers` against the attacker's deck and perks and can include a RANDOM modifier. Quickhack damage MUST stay 0 in the rule table: Cyberpunk applies it through the ordinary hit pipeline, so a number there double-counts (the v0.3.104 bug). A TweakDBID is **CRC32** of the name + length in bits 32-39, not FNV — guarded by a static_assert against a value dumped from the game |
 | Making players targetable | `code/assets/Tweaks/CyberpunkMP.tweak` + `Hackable.reds` | `objectActions` on the puppet records; hostile attitude at spawn | **`MaMuppet`/`WaMuppet` inherit from `Character.Panam`, NOT from `Character.Muppet`** — editing Muppet does nothing. Quickhack action names in the game's scripts are WRONG (`BaseBlindHack` not `BlindHack`, `MadnessHackBase` not `MadnessLvl3Hack`) — they were dumped live. Hostile attitude satisfies BOTH gates: `Att_Hostile` for `TSF_EnemyNPC` and the fourth route to `IsAggressive()`. The entity templates were never missing targeting components (16 `gameTargetingComponent`s, confirmed via WolvenKit CLI). Behind `--hackable-puppets` |
 | Runtime inspection | `bin/x64/plugins/cyber_engine_tweaks/mods/nco_hackdump` (not in repo) | Dumps TweakDB data the game will not reveal statically | CET only honours `registerForEvent` from `init.lua`; a required module's registration is ignored. Mod globals are NOT reachable from the console — export by returning a table. `io` is sandboxed to the mod folder. **Lua output goes to `scripting.log`**, not `cyber_engine_tweaks.log` |
+| World/asset editing | External tool, not in repo: [WolvenKit](https://github.com/WolvenKit/Wolvenkit/releases) | Editor + CLI for the game's own resource formats (`.ent`, `.mesh`, `.app`, world/sector nodes, TweakDB). Already used once to confirm the puppet templates' `gameTargetingComponent`s statically (see the targeting row above) — it is the tool for any future world-building, level-editing, or static-asset-inspection work, not just confirmation checks. **LIVE on the NAS as of 2026-08-29**: `tools/deploy/update-wolvenkit.sh` is wired into `truenas_admin@100.90.85.33`'s crontab (`0 * * * *`, self-throttled to ~72h internally — see the script's own header for why cron frequency and check cadence are deliberately decoupled) and the seed run succeeded — `~/wolvenkit-console/VERSION` reads `8.20.0`, `~/wolvenkit-console/current/` holds the full `WolvenKit.ConsoleLinux` extraction. Deployed by copying the file directly rather than through the tracked git pull, because that checkout is on `feat/world-state` (see the Deploy row below) and does not have this file yet — if `feat/world-state` is ever reset/rebuilt from git, this script and the cron line survive independently of it, but a fresh checkout elsewhere would need both re-applied by hand until this lands on that branch too. | **Check the releases page for the version matched to game patch 2.31** before using it on this project — WolvenKit versions track specific game patches, and a mismatched version can misread or corrupt resource formats it does not recognise. Read-only inspection (CLI dumps) is low-risk; anything that WRITES a resource file should be treated the same as an engine version pin — verify against 2.31 first. |
 | Launcher | `code/launcher-lite/main.js` | Discord identity (membership: only 200/404 are verdicts), roles (10-min memo), manifest state machine, install lock + queue, Nexus manager, game detect (A–Z drives), footprint/uninstall | **CSS specificity**: base `button.action` (0,1,1) beats bare class rules — trio overrides must be `button.action.x`. Electron packaged: new source files MUST be added to package.json `build.files` (v0.3.97 shipped importing a file it didn't contain). **Uninstall is a two-layer mirror**: footprint in main.js AND `build/installer.nsh` — a new write location goes in BOTH. The `nxm://` class is cleared only when its command points at OUR exe (Vortex/MO2 write the same key; empirically tested both ways 2026-08-22) |
 | Manifest kit | `code/launcher-lite/manifest.js` (+ selftest) | Signature verify vs pins, §2.1 availability states, install digest, ownership index, unmanaged classifier, tailnet check | Pure functions, Electron-free; run `node manifest.selftest.mjs` (82 checks) before shipping launcher changes |
 | Ship tooling | `tools/Ship.ps1`, `tools/manifest/*.cjs` | Gate battery, staging, carry-forward, manifest generate/sign/verify-vs-pins, prerelease→verify→promote | Ship bumps package.json but never commits — carry the bump or the next ship collides with an existing tag and silently uploads into an old release |

@@ -41,6 +41,14 @@ public static func MpDeathFloor() -> Float = 1.0
 // scene keeps its own claim, and dropping ours does not touch it.
 public static func MpGodModeSource() -> CName = n"CyberpunkMP.NoFlatline"
 
+// Separate from MpGodModeSource on purpose: that one is permanent for the whole session
+// and cleared only on disconnect (MpClearImmortality). This one is granted and revoked
+// within seconds of each other, every single revive - reusing the same source would let
+// a slow revoke on one race the next grant on another and remove the wrong instance's
+// claim. God mode is reference-counted by source, so two distinct sources means the two
+// lifetimes can never step on each other.
+public static func MpReviveGraceSource() -> CName = n"CyberpunkMP.ReviveGrace"
+
 // The engine's own "this entity cannot die" flag, and the reason this file is on its third
 // attempt.
 //
@@ -87,6 +95,57 @@ public func MpClearImmortality(player: ref<PlayerPuppet>) -> Void {
                                                  gamedataStatPoolType.Health, 0.0, null);
 
     FTLog(s"[Death] immortality removed - singleplayer death is back to normal");
+}
+
+/**
+ * A few seconds of real invulnerability right after a revive.
+ *
+ * The gap this closes: MpApplyImmortality stops FLATLINED, and RevivePlayer puts health
+ * back to 100 - but 100 health is not immunity, and the server decides WHERE to respawn,
+ * not whether that spot is currently safe. A player downed mid-firefight and revived
+ * where they fell (or wherever /setspawn points, if that also happens to be hot) can be
+ * shot straight back down, over and over, at whatever the down-to-revive interval is -
+ * the farming loop the fresh-creator-flow reports describe (~20-30s cycles).
+ *
+ * `Invulnerable` rather than raising the health floor further: the floor already stops
+ * death, so the actual problem is the DAMAGE landing at all in that window, not what it
+ * reduces health to.
+ *
+ * Revoked by a delayed callback rather than left to expire on its own - GodMode has no
+ * built-in TTL, only AddGodMode/RemoveGodMode, so something has to call the second one.
+ */
+// Matches MpDeathFloor's own shape above - a zero-arg static func rather than a bare
+// module-level constant, which has no proven use anywhere else in this codebase.
+public static func MpReviveGraceSeconds() -> Float = 5.0
+
+public func MpGrantReviveGrace(player: ref<PlayerPuppet>) -> Void {
+    if !IsDefined(player) {
+        return;
+    }
+
+    let gods = GameInstance.GetGodModeSystem(player.GetGame());
+    gods.AddGodMode(player.GetEntityID(), gameGodModeType.Invulnerable, MpReviveGraceSource());
+
+    FTLog(s"[Death] revive grace granted - invulnerable for \(MpReviveGraceSeconds())s");
+
+    let expire = new MpReviveGraceExpireCallback();
+    expire.player = player;
+    GameInstance.GetDelaySystem(player.GetGame()).DelayCallback(expire, MpReviveGraceSeconds(), false);
+}
+
+public class MpReviveGraceExpireCallback extends DelayCallback {
+    public let player: wref<PlayerPuppet>;
+
+    public func Call() -> Void {
+        if !IsDefined(this.player) {
+            return;
+        }
+
+        let gods = GameInstance.GetGodModeSystem(this.player.GetGame());
+        gods.RemoveGodMode(this.player.GetEntityID(), gameGodModeType.Invulnerable, MpReviveGraceSource());
+
+        FTLog(s"[Death] revive grace over");
+    }
 }
 
 // Puts the floor under the player's health and starts listening for it.
