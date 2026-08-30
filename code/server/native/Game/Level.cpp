@@ -22,10 +22,13 @@
 #include "Validation.h"           // sanity checks on anything a client sent
 
 #include <chrono>
+#include <cmath>                  // std::floor, for ToCell - see Level::kCellSize
 
-constexpr static float sCellSize = 60 * 100;
-constexpr static int16_t sCellLoadRadius = 3;
-constexpr static int16_t sCellUnloadRadius = 4;
+// Aliases for the contract in Level.h. Declared there because the client is told these
+// numbers and checks our arithmetic against them - see the comment on Level::kCellSize.
+constexpr static float sCellSize = Level::kCellSize;
+constexpr static int16_t sCellLoadRadius = Level::kLoadRadius;
+constexpr static int16_t sCellUnloadRadius = Level::kUnloadRadius;
 
 static bool IsCellInRange(const GridCell::TPosition aCenter, const GridCell::TPosition aCell,
                           const int16_t aRange) noexcept
@@ -55,7 +58,11 @@ struct PendingReleaseComponent
 
 GridCell::TPosition Level::ToCell(const glm::vec3& acLocation) noexcept
 {
-    return {static_cast<int16_t>(acLocation.x / sCellSize), static_cast<int16_t>(acLocation.y / sCellSize)};
+    // std::floor, matching the client exactly. A plain cast truncates toward zero, which
+    // for x = -1769 gives cell 0 where floor gives -1 - so the client, which floors,
+    // computed a different cell and threw the load away as map-invalid.
+    return {static_cast<int16_t>(std::floor(acLocation.x / sCellSize)),
+            static_cast<int16_t>(std::floor(acLocation.y / sCellSize))};
 }
 
 Level::Level(World* apWorld) noexcept

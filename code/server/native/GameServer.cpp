@@ -934,8 +934,12 @@ void GameServer::AdmitPlayer(const ConnectionId aConnectionId, const std::string
     settings.set_update_rate(m_config.UpdateRate);
     settings.set_world_id("night-city");
     settings.set_coordinate_version(1);
-    settings.set_cell_size(60000);
-    settings.set_interest_radius(3);
+    // From the grid itself, never a literal. These were hand-written as 60000 and 3 while
+    // Level bins by 6000 - so the client, which re-derives each load's cell from these
+    // numbers and drops anything that disagrees, rejected every character and vehicle load
+    // for a week. Nobody could see anybody. See the comment on Level::kCellSize.
+    settings.set_cell_size(static_cast<uint32_t>(Level::kCellSize));
+    settings.set_interest_radius(Level::kLoadRadius);
     response.set_settings(settings);
 
     // Tell them what character this ACCOUNT owns, before they can decide for themselves.
