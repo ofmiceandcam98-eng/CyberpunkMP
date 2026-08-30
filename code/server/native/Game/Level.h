@@ -6,6 +6,27 @@ struct World;
 
 struct Level
 {
+    // THE grid, in one place, because two copies of it silently broke multiplayer.
+    //
+    // The client re-derives a load's cell from its position and drops the load if its
+    // answer differs from ours (the map-contract check). That makes this number half of a
+    // contract, not an implementation detail - and it was declared here as 6000 while
+    // GameServer advertised 60000, so the two sides disagreed by 10x and the client
+    // rejected EVERY character and vehicle load from 2026-08-24 until this was found.
+    // Nobody could see anybody. Advertise this constant; never a literal.
+    static constexpr float kCellSize = 60 * 100;
+
+    // How far interest reaches, in cells. Advertised alongside the size for the same
+    // reason: the client is entitled to compute what we compute.
+    static constexpr int16_t kLoadRadius = 3;
+    static constexpr int16_t kUnloadRadius = 4;
+
+    // Which cell a world position falls in.
+    //
+    // FLOORED, not truncated. A C++ float-to-int cast rounds toward zero, which makes the
+    // cell either side of the origin twice as wide as every other cell and - worse - makes
+    // this disagree with std::floor for every negative coordinate. Night City is mostly
+    // negative, so the honest-looking cast was wrong across most of the map.
     static GridCell::TPosition ToCell(const glm::vec3& acLocation) noexcept;
 
     Level(World* apWorld) noexcept;
