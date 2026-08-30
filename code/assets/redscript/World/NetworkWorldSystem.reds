@@ -609,6 +609,11 @@ public native class NetworkWorldSystem extends IGameSystem {
         // for one player and not another.
         MpArmDeathFloor(player as PlayerPuppet);
 
+        // A few seconds where nothing can put them straight back down. Full health alone
+        // does not stop a revive-at-the-same-hot-spot loop; see Death.reds for why this
+        // needs to be actual invulnerability, not a bigger number.
+        MpGrantReviveGrace(player as PlayerPuppet);
+
         // Asking the server where to go rather than deciding here. It owns the respawn
         // point, and it is the same teleport path /tp and /return already use - so this
         // adds no new way for a client to move itself anywhere it likes.
