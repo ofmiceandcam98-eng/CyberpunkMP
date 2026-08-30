@@ -279,6 +279,55 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   test that counts." Needs one live join to answer. Do not restart this investigation from
   scratch - the dispatch bug and the InitializeState/live-state question are BOTH already
   closed; only the visual outcome of the final apply is open.
+- **The template's inventory lands on the player. FIX WRITTEN 2026-08-28, UNTESTED
+  (d926ca9).** Same disease as the row above - Phantom Veronica supplying identity instead of
+  just the world. The strip runs, the kit lands correctly (5 items, 20,000 eddies, no chrome),
+  and **~88 seconds later** 124 stacks and 14 cyberware appear; the 90s autosave then writes
+  them to the server as the character's real inventory, which is why they survive reconnects.
+  **NOT a vanilla engine grant** - a fresh start has none of that, and the counts vary by
+  session (409/60, then 124/14) where a fixed grant would not. It is her save data arriving
+  late. Fix is `MpStarterSettlement` (Inventory.reds): waits for the stack count to grow past
+  the kit, waits for it to stop moving, cleans ONCE, disarms permanently. Detects rather than
+  sleeping - 88s is one machine's observation, not a contract.
+  **HARD CONSTRAINT - do not "improve" this into a recurring strip.** Cam's rule: *"any new
+  weapon, clothing, cyberware, money or any item a person grabs or buys stays on them."* A
+  cleanup on a timer, on inventory change, or on reconnect would delete a gun somebody just
+  bought. It arms ONLY inside `ShouldEquipRestored()`, true only for a starter kit, true only
+  at character creation. NEXT: make a character, watch `settlement: armed` -> `INITIALIZED`,
+  then buy something, reconnect, confirm it survived.
+- **Money does not persist. NOT STARTED (2026-08-28).** 84 eddies picked up; every subsequent
+  capture read exactly `20000`. Nothing decayed - a gain never entered the record. Candidate:
+  a second restore ran mid-session (`restore DONE: money 20000 -> 20000`) re-applying the
+  server's snapshot, which would also violate the items-must-stay rule above. Instrument every
+  boundary before touching it: capture -> send -> record -> save -> reload -> apply.
+- **Character overwrite - FIXED 2026-08-28 (fbdff4a), and the fix needed a second fix
+  (019a4cc).** Cam lost a character: connected, restored correctly (13 stacks, 20,000 eddies),
+  pressed join from the main menu - which detaches the world and rebuilds it from the LOCAL
+  save - and 70s later the disconnect save captured the template and sent it as him
+  (`409 stack(s), 872 eddies`). `m_restorePending` could not catch it; it only covers the
+  window before the FIRST restore. Now `m_characterLive`, set when a restore completes and
+  cleared by ANY world detach, gates all four save paths through one rule
+  (`MaySaveCharacter()`). **The second fix matters as much:** that guard made the only exit
+  save (in `Disconnect()`) refuse on quit-to-desktop and quit-to-menu, which tear the world
+  down on the engine's schedule - trading a rare catastrophic loss for a routine small one.
+  The save now runs at the TOP of `OnBeforeWorldDetach`, the last instant the body is still
+  the server's character. Cam caught this: *"also make sure the game saves when you quit."*
+- **The invisible chat box - SOLVED 2026-08-28 (96da4bf, shipped v0.3.113).** Never a
+  visibility problem. A native parent-chain walk (`LogWidgetAncestry`, added because
+  `inkWidget` in 2.31 has `Reparent` and **no `GetParentWidget`**, so script can only walk
+  DOWN) showed every ancestor visible at opacity 1 - and the `hud` canvas at `pos=(0,0)`,
+  then `(47,1688)` thirteen seconds later, right after an `OnVehicleEnter`. `(0,0)` is how the
+  asset authors it, and the ONLY things that ever moved it were the `to_vehicle` /
+  `from_vehicle` animations. Nothing played one at startup, so the whole custom HUD drew in
+  the top-left corner until the player got into a car. A `from_vehicle` now plays when the
+  connection comes up. **Not cosmetic:** the name prompt fires at spawn into a box that was
+  not on screen, and a name is chosen ONCE - that is where "JulianJulian Vale" came from, and
+  why Cam has asked for an admin `/rename` keyed on `CharacterId`, not the Discord account.
+  Eliminated with evidence so nobody re-treads it: the widget matches its authored state
+  exactly, and `multiplayer_ui` in `prototype_hud.inkhud` carries the MOST permissive context
+  list of all 70 entries and is otherwise field-for-field identical to `new_phone`. Decoded by
+  building the WolvenKit CLI from source (`dotnet build WolvenKit.CLI`, then
+  `convert serialize`) - worth knowing that route exists.
 - **Exit-grace 250m pop**: the 4s vehicle-exit grace freezes the puppet's interpolation
   target while the real player keeps moving → teleport-pop when grace ends
   (`[MultiMovement] delta runaway (250m)`, live). Fix: keep updating the target during
@@ -344,6 +393,29 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   naming. (4198 is CONFIRMED ArchiveXL and pulled — see modlist `_pulled`.)
 
 ### Operational debts
+- **"Built and pushed" is NOT "deployed" - three surfaces, each of which bit once on
+  2026-08-28.** Every time, a correct fix looked broken because the thing under test was not
+  the thing that was built, and each cost a full test round-trip with Cam. Verify the artifact
+  contains the specific change, **by string, not by timestamp**, before asking anyone to test.
+  1. **Redscript does not ship with the build.** The DLL is a symlink into
+     `build\windows\x64\release\`, so it is live the instant it links. Redscript is not: the
+     plugin's `assets` folder is a JUNCTION to `distrib\launcher\mod\assets`, and
+     **`xmake install -o distrib Client` prints "install ok!" and leaves edited `.reds` at
+     their previous contents.** Force-copy, then check the deployed file. Never
+     mirror/`/PURGE` - `distrib` legitimately carries `World\CharacterProfile.reds` and
+     `World\KiroshiScanner.reds`, which are not in `code`. `Ship.ps1` is safe (line 343
+     force-copies, 346-348 verify), so releases were never affected - only the manual path.
+  2. **The launcher writes THROUGH the symlink.** Installing a release replaces the dev build
+     with the release binary, so a fix built minutes earlier silently disappears and the game
+     logs behaviour from code no longer in the tree. Rebuild after any launcher install.
+  3. **A fix that exists only in git reaches nobody.** The appearance fix (`e795a52`) was
+     committed, pushed to main, and verified in the local build - then v0.3.113 shipped
+     without it, because the release had already been cut. The launcher can only deliver what
+     is in a release.
+- **No manifest signing key** (`~/.nco-manifest-key`), so releases ship without
+  `server-manifest.json` and players get no manifest verification. NOT new - v0.3.107 through
+  v0.3.113 all lack it. `tools\manifest\keygen.cjs` fixes it permanently; it generates a key,
+  so it is Cam's to run.
 - **Live server runs feat-built code while `main` lags** — Cam deploys the live box by
   hand from feat; the NAS cron tracks main. Either merge feat→main at a stable point or
   keep the cron pointed where deploys actually come from. Divergence is how a "clean"
