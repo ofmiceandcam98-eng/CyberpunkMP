@@ -59,23 +59,31 @@ people to work that is already done.
   `51756fc` genuinely stops every phone call — zero presented in a full session — and the
   conversation still happened, because it is a scene the quest drives. Suppression cannot
   stop a running quest; prevention is the only route.
-- **Clean-start probe: BUILT, INSTALLED, UNTESTED (2026-08-30).** A game start is a
-  `.gamedef` — root quests + spawn tag + world, and the game ships 824 of them.
-  `ep1\quest\ep1_standalone.gamedef` lists **three independent** root quests: the PL story
-  (`ep1_standalone.quest`), the base world with the prologue already skipped
-  (`cyberpunk2077_ep1_standalone.quest`, 1,744 bytes, enters `cyberpunk2077.questphase` at
-  the `EP1_Standalone` socket), and the preorder Quadra. The probe is an 8 KB archive
-  overriding that gamedef with the story quest removed and everything else untouched, to
-  answer one question: **will the game honour an overridden gamedef?** Test in
-  SINGLEPLAYER (New Game → Phantom Liberty) — it costs no server character. Evidence is the
-  save's `metadata.9.json` fact list.
-  - **Caveat found while tracing:** entering `ep1.questphase` at `Base` still reaches
-    `q301_hook.questphase` (20 nodes vs 19 from `EP1_Standalone`, near-identical sets), so
-    `Base` *arms* q301 rather than avoiding it. The clean start likely needs the spawn tag
-    changed too, not just the story root dropped.
+- **Clean multiplayer start: SHIPPED 2026-08-30 (`c1518c4`), needs field testing.** A game
+  start is a `.gamedef` — root quests + spawn tag + world, and the game ships 824 of them.
+  `ep1\quest\ep1_standalone.gamedef` lists **three independent** root quests, only one of
+  which is the story. `code\assets\Archives\packed\...\zz_NightCityOnline_CleanStart.archive`
+  (8 KB, a second archive; ArchiveXL is handed the whole directory) overrides it with:
+  `cyberpunk2077_ep1_standalone.quest` (base Night City, prologue skipped) +
+  **`ep1.quest`** (CDPR's non-standalone EP1 root: sets `ep1_installed=1`, enters
+  `ep1.questphase` at `Base`, no story) + `ep1_preorder.quest`. Nothing authored.
+  - **Proven before shipping:** a fresh character came up with an **empty quest log** and
+    **not one EP1 fact** (`ep1_standalone=0 ep1_active=0 q301_active=0` against 1/1/1 in the
+    control), and Songbird never called. Save `ManualSave-132` had a completely empty fact
+    list.
+  - **NOT yet tested:** the shipped combination *with* `ep1.quest` added back — i.e. whether
+    Dogtown returns and the story stays away together. That is what players are testing now.
+  - **Level 15 came from the story root.** Clean-start characters are level 1 with no base
+    prologue quests marked done. The server will have to grant progression; it already
+    grants the starter kit and eddies.
+  - **A spawn tag is content owned by its quest.** The first probe kept the stock
+    `#q301_spwn_ep1standalone_opener` while deleting the quest that defines it, and players
+    **fell through the map**. Now `#q000_spwn_start` — the base game's own, which is a
+    holding room rather than a place; the server moves new arrivals on connect
+    (`/setstart`). Every shipped gamedef pairs its spawn with its own quest.
   - **HAZARD:** `Ship.ps1:574` copies `distrib\launcher\mod\assets` wholesale and never
-    cleans it. Anything left in `assets\Archives\` ships to every player. The probe must be
-    out of `distrib` before any ship.
+    cleans it. Anything left in `assets\Archives\` ships to every player — keep probes and
+    experiments out of `distrib`.
 
 **Landed since the last pass, so nobody re-opens them:** `/rename` for admins is IMPLEMENTED
 (`ChatSystem.cpp:1513`, `kAdmin`-gated, keyed on the character id, and deliberately does NOT
