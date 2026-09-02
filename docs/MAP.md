@@ -29,6 +29,39 @@ Keep this block current; it is the first thing anyone should read. Cam: *"we sho
 the mental map pretty often."* A stale in-flight list is worse than none, because it sends
 people to work that is already done.
 
+- **SLOTS, SOFT DELETE AND THE SELECTOR — BUILT, NOT SHIPPED (`9a70e1d`).** Branch only, no
+  release, `main` untouched. **This is a flag day when it does ship** — `CharacterSummary`
+  gains `slot`/`is_active`, `AuthenticationResponse` gains `character_slots`, and there are
+  two new client messages, so every un-rebuilt client is refused. Batch anything else waiting
+  on a protocol change with it.
+  - **Most of the server model was already here and unused.** `Characters` is a vector,
+    `ActiveSlot` exists, `RetiredCharacters` exists, and `RetireCharacter` already took a slot
+    and already did a **soft delete** — the row moves rather than being erased, so an id is
+    never reissued and a deletion can be undone by hand. What was missing was everything above
+    it, and the fact that `SendCharacterList` collapsed the roster to the active character
+    wrapped in a list of one.
+  - **One slot for a player, four for admin and above** (`PlayerStore::SlotsForLevel`). A
+    permission, so the server decides and the client is told — an allowance the client
+    computes is one it can raise. **Lowering it never deletes anything:** an account over the
+    limit keeps every character and simply cannot make another.
+  - **A lifetime row ceiling of 60, separate from the slot count**, and necessary *because*
+    deletion is soft: create-and-delete-and-create writes a new row every time.
+  - **Slots are NOT contiguous and are NOT an identity.** Retiring the character in slot 1 of
+    three leaves 0 and 2 occupied. The panel draws by walking slots and looking each up in the
+    roster, never by walking the roster — the other way silently renumbers. Anything keyed on
+    a slot number is a bug waiting for a deletion.
+  - **`SelectSlot` refuses an empty slot** rather than falling back to slot 0. "You asked for
+    a character that is not there, so here is a different one" is how somebody ends up playing,
+    and then saving over, a character they did not choose.
+  - **Why the selector was off, fixed at the cause.** The note that replaced those lines said
+    the panel would say *"signing in… forever against a connection nobody opened"* — true,
+    because nothing on that screen asked the server who the account was. A **CHARACTERS** menu
+    entry now opens the connection deliberately and polls until the roster lands, and the panel
+    is built only once the answer is here. It either shows the roster or is not on screen.
+  - Roster accessors bounds-check, and `GetRosterSlot` answers **-1** for a bad index rather
+    than 0 — zero is a real slot, and a caller reading it as one would offer to delete the
+    character in slot 0 when asked about a row that is not there.
+
 - **Built on the branch, NOT shipped (`a0346ce`).** Cam's instruction was to build and not
   ship. On `feat/world-state` only: no release, and deliberately not pushed to `main`, since
   `main` is the deploy.
