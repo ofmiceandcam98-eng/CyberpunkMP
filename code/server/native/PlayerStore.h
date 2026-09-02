@@ -253,11 +253,26 @@ struct PlayerStore
         if (acCharacterId.empty())
             return nullptr;
 
+        // Normalise before comparing, because this is what a PERSON typed.
+        //
+        // Ids are stored grouped ("AEC-MJ6P") and read aloud without the hyphen. A correct
+        // id typed as "aecmj6p" is the same id and must find the same character; a
+        // mistyped one must find nothing rather than somebody else's. ParseCharacterId
+        // strips case, spaces and hyphens, verifies the check symbol, and hands back the
+        // stored form - so a typo fails HERE instead of resolving to a stranger.
+        //
+        // An unparseable id falls through to the raw comparison rather than refusing
+        // outright: legacy 16-hex ids parse fine, but anything else stored before this
+        // existed should still be findable by its exact text.
+        std::string reason;
+        const std::string normalised = ParseCharacterId(acCharacterId, &reason);
+        const std::string& wanted = normalised.empty() ? acCharacterId : normalised;
+
         for (const auto& record : m_records)
         {
             for (const auto& character : record.Characters)
             {
-                if (character.CharacterId != acCharacterId)
+                if (character.CharacterId != wanted)
                     continue;
 
                 if (apOwnerDiscordId)
