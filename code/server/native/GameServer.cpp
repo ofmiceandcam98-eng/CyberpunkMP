@@ -55,6 +55,7 @@ GameServer::GameServer()
         m_worldFacts.Load(serverPath / "config" / "worldfacts.json");
         m_vehicles.Load(serverPath / "config" / "vehicles.json");
         m_messages.Load(serverPath / "config" / "messages.json");
+        m_calls.Load(serverPath / "config" / "calls.json");
 
         LoadServerManifest(serverPath / "config" / "server-manifest.json");
 
@@ -183,6 +184,7 @@ void GameServer::OnUpdate()
     ReverifyPlayers(now);
     SavePlayerPositions(now);
     EnforceJail(now);
+    ExpireCalls(now);
 
     m_pWorld->Update(std::chrono::duration_cast<std::chrono::duration<float>>(delta).count());
 }
@@ -270,6 +272,19 @@ bool GameServer::GetStartPoint(glm::vec3& aPosition, float& aYaw) const
     aPosition = m_startPosition;
     aYaw = m_startYaw;
     return true;
+}
+
+void GameServer::ExpireCalls(std::chrono::steady_clock::time_point aNow)
+{
+    // Once a second. A ring timeout measured in seconds does not need finer resolution,
+    // and this walks every live call - which is nearly always none.
+    if (std::chrono::duration_cast<std::chrono::milliseconds>(aNow - m_lastCallCheck).count() < 1000)
+        return;
+
+    m_lastCallCheck = aNow;
+
+    if (auto* pChat = GetWorld()->get_mut<ChatSystem>())
+        pChat->TickCalls();
 }
 
 void GameServer::EnforceJail(std::chrono::steady_clock::time_point aNow)
@@ -524,6 +539,18 @@ void GameServer::OnDisconnection(ConnectionId aConnectionId, EDisconnectReason a
 
         if (auto* pPlayerComponent = player.get<PlayerComponent>())
         {
+            // A call does not survive its participant.
+            //
+            // Before anything else, because this needs the character still resolvable from
+            // the connection, and because the person on the other end should be told they
+            // are alone rather than left talking into a phone. Covers a crash exactly as
+            // it covers a clean quit - both arrive here as a dropped connection.
+            if (const auto* pCharacter = m_players.FindCharacter(pPlayerComponent->DiscordId))
+            {
+                if (auto* pChat = GetWorld()->get_mut<ChatSystem>())
+                    pChat->EndCallFor(pCharacter->CharacterId, CallState::Ended);
+            }
+
             // Save BEFORE the puppet is removed - afterwards there is no position left
             // to read. This is the branch that matters most: a crashed game drops its
             // connection, so this runs for a crash exactly as it does for a clean quit,

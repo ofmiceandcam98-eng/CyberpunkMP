@@ -2,6 +2,7 @@
 
 #include "Components/PlayerComponent.h"
 #include "CharacterRecord.h"
+#include "CallStore.h"
 
 // How far a line of chat carries, in metres.
 //
@@ -111,6 +112,37 @@ struct ChatSystem
      * account's characters is listening is exactly the question that must not be guessed.
      */
     void DeliverPendingMessages(const PlayerComponent& acPlayer);
+
+    // ------------------------------------------------------------------- calls ----
+    //
+    // Player-to-player calls only. Nothing here goes near the game's PhoneSystem, which is
+    // what keeps the Songbird block intact - see CallStore.h for the full argument.
+
+    /**
+     * The connected player whose ACTIVE character is this one, or an empty entity.
+     *
+     * "Active" is the whole point. Somebody logged in as their other character is, for
+     * every purpose here, offline: their phone is a different phone, and ringing it would
+     * be ringing a person who is not holding it.
+     */
+    flecs::entity FindByActiveCharacter(const std::string& acCharacterId) const;
+
+    /**
+     * End whatever call this character is in, and tell the other side.
+     *
+     * Public because three callers outside this file need it and all three are cases where
+     * a call must not survive: a disconnect, a crash, and a CHARACTER SWITCH. The last is
+     * the one worth naming - a call belongs to the character that made it, so it must end
+     * rather than follow the player to their next character.
+     */
+    void EndCallFor(const std::string& acCharacterId, CallState aState);
+
+    // Rings out calls nobody answered. Driven from the server tick.
+    void TickCalls();
+
+    // Tells both sides where a call now is. One place, so a state change cannot be
+    // announced to one participant and not the other.
+    void AnnounceCall(const CallSession& acSession, CallState aState);
 
     std::vector<PendingSale> m_pendingSales;
 
