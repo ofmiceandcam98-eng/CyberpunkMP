@@ -229,7 +229,37 @@ message UpdateAppearanceRequest {
 //
 // The confirmation belongs on the client, in front of the person losing the character. By
 // the time this message exists they have already answered it.
+// "Delete the character in this slot."
+//
+// The slot is named because a person clicked a row, not because the slot is the identity.
+// The server resolves the slot to a character and re-checks everything about it - a client
+// that names slot 9, or a slot holding somebody else's character, gets a refusal rather
+// than a deletion.
+//
+// Deletion is SOFT: the row moves to RetiredCharacters, so the slot is freed, the character
+// id is never reissued, and the deletion can be undone by hand. That is also why an account
+// has a lifetime row ceiling separate from its slot count - create-and-delete writes a new
+// row every time.
 message DeleteCharacterRequest {
+    int32 slot = 1;
+}
+
+// "Play as the character in this slot."
+//
+// Answers nothing on its own. The real answer is the spawn that follows, or a refusal on
+// the character list - the same shape every other character request has, because a request
+// that returned a verdict would have to block, and the client has nothing to block on.
+message SelectCharacterRequest {
+    int32 slot = 1;
+}
+
+// "Make a new character in this slot."
+//
+// Slot is named so a player with four can choose WHERE the new one goes rather than always
+// filling the first hole. The server refuses a slot that is occupied, out of range for this
+// account's allowance, or beyond the lifetime row ceiling.
+message CreateCharacterRequest {
+    int32 slot = 1;
 }
 
 // "I want to run this quickhack on this person."
@@ -467,5 +497,7 @@ message Protocol {
         StatusEffectRequest status_effect_request = 15;
         QuickhackUploadRequest quickhack_upload_request = 16;
         QuickhackRequest quickhack_request = 17;
+        SelectCharacterRequest select_character_request = 18;
+        CreateCharacterRequest create_character_request = 19;
     }
 }

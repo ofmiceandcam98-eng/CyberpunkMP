@@ -1652,6 +1652,140 @@ bool NetworkWorldSystem::IsConnected() const
     return service && service->IsConnected();
 }
 
+/**
+ * Takes the server's roster whole, slots and all.
+ *
+ * The old code read characters[0] and threw the rest away, which was correct while the server
+ * only ever sent one - and is exactly what a selector cannot work with.
+ *
+ * Called from both places the roster arrives: the authentication reply, which is the earlier
+ * and is what the main menu draws from before anyone asks for anything, and
+ * NotifyCharacterList, which is the answer to a select or a delete. One implementation, so
+ * the two cannot drift.
+ */
+void NetworkWorldSystem::AdoptRoster(const Vector<server::CharacterSummary>& acCharacters,
+                                     int32_t aSlots)
+{
+    // Only believe a sane allowance. Zero would draw no slots at all and hide every
+    // character the account has; a negative one is nonsense. An older server sends nothing,
+    // which arrives as zero, and one slot is the honest reading of that.
+    m_characterSlots = aSlots > 0 ? aSlots : 1;
+
+    m_roster.clear();
+    m_roster.reserve(acCharacters.size());
+
+    for (const auto& summary : acCharacters)
+    {
+        RosterEntry entry;
+        entry.Id = summary.get_id().c_str();
+        entry.Name = summary.get_name().c_str();
+        entry.Level = summary.get_level();
+        entry.Slot = summary.get_slot();
+        entry.SpawnedBefore = summary.get_spawned_before();
+        entry.Active = summary.get_is_active();
+
+        m_roster.push_back(std::move(entry));
+    }
+
+    // Sorted by slot, with a TOTAL order.
+    //
+    // Slot alone is not one: two rows reported for the same slot would swap places between
+    // redraws on arrival order alone, which reads on screen as rows moving by themselves.
+    // The id is the tie-break because it is the only field guaranteed unique.
+    std::sort(m_roster.begin(), m_roster.end(),
+              [](const RosterEntry& a, const RosterEntry& b)
+              {
+                  if (a.Slot != b.Slot)
+                      return a.Slot < b.Slot;
+                  return a.Id < b.Id;
+              });
+
+    spdlog::info("[Character] roster: {} character(s), {} slot(s)", m_roster.size(),
+                 m_characterSlots);
+}
+
+/**
+ * The roster, read out one scalar at a time.
+ *
+ * Every accessor bounds-checks and answers a harmless default rather than reaching past the
+ * end. redscript has no exceptions to catch and a bad index here would take the whole script
+ * VM with it - and the caller most likely to pass one is a selector drawing four rows against
+ * a roster that just shrank because somebody deleted a character.
+ */
+Red::CString NetworkWorldSystem::GetRosterId(uint32_t aIndex) const
+{
+    return aIndex < m_roster.size() ? Red::CString(m_roster[aIndex].Id.c_str()) : Red::CString("");
+}
+
+Red::CString NetworkWorldSystem::GetRosterName(uint32_t aIndex) const
+{
+    return aIndex < m_roster.size() ? Red::CString(m_roster[aIndex].Name.c_str()) : Red::CString("");
+}
+
+int32_t NetworkWorldSystem::GetRosterLevel(uint32_t aIndex) const
+{
+    return aIndex < m_roster.size() ? m_roster[aIndex].Level : 0;
+}
+
+int32_t NetworkWorldSystem::GetRosterSlot(uint32_t aIndex) const
+{
+    // -1 rather than 0 for a bad index. Zero is a REAL slot, and a selector that read it as
+    // one would offer to delete the character in slot 0 when asked about a row that is not
+    // there.
+    return aIndex < m_roster.size() ? m_roster[aIndex].Slot : -1;
+}
+
+bool NetworkWorldSystem::IsRosterActive(uint32_t aIndex) const
+{
+    return aIndex < m_roster.size() && m_roster[aIndex].Active;
+}
+
+bool NetworkWorldSystem::HasRosterSpawnedBefore(uint32_t aIndex) const
+{
+    return aIndex < m_roster.size() && m_roster[aIndex].SpawnedBefore;
+}
+
+/**
+ * "Play as the character in this slot."
+ *
+ * A REQUEST. It returns nothing because there is nothing to return yet: the server decides,
+ * and the answer arrives as a fresh roster or as a refusal carried on it. A caller that
+ * treats the absence of an error here as success is reading a sent packet as a verdict.
+ */
+void NetworkWorldSystem::SelectCharacterSlot(int32_t aSlot)
+{
+    const auto& service = Core::Container::Get<NetworkService>();
+    if (!service || !service->IsConnected())
+        return;
+
+    client::SelectCharacterRequest request;
+    request.set_slot(aSlot);
+    service->Send(request);
+
+    spdlog::info("[Character] asked the server to select slot {}", aSlot);
+}
+
+/**
+ * "Delete the character in this slot."
+ *
+ * Also a request, and deliberately not guarded here beyond the connection check: the server
+ * re-resolves the slot to a character and refuses an empty one, a slot out of range, or a
+ * deletion attempted while the player is standing in the world as that character. A check
+ * here would be a courtesy, not a control.
+ */
+void NetworkWorldSystem::DeleteCharacterSlot(int32_t aSlot)
+{
+    const auto& service = Core::Container::Get<NetworkService>();
+    if (!service || !service->IsConnected())
+        return;
+
+    client::DeleteCharacterRequest request;
+    request.set_slot(aSlot);
+    service->Send(request);
+
+    spdlog::info("[Character] asked the server to delete slot {}", aSlot);
+}
+
 void NetworkWorldSystem::EnterCharacterState(CharacterState aNext, const char* acpWhy)
 {
     if (m_characterState == aNext)
@@ -1788,15 +1922,33 @@ void NetworkWorldSystem::HandleCharacterList(const PacketEvent<server::NotifyCha
 
     const auto& characters = aMessage.get_characters();
 
+    // The roster arrives on TWO messages - the authentication reply and this one - so the
+    // adoption lives in one place rather than being written twice and drifting.
+    AdoptRoster(characters, m_characterSlots);
+
     if (characters.empty())
     {
         SetCharacterStatus(false, "", 0, false);
     }
     else
     {
-        const auto& first = characters[0];
-        SetCharacterStatus(true, first.get_name().c_str(), first.get_level(),
-                           first.get_spawned_before());
+        // The ACTIVE one drives the old single-character status, not whichever arrived
+        // first. With one character those are the same row; with four they are not, and
+        // every existing caller of HasCharacter/GetCharacterName means "the one I am
+        // playing".
+        const server::CharacterSummary* pActive = &characters[0];
+
+        for (const auto& summary : characters)
+        {
+            if (summary.get_is_active())
+            {
+                pActive = &summary;
+                break;
+            }
+        }
+
+        SetCharacterStatus(true, pActive->get_name().c_str(), pActive->get_level(),
+                           pActive->get_spawned_before());
     }
 
     if (!m_characterError.empty())

@@ -126,6 +126,10 @@ protected:
     // The selector's trash can. Retires rather than destroys - see PlayerStore.
     void HandleDeleteCharacterRequest(const PacketEvent<client::DeleteCharacterRequest>& aMessage);
 
+    // "Play as the character in this slot." Answers nothing directly - the real answer is
+    // the spawn that follows, or a refusal carried on the character list.
+    void HandleSelectCharacterRequest(const PacketEvent<client::SelectCharacterRequest>& aMessage);
+
     // Send this connection its current character list. The selector redraws from this
     // rather than assuming what a delete did.
     void SendCharacterList(const PlayerComponent& acPlayer, const std::string& acError = {});

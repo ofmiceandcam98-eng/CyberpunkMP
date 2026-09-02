@@ -27,6 +27,16 @@ message CharacterSummary {
     // server last recorded it. Here so the selector can say "new", not to be acted on -
     // the server decides where anybody lands.
     bool spawned_before = 4;
+
+    // Which slot this character occupies, and whether it is the one currently in play.
+    //
+    // The slot is NOT an identity - deleting the character in slot 2 of 3 leaves the third
+    // in slot 3, and anything keyed on the slot number rather than on id is a bug waiting
+    // for a deletion. It is here so the selector can draw a row in the right place and grey
+    // the empty ones; every ACTION names a slot only because a person is pointing at a row,
+    // and the server re-checks the id behind it.
+    int32 slot = 5;
+    bool is_active = 6;
 }
 
 message AuthenticationResponse {
@@ -67,6 +77,18 @@ message AuthenticationResponse {
     // On manifest/digest denials: the manifestVersion the server wanted, so the popup
     // can say exactly which update to fetch instead of "your installation is wrong".
     string required_manifest = 6;
+
+    // How many character slots this ACCOUNT has, decided by the server from the player's
+    // role. One for everybody; more for staff.
+    //
+    // Sent rather than assumed, because the client must never answer "how many characters
+    // may I have" for itself - it is a permission, and a permission the client computes is
+    // a permission the client can grant itself. The selector draws exactly this many rows.
+    //
+    // Lowering this never deletes anything: an account already over the limit keeps every
+    // character and simply cannot make another. A config number must never be able to
+    // destroy somebody's character.
+    int32 character_slots = 7;
 }
 
 message Attribute {

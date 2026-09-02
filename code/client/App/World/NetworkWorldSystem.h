@@ -189,6 +189,32 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
 
     // Ask the server to delete this account's character. The confirmation happens on the
     // client, in front of the person losing it, before this is called.
+// ------------------------------------------------------------------------------
+    // The character roster, for the selector.
+    //
+    // Read out one scalar at a time, the same shape the restore inventory uses: scalars
+    // cross the native boundary comfortably and arrays of structs do not.
+    // Takes the server.s roster whole. Called from BOTH places it arrives - the
+    // authentication reply and NotifyCharacterList - so the two cannot drift.
+    void AdoptRoster(const Vector<server::CharacterSummary>& acCharacters, int32_t aSlots);
+
+    uint32_t GetRosterCount() const { return static_cast<uint32_t>(m_roster.size()); }
+    Red::CString GetRosterId(uint32_t aIndex) const;
+    Red::CString GetRosterName(uint32_t aIndex) const;
+    int32_t GetRosterLevel(uint32_t aIndex) const;
+    int32_t GetRosterSlot(uint32_t aIndex) const;
+    bool IsRosterActive(uint32_t aIndex) const;
+    bool HasRosterSpawnedBefore(uint32_t aIndex) const;
+
+    // How many characters this ACCOUNT may hold, as the SERVER decided it. Never computed
+    // here - an allowance the client works out is an allowance the client can raise.
+    int32_t GetCharacterSlots() const { return m_characterSlots; }
+
+    // Requests, not answers. Each says only that it was sent; the verdict arrives as a new
+    // roster or as a refusal on it.
+    void SelectCharacterSlot(int32_t aSlot);
+    void DeleteCharacterSlot(int32_t aSlot);
+
     void DeleteCharacter();
 
     // ---------------------------------------------------------------------------
@@ -455,6 +481,25 @@ protected:
     // Empty means the server had nothing stored - a new character - and the body the creator
     // just made is kept. The body gender is not carried separately; it is inside the blob as
     // isBodyGenderMale, which is where the save path reads it from too.
+    // The account roster as the SERVER last described it - every character, with its slot.
+    // Held whole rather than collapsed to one, because a selector cannot draw four rows from
+    // a list the client already threw away.
+    struct RosterEntry
+    {
+        std::string Id;
+        std::string Name;
+        int32_t Level{0};
+        int32_t Slot{0};
+        bool SpawnedBefore{false};
+        bool Active{false};
+    };
+
+    std::vector<RosterEntry> m_roster;
+
+    // The allowance, as the server decided it. Defaults to 1 so a client that has not heard
+    // yet draws one slot rather than four it may not have.
+    int32_t m_characterSlots{1};
+
     Vector<uint8_t> m_restoreAppearance;
 
     // How far the local appearance restore has got, so it happens exactly once.
@@ -796,6 +841,16 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(GetCharacterName);
     RTTI_METHOD(GetCharacterLevel);
     RTTI_METHOD(HasCharacterSpawnedBefore);
+    RTTI_METHOD(GetRosterCount);
+    RTTI_METHOD(GetRosterId);
+    RTTI_METHOD(GetRosterName);
+    RTTI_METHOD(GetRosterLevel);
+    RTTI_METHOD(GetRosterSlot);
+    RTTI_METHOD(IsRosterActive);
+    RTTI_METHOD(HasRosterSpawnedBefore);
+    RTTI_METHOD(GetCharacterSlots);
+    RTTI_METHOD(SelectCharacterSlot);
+    RTTI_METHOD(DeleteCharacterSlot);
     RTTI_METHOD(EnterWorld);
     RTTI_METHOD(DeleteCharacter);
     RTTI_METHOD(VoiceRefreshDevices);
