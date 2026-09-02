@@ -24,10 +24,38 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
 
 ## 1. THE LEDGER
 
-### IN FLIGHT — what is being worked on right now (2026-08-30)
+### IN FLIGHT — what is being worked on right now (2026-09-02)
 Keep this block current; it is the first thing anyone should read. Cam: *"we should update
 the mental map pretty often."* A stale in-flight list is worse than none, because it sends
 people to work that is already done.
+
+- **Built on the branch, NOT shipped (`a0346ce`).** Cam's instruction was to build and not
+  ship. On `feat/world-state` only: no release, and deliberately not pushed to `main`, since
+  `main` is the deploy.
+  - **A character lifecycle STATE, replacing `m_characterLive`.** That boolean was standing
+    in for five states, and the missing one is what cost a character: at the moment of the
+    overwrite Cam had a live connection, a valid record, **and a body in the world that was
+    neither**. `Connected → Selected → Restoring → Live → Detached`, where `Live` is the only
+    state in which writing to the stored record is legal. Every transition logs; `Live →
+    Detached` logs as a **warning**, so that session would have read
+    `Live -> Detached (world detach)` seventy seconds before the save. A refused save now
+    names the state it refused in.
+  - **The wire's presence width is now said out loud.** netpack emits `kXPresenceBits` beside
+    every generated struct (39 of them). The bitfield is sized to a message's optional field
+    count and a reader expecting a different width misreads every field after it — none of
+    which is visible in the `.proto`. Not a guard (the protocol identifier already refuses a
+    mismatched client): a **name**, so a diff of the generated header shows `4 -> 6` rather
+    than showing nothing.
+  - **CORRECTION it caught immediately:** `SpawnCharacterResponse` reads **4** presence bits,
+    not 6. I derived it by hand once while my own two extra fields were still applied, read 6,
+    and repeated that as the baseline in a commit message, a design doc and an artifact. The
+    conclusion never changed; the number was wrong three times. That is the whole argument for
+    naming a value rather than re-deriving it.
+  - **NOT built, deliberately: "placement is not a teleport".** Its own entry in
+    `docs/CHARACTER-LIFECYCLE.md` says it is an experiment and that nobody should fix it
+    speculatively. Building it because it appeared on a list would be exactly that. It stays a
+    question: does 2.31 offer a placement path that preloads streaming, and are we skipping it
+    with `TeleportLocalPlayer`?
 
 - **The character selector is OFF, and two requested features are blocked behind it.**
   `MainMenu.reds:331-342` disables the trash can and the panel, because both only make sense
