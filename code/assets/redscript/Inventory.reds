@@ -60,6 +60,24 @@ public class MpInventory {
     let money = transaction.GetItemQuantity(player, MarketSystem.Money());
     let counted = 0;
 
+    // [MONEY] boundary 1 of 4: what the game says this player is holding, right now.
+    //
+    // The money-persistence bug has survived three rounds of reasoning from logs and it is
+    // not going to be solved by a fourth. Every capture across four sessions read exactly
+    // 20000 - which is both "money is pinned" and "he only ever had the starter kit", and
+    // nothing recorded so far can tell those apart.
+    //
+    // So each boundary now says what it saw, and the WHICH-PLAYER question is answered
+    // rather than assumed: if the entity being read is not the entity being played, then
+    // eddies picked up in the world land on one and the capture reads the other, and every
+    // figure downstream is honestly reported and about the wrong body. That would also
+    // explain why the number never moves rather than moving late.
+    //
+    // Trace the four together. If boundary 1 already reads 20000 after a pickup, the loss is
+    // upstream of the mod entirely and the entity id says whether we are even looking at the
+    // right player. If it reads 20084 and the stored figure is 20000, it is ours.
+    network.ScriptLog(s"[MONEY] 1 capture: GetItemQuantity=\(money) on entity \(EntityID.GetHash(player.GetEntityID()))");
+
     // Written with nested ifs rather than `continue`, which redscript does not support in
     // a for-loop - it fails with UNRESOLVED_REF, which reads like a missing symbol rather
     // than an unsupported keyword.
@@ -294,6 +312,14 @@ public class MpInventory {
     let stored = network.GetRestoreMoney();
     let held = transaction.GetItemQuantity(player, MarketSystem.Money());
     let owed = stored - held;
+
+    // [MONEY] boundary 4 of 4: what the restore is about to overwrite, and with what.
+    //
+    // This is the boundary that can DESTROY money rather than merely fail to record it. If
+    // held is 20084 and stored is 20000, the line below takes 84 eddies off the player
+    // because the server's snapshot is older than what they are carrying - which is exactly
+    // the shape of "I found some eddies and they did not save".
+    network.ScriptLog(s"[MONEY] 4 restore: holding \(held), server says \(stored), adjusting by \(owed)");
 
     if owed > 0 {
       transaction.GiveItem(player, MarketSystem.Money(), owed);

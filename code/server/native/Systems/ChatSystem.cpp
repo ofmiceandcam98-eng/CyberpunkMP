@@ -320,6 +320,16 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
 
         character.Money = aMessage.get_money();
 
+        // [MONEY] boundary 3 of 4: what the server received, against what it already had.
+        //
+        // Logged unconditionally, not only on disagreement. The existing warning below fires
+        // when the figures differ, which is the interesting case once you know money moves at
+        // all - and right now we do not know that. A line that prints when the numbers AGREE
+        // is what distinguishes "money never changes" from "money changes and is overwritten",
+        // and those need opposite fixes.
+        spdlog::info("[MONEY] 3 received: client says {}, server had {}, delta {}",
+                     character.Money, storedMoney, character.Money - storedMoney);
+
         spdlog::info("{} stored {} item stack(s) and {} eddies", pPlayer->Username,
                      character.Inventory.size(), character.Money);
 

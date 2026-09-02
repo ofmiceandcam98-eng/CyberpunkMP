@@ -1171,6 +1171,10 @@ void NetworkWorldSystem::PollAppearanceChanges()
     {
         request.set_inventory(m_capturedInventory);
         request.set_money(m_capturedMoney);
+
+        // [MONEY] boundary 2 of 4: what actually leaves this client.
+        spdlog::info("[MONEY] 2 wire: sending {} eddies with {} stack(s)", m_capturedMoney,
+                     m_capturedInventory.size());
         request.set_proficiencies(m_capturedProficiencies);
         request.set_attributes(m_capturedAttributes);
         request.set_perks(m_capturedPerks);
@@ -1621,6 +1625,10 @@ void NetworkWorldSystem::SaveCharacterAppearance(bool aAutomatic)
     {
         request.set_inventory(m_capturedInventory);
         request.set_money(m_capturedMoney);
+
+        // [MONEY] boundary 2 of 4: what actually leaves this client.
+        spdlog::info("[MONEY] 2 wire: sending {} eddies with {} stack(s)", m_capturedMoney,
+                     m_capturedInventory.size());
         request.set_proficiencies(m_capturedProficiencies);
         request.set_attributes(m_capturedAttributes);
         request.set_perks(m_capturedPerks);
