@@ -200,8 +200,8 @@ Smaller than the above, each earning its place.
 **Make a silent limit loud.** Their event payload budget refuses at 64 nodes because the host
 silently drops anything past 1024 — *"a budget that refuses at 64 turns a payload that would
 have vanished without a word into an error code you can read."* We hit the identical class of
-problem in netpack: `SpawnCharacterResponse` reads a **6-bit** presence bitfield, and adding
-two optional fields makes it 8, misaligning every field after them on any client not rebuilt
+problem in netpack: `SpawnCharacterResponse` reads a **4-bit** presence bitfield, and adding
+two optional fields makes it 6, misaligning every field after them on any client not rebuilt
 in lockstep. Nothing warns. That is a silent limit we should make loud.
 
 **Refusals are stable codes, not sentences.** Every refusal answers a key that the caller can
