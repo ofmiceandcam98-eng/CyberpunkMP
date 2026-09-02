@@ -476,6 +476,11 @@ protected:
 
     AppearanceRestore m_appearanceRestore{AppearanceRestore::NotStarted};
 
+    // So "waiting for a world" is said once instead of every tick. ApplyStoredAppearance is
+    // called from the settle loop, and the wait is the normal case for the first second or
+    // two of every connect.
+    bool m_appearanceWaitLogged{false};
+
     // Which character the buffered appearance belongs to, as a revision token.
     //
     // The remote player id is reassigned on every spawn - one of Cam's sessions went from
