@@ -334,6 +334,32 @@ void GenerateHeader(std::filesystem::path aPath, const google::protobuf::FileDes
             }
         }
         out << "};" << std::endl << std::endl;
+
+        // Say the wire width out loud.
+        //
+        // Every message is prefixed with a presence bitfield sized to its optional field
+        // count, and a reader that expects a different width misreads EVERY field after it.
+        // Nothing about that is visible in the .proto: adding one optional field silently
+        // widens the prefix, and the symptom on an un-rebuilt client is not "a missing
+        // field" but garbage from that point on.
+        //
+        // This cost a real afternoon. SpawnCharacterResponse reads 6 bits; two fields were
+        // added for the character-appearance work, which would have made it 8 and misaligned
+        // everything behind them on any client not rebuilt in lockstep. It was caught by
+        // reading the generated deserialiser by hand, which is not a process.
+        //
+        // So the width is emitted as a constant next to the struct. It is not a guard - the
+        // protocol identifier already refuses a mismatched client - it is a NAME for the
+        // thing, so that a diff of the generated header shows "6 -> 8" instead of showing
+        // nothing, and so a reader of the code can find out what the prefix costs without
+        // deriving it.
+        if (!msg.optional_fields.empty())
+        {
+            out << "// Presence-bitfield width for " << cpp::ClassName(msg.descriptor) << ". A change here is a wire "
+                << "change: every field after the prefix shifts." << std::endl;
+            out << "inline constexpr size_t k" << cpp::ClassName(msg.descriptor) << "PresenceBits = "
+                << msg.optional_fields.size() << ";" << std::endl << std::endl;
+        }
     }
 
     if (protocol)

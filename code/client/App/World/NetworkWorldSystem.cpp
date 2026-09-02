@@ -374,7 +374,7 @@ void NetworkWorldSystem::Update(uint64_t aTick)
                 // From here the player standing in the world IS the server's character, so
                 // it is safe to save what they are carrying. Cleared again by any world
                 // detach - see OnBeforeWorldDetach.
-                m_characterLive = true;
+                EnterCharacterState(CharacterState::Live, "restore completed");
 
                 // The face BEFORE the belongings. Restoring the inventory first would dress
                 // the local save's V in this character's clothes for a frame, and the strip
@@ -1652,6 +1652,31 @@ bool NetworkWorldSystem::IsConnected() const
     return service && service->IsConnected();
 }
 
+void NetworkWorldSystem::EnterCharacterState(CharacterState aNext, const char* acpWhy)
+{
+    if (m_characterState == aNext)
+        return;
+
+    // Warn on the one transition that has already cost a character, so it is impossible to
+    // read a log of that session and miss the moment it went wrong.
+    const bool losingTheBody = m_characterState == CharacterState::Live &&
+                               aNext == CharacterState::Detached;
+
+    if (losingTheBody)
+    {
+        spdlog::warn("[Character] {} -> {} ({}) - the body in the world is no longer this "
+                     "character; saving is refused until a restore says otherwise",
+                     CharacterStateName(m_characterState), CharacterStateName(aNext), acpWhy);
+    }
+    else
+    {
+        spdlog::info("[Character] {} -> {} ({})", CharacterStateName(m_characterState),
+                     CharacterStateName(aNext), acpWhy);
+    }
+
+    m_characterState = aNext;
+}
+
 void NetworkWorldSystem::SetCharacterStatus(bool aHasCharacter, const char* acName, int32_t aLevel,
                                             bool aSpawnedBefore)
 {
@@ -1888,7 +1913,7 @@ void NetworkWorldSystem::OnBeforeWorldDetach(RED4ext::world::RuntimeScene* aScen
 
     // So a detach revokes the claim. Saving is allowed again only when a restore completes
     // and makes it true once more.
-    m_characterLive = false;
+    EnterCharacterState(CharacterState::Detached, "world detach");
 
     // The appearance restore starts over with the next spawn. The body it applied is being
     // destroyed along with the rest of the world, so "already Applied" would be a lie the
@@ -2524,6 +2549,7 @@ void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::
     spdlog::info("[SpawnResponse] id {:x} - setting remote player id", aMessage.get_id());
     SetRemotePlayerId(aMessage.get_id());
     spdlog::info("[SpawnResponse] remote player id set");
+    EnterCharacterState(CharacterState::Selected, "spawn response - a character is chosen");
 
     // Which doors the server says are open.
     //
@@ -2599,11 +2625,13 @@ void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::
             m_restorePending = true;
 
             spdlog::info("[SpawnResponse] NEW character - possessions discarded, restore will run empty");
+            EnterCharacterState(CharacterState::Restoring, "new character, empty restore armed");
         }
         else
         {
             m_restorePending = true;
             spdlog::info("[SpawnResponse] possessions buffered - restore armed");
+            EnterCharacterState(CharacterState::Restoring, "possessions buffered");
         }
     }
     else
@@ -3378,8 +3406,10 @@ void NetworkWorldSystem::Disconnect()
         //
         // Losing the last few minutes of a session is recoverable. Overwriting the stored
         // character is not.
-        spdlog::warn("[Inventory] NOT saving on disconnect - the world was reloaded since the "
-                     "restore, so what is loaded is not the server's character");
+        spdlog::warn("[Inventory] NOT saving on disconnect - state is {}, not Live. The body in "
+                     "the world is not this character, so saving it would overwrite the stored "
+                     "record with somebody else's.",
+                     CharacterStateName(m_characterState));
     }
 
     Core::Container::Get<NetworkService>()->Close();

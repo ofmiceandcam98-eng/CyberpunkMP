@@ -500,20 +500,64 @@ protected:
     int64_t m_capturedMoney{0};
     bool m_hasCapturedPossessions{false};
 
-    // True while the player standing in the world IS the character the server restored.
-    //
-    // Set when a restore completes; cleared by ANY world detach. A detach means the engine
-    // is about to rebuild the world from the local save, and what walks out of that is the
-    // player's singleplayer V - not their server character - even though we are still
-    // connected and everything else still looks normal.
-    //
-    // This exists because that difference destroyed Cam's character on 27 August. He
-    // connected, was restored correctly, pressed join from the main menu (detach, reload),
-    // and seventy seconds later the disconnect save captured the singleplayer template and
-    // sent it to the server as him: 13 stacks and 20000 eddies replaced by 409 stacks and
-    // 872. m_restorePending did not catch it - that only covers the window before the FIRST
-    // restore lands, and this happened long after.
-    bool m_characterLive{false};
+    /**
+     * Where this session is between "a socket opened" and "the body standing there is this
+     * character".
+     *
+     * A CONNECTION IS NOT A CHARACTER, and treating those as one boolean is what destroyed
+     * Cam's character on 27 August. He connected, was restored correctly, pressed join from
+     * the main menu - which detaches the world and rebuilds it from his LOCAL SAVE - and
+     * seventy seconds later the disconnect save captured the singleplayer template and sent
+     * it as him: 13 stacks and 20000 eddies replaced by 409 stacks and 872.
+     *
+     * At that moment he had a live connection, a valid character record, AND a body in the
+     * world that was neither. That is a third state, and the code had two.
+     *
+     *   Connected   socket up, nothing chosen. The selector lives here.
+     *   Selected    a character is chosen; nothing has been applied to a body yet.
+     *   Restoring   possessions and appearance are being applied.
+     *   Live        the body in the world IS this character. The ONLY state where
+     *               writing to the stored record is legal.
+     *   Detached    the world was torn down. Whatever walks out of the reload is the
+     *               local save's V until a restore says otherwise.
+     *
+     * Detached is the state that did not exist before and cost a character. It is not
+     * "disconnected" - the connection is fine, the record is fine, and everything else looks
+     * normal. That is exactly why it needs a name.
+     *
+     * The old m_characterLive was Live-or-not, which could not distinguish "before the first
+     * restore" from "after a reload", and could not say WHY a save was refused.
+     */
+    enum class CharacterState : uint32_t
+    {
+        Connected,
+        Selected,
+        Restoring,
+        Live,
+        Detached,
+    };
+
+    CharacterState m_characterState{CharacterState::Connected};
+
+    // Every transition goes through here, so the log tells the story of a session rather
+    // than leaving it to be inferred from what happened next. Cam's lost character would
+    // have been one line: "Live -> Detached (world detach)", seventy seconds before the save.
+    void EnterCharacterState(CharacterState aNext, const char* acpWhy);
+
+    // For the log line, because "refused in state 3" is not a diagnosis.
+    static const char* CharacterStateName(CharacterState aState)
+    {
+        switch (aState)
+        {
+        case CharacterState::Connected: return "Connected";
+        case CharacterState::Selected:  return "Selected";
+        case CharacterState::Restoring: return "Restoring";
+        case CharacterState::Live:      return "Live";
+        case CharacterState::Detached:  return "Detached";
+        }
+
+        return "?";
+    }
 
     // Whether it is safe to tell the server what this player is carrying or wearing.
     //
@@ -547,7 +591,10 @@ protected:
         if (m_appearanceRestore == AppearanceRestore::Failed)
             return false;
 
-        return m_characterLive || m_newCharacterPending;
+        // Live is the only state in which the body standing in the world is this character.
+        // A deliberate creation is the one exception: pressing MULTIPLAYER - NEW CHARACTER is
+        // precisely the case where saving a body the server never gave us is the point.
+        return m_characterState == CharacterState::Live || m_newCharacterPending;
     }
 
     // Set only for a starter-kit grant - see HandleNotifyPossessions. Cleared once the
