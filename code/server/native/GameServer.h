@@ -6,6 +6,7 @@
 #include "BanList.h"
 #include "PlayerStore.h"
 #include "MessageStore.h"
+#include "CallStore.h"
 #include "AuditLog.h"
 #include "Systems/WorldFacts.h"
 #include "Systems/VehicleStore.h"
@@ -218,6 +219,10 @@ private:
     // anyone who wanders too far straight back.
     void EnforceJail(std::chrono::steady_clock::time_point aNow);
 
+    // Rings out calls nobody picked up. A ring with no timeout leaves both characters in a
+    // state nothing will ever clear, and the only escape is a reconnect.
+    void ExpireCalls(std::chrono::steady_clock::time_point aNow);
+
 public:
     // Where players reappear after dying, set with /setspawn. Persisted alongside the
     // player records so it survives a restart.
@@ -253,6 +258,10 @@ public:
     // a player's second character cannot read their first one's inbox - see MessageStore.h.
     MessageStore& GetMessages() noexcept { return m_messages; }
 
+    // Player-to-player calls. Deliberately does NOT go through the game's PhoneSystem -
+    // see CallStore.h for why that is what keeps the Songbird block intact.
+    CallStore& GetCalls() noexcept { return m_calls; }
+
 private:
 
     Path m_path;
@@ -269,6 +278,8 @@ private:
     VehicleStore m_vehicles;
     AuditLog m_audit;
     MessageStore m_messages;
+    CallStore m_calls;
+    std::chrono::steady_clock::time_point m_lastCallCheck;
     std::chrono::steady_clock::time_point m_lastPlayerSave;
     std::chrono::steady_clock::time_point m_lastJailCheck;
 

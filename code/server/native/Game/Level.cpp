@@ -1852,14 +1852,53 @@ void Level::HandleVoiceFrameRequest(PacketEvent<client::VoiceFrameRequest>& aMes
     message.set_data(aMessage.get_data());
     message.set_sequence(aMessage.get_sequence());
 
+    /**
+     * Whoever this character is on the phone to, if anyone.
+     *
+     * This is what makes a call a call rather than an announcement: the person on the
+     * other end hears you from anywhere, and only they do. Resolved once per FRAME rather
+     * than once per listener - the loop below runs for everybody online, fifty times a
+     * second per speaker, and this is a search through the live call list.
+     *
+     * Empty for the overwhelmingly common case of nobody being on a call, which costs one
+     * walk of an empty list.
+     */
+    std::string partnerCharacterId;
+
+    if (const auto* pSpeakerCharacter = GServer->GetPlayerStore().FindCharacter(pSpeaker->DiscordId))
+        partnerCharacterId = GServer->GetCalls().ConnectedPartner(pSpeakerCharacter->CharacterId);
+
     GetWorld()->get_world().each(
-        [&message, speaker, speakerPosition, radiusSquared](flecs::entity player,
-                                                            const PlayerComponent& aPlayerComponent)
+        [&message, &partnerCharacterId, speaker, speakerPosition,
+         radiusSquared](flecs::entity player, const PlayerComponent& aPlayerComponent)
         {
             // Never echo somebody their own voice. Hearing yourself a ping later is the
             // single most disorienting thing a voice system can do.
             if (player == speaker)
                 return;
+
+            /**
+             * On the phone: heard wherever they are, and BEFORE the distance test.
+             *
+             * Checked against the listener's ACTIVE character, so somebody who has swapped
+             * to a different character does not keep receiving a call the character they
+             * left was in.
+             *
+             * Deliberately not merged into the proximity test as "distance OR call" - the
+             * early return also means a caller standing next to the person they rang is
+             * sent one frame rather than two, which would otherwise be audible.
+             */
+            if (!partnerCharacterId.empty())
+            {
+                const auto* pListener =
+                    GServer->GetPlayerStore().FindCharacter(aPlayerComponent.DiscordId);
+
+                if (pListener && pListener->CharacterId == partnerCharacterId)
+                {
+                    GServer->Send(aPlayerComponent.Connection, message);
+                    return;
+                }
+            }
 
             if (!aPlayerComponent.Puppet || !aPlayerComponent.Puppet.is_alive())
                 return;
