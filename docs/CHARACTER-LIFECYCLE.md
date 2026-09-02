@@ -242,6 +242,10 @@ Recorded so nobody tries.
   is no resource boundary to police.
 - **MySQL and migrations.** We persist to JSON on the server. Their append-only migration
   ledger is good practice, but for a different storage model.
-- **Money types as a JSON column.** We have one balance and Cam has explicitly ruled out a
-  banking system for now.
+- ~~**Money types as a JSON column.**~~ **REVERSED 2026-09-02.** Cam asked for a bank system,
+  so named money types are back on — see `docs/BANKING.md`. The shape differs from theirs: two
+  named fields (`CASH`, `BANK`) rather than a map of operator-defined types, because ours are
+  fixed at two and a map with two entries is harder to migrate for no benefit. Their durability
+  warning is kept in full — **a money type name becomes a stored key, and renaming one orphans
+  every balance under the old name.**
 - **Their permission manifest.** Ours is Discord roles, already built.
