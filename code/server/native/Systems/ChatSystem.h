@@ -101,6 +101,17 @@ struct ChatSystem
     // Only the client owning a journal can change it, so /quest skip relays rather than acts.
     void SendQuestSkip(flecs::entity aSubject, const std::string& acQuest);
 
+    /**
+     * Hands over everything texted to this player's ACTIVE character while they were away.
+     *
+     * Public because the spawn path calls it - arrival is when somebody is in a position
+     * to read anything, and it is also the moment a character switch has finished, which
+     * is the other time the answer changes. Resolving the character here rather than at
+     * the call site is deliberate: the caller knows about a connection, and which of that
+     * account's characters is listening is exactly the question that must not be guessed.
+     */
+    void DeliverPendingMessages(const PlayerComponent& acPlayer);
+
     std::vector<PendingSale> m_pendingSales;
 
     // Only players whose puppet is within aRange of acOrigin.

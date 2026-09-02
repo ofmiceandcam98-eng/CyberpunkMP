@@ -676,6 +676,16 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
         spdlog::info("{} has no character yet - capturing the one they arrived as", pComponent->Username);
     }
 
+    // Anything texted to this character while they were away.
+    //
+    // Here rather than at connect because arrival is the first moment they can read
+    // anything, and because this is also where a character SWITCH lands - which is the
+    // other time the answer changes, since the inbox belongs to the character and not to
+    // the account. Somebody switching from their first character to their second must be
+    // handed the second one's messages and none of the first one's.
+    if (auto* pChat = GetWorld()->get_mut<ChatSystem>())
+        pChat->DeliverPendingMessages(*pComponent);
+
     // Hand back what this character owns.
     //
     // Sent with the spawn rather than afterwards, so there is no window in which somebody

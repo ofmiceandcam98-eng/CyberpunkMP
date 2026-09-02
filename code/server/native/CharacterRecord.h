@@ -19,6 +19,87 @@
  * The server keeps this instead. It is small, it is authoritative, and it is keyed on the
  * one identifier a player cannot change.
  */
+/**
+ * One entry in a character's phone book.
+ *
+ * The number is the identity and the name is a label THIS character chose. Deliberately
+ * not the other way round: two people can save the same number under different names, and
+ * neither is more correct than the other. A phone book is a private annotation of the
+ * world, not a directory of it.
+ *
+ * Stored per character, so the same player's second character starts with an empty one.
+ *
+ * WHY THE NAME IS NOT RESOLVED AT DISPLAY TIME
+ *
+ * The obvious alternative is to keep storing bare numbers and look up whoever holds each
+ * one when the list is drawn. That is what the code did, and it has a failure that only
+ * appears with roleplay: it shows the name the OWNER currently uses, so somebody who
+ * introduces themselves under one name and later renames silently rewrites themselves in
+ * every phone book on the server. Worse, it means a character cannot be saved as "Ripper
+ * Doc - Watson" or "do not answer", which is most of what people actually use a phone
+ * book for.
+ *
+ * The live lookup is still used when there is no saved name, so an entry added by number
+ * shows who it reaches rather than showing nothing.
+ */
+struct Contact
+{
+    std::string Number;
+
+    // Empty means "no name saved" - fall back to whoever currently holds the number.
+    // Empty rather than a copy of the number, so the two cases stay distinguishable.
+    std::string Name;
+
+    // A character's own marker. Nobody is told they were favourited, the same way nobody
+    // is told they were added.
+    bool Favorite{false};
+};
+
+/**
+ * Written as a bare string when there is no saved name.
+ *
+ * This is a MIGRATION choice, not a formatting one. Contacts were stored as plain strings
+ * and the live players.json is full of them; emitting the object form unconditionally
+ * would rewrite every account on the first flush, and an older server binary reading that
+ * file back would throw on the type. Writing the compact form whenever it is sufficient
+ * means only accounts that actually use a name change shape, so a rollback keeps working
+ * for everyone who has not touched the feature.
+ */
+inline void to_json(nlohmann::json& aJson, const Contact& acContact)
+{
+    if (acContact.Name.empty() && !acContact.Favorite)
+    {
+        aJson = acContact.Number;
+        return;
+    }
+
+    aJson = nlohmann::json{{"Number", acContact.Number},
+                           {"Name", acContact.Name},
+                           {"Favorite", acContact.Favorite}};
+}
+
+/**
+ * Accepts both shapes, because both are in the file.
+ *
+ * A bare string is a contact added before names existed. Anything else is read
+ * field-by-field with defaults, so a hand-edited entry missing a field is filled in
+ * rather than refused - this file is meant to be openable and edited by a person.
+ */
+inline void from_json(const nlohmann::json& acJson, Contact& aContact)
+{
+    if (acJson.is_string())
+    {
+        aContact.Number = acJson.get<std::string>();
+        aContact.Name.clear();
+        aContact.Favorite = false;
+        return;
+    }
+
+    aContact.Number = acJson.value("Number", std::string{});
+    aContact.Name = acJson.value("Name", std::string{});
+    aContact.Favorite = acJson.value("Favorite", false);
+}
+
 struct CharacterRecord
 {
     // Which slot this occupies. Only 0 is used today.
@@ -241,7 +322,28 @@ struct CharacterRecord
      * types and what they will still have if the person behind it is not online. Resolving
      * a number to whoever currently holds it is the server's job at the moment of use.
      */
-    std::vector<std::string> Contacts;
+    std::vector<Contact> Contacts;
+
+    /**
+     * Numbers this character refuses to hear from.
+     *
+     * BLOCKING IS PER CHARACTER, and putting the list here is what makes that true without
+     * anybody having to enforce it. If a player blocks somebody, their OTHER character has
+     * not blocked them - those are two different people who happen to share an owner, and
+     * one of them knowing what the other decided would leak exactly the thing that having
+     * separate characters is for.
+     *
+     * Stores numbers rather than character ids, matching Contacts, because a block is
+     * aimed at what somebody was given: the number they were texted from. Someone who
+     * retires a character and makes a new one gets a new number and is not blocked by it,
+     * which is correct - a block is not a punishment the server carries forward, it is one
+     * character declining to hear from another.
+     *
+     * Blocking is silent on purpose. The blocked party is never told, and their messages
+     * are accepted and dropped rather than refused, so a block cannot be probed for by
+     * watching which sends fail.
+     */
+    std::vector<std::string> Blocked;
 
     /**
      * Quests this character is permitted to see, granted one at a time by an admin.
@@ -263,7 +365,7 @@ struct CharacterRecord
                                                 Lifepath, StarterKitGranted,
                                                 Inventory, Money, Proficiencies,
                                                 Attributes, Perks, Vehicles,
-                                                PhoneNumber, Contacts, AllowedQuests,
+                                                PhoneNumber, Contacts, Blocked, AllowedQuests,
                                                 CreatedAt, UpdatedAt)
 };
 

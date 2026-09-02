@@ -744,6 +744,148 @@ static std::string DisplayNameFor(const std::string& acDiscordId, const Characte
     return acFallback;
 }
 
+/**
+ * What THIS character's phone shows for a number.
+ *
+ * Three answers in priority order, and the order is the whole point:
+ *
+ *  1. The name this character saved. A phone book is a private annotation, so somebody
+ *     saved as "Ripper - Watson" stays that even after the person behind it renames.
+ *  2. Whoever currently holds the number, when nothing was saved. An entry added by
+ *     number should say who it reaches rather than showing a bare string.
+ *  3. The number itself, for a number nobody holds.
+ *
+ * Takes the VIEWER's character rather than an account, because the saved name belongs to
+ * one character. Their other character has a different phone book and must get a
+ * different answer from this function.
+ */
+static std::string PhoneBookName(const CharacterRecord* apViewer, const std::string& acNumber)
+{
+    if (apViewer)
+    {
+        if (const auto* pContact = PlayerStore::FindContact(*apViewer, acNumber))
+        {
+            if (!pContact->Name.empty())
+                return pContact->Name;
+        }
+    }
+
+    std::string ownerId;
+    const auto* pOwner = GServer->GetPlayerStore().FindCharacterByPhoneNumber(acNumber, &ownerId);
+
+    if (pOwner)
+        return DisplayNameFor(ownerId, pOwner, acNumber);
+
+    return acNumber;
+}
+
+/**
+ * The same, for a character named by id rather than by number.
+ *
+ * The inbox stores CharacterIds - that is what makes a thread survive a rename and what
+ * keeps two characters on one account apart - but a player thinks in numbers and names.
+ * This is the one place that translation happens.
+ */
+static std::string PhoneBookNameForCharacter(const CharacterRecord* apViewer,
+                                             const std::string& acCharacterId,
+                                             std::string* apNumber = nullptr)
+{
+    std::string ownerId;
+    const auto* pOther = GServer->GetPlayerStore().FindCharacterById(acCharacterId, &ownerId);
+
+    if (!pOther)
+    {
+        // A retired or deleted character. The thread is still theirs and still readable -
+        // deleting the person does not un-say what was said - so it is labelled rather
+        // than hidden.
+        if (apNumber)
+            apNumber->clear();
+
+        return "(unknown)";
+    }
+
+    if (apNumber)
+        *apNumber = pOther->PhoneNumber;
+
+    // The viewer's own saved name wins here too, for the same reason as above.
+    if (apViewer && !pOther->PhoneNumber.empty())
+    {
+        if (const auto* pContact = PlayerStore::FindContact(*apViewer, pOther->PhoneNumber))
+        {
+            if (!pContact->Name.empty())
+                return pContact->Name;
+        }
+    }
+
+    return DisplayNameFor(ownerId, pOther, pOther->PhoneNumber);
+}
+
+/**
+ * How long ago, in words. "3m", "2h", "4d".
+ *
+ * A phone shows relative time because that is the question being asked - "is this recent"
+ * - and an absolute timestamp makes the reader do arithmetic to answer it. Kept crude on
+ * purpose: nobody needs seconds, and the widest unit that is still true is the most
+ * readable one.
+ */
+static std::string Ago(int64_t aWhen)
+{
+    if (aWhen <= 0)
+        return "?";
+
+    const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+
+    const auto seconds = now - aWhen;
+
+    if (seconds < 60)
+        return "now";
+    if (seconds < 3600)
+        return fmt::format("{}m", seconds / 60);
+    if (seconds < 86400)
+        return fmt::format("{}h", seconds / 3600);
+
+    return fmt::format("{}d", seconds / 86400);
+}
+
+void ChatSystem::DeliverPendingMessages(const PlayerComponent& acPlayer)
+{
+    auto& store = GServer->GetPlayerStore();
+
+    const auto* pCharacter = store.FindCharacter(acPlayer.DiscordId);
+
+    // No character means nothing is addressed to them yet. A message is sent to a
+    // CharacterId, and somebody who has not made one does not have an inbox to fill.
+    if (!pCharacter || pCharacter->CharacterId.empty())
+        return;
+
+    auto& messages = GServer->GetMessages();
+
+    const auto pending = messages.Undelivered(pCharacter->CharacterId);
+
+    if (pending.empty())
+        return;
+
+    Tell(acPlayer, fmt::format("--- {} unread message(s) ---", pending.size()));
+
+    for (const auto& message : pending)
+    {
+        std::string number;
+        const auto who = PhoneBookNameForCharacter(pCharacter, message.FromCharacterId, &number);
+
+        Tell(acPlayer, fmt::format("  {} {}: {}", Ago(message.SentAt),
+                                   number.empty() ? who : fmt::format("{} ({})", who, number),
+                                   message.Body));
+    }
+
+    Tell(acPlayer, "Reply with /text <number> <message>.");
+
+    // Marked only after every line has been handed to the connection. A crash partway
+    // through leaves them undelivered and they arrive again next time, which is the right
+    // way round: showing a message twice is a blemish, losing one is the bug.
+    messages.MarkDelivered(pCharacter->CharacterId);
+}
+
 void ChatSystem::SendQuestSkip(flecs::entity aSubject, const std::string& acQuest)
 {
     const auto* pPlayer = aSubject.get<PlayerComponent>();
@@ -2172,7 +2314,7 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
     {
         if (target.empty())
         {
-            Tell(acSender, "Usage: /addcontact 555-014-372   (ask them for their number)");
+            Tell(acSender, "Usage: /addcontact 555-014-372 [name]   (ask them for their number)");
             return true;
         }
 
@@ -2184,6 +2326,24 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             return true;
         }
 
+        // Everything after the number is the name they want it saved under, spaces and
+        // all. Optional: adding by number alone still works and falls back to whoever
+        // holds it, which is what every existing contact does.
+        std::string savedName;
+        {
+            const auto numberAt = acLine.find(target);
+
+            if (numberAt != std::string::npos)
+            {
+                savedName = acLine.substr(numberAt + target.size());
+
+                while (!savedName.empty() && savedName.front() == ' ')
+                    savedName.erase(savedName.begin());
+                while (!savedName.empty() && savedName.back() == ' ')
+                    savedName.pop_back();
+            }
+        }
+
         std::string ownerId;
         const auto* pOwner = GServer->GetPlayerStore().FindCharacterByPhoneNumber(target, &ownerId);
 
@@ -2193,22 +2353,102 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             return true;
         }
 
-        if (ownerId == acSender.DiscordId)
+        // Compared by CHARACTER, not by account.
+        //
+        // This used to compare Discord ids, which was right while an account had one
+        // character and became wrong the moment slots existed: a player's second character
+        // would be told their first character's number was "your own number" and refused.
+        // Those are two different people who happen to share an owner, and one saving the
+        // other's number is an ordinary thing to do.
+        const auto* pSelf = GServer->GetPlayerStore().FindCharacter(acSender.DiscordId);
+
+        if (pSelf && !pSelf->PhoneNumber.empty() && pSelf->PhoneNumber == target)
         {
             Tell(acSender, "That is your own number.");
             return true;
         }
 
-        if (!GServer->GetPlayerStore().AddContact(acSender.DiscordId, target))
+        if (!GServer->GetPlayerStore().AddContact(acSender.DiscordId, target, savedName))
         {
-            Tell(acSender, fmt::format("{} is already in your contacts.", target));
+            Tell(acSender, fmt::format("{} is already in your contacts. "
+                                       "Rename it with /contactname {} <name>.", target, target));
             return true;
         }
 
         // Only the person who added them is told. Nobody else's phone gains an entry, and
         // the owner is not notified either - looking somebody up is not an event that should
         // announce itself to them.
-        Tell(acSender, fmt::format("Added {} - {}.", DisplayNameFor(ownerId, pOwner, target), target));
+        Tell(acSender, fmt::format("Added {} - {}.",
+                                   savedName.empty() ? DisplayNameFor(ownerId, pOwner, target)
+                                                     : savedName,
+                                   target));
+        return true;
+    }
+
+    // -------------------------------------------------------- /contactname ---
+    //
+    // Renaming an entry, kept separate from adding one. An upsert would silently create a
+    // contact when somebody meant to rename one, and a phone book that grows entries by
+    // typo is worse than one that says "you do not have that number".
+    if (command == "/contactname")
+    {
+        const auto restStart = acLine.find(' ');
+        std::string rest = (restStart == std::string::npos) ? std::string{} : acLine.substr(restStart + 1);
+
+        while (!rest.empty() && rest.front() == ' ')
+            rest.erase(rest.begin());
+
+        std::string number = rest;
+        std::string name;
+
+        if (const auto space = rest.find(' '); space != std::string::npos)
+        {
+            number = rest.substr(0, space);
+            name = rest.substr(space + 1);
+
+            while (!name.empty() && name.front() == ' ')
+                name.erase(name.begin());
+        }
+
+        if (number.empty())
+        {
+            Tell(acSender, "Usage: /contactname 555-014-372 <name>   (empty name clears it)");
+            return true;
+        }
+
+        if (!GServer->GetPlayerStore().SetContactName(acSender.DiscordId, number, name))
+        {
+            Tell(acSender, fmt::format("{} is not in your contacts.", number));
+            return true;
+        }
+
+        if (name.empty())
+            Tell(acSender, fmt::format("Cleared the name on {}.", number));
+        else
+            Tell(acSender, fmt::format("Saved {} as {}.", number, name));
+
+        return true;
+    }
+
+    // -------------------------------------------------------- /delcontact ---
+    if (command == "/delcontact")
+    {
+        if (target.empty())
+        {
+            Tell(acSender, "Usage: /delcontact 555-014-372");
+            return true;
+        }
+
+        if (!GServer->GetPlayerStore().RemoveContact(acSender.DiscordId, target))
+        {
+            Tell(acSender, fmt::format("{} is not in your contacts.", target));
+            return true;
+        }
+
+        // Said out loud, because it is the surprising half. Forgetting somebody's name is
+        // not the same as un-saying what passed between you, and a player who expects a
+        // delete to erase the thread should find out here rather than from the thread.
+        Tell(acSender, fmt::format("Removed {}. Your messages with them are kept.", target));
         return true;
     }
 
@@ -2376,19 +2616,332 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
 
         Tell(acSender, fmt::format("{} contact(s):", pCharacter->Contacts.size()));
 
-        for (const auto& number : pCharacter->Contacts)
+        for (const auto& contact : pCharacter->Contacts)
         {
-            const auto* pOwner = GServer->GetPlayerStore().FindCharacterByPhoneNumber(number);
-
             // A number whose owner has retired still shows, with the truth next to it.
             // Silently dropping it would look like the contact was never added.
-            std::string ownerId;
-            const auto* pResolved = GServer->GetPlayerStore().FindCharacterByPhoneNumber(number, &ownerId);
+            const auto* pResolved =
+                GServer->GetPlayerStore().FindCharacterByPhoneNumber(contact.Number);
 
-            Tell(acSender, fmt::format("  {}  {}", number,
-                                       pResolved ? DisplayNameFor(ownerId, pResolved, number)
-                                                 : "(no longer in service)"));
+            const auto blocked = PlayerStore::IsBlockedBy(*pCharacter, contact.Number);
+
+            Tell(acSender, fmt::format("  {}  {}{}{}", contact.Number,
+                                       PhoneBookName(pCharacter, contact.Number),
+                                       pResolved ? "" : "  (no longer in service)",
+                                       blocked ? "  [blocked]" : ""));
         }
+
+        return true;
+    }
+
+    // ------------------------------------------------------------- /text ---
+    //
+    // Sending a message. Written against CharacterIds rather than accounts, so a player's
+    // second character has its own inbox and cannot see the first one's - see MessageStore.h.
+    if (command == "/text")
+    {
+        const auto restStart = acLine.find(' ');
+        std::string rest = (restStart == std::string::npos) ? std::string{} : acLine.substr(restStart + 1);
+
+        while (!rest.empty() && rest.front() == ' ')
+            rest.erase(rest.begin());
+
+        std::string number = rest;
+        std::string body;
+
+        if (const auto space = rest.find(' '); space != std::string::npos)
+        {
+            number = rest.substr(0, space);
+            body = rest.substr(space + 1);
+
+            while (!body.empty() && body.front() == ' ')
+                body.erase(body.begin());
+        }
+
+        if (number.empty() || body.empty())
+        {
+            Tell(acSender, "Usage: /text 555-014-372 <message>");
+            return true;
+        }
+
+        if (!IsPhoneNumberShaped(number))
+        {
+            Tell(acSender, fmt::format("'{}' is not a number. They look like 555-014-372.", number));
+            return true;
+        }
+
+        auto& store = GServer->GetPlayerStore();
+
+        const auto* pSelf = store.FindCharacter(acSender.DiscordId);
+
+        if (!pSelf || pSelf->CharacterId.empty())
+        {
+            Tell(acSender, "You have no character yet.");
+            return true;
+        }
+
+        if (pSelf->PhoneNumber.empty())
+        {
+            Tell(acSender, "You have no number yet - it is assigned on your next save.");
+            return true;
+        }
+
+        std::string recipientId;
+        const auto* pRecipient = store.FindCharacterByPhoneNumber(number, &recipientId);
+
+        if (!pRecipient)
+        {
+            Tell(acSender, fmt::format("Nobody has the number {}.", number));
+            return true;
+        }
+
+        // Compared by number, so a player CAN text their own other character. They are two
+        // people; the only thing that must be refused is a thread with itself.
+        if (pRecipient->CharacterId == pSelf->CharacterId)
+        {
+            Tell(acSender, "That is your own number.");
+            return true;
+        }
+
+        /**
+         * Blocked, and told nothing.
+         *
+         * Accepted and dropped rather than refused. A refusal is a signal - somebody who
+         * gets "delivery failed" for one number and "sent" for another has learned they
+         * were blocked, and on a roleplay server that is information a block exists
+         * precisely to withhold.
+         *
+         * Nothing is stored either. Storing it and never delivering would look identical
+         * today and dump the whole backlog on whoever later unblocks them, which is the
+         * opposite of what the block was for.
+         *
+         * Read off the recipient's own record rather than re-resolved from their account:
+         * a block belongs to a CHARACTER, and asking the account again could answer with
+         * whichever of their characters is currently active instead of the one being
+         * texted.
+         */
+        if (PlayerStore::IsBlockedBy(*pRecipient, pSelf->PhoneNumber))
+        {
+            Tell(acSender, fmt::format("Sent to {}.", PhoneBookName(pSelf, number)));
+
+            spdlog::info("{} texted {} - dropped, blocked", acSender.Username, number);
+            return true;
+        }
+
+        std::string reason;
+        const auto messageId = GServer->GetMessages().Send(pSelf->CharacterId,
+                                                           pRecipient->CharacterId, body, &reason);
+
+        if (messageId.empty())
+        {
+            // Stable codes turned into sentences HERE, at the one surface that has a
+            // player in front of it. The store answers in codes so a phone app can answer
+            // differently without the store having opinions about wording.
+            if (reason == "too_long")
+                Tell(acSender, fmt::format("Too long - {} characters at most.", kMessageBodyLimit));
+            else if (reason == "store_unreadable")
+                Tell(acSender, "Messages are unavailable right now. Staff have been told.");
+            else
+                Tell(acSender, "That message could not be sent.");
+
+            return true;
+        }
+
+        Tell(acSender, fmt::format("To {}: {}", PhoneBookName(pSelf, number), body));
+
+        // Delivered immediately if they are here, so a conversation between two people who
+        // are both online reads like a conversation rather than like mail.
+        //
+        // Only when the character they are PLAYING is the one that was texted. Somebody
+        // logged in as their other character is, for this purpose, offline - and the
+        // message stays undelivered until they switch back, which is exactly right.
+        const auto recipientEntity = findPlayer(recipientId);
+
+        if (recipientEntity)
+        {
+            if (const auto* pRecipientPlayer = recipientEntity.get<PlayerComponent>())
+            {
+                const auto* pActive = store.FindCharacter(recipientId);
+
+                if (pActive && pActive->CharacterId == pRecipient->CharacterId)
+                {
+                    Tell(*pRecipientPlayer,
+                         fmt::format("Text from {} ({}): {}",
+                                     PhoneBookName(pActive, pSelf->PhoneNumber),
+                                     pSelf->PhoneNumber, body));
+
+                    GServer->GetMessages().MarkDelivered(pRecipient->CharacterId);
+                }
+            }
+        }
+
+        spdlog::info("{} texted {} ({} chars)", acSender.Username, number, body.size());
+        return true;
+    }
+
+    // ------------------------------------------------------------ /texts ---
+    //
+    // The inbox: who this character has threads with, most recent first.
+    if (command == "/texts")
+    {
+        const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(acSender.DiscordId);
+
+        if (!pCharacter || pCharacter->CharacterId.empty())
+        {
+            Tell(acSender, "You have no character yet.");
+            return true;
+        }
+
+        const auto inbox = GServer->GetMessages().Inbox(pCharacter->CharacterId);
+
+        if (inbox.empty())
+        {
+            Tell(acSender, "No messages. Send one with /text <number> <message>.");
+            return true;
+        }
+
+        Tell(acSender, fmt::format("{} conversation(s):", inbox.size()));
+
+        for (const auto& thread : inbox)
+        {
+            std::string number;
+            const auto who = PhoneBookNameForCharacter(pCharacter, thread.OtherCharacterId, &number);
+
+            // The last line, truncated. Enough to recognise the thread, not so much that
+            // the list becomes the thread.
+            auto preview = thread.LastBody;
+            if (preview.size() > 40)
+                preview = preview.substr(0, 37) + "...";
+
+            Tell(acSender, fmt::format("  {}{}  {}  {}{}",
+                                       thread.Unread ? fmt::format("({}) ", thread.Unread) : "",
+                                       number.empty() ? who : fmt::format("{} {}", who, number),
+                                       Ago(thread.LastMessageAt),
+                                       thread.LastWasMine ? "you: " : "",
+                                       preview));
+        }
+
+        Tell(acSender, "Read one with /read <number>.");
+        return true;
+    }
+
+    // ------------------------------------------------------------- /read ---
+    if (command == "/read")
+    {
+        if (target.empty())
+        {
+            Tell(acSender, "Usage: /read 555-014-372");
+            return true;
+        }
+
+        auto& store = GServer->GetPlayerStore();
+
+        const auto* pCharacter = store.FindCharacter(acSender.DiscordId);
+
+        if (!pCharacter || pCharacter->CharacterId.empty())
+        {
+            Tell(acSender, "You have no character yet.");
+            return true;
+        }
+
+        const auto* pOther = store.FindCharacterByPhoneNumber(target, nullptr);
+
+        if (!pOther)
+        {
+            Tell(acSender, fmt::format("Nobody has the number {}.", target));
+            return true;
+        }
+
+        auto& messages = GServer->GetMessages();
+
+        const auto thread = messages.Thread(pCharacter->CharacterId, pOther->CharacterId);
+
+        if (thread.empty())
+        {
+            Tell(acSender, fmt::format("Nothing between you and {}.",
+                                       PhoneBookName(pCharacter, target)));
+            return true;
+        }
+
+        Tell(acSender, fmt::format("--- {} ({}) ---", PhoneBookName(pCharacter, target), target));
+
+        for (const auto& message : thread)
+        {
+            const bool mine = message.SenderCharacterId == pCharacter->CharacterId;
+
+            Tell(acSender, fmt::format("  {} {}: {}", Ago(message.SentAt),
+                                       mine ? "you" : PhoneBookName(pCharacter, target),
+                                       message.Body));
+        }
+
+        // Reading a thread is what makes it read. Only this character's - MarkDelivered
+        // takes a CharacterId, so their other character's unread messages are untouched.
+        messages.MarkDelivered(pCharacter->CharacterId);
+        return true;
+    }
+
+    // ------------------------------------------------------------ /block ---
+    //
+    // Per character, silent, and aimed at a number. See CharacterRecord::Blocked.
+    if (command == "/block" || command == "/unblock")
+    {
+        const bool blocking = command == "/block";
+
+        if (target.empty())
+        {
+            Tell(acSender, fmt::format("Usage: {} 555-014-372", command));
+            return true;
+        }
+
+        if (!IsPhoneNumberShaped(target))
+        {
+            Tell(acSender, fmt::format("'{}' is not a number. They look like 555-014-372.", target));
+            return true;
+        }
+
+        auto& store = GServer->GetPlayerStore();
+
+        const auto* pSelf = store.FindCharacter(acSender.DiscordId);
+
+        if (pSelf && pSelf->PhoneNumber == target)
+        {
+            Tell(acSender, "That is your own number.");
+            return true;
+        }
+
+        const bool changed = blocking ? store.Block(acSender.DiscordId, target)
+                                      : store.Unblock(acSender.DiscordId, target);
+
+        if (!changed)
+        {
+            Tell(acSender, blocking ? fmt::format("{} is already blocked.", target)
+                                    : fmt::format("{} is not blocked.", target));
+            return true;
+        }
+
+        // Nobody but the blocker is told, ever. The other side finds out by not finding
+        // out, which is the point.
+        Tell(acSender, blocking
+                           ? fmt::format("Blocked {}. They are not told.", target)
+                           : fmt::format("Unblocked {}.", target));
+
+        return true;
+    }
+
+    if (command == "/blocked")
+    {
+        const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(acSender.DiscordId);
+
+        if (!pCharacter || pCharacter->Blocked.empty())
+        {
+            Tell(acSender, "Nobody blocked.");
+            return true;
+        }
+
+        Tell(acSender, fmt::format("{} blocked:", pCharacter->Blocked.size()));
+
+        for (const auto& number : pCharacter->Blocked)
+            Tell(acSender, fmt::format("  {}", number));
 
         return true;
     }

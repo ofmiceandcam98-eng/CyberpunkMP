@@ -29,6 +29,58 @@ Keep this block current; it is the first thing anyone should read. Cam: *"we sho
 the mental map pretty often."* A stale in-flight list is worse than none, because it sends
 people to work that is already done.
 
+- **DIGITAL LIFE: MESSAGING, CONTACT NAMES AND BLOCKING — BUILT, NOT SHIPPED.** Phase 1 of the
+  "character digital life" brief ChatGPT wrote on 2026-09-02. **Server-only — no protocol
+  change**, so unlike the slot work this could ship on its own.
+  - **Read the brief against the code before building any more of it.** Most of its Phase 1
+    and half of Phase 2 already existed: `CharacterId`, a unique per-character `PhoneNumber`,
+    per-character `Contacts`, `/number`, `/addcontact`, `/contacts`, and `/pay` (which is
+    already server-authoritative, atomic, and audit-logged — brief §10 describes what is
+    built). **Two of its instructions would have regressed decisions already made:** it
+    specifies `char_8f31a92c` for character ids, which is the 16-hex shape Cam rejected as
+    "too big" and which has no check symbol; and 10-digit phone numbers, where ours are
+    already unique strings and changing the digit count would break every number handed out.
+    Neither was adopted. Its central rule — **the character owns the digital identity, the
+    account does not** — was already how `CharacterRecord` is built.
+  - **`MessageStore` (`code/server/native/MessageStore.h`), addressed by `CharacterId` and
+    never by account.** Its own store, not a field on `CharacterRecord`, for a reason that
+    matters: `SaveCharacter` REPLACES a character wholesale from what the client reported, so
+    a message arriving between a client's read and its write would vanish silently. Same class
+    of bug as the money thrash.
+  - **Offline is the normal case.** A message is written to disk first and delivered second,
+    and `Delivered` is stored per message rather than assumed — so a recipient who was away,
+    crashed, or dropped the push gets it on their next arrival. `MarkDelivered` runs *after*
+    every line is handed to the connection: showing a message twice is a blemish, losing one
+    is the bug.
+  - **Conversations are keyed on the sorted pair.** A-texts-B and B-texts-A are one thread.
+    Unsorted, they are two threads each holding half of what was said, and both people see
+    the other ignoring them — a bug that reads as a UI problem for a week. Repaired on load
+    too, so a hand edit cannot create it.
+  - **Contacts gained a name (`Contact` struct) with a two-way-safe migration**, verified by
+    a standalone test: an existing bare-string list loads, and an unnamed contact still
+    *writes* as a bare string, so only accounts that actually save a name change shape and a
+    rollback keeps working for everyone else. Deleting a contact never touches message
+    history — that falls out of messages being their own store rather than hanging off the
+    phone book.
+  - **Blocking is per character, silent, and aimed at a number.** Blocked messages are
+    accepted and dropped, never refused: a refusal is a signal, and "delivery failed for this
+    number, sent for that one" tells somebody they were blocked. Nothing is stored either —
+    storing and never delivering would dump the backlog on whoever later unblocks.
+  - **`/addcontact` compared Discord ids, which the slot work made wrong.** It would tell a
+    player their own second character's number was "your own number" and refuse it. Now
+    compared by character. **Look for more of these** — every account-keyed phone lookup is
+    suspect now that an account can hold four characters.
+  - Commands: `/text`, `/texts`, `/read`, `/contactname`, `/delcontact`, `/block`,
+    `/unblock`, `/blocked`. Delivery on arrival hooks the spawn path, which is also where a
+    character *switch* lands — so switching hands over the new character's inbox and none of
+    the old one's.
+  - **Not built, and why:** calls (§12–13) need `PhoneSystem.OnTriggerCall`, which is
+    currently blocking *every* call — see [[project-cyberpunkmp-phone-calls]] before touching
+    it. Money attachments (§9–11) are **blocked on the money persistence bug**, and building
+    transfers on a balance that does not survive a session is how duplication bugs are born.
+    Social, email, computers, files, contracts, taxi and media (§18–28, §41–55) are later
+    phases with no foundation dependency on this one.
+
 - **SLOTS, SOFT DELETE AND THE SELECTOR — BUILT, NOT SHIPPED (`9a70e1d`).** Branch only, no
   release, `main` untouched. **This is a flag day when it does ship** — `CharacterSummary`
   gains `slot`/`is_active`, `AuthenticationResponse` gains `character_slots`, and there are
