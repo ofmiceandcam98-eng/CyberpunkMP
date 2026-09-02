@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 #include <random>
+#include <cstring>
+#include <cctype>
 
 /**
  * A multiplayer character, owned by the server.
@@ -324,20 +326,140 @@ inline bool IsPhoneNumberShaped(const std::string& acValue)
     return true;
 }
 
+/**
+ * The character id alphabet: 23 symbols, none of which can be misread as another.
+ *
+ * No 0 against O. No 1 against I or L. No 5 against S. No 8 against B, no 2 against Z, no U
+ * against V. What is left is what survives being read aloud down a voice channel and typed
+ * back by somebody who has never seen it written.
+ *
+ * TWENTY-THREE IS PRIME AND THAT IS THE WHOLE POINT - see CharacterIdCheckSymbol. Do not add
+ * a symbol to "get more ids": it silently destroys the error detection. Six payload symbols
+ * over this alphabet is 148 million characters, which is not the constraint on this project.
+ */
+inline constexpr char kCharacterIdAlphabet[] = "34679ACDEFGHJKMNPRTWXYZ";
+inline constexpr size_t kCharacterIdBase = 23; // sizeof(alphabet) - 1, and prime
+inline constexpr size_t kCharacterIdPayload = 6;
+
+/**
+ * The check symbol: the one that brings a weighted sum to zero modulo 23.
+ *
+ * Weights are 2,3,4,5,6,7 - distinct, and none of them zero or one. With a PRIME modulus and
+ * DISTINCT weights this catches every single-symbol substitution and every transposition of
+ * two adjacent symbols, which between them are almost every way a person mis-hears or
+ * mis-types a code.
+ *
+ * Why it exists at all: without a check symbol a typo lands on a DIFFERENT VALID id. An admin
+ * running /rename repairs a stranger's character, or a lookup silently answers about somebody
+ * else, and nothing anywhere reports an error. That is the failure this prevents, and it is
+ * why the 16 random hex characters this replaced were the wrong shape as soon as Cam asked
+ * for /rename - hex has no check, so every typo of an id is another valid id.
+ */
+inline char CharacterIdCheckSymbol(const std::string& acPayload)
+{
+    size_t sum = 0;
+
+    for (size_t i = 0; i < acPayload.size(); ++i)
+    {
+        const char* pFound = std::strchr(kCharacterIdAlphabet, acPayload[i]);
+        if (!pFound)
+            return '\0';
+
+        sum += static_cast<size_t>(pFound - kCharacterIdAlphabet) * (i + 2);
+    }
+
+    return kCharacterIdAlphabet[(kCharacterIdBase - (sum % kCharacterIdBase)) % kCharacterIdBase];
+}
+
+/**
+ * A new character id: six random symbols plus a check symbol, grouped as H7K-M4X3.
+ *
+ * Grouped because people read codes in chunks, and the hyphen is a reading aid rather than
+ * part of the value - ParseCharacterId strips it, so H7KM4X3, h7k m4x3 and H7K-M4X3 are the
+ * same id.
+ */
 inline std::string GenerateCharacterId()
 {
     static std::mt19937_64 engine{std::random_device{}()};
-    static std::uniform_int_distribution<uint64_t> dist;
+    std::uniform_int_distribution<size_t> dist(0, kCharacterIdBase - 1);
 
-    const uint64_t value = dist(engine);
+    std::string payload;
+    payload.reserve(kCharacterIdPayload);
 
-    static constexpr char kHex[] = "0123456789abcdef";
-    std::string id(16, '0');
+    for (size_t i = 0; i < kCharacterIdPayload; ++i)
+        payload.push_back(kCharacterIdAlphabet[dist(engine)]);
 
-    for (int i = 0; i < 16; ++i)
-        id[15 - i] = kHex[(value >> (i * 4)) & 0xF];
+    const char check = CharacterIdCheckSymbol(payload);
 
-    return id;
+    return payload.substr(0, 3) + "-" + payload.substr(3) + std::string(1, check);
+}
+
+/**
+ * Normalises what somebody typed into a stored id, or says why it is not one.
+ *
+ * FORGIVING ABOUT FORM, STRICT ABOUT CONTENT. Case, spaces, hyphens and underscores are all
+ * stripped - somebody reading an id back has no idea where the hyphen went. An unrecognised
+ * symbol is REFUSED, never dropped: dropping a stray character turns one player's id into
+ * another player's id, which is the exact accident the check symbol exists to catch.
+ *
+ * Legacy ids (16 hex characters, everything issued before 2026-08-30) are accepted unchanged
+ * and lower-cased. They carry no check symbol - nothing can be done about that now, and
+ * renumbering a stored key to make it prettier is not worth breaking every reference to it.
+ *
+ * Returns the normalised id, or an empty string with acReason set to one of:
+ * "empty", "length", "alphabet", "checksum".
+ */
+inline std::string ParseCharacterId(const std::string& acInput, std::string* apReason = nullptr)
+{
+    const auto fail = [apReason](const char* acpWhy) -> std::string
+    {
+        if (apReason)
+            *apReason = acpWhy;
+        return {};
+    };
+
+    std::string cleaned;
+    cleaned.reserve(acInput.size());
+
+    for (const char c : acInput)
+    {
+        if (c == '-' || c == '_' || c == ' ' || c == '\t')
+            continue;
+
+        cleaned.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+    }
+
+    if (cleaned.empty())
+        return fail("empty");
+
+    // Legacy: 16 hex characters, stored lower-case.
+    if (cleaned.size() == 16 &&
+        cleaned.find_first_not_of("0123456789ABCDEF") == std::string::npos)
+    {
+        std::string legacy = cleaned;
+        for (char& c : legacy)
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+        return legacy;
+    }
+
+    if (cleaned.size() != kCharacterIdPayload + 1)
+        return fail("length");
+
+    for (const char c : cleaned)
+    {
+        if (!std::strchr(kCharacterIdAlphabet, c))
+            return fail("alphabet");
+    }
+
+    const std::string payload = cleaned.substr(0, kCharacterIdPayload);
+    if (CharacterIdCheckSymbol(payload) != cleaned[kCharacterIdPayload])
+        return fail("checksum");
+
+    if (apReason)
+        apReason->clear();
+
+    return payload.substr(0, 3) + "-" + payload.substr(3) + std::string(1, cleaned[kCharacterIdPayload]);
 }
 
 /**
