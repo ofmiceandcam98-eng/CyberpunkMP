@@ -281,14 +281,52 @@ public func MpUpdatePanel() -> Void {
         return;
     }
 
+    let slots = network.GetCharacterSlots();
+
     if !network.HasCharacter() {
-        this.m_mpTitle.SetText("NO CHARACTER");
+        this.m_mpTitle.SetText(slots > 1 ? s"\(slots) CHARACTER SLOTS" : "NO CHARACTER");
         this.m_mpDetail.SetText("Press MULTIPLAYER to make one");
         return;
     }
 
-    this.m_mpTitle.SetText("YOUR CHARACTER");
-    this.m_mpDetail.SetText(s"\(network.GetCharacterName())  -  LEVEL \(network.GetCharacterLevel())");
+    this.m_mpTitle.SetText(slots > 1 ? s"YOUR CHARACTERS  (\(slots) SLOTS)" : "YOUR CHARACTER");
+
+    // One line per SLOT, not per character - the empty ones have to be visible, or there is
+    // no way to see that a slot is free without trying to use it.
+    //
+    // Drawn by walking slots and looking each one up in the roster, rather than by walking
+    // the roster: slots are not contiguous. Retiring the character in slot 1 of three leaves
+    // 0 and 2 occupied, and a list built from the roster alone would draw two rows and
+    // silently renumber them.
+    let lines = "";
+    let slot = 0;
+
+    while slot < slots {
+        let found = false;
+        let i = 0u;
+
+        while i < network.GetRosterCount() {
+            if network.GetRosterSlot(i) == slot {
+                let marker = network.IsRosterActive(i) ? "> " : "  ";
+                let name = network.GetRosterName(i);
+                let shown = NotEquals(name, "") ? name : "unnamed";
+                let state = network.HasRosterSpawnedBefore(i) ? s"LEVEL \(network.GetRosterLevel(i))" : "NEW";
+
+                lines += s"\(marker)\(slot + 1). \(shown)  -  \(state)\n";
+                found = true;
+            }
+
+            i += 1u;
+        }
+
+        if !found {
+            lines += s"  \(slot + 1). empty\n";
+        }
+
+        slot += 1;
+    }
+
+    this.m_mpDetail.SetText(lines);
 }
 
 @wrapMethod(SingleplayerMenuGameController)
@@ -328,18 +366,42 @@ private func PopulateMenuItemList() -> Void {
     //
     // Only offered while a character exists to delete. Drawing it against an empty account
     // would be a button whose only possible outcome is a refusal.
-    // Off with the selector. Both the trash can and the panel only make sense once the
-    // menu has asked the server who this account is, and it no longer does - drawn now,
-    // they would say "signing in..." forever against a connection nobody opened.
+    // BACK ON, and the reason it was off is fixed rather than ignored.
     //
-    // The handler for OnMultiplayerDeleteCharacter is still present and still compiles, so
-    // re-adding this line is all it takes to bring the entry back.
+    // The note that replaced these lines said the panel "would say 'signing in...' forever
+    // against a connection nobody opened", which was true: nothing on this screen asked the
+    // server who the account was, so the panel had nothing to draw and no prospect of
+    // getting anything.
     //
-    // if IsDefined(network) && network.IsCharacterStatusKnown() && network.HasCharacter() {
-    //     this.AddMenuItem("[ TRASH ]  DELETE CHARACTER", n"OnMultiplayerDeleteCharacter");
-    // }
-    // this.MpBuildPanel();
-    // this.MpUpdatePanel();
+    // The fix is the entry below, not a timer. CHARACTERS opens the connection deliberately
+    // and polls until the roster lands - the same mechanism the delete entry has always used
+    // - and the panel is built only once the answer is actually here. So it either shows the
+    // roster or it is not on screen; it never sits saying "signing in" at somebody.
+    let network = GameInstance.GetNetworkWorldSystem();
+
+    if IsDefined(network) {
+        if network.IsCharacterStatusKnown() {
+            this.MpBuildPanel();
+            this.MpUpdatePanel();
+
+            // The trash can.
+            //
+            // Only offered while a character exists to delete - drawing it against an empty
+            // account would be a button whose only possible outcome is a refusal.
+            if network.HasCharacter() {
+                this.AddMenuItem("[ TRASH ]  DELETE CHARACTER", n"OnMultiplayerDeleteCharacter");
+            }
+
+            // Switching only makes sense with somewhere to switch to. One slot means one
+            // character, and an entry that can only ever re-select what you already are is
+            // noise on the one screen everybody sees.
+            if network.GetCharacterSlots() > 1 {
+                this.AddMenuItem("MULTIPLAYER - SWITCH CHARACTER", n"OnMultiplayerSwitchCharacter");
+            }
+        } else {
+            this.AddMenuItem("MULTIPLAYER - CHARACTERS", n"OnMultiplayerCharacters");
+        }
+    }
 
     // PopulateMenuItemList refreshes at its end, before our item existed. Without
     // refreshing again the entry is in the data but never drawn, which looks exactly
@@ -420,6 +482,89 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
     // first press arms and says so on the panel; the second sends it. Walking away from
     // the menu disarms, because the arm lives on the controller and the controller does
     // not survive leaving the screen.
+    // "Show me my characters." Opens the connection so the server can say who this account
+    // is, then polls until the roster lands and rebuilds the menu with the panel on it.
+    //
+    // A deliberate press rather than something the menu does by itself: connecting is not
+    // free, and most visits to this screen are somebody loading a singleplayer save.
+    if Equals(data.eventName, n"OnMultiplayerCharacters") {
+        let network = GameInstance.GetNetworkWorldSystem();
+
+        if !IsDefined(network) {
+            return true;
+        }
+
+        if !network.IsConnected() {
+            network.Connect();
+        }
+
+        let poll = new MpSelectorPoll();
+        poll.controller = this;
+        poll.attempts = 0;
+
+        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(poll, 0.25, false);
+        return true;
+    }
+
+    // Step to the next slot that HAS a character in it.
+    //
+    // A cycle rather than a list, because the main menu's item list is the only reliably
+    // clickable, focusable, controller-navigable surface here, and four rows of characters
+    // on the front screen would bury MULTIPLAYER under them. The panel on the right shows
+    // every slot; this walks between them and marks the one in play with a caret.
+    //
+    // Cycling only over OCCUPIED slots is the point: stepping onto an empty one would answer
+    // "there is no character in that slot" from the server, which is a refusal the player
+    // did not ask for.
+    if Equals(data.eventName, n"OnMultiplayerSwitchCharacter") {
+        let network = GameInstance.GetNetworkWorldSystem();
+
+        if !IsDefined(network) || !network.IsConnected() {
+            FTLogError(s"[Selector] switch pressed with no connection");
+            return true;
+        }
+
+        let count = network.GetRosterCount();
+        if count <= 1u {
+            return true;
+        }
+
+        // Find where we are, then take the next one round. Not "active index + 1" against
+        // the slot number: the roster is sorted by slot and slots are not contiguous, so the
+        // successor of slot 0 may be slot 2.
+        let activeIndex = 0u;
+        let i = 0u;
+
+        while i < count {
+            if network.IsRosterActive(i) {
+                activeIndex = i;
+            }
+
+            i += 1u;
+        }
+
+        let nextIndex = (activeIndex + 1u) % count;
+        let nextSlot = network.GetRosterSlot(nextIndex);
+
+        if nextSlot >= 0 {
+            network.SelectCharacterSlot(nextSlot);
+
+            if IsDefined(this.m_mpDetail) {
+                this.m_mpDetail.SetText("switching...");
+            }
+
+            // The answer comes back as a fresh roster, so poll for it rather than assuming
+            // the switch took. SelectCharacterSlot only says the request was sent.
+            let poll = new MpSelectorPoll();
+            poll.controller = this;
+            poll.attempts = 0;
+
+            GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(poll, 0.25, false);
+        }
+
+        return true;
+    }
+
     if Equals(data.eventName, n"OnMultiplayerDeleteCharacter") {
         let network = GameInstance.GetNetworkWorldSystem();
 

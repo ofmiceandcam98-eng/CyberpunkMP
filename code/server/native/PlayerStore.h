@@ -2,6 +2,7 @@
 
 #include "CharacterRecord.h"
 
+#include "PermissionLevel.h"
 /**
  * Where each player was, kept across sessions.
  *
@@ -530,6 +531,114 @@ struct PlayerStore
      * gone". Nothing reads the retired list yet; it exists so that answer can be written
      * later without a time machine.
      */
+    /**
+     * How many character slots an account has, from its role.
+     *
+     * One for a player, four for staff. Cam's rule: admins and above get four.
+     *
+     * A PERMISSION, so the server decides it and the client is told. A client that works out
+     * its own allowance is a client that can grant itself an allowance.
+     */
+    static int SlotsForLevel(EPermissionLevel aLevel)
+    {
+        return aLevel >= EPermissionLevel::kAdmin ? kStaffSlots : kPlayerSlots;
+    }
+
+    static constexpr int kPlayerSlots = 1;
+    static constexpr int kStaffSlots = 4;
+
+    /**
+     * The most rows one account may EVER write, across every character it has ever had.
+     *
+     * Separate from the slot count, and it exists because deletion is soft: a retired
+     * character keeps its row so its id is never reissued and the deletion can be undone.
+     * Which means create-and-delete-and-create writes a new row every single time, and
+     * without a ceiling one account can grow the file forever.
+     *
+     * Sixty is not a considered figure - it is "far more than anybody will legitimately use,
+     * and far fewer than a script can produce in an afternoon".
+     */
+    static constexpr int kLifetimeRowCeiling = 60;
+
+    /**
+     * Whether this account may create a character in this slot, and why not if not.
+     *
+     * Returns an empty string for yes, or a stable refusal code. Codes rather than sentences
+     * so the caller can branch, log and render them - "slot_taken" survives translation and a
+     * log grep in a way that "That slot already has a character on it" does not.
+     */
+    std::string MayCreateInSlot(const std::string& acDiscordId, int aSlot, EPermissionLevel aLevel) const
+    {
+        const int slots = SlotsForLevel(aLevel);
+
+        if (aSlot < 0 || aSlot >= slots)
+            return "slot_out_of_range";
+
+        const auto* pRecord = Find(acDiscordId);
+        if (!pRecord)
+            return {}; // no record yet: the first character of a new account
+
+        for (const auto& character : pRecord->Characters)
+        {
+            if (character.Slot == aSlot)
+                return "slot_taken";
+        }
+
+        // Live and retired both count. The ceiling is about rows written, not characters
+        // held - that is the whole reason it is separate from the slot count.
+        const size_t rows = pRecord->Characters.size() + pRecord->RetiredCharacters.size();
+
+        if (rows >= static_cast<size_t>(kLifetimeRowCeiling))
+            return "row_ceiling";
+
+        return {};
+    }
+
+    /**
+     * The live characters on an account, for the selector.
+     *
+     * Returns them as they are stored, INCLUDING their slot numbers, which are not
+     * contiguous: retiring the character in slot 1 of three leaves slots 0 and 2 occupied.
+     * The caller draws holes where the gaps are rather than renumbering, because a slot
+     * number that moves is a slot number somebody's UI is about to act on wrongly.
+     */
+    const std::vector<CharacterRecord>* GetCharacters(const std::string& acDiscordId) const
+    {
+        const auto* pRecord = Find(acDiscordId);
+        return pRecord ? &pRecord->Characters : nullptr;
+    }
+
+    /**
+     * Play as the character in this slot.
+     *
+     * Refuses rather than falling back to slot 0. "You asked for a character that is not
+     * there, so here is a different one" is how somebody ends up playing, and saving over,
+     * a character they did not choose.
+     */
+    std::string SelectSlot(const std::string& acDiscordId, int aSlot)
+    {
+        auto* pRecord = FindMutable(acDiscordId);
+        if (!pRecord)
+            return "no_account";
+
+        for (const auto& character : pRecord->Characters)
+        {
+            if (character.Slot != aSlot)
+                continue;
+
+            if (pRecord->ActiveSlot != aSlot)
+            {
+                pRecord->ActiveSlot = aSlot;
+                m_dirty = true;
+                Flush();
+            }
+
+            return {};
+        }
+
+        return "empty_slot";
+    }
+
     bool RetireCharacter(const std::string& acDiscordId, int aSlot = -1)
     {
         auto* pRecord = FindMutable(acDiscordId);

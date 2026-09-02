@@ -47,6 +47,7 @@ ChatSystem::ChatSystem(gsl::not_null<World*> apWorld)
     GServer->RegisterHandler<&ChatSystem::HandleRespawnRequest>(this);
     GServer->RegisterHandler<&ChatSystem::HandleSaveCharacterRequest>(this);
     GServer->RegisterHandler<&ChatSystem::HandleDeleteCharacterRequest>(this);
+    GServer->RegisterHandler<&ChatSystem::HandleSelectCharacterRequest>(this);
 
     // Walks every dummy in a slow circle. Registered here rather than beside the command
     // so it exists exactly once, whatever anyone types.
@@ -104,16 +105,37 @@ void ChatSystem::SendCharacterList(const PlayerComponent& acPlayer, const std::s
 
     if (!acPlayer.DiscordId.empty())
     {
-        if (const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(acPlayer.DiscordId))
-        {
-            server::CharacterSummary summary;
-            summary.set_id(pCharacter->CharacterId.c_str());
-            summary.set_name(pCharacter->Name.c_str());
-            summary.set_level(pCharacter->Level);
-            summary.set_spawned_before(pCharacter->SpawnedBefore);
+        // EVERY character on the account, not just the one in play.
+        //
+        // This used to send the active character wrapped in a list of one, which made the
+        // list shape a lie: the wire has always carried a list, deliberately, and the server
+        // was the thing collapsing it. A selector cannot draw four slots from a roster that
+        // only ever contains the slot you are already in.
+        const auto& store = GServer->GetPlayerStore();
+        const auto* pRecord = store.Find(acPlayer.DiscordId);
 
+        if (pRecord && !pRecord->Characters.empty())
+        {
             Vector<server::CharacterSummary> characters;
-            characters.push_back(summary);
+
+            for (const auto& character : pRecord->Characters)
+            {
+                server::CharacterSummary summary;
+                summary.set_id(character.CharacterId.c_str());
+                summary.set_name(character.Name.c_str());
+                summary.set_level(character.Level);
+                summary.set_spawned_before(character.SpawnedBefore);
+
+                // The slot is for DRAWING, never for identity. Slots are not contiguous -
+                // retiring the character in slot 1 of three leaves 0 and 2 occupied - so the
+                // client draws holes where the gaps are rather than renumbering. Anything
+                // keyed on a slot number that moves is a bug waiting for a deletion.
+                summary.set_slot(character.Slot);
+                summary.set_is_active(character.Slot == pRecord->ActiveSlot);
+
+                characters.push_back(summary);
+            }
+
             message.set_characters(characters);
         }
     }
@@ -122,6 +144,63 @@ void ChatSystem::SendCharacterList(const PlayerComponent& acPlayer, const std::s
         message.set_error(acError.c_str());
 
     GServer->Send(acPlayer.Connection, message);
+}
+
+/**
+ * "Play as the character in this slot."
+ *
+ * Refuses an empty slot rather than falling back to the first one. "You asked for a
+ * character that is not there, so here is a different one" is exactly how somebody ends up
+ * playing - and then saving over - a character they did not choose.
+ *
+ * Answers nothing directly. Selection is a request; the real answer is the spawn that
+ * follows, or a refusal carried back on the character list. A caller that waits for a
+ * verdict here would wait forever.
+ */
+void ChatSystem::HandleSelectCharacterRequest(const PacketEvent<client::SelectCharacterRequest>& aMessage)
+{
+    auto* pPlayerManager = m_pWorld->get<PlayerManager>();
+
+    const auto entity = pPlayerManager->GetByConnectionId(aMessage.ConnectionId);
+    if (!entity || !entity.has<PlayerComponent>())
+        return;
+
+    const auto* pPlayer = entity.get<PlayerComponent>();
+
+    if (pPlayer->DiscordId.empty())
+    {
+        SendCharacterList(*pPlayer, "Your Discord sign-in could not be verified.");
+        return;
+    }
+
+    // Switching characters while standing in the world as one of them would leave a body
+    // behind belonging to a character nobody is playing any more, and the autosave would
+    // then write the new character's state over the old one's record.
+    if (pPlayer->Puppet && pPlayer->Puppet.is_alive())
+    {
+        SendCharacterList(*pPlayer, "Leave the world before switching characters.");
+        return;
+    }
+
+    auto& store = GServer->GetPlayerStore();
+    const std::string refusal = store.SelectSlot(pPlayer->DiscordId, aMessage.get_slot());
+
+    if (!refusal.empty())
+    {
+        spdlog::info("{} could not select slot {}: {}", pPlayer->Username, aMessage.get_slot(),
+                     refusal);
+
+        SendCharacterList(*pPlayer, refusal == "empty_slot"
+                                        ? "There is no character in that slot."
+                                        : "That character could not be selected.");
+        return;
+    }
+
+    spdlog::info("{} selected slot {}", pPlayer->Username, aMessage.get_slot());
+
+    // The roster goes back so the panel can redraw with the new active row marked. The
+    // player still has to press play; this only decides who they will be when they do.
+    SendCharacterList(*pPlayer, {});
 }
 
 void ChatSystem::HandleDeleteCharacterRequest(const PacketEvent<client::DeleteCharacterRequest>& aMessage)
@@ -158,11 +237,42 @@ void ChatSystem::HandleDeleteCharacterRequest(const PacketEvent<client::DeleteCh
 
     auto& store = GServer->GetPlayerStore();
 
-    if (!store.FindCharacter(pPlayer->DiscordId))
+    // Which slot the player pointed at. The slot is resolved to a character HERE, on the
+    // server, and everything about that character is re-checked - a client naming a slot it
+    // does not own, or one that is empty, gets a refusal rather than a deletion.
+    //
+    // Falls back to the active slot so an older client, which sends no slot at all, keeps
+    // behaving exactly as it did.
+    const int slot = aMessage.has_slot() ? aMessage.get_slot() : -1;
+
+    const auto* pCharacters = store.GetCharacters(pPlayer->DiscordId);
+    const CharacterRecord* pTarget = nullptr;
+
+    if (pCharacters)
     {
-        SendCharacterList(*pPlayer, "There is no character to delete.");
+        for (const auto& character : *pCharacters)
+        {
+            const bool wanted = (slot < 0) ? (&character == store.FindCharacter(pPlayer->DiscordId))
+                                           : (character.Slot == slot);
+            if (wanted)
+            {
+                pTarget = &character;
+                break;
+            }
+        }
+    }
+
+    if (!pTarget)
+    {
+        SendCharacterList(*pPlayer, "There is no character in that slot.");
         return;
     }
+
+    // Named in the log BEFORE it goes, because after the retire this record is somewhere
+    // else and "which character did they just delete" becomes a question rather than a fact.
+    spdlog::info("{} is deleting '{}' ({}) from slot {}", pPlayer->Username,
+                 pTarget->Name.empty() ? "unnamed" : pTarget->Name, pTarget->CharacterId,
+                 pTarget->Slot);
 
     // Retired, not destroyed. The store keeps it in RetiredCharacters precisely so that
     // "I clicked the wrong thing" has an answer that is not "it is gone" - and nothing
@@ -171,7 +281,7 @@ void ChatSystem::HandleDeleteCharacterRequest(const PacketEvent<client::DeleteCh
     // Owned vehicles and other character-owned records are deliberately NOT cascaded here.
     // Working out what should be deleted, transferred or orphaned is its own decision, and
     // a delete that quietly took someone's cars with it would be discovered far too late.
-    const bool retired = store.RetireCharacter(pPlayer->DiscordId);
+    const bool retired = store.RetireCharacter(pPlayer->DiscordId, pTarget->Slot);
 
     if (!retired)
     {

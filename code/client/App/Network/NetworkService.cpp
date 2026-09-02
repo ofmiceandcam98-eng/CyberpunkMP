@@ -232,15 +232,33 @@ void NetworkService::HandleAuthentication(const PacketEvent<server::Authenticati
     auto* pWorldSystem = Red::GetGameSystem<NetworkWorldSystem>();
     const auto& characters = aResponse.get_characters();
 
+    // The roster arrives on the authentication reply as well as on NotifyCharacterList, and
+    // this is the earlier of the two - it is what the main menu has to draw from before
+    // anybody has asked for anything.
+    pWorldSystem->AdoptRoster(characters, aResponse.get_character_slots());
+
     if (characters.empty())
     {
         pWorldSystem->SetCharacterStatus(false, "", 0, false);
     }
     else
     {
-        const auto& first = characters[0];
-        pWorldSystem->SetCharacterStatus(true, first.get_name().c_str(), first.get_level(),
-                                         first.get_spawned_before());
+        // The ACTIVE character drives the single-character status, not whichever came first.
+        // With one character they are the same row; with four they are not, and every
+        // existing caller means "the one I am playing".
+        const server::CharacterSummary* pActive = &characters[0];
+
+        for (const auto& summary : characters)
+        {
+            if (summary.get_is_active())
+            {
+                pActive = &summary;
+                break;
+            }
+        }
+
+        pWorldSystem->SetCharacterStatus(true, pActive->get_name().c_str(), pActive->get_level(),
+                                         pActive->get_spawned_before());
     }
 
     pWorldSystem->OnConnected();

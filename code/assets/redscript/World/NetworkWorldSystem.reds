@@ -125,6 +125,28 @@ public native class NetworkWorldSystem extends IGameSystem {
     // of the person losing it, before this is called.
     public native func DeleteCharacter() -> Void;
 
+    // The account roster, read one scalar at a time - the same shape the restore inventory
+    // uses, because scalars cross the native boundary comfortably and arrays of structs do
+    // not. Every accessor bounds-checks and answers a harmless default.
+    public native func GetRosterCount() -> Uint32;
+    public native func GetRosterId(index: Uint32) -> String;
+    public native func GetRosterName(index: Uint32) -> String;
+    public native func GetRosterLevel(index: Uint32) -> Int32;
+
+    // -1 for a bad index, never 0: zero is a REAL slot, and a caller reading it as one
+    // would offer to delete the character in slot 0 when asked about a row that is not there.
+    public native func GetRosterSlot(index: Uint32) -> Int32;
+    public native func IsRosterActive(index: Uint32) -> Bool;
+    public native func HasRosterSpawnedBefore(index: Uint32) -> Bool;
+
+    // How many characters this ACCOUNT may hold, as the SERVER decided. Never computed here.
+    public native func GetCharacterSlots() -> Int32;
+
+    // Requests, not answers. Each says only that it was sent; the verdict arrives as a new
+    // roster, or as a refusal carried on it.
+    public native func SelectCharacterSlot(slot: Int32) -> Void;
+    public native func DeleteCharacterSlot(slot: Int32) -> Void;
+
     // Why the last request was refused, empty when nothing was. Shown on the panel rather
     // than swallowed - a button that appears to do nothing is the worst outcome here.
     public native func GetCharacterError() -> String;

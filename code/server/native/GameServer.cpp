@@ -956,6 +956,13 @@ void GameServer::AdmitPlayer(const ConnectionId aConnectionId, const std::string
         // One lookup, appended to a list. The store is keyed on Discord id so there can
         // only be one - but the shape is a list, so the day slots exist this loop grows
         // rather than every reader changing.
+        // The allowance goes out whether or not they already have a character.
+        //
+        // Set outside the branch deliberately: an account with NO character is exactly the
+        // one that needs to know how many it may make, and putting this inside the
+        // has-a-character branch would tell everybody except the person about to create one.
+        response.set_character_slots(PlayerStore::SlotsForLevel(aLevel));
+
         if (const auto* pCharacter = m_players.FindCharacter(acDiscordId))
         {
             server::CharacterSummary summary;
