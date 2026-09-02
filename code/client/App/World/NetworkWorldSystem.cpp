@@ -1351,10 +1351,47 @@ void NetworkWorldSystem::ApplyStoredAppearance()
         return;
     }
 
-    // Taken, not copied. This runs once per spawn; a retry with the same bytes would be a
-    // second rebuild of the same body for no benefit.
-    const auto bytes = std::move(m_restoreAppearance);
-    m_restoreAppearance.clear();
+    // NOT READY is not the same as FAILED, and conflating them cost us the character.
+    //
+    // On a fresh connect the server sends the appearance while the player is still on the
+    // MAIN MENU - MpLoadOwnCharacterSave has not loaded their save yet. There is no live
+    // customization state to write into at that moment, and there cannot be. From Cam's
+    // log on 2026-09-01, in this exact order:
+    //
+    //   00:13:34.156  server sent 9206 bytes of our own stored appearance
+    //   00:13:35.164  Local appearance restore BEGIN - 9206 bytes
+    //   00:13:35.164  FAILED: GetState returned nothing
+    //   00:13:36.063  [OwnSave] loading 'AutoSave-12'      <- the world arrives AFTER
+    //
+    // The old code took the bytes with std::move BEFORE trying, so that doomed first
+    // attempt consumed the only copy. By the time a world existed there was nothing left
+    // to apply, OnBeforeWorldDetach cleared the (already empty) buffer, and the player
+    // ended up looking like whatever save happened to load. Not their character, and not
+    // the template either - a third person entirely, which is exactly what Cam reported.
+    //
+    // So: ask whether the engine can take an appearance at all BEFORE spending the bytes.
+    // If it cannot, leave everything untouched and let the settle loop come back once the
+    // world is up. Silent after the first line, because this is called repeatedly.
+    if (!Red::GetGameSystem<Red::game::ui::CharacterCustomizationSystem>() ||
+        !GetLiveCustomizationState(Red::GetGameSystem<Red::game::ui::CharacterCustomizationSystem>()))
+    {
+        if (!m_appearanceWaitLogged)
+        {
+            m_appearanceWaitLogged = true;
+            spdlog::info("[Character] appearance held - no live customization state yet (still at the menu, "
+                         "or the world has not attached). Keeping the {} bytes for when it is.",
+                         m_restoreAppearance.size());
+        }
+
+        return;
+    }
+
+    m_appearanceWaitLogged = false;
+
+    // Copied, not taken. The clear happens only once the apply has actually SUCCEEDED -
+    // see the Applied assignment at the end. A failure now leaves the bytes in place so
+    // the next attempt has something to work with.
+    const auto bytes = m_restoreAppearance;
 
     m_appearanceRestore = AppearanceRestore::Applying;
 
@@ -1496,6 +1533,10 @@ void NetworkWorldSystem::ApplyStoredAppearance()
 
     spdlog::info("[Character] commit COMPLETE - accepted by {}", committed);
 
+    // NOW the bytes are spent. Held until this point on purpose: every early return above
+    // is a reason to try again later, and the version that consumed them up front turned
+    // one badly-timed attempt into a permanently lost appearance.
+    m_restoreAppearance.clear();
 
     m_appearanceRestore = AppearanceRestore::Applied;
 

@@ -41,10 +41,31 @@ people to work that is already done.
     `CharacterSummary` (deliberately a list, "a list of length one costs nothing today and is
     the whole difference later"), and `CharacterRecord` already has `Slot` and `CharacterId`.
     What is missing is the client panel that draws four slots and says which are in use.
-- **Appearance is DELIVERED and still wrong — this is the biggest open bug.** `e795a52` is
-  no longer stuck: two mod releases went out on 2026-08-30 and the payload was verified by
-  download. So the fix is in players' hands and the problem persists, which moves it from
-  "undelivered" to "does not work". What the 2026-08-29/30 logs actually show:
+- **"I am not the character I made" — ROOT CAUSE FOUND 2026-09-02. TWO bugs, one fixed.**
+  Cam: *"the character we created would not be the character we play as, it is also not
+  phantom veronica"* — a third person entirely. That is two independent faults stacking:
+  - **(A) `OwnSave` has no idea which save is the character. STILL OPEN — this is the big
+    one.** It loads "the newest save that is not `MultiplayerStart`", which is not an
+    identity, it is an accident of file order. On 2026-09-01 it loaded `AutoSave-12` — a
+    throwaway female Corpo from a probe run two days earlier. Any newer save wins: another
+    test character, a singleplayer session, anything. Fixing it needs a save NAMED for the
+    character (`ManualSave(saveName: String)` exists on `inkISystemRequestsHandler`, so the
+    mod can name its own saves) and a load that matches that name rather than a position in
+    a list. That is ChatGPT's Phase 1 items 1-4 and it is the correct next piece of work.
+  - **(B) A failed appearance restore destroyed its own input. FIXED.** See below.
+- **Appearance restore: the bytes were spent before the attempt. Fixed, NOT VERIFIED LIVE.**
+  On a fresh connect the server sends the appearance while the player is still on the MAIN
+  MENU, because `MpLoadOwnCharacterSave` has not loaded a save yet. From the 2026-09-01 log,
+  in order: `server sent 9206 bytes` → `restore BEGIN` → `FAILED: GetState returned nothing`
+  → **then** `[OwnSave] loading 'AutoSave-12'`. The old code did
+  `const auto bytes = std::move(m_restoreAppearance)` BEFORE trying, so that doomed first
+  attempt consumed the only copy; the world then attached with nothing left to apply and
+  the player looked like whatever save had loaded. Now the code asks whether a live
+  customization state exists BEFORE spending the bytes, keeps them when it does not, and
+  clears them only after a commit is accepted. Cheap to check: the log should say
+  `appearance held - no live customization state yet` once, then a real BEGIN after the
+  world attaches.
+- **Older notes on the same area, still true:**
   - **The restore runs on characters it promised to skip.** On a brand-new character the
     log says `NEW character - possessions discarded, restore will run empty` and then
     immediately `Deserialize ccstate COMPLETE - body is female`. It is applying the stored
