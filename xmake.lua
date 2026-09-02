@@ -8,20 +8,32 @@ add_cxflags("-fPIC")
 set_languages("c99", "cxx20")
 add_configfiles("BuildInfo.h.in")
 
+-- Every dependency is pinned, deliberately.
+--
+-- Unpinned entries resolve to whatever is newest on the day, so a clean checkout builds
+-- against a different set of libraries every time. CI does not notice because it restores
+-- a cached package set keyed on hashFiles('**/xmake.lua') - the cache hides the drift, and
+-- only a fresh clone finds it. As of August 2026 a fresh clone of main does not build.
+--
+-- These are the versions a full build was verified against, not guesses. Loosening any of
+-- them is fine; doing it by accident is what this prevents.
 add_requires(
     "mimalloc 2.1.7",
-    "spdlog",
-    "hopscotch-map",
-    "cryptopp",
-    "gamenetworkingsockets",
-    "glm",
-    "openssl",
-    "zlib",
-    "nlohmann_json",
+    "spdlog v1.17.0",
+    "hopscotch-map v2.4.0",
+    "cryptopp 8.9.0",
+    "gamenetworkingsockets v1.6.0",
+    "glm 1.0.3",
+    "openssl 1.1.1-w",
+    "zlib v1.3.2",
+    "nlohmann_json v3.12.0",
     "flecs v4.0.3",
+    -- 3.19.4 lacks RecordError and absl::string_view; 35.1 removed
+    -- FieldDescriptor::is_optional() and internal symbols code/netpack/cpp/helpers.h
+    -- reaches for. 29.3 is the version this code was written against.
     "protobuf-cpp 29.3",
-    "entt",
-    "microsoft-gsl")
+    "entt v3.16.0",
+    "microsoft-gsl v4.2.2")
 
 if is_plat("windows") then
     set_arch("x64")
