@@ -325,17 +325,21 @@ struct PlayerStore
      * All of them act on the ACTIVE character, and all return false when there is nothing
      * to act on, so a caller can say what happened rather than reporting success blindly.
      */
-    bool AddContact(const std::string& acDiscordId, const std::string& acNumber)
+    bool AddContact(const std::string& acDiscordId, const std::string& acNumber,
+                    const std::string& acName = {})
     {
         auto* pCharacter = FindCharacterMutable(acDiscordId);
         if (!pCharacter || acNumber.empty())
             return false;
 
-        if (std::find(pCharacter->Contacts.begin(), pCharacter->Contacts.end(), acNumber) !=
-            pCharacter->Contacts.end())
+        if (FindContact(*pCharacter, acNumber))
             return false;   // already theirs - the caller says so rather than duplicating it
 
-        pCharacter->Contacts.push_back(acNumber);
+        Contact contact;
+        contact.Number = acNumber;
+        contact.Name = acName;
+
+        pCharacter->Contacts.push_back(std::move(contact));
         pCharacter->UpdatedAt = Now();
 
         m_dirty = true;
@@ -343,6 +347,45 @@ struct PlayerStore
         return true;
     }
 
+    /**
+     * Rename an entry the character already has.
+     *
+     * Separate from AddContact rather than folded into it as an upsert. "Add" and "rename"
+     * fail for different reasons and a player needs to be told which happened - an upsert
+     * that silently creates a contact when somebody meant to rename one is how you end up
+     * with a phone book full of numbers nobody recognises.
+     *
+     * An empty name CLEARS it, falling back to whoever holds the number. That is a real
+     * thing to want and there is no other way to express it.
+     */
+    bool SetContactName(const std::string& acDiscordId, const std::string& acNumber,
+                        const std::string& acName)
+    {
+        auto* pCharacter = FindCharacterMutable(acDiscordId);
+        if (!pCharacter)
+            return false;
+
+        auto* pContact = FindContactMutable(*pCharacter, acNumber);
+        if (!pContact)
+            return false;
+
+        pContact->Name = acName;
+        pCharacter->UpdatedAt = Now();
+
+        m_dirty = true;
+        Flush();
+        return true;
+    }
+
+    /**
+     * Forget a contact. Deliberately does NOT touch anything else.
+     *
+     * Message history, payments and call records all survive, because they are records of
+     * things that happened and deleting a phone book entry does not un-happen them. The
+     * thread simply shows the number where the name used to be. This is why messages live
+     * in their own store keyed on CharacterId rather than hanging off the contact list -
+     * the separation is what makes this the easy behaviour instead of the careful one.
+     */
     bool RemoveContact(const std::string& acDiscordId, const std::string& acNumber)
     {
         auto* pCharacter = FindCharacterMutable(acDiscordId);
@@ -352,7 +395,9 @@ struct PlayerStore
         const auto before = pCharacter->Contacts.size();
 
         pCharacter->Contacts.erase(
-            std::remove(pCharacter->Contacts.begin(), pCharacter->Contacts.end(), acNumber),
+            std::remove_if(pCharacter->Contacts.begin(), pCharacter->Contacts.end(),
+                           [&acNumber](const Contact& acContact)
+                           { return acContact.Number == acNumber; }),
             pCharacter->Contacts.end());
 
         if (pCharacter->Contacts.size() == before)
@@ -362,6 +407,97 @@ struct PlayerStore
         m_dirty = true;
         Flush();
         return true;
+    }
+
+    // ------------------------------------------------------------------ blocking ----
+
+    /**
+     * Does this character refuse messages from that number?
+     *
+     * Const and cheap, because it is checked on the path of every message rather than only
+     * when somebody asks. A block that is enforced at the command surface and not at the
+     * delivery surface is not a block - it is a rule the next caller gets to forget.
+     */
+    bool IsBlocked(const std::string& acDiscordId, const std::string& acNumber) const
+    {
+        const auto* pCharacter = FindCharacter(acDiscordId);
+        if (!pCharacter)
+            return false;
+
+        return std::find(pCharacter->Blocked.begin(), pCharacter->Blocked.end(), acNumber) !=
+               pCharacter->Blocked.end();
+    }
+
+    // The same question asked of a character directly, for paths that already have one and
+    // must not resolve an account a second time - a block is the ACTIVE character's, and
+    // re-resolving invites the wrong one to answer.
+    static bool IsBlockedBy(const CharacterRecord& acCharacter, const std::string& acNumber)
+    {
+        return std::find(acCharacter.Blocked.begin(), acCharacter.Blocked.end(), acNumber) !=
+               acCharacter.Blocked.end();
+    }
+
+    bool Block(const std::string& acDiscordId, const std::string& acNumber)
+    {
+        auto* pCharacter = FindCharacterMutable(acDiscordId);
+        if (!pCharacter || acNumber.empty())
+            return false;
+
+        if (std::find(pCharacter->Blocked.begin(), pCharacter->Blocked.end(), acNumber) !=
+            pCharacter->Blocked.end())
+            return false;
+
+        pCharacter->Blocked.push_back(acNumber);
+        pCharacter->UpdatedAt = Now();
+
+        m_dirty = true;
+        Flush();
+        return true;
+    }
+
+    bool Unblock(const std::string& acDiscordId, const std::string& acNumber)
+    {
+        auto* pCharacter = FindCharacterMutable(acDiscordId);
+        if (!pCharacter)
+            return false;
+
+        const auto before = pCharacter->Blocked.size();
+
+        pCharacter->Blocked.erase(
+            std::remove(pCharacter->Blocked.begin(), pCharacter->Blocked.end(), acNumber),
+            pCharacter->Blocked.end());
+
+        if (pCharacter->Blocked.size() == before)
+            return false;
+
+        pCharacter->UpdatedAt = Now();
+        m_dirty = true;
+        Flush();
+        return true;
+    }
+
+    // A character's saved name for a number, or nullptr when they have not saved one.
+    static const Contact* FindContact(const CharacterRecord& acCharacter,
+                                      const std::string& acNumber)
+    {
+        for (const auto& contact : acCharacter.Contacts)
+        {
+            if (contact.Number == acNumber)
+                return &contact;
+        }
+
+        return nullptr;
+    }
+
+    static Contact* FindContactMutable(CharacterRecord& aCharacter, const std::string& acNumber)
+    {
+        for (auto& contact : aCharacter.Contacts)
+        {
+            if (contact.Number == acNumber)
+                return &contact;
+        }
+
+        return nullptr;
     }
 
     bool AllowQuest(const std::string& acDiscordId, const std::string& acQuest)
@@ -489,6 +625,7 @@ struct PlayerStore
             // worked. Same shape as the CreatedAt line above, and the same reason.
             const auto number = existing.PhoneNumber;
             const auto contacts = existing.Contacts;
+            const auto blocked = existing.Blocked;
             const auto allowed = existing.AllowedQuests;
 
             existing = acCharacter;
@@ -499,6 +636,8 @@ struct PlayerStore
                 existing.PhoneNumber = number;
             if (!contacts.empty())
                 existing.Contacts = contacts;
+            if (!blocked.empty())
+                existing.Blocked = blocked;
             if (!allowed.empty())
                 existing.AllowedQuests = allowed;
 

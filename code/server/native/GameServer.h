@@ -5,6 +5,7 @@
 #include "Config.h"
 #include "BanList.h"
 #include "PlayerStore.h"
+#include "MessageStore.h"
 #include "AuditLog.h"
 #include "Systems/WorldFacts.h"
 #include "Systems/VehicleStore.h"
@@ -248,6 +249,10 @@ public:
     // player would be upset to lose or delighted to forge, never anything at frame rate.
     AuditLog& GetAuditLog() noexcept { return m_audit; }
 
+    // Text messages between characters. Addressed by CharacterId and never by account, so
+    // a player's second character cannot read their first one's inbox - see MessageStore.h.
+    MessageStore& GetMessages() noexcept { return m_messages; }
+
 private:
 
     Path m_path;
@@ -263,6 +268,7 @@ private:
     WorldFactStore m_worldFacts;
     VehicleStore m_vehicles;
     AuditLog m_audit;
+    MessageStore m_messages;
     std::chrono::steady_clock::time_point m_lastPlayerSave;
     std::chrono::steady_clock::time_point m_lastJailCheck;
 

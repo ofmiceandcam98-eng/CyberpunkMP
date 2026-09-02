@@ -54,6 +54,7 @@ GameServer::GameServer()
         m_players.Load(serverPath / "config" / "players.json");
         m_worldFacts.Load(serverPath / "config" / "worldfacts.json");
         m_vehicles.Load(serverPath / "config" / "vehicles.json");
+        m_messages.Load(serverPath / "config" / "messages.json");
 
         LoadServerManifest(serverPath / "config" / "server-manifest.json");
 
