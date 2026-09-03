@@ -4,6 +4,8 @@
 #include "Components/PlayerComponent.h"
 #include "Components/MovementComponent.h"
 #include "Components/AppearanceComponent.h"
+#include "Components/AttachmentComponent.h"   // who is sitting where, for /vehseats
+#include "VehicleSeats.h"                     // and what to call the seat they are in
 #include "CharacterRecord.h"
 #include "StarterKit.h"
 #include "Components/CharacterComponent.h"
@@ -3455,6 +3457,78 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
 
         for (const auto& number : pCharacter->Blocked)
             Tell(acSender, fmt::format("  {}", number));
+
+        return true;
+    }
+
+    // -------------------------------------------------------- /vehseats ---
+    //
+    // Who is sitting where, from the SERVER's own state. Exists because every seat bug so
+    // far has started with two people describing what they can see and neither of them
+    // being able to see what the server thinks - and the server's view is the one that
+    // decides who gets refused.
+    if (command == "/vehseats")
+    {
+        if (!acSender.HasAtLeast(EPermissionLevel::kModerator))
+            return deny(EPermissionLevel::kModerator);
+
+        // Vehicle -> its occupants, gathered in one pass. Reported per vehicle rather than
+        // per player because "is this car full" is the question being asked.
+        std::map<uint64_t, std::vector<std::string>> byVehicle;
+
+        m_pWorld->each(
+            [&](flecs::entity aOccupant, const AttachmentComponent& aAttachment)
+            {
+                std::string who = fmt::format("{:x}", aOccupant.id());
+
+                // Name the person where we can. An id is enough to debug with and useless
+                // to talk about.
+                if (const auto owner = aOccupant.parent())
+                {
+                    if (const auto* pOwner = owner.get<PlayerComponent>())
+                    {
+                        const auto* pCharacter =
+                            GServer->GetPlayerStore().FindCharacter(pOwner->DiscordId);
+
+                        who = DisplayNameFor(pOwner->DiscordId, pCharacter, pOwner->Username);
+                    }
+                }
+
+                byVehicle[aAttachment.Parent].push_back(
+                    fmt::format("{} = {}", VehicleSeatName(aAttachment.SlotId), who));
+            });
+
+        if (byVehicle.empty())
+        {
+            Tell(acSender, "Nobody is in a vehicle.");
+            return true;
+        }
+
+        Tell(acSender, fmt::format("{} occupied vehicle(s):", byVehicle.size()));
+
+        for (const auto& [vehicleId, occupants] : byVehicle)
+        {
+            const flecs::entity vehicle(m_pWorld->get_world(), vehicleId);
+
+            // The authority holder, because "who is simulating this car" is the other half
+            // of every vehicle question and is not visible from the seats alone.
+            std::string authority = "parked";
+
+            if (vehicle && vehicle.is_alive())
+            {
+                if (const auto owner = vehicle.parent())
+                {
+                    if (const auto* pOwner = owner.get<PlayerComponent>())
+                        authority = pOwner->Username;
+                }
+            }
+
+            Tell(acSender, fmt::format("  vehicle {:x}  ({} occupant(s), simulated by {})",
+                                       vehicleId, occupants.size(), authority));
+
+            for (const auto& line : occupants)
+                Tell(acSender, fmt::format("    {}", line));
+        }
 
         return true;
     }
