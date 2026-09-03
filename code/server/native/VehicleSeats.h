@@ -33,6 +33,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <cstdio>   // snprintf - MSVC pulls this in via <string>, GCC does not
 #include <string>
 
 /**

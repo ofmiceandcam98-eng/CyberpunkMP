@@ -1,5 +1,14 @@
 #include "ChatSystem.h"
 
+// Explicit rather than transitive. This file uses std::map for /vehseats and the string
+// conversions for the trade commands, and MSVC supplies both through headers that GCC
+// does not - which is a difference that only shows up on the Linux build the server
+// actually runs on, long after it compiles cleanly here.
+#include <map>
+#include <string>
+#include <vector>
+#include <utility>
+
 #include "GameServer.h"
 #include "Components/PlayerComponent.h"
 #include "Components/MovementComponent.h"

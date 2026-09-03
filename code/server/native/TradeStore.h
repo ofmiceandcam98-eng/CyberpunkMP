@@ -39,6 +39,8 @@
 #include <vector>
 #include <list>
 #include <algorithm>
+#include <cstdint>
+#include <cstdio>   // snprintf - MSVC pulls this in transitively, GCC does not
 #include <chrono>
 #include <random>
 
