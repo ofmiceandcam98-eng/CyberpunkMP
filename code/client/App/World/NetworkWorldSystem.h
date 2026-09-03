@@ -218,6 +218,49 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     void DeleteCharacter();
 
     // ---------------------------------------------------------------------------
+    // Player-to-player calls, for the PHONE.
+    //
+    // Read-only state plus three requests. The client renders what the server says and
+    // decides nothing: it does not run the ring timeout, does not decide when a call
+    // connects, and cannot end one by forgetting about it. A client that misses a
+    // NotifyCall shows a stale phone, which the next notification repairs; a client that
+    // owned the state could disagree with the server about whether two people are talking,
+    // which nothing repairs.
+    //
+    // Scalar accessors for the same reason as the roster: redscript crosses the native
+    // boundary comfortably with scalars and badly with structs.
+
+    // CallState from the server's CallStore.h. 0 dialing, 1 ringing, 2 connected, and the
+    // terminal states above that - see IsCallOver there. kNoCall when there is none.
+    uint32_t GetCallState() const { return m_callState; }
+    bool HasCall() const { return m_callState != kNoCall; }
+
+    // Already resolved through THIS character's phone book, on the server. Two people can
+    // see different names for the same number, so this cannot be worked out here.
+    Red::CString GetCallName() const { return m_callName.c_str(); }
+    Red::CString GetCallNumber() const { return m_callNumber.c_str(); }
+
+    // True when this player is the one being called - decides ANSWER/DECLINE against
+    // CANCEL. A server fact, not something inferred from whether the client remembers
+    // dialling.
+    bool IsCallIncoming() const { return m_callIncoming; }
+
+    // Requests. Each says only that it was sent; the verdict arrives as a NotifyCall.
+    void RequestCall(const Red::CString& acNumber);
+    void AnswerCall();
+    void DeclineCall();
+    void HangUpCall();
+
+    // The three above, sharing one sender. Private in spirit - not exposed to script,
+    // because a raw action number is exactly the kind of thing that gets miscounted.
+    void SendCallControl(uint32_t aAction);
+
+    // Nothing is ringing. Not a CallState value - it is the absence of one, and folding it
+    // into the enum would make every server-side switch have to handle a state the server
+    // can never be in.
+    static constexpr uint32_t kNoCall = 0xFFFFFFFF;
+
+    // ---------------------------------------------------------------------------
     // Voice devices and capture.
     //
     // Index-based accessors rather than returning a list, matching how the restore
@@ -450,6 +493,9 @@ protected:
 
     // The server correcting our balance - a purchase, a sale, an admin adjustment.
     void HandleNotifyMoney(const PacketEvent<server::NotifyMoney>& aMessage);
+
+    // Where a call is now. The only thing that writes the call state below.
+    void HandleNotifyCall(const PacketEvent<server::NotifyCall>& aMessage);
     void HandleNotifyPossessions(const PacketEvent<server::NotifyPossessions>& aMessage);
 
     // Set while a freshly created character is waiting to be sent to the server.
@@ -499,6 +545,23 @@ protected:
     // The allowance, as the server decided it. Defaults to 1 so a client that has not heard
     // yet draws one slot rather than four it may not have.
     int32_t m_characterSlots{1};
+
+    /**
+     * The call the phone is showing. Written ONLY by HandleNotifyCall.
+     *
+     * A mirror of server state, never a copy the client maintains. Every field here is
+     * replaced wholesale by the next notification, so there is no way for the two to drift
+     * apart field by field - which is what happens when a client updates "the name" on one
+     * message and "the state" on another.
+     *
+     * Cleared when a call reaches a terminal state, so a phone that was showing a finished
+     * call does not keep offering ANSWER for it.
+     */
+    uint32_t m_callState{kNoCall};
+    std::string m_callId;
+    std::string m_callName;
+    std::string m_callNumber;
+    bool m_callIncoming{false};
 
     Vector<uint8_t> m_restoreAppearance;
 
@@ -853,6 +916,15 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(DeleteCharacterSlot);
     RTTI_METHOD(EnterWorld);
     RTTI_METHOD(DeleteCharacter);
+    RTTI_METHOD(GetCallState);
+    RTTI_METHOD(HasCall);
+    RTTI_METHOD(GetCallName);
+    RTTI_METHOD(GetCallNumber);
+    RTTI_METHOD(IsCallIncoming);
+    RTTI_METHOD(RequestCall);
+    RTTI_METHOD(AnswerCall);
+    RTTI_METHOD(DeclineCall);
+    RTTI_METHOD(HangUpCall);
     RTTI_METHOD(VoiceRefreshDevices);
     RTTI_METHOD(VoiceInputCount);
     RTTI_METHOD(VoiceOutputCount);

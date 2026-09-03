@@ -632,6 +632,47 @@ message NotifyVoiceFrame {
     uint32 sequence = 3;
 }
 
+/**
+ * Where a player-to-player call is, so the PHONE can show it.
+ *
+ * One message for every transition rather than one per state. A call moves through at most
+ * a handful of states and every one of them carries the same "who, which call, what now",
+ * so eight messages would be eight presence bitfields to keep in step for no gain - the
+ * same reasoning as CombatEventRequest covering eight kinds of attack.
+ *
+ * The client RENDERS this and decides nothing. It does not run the ring timeout, does not
+ * decide when a call connects, and cannot end one by forgetting about it - all of that is
+ * CallStore on the server. A client that misses this message shows a stale phone, which is
+ * recoverable; a client that owned the state could disagree with the server about whether
+ * two people are talking, which is not.
+ *
+ * Deliberately carries NO character id. The phone shows a name and a number, which is what
+ * a person dials and what their phone book is keyed on; handing out the other party's
+ * CharacterId would leak an identifier that survives renames and retirement, to anybody who
+ * can get you to answer a call.
+ */
+message NotifyCall {
+    // Echoed back on a control request, so a stale button press cannot act on the call
+    // that replaced the one the player was looking at.
+    string call_id = 1;
+
+    // CallState from CallStore.h, as its underlying value.
+    uint32 state = 2;
+
+    // Already resolved through the RECIPIENT's phone book, on the server. The client is
+    // handed the finished string because the saved name lives in the character record and
+    // the client has no copy of it - and because two people must be able to see different
+    // names for the same number, which is the whole point of a phone book.
+    string display_name = 3;
+
+    string number = 4;
+
+    // True when this player is the one being called. Decides ANSWER/DECLINE against
+    // CANCEL, and it is a server fact rather than something the client infers from
+    // whether it remembers dialling.
+    bool incoming = 5;
+}
+
 message Protocol {
     oneof content {
         AuthenticationResponse authentication_response = 1;
@@ -666,5 +707,6 @@ message Protocol {
         NotifyQuickhackUpload notify_quickhack_upload = 30;
         NotifyQuickhackResult notify_quickhack_result = 31;
         NotifyPossessions notify_possessions = 32;
+        NotifyCall notify_call = 33;
     }
 }

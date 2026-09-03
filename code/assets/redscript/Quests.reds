@@ -60,7 +60,20 @@ private final func PushObjectiveQuestNotification(entry: wref<JournalEntry>) -> 
  */
 @wrapMethod(IncomingCallLogicController)
 public final func SetCallInfo(contactName: script_ref<String>, contactEntry: wref<JournalContact>, journalMgr: wref<JournalManager>, isRejectable: Bool) -> Void {
-  if MpQuestsSilenced() {
+  /*
+   * OUR OWN CALL GOES THROUGH. Everything else is still refused.
+   *
+   * MpPhoneCall.IsPresenting() is true only inside the blackboard write in Phone.reds, set
+   * by our network handler and by nothing else in the mod or the game. A story call has no
+   * way to turn it on, so this is not a heuristic about what a call LOOKS like - it is the
+   * difference between a call we are making and a call somebody else is.
+   *
+   * That distinction is why player calls were not built by relaxing the gate below on
+   * request.isPlayerTriggered. That field means "the player triggered this QUEST call" -
+   * ringing a fixer back from the journal - and gating on it would let a whole class of
+   * singleplayer story calls back in. See CallStore.h on the server for the full argument.
+   */
+  if MpQuestsSilenced() && !MpPhoneCall.Active() {
     return;
   }
 

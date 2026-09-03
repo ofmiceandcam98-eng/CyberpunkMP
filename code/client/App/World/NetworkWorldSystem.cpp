@@ -2634,6 +2634,118 @@ void NetworkWorldSystem::HandleNotifyMoney(const PacketEvent<server::NotifyMoney
     Red::CallVirtual(Red::GetGameSystem<NetworkWorldSystem>(), "ApplyServerMoney");
 }
 
+/**
+ * Where a call is now, straight from the server.
+ *
+ * The ONLY writer of the call state. Every field is replaced together rather than merged,
+ * so the mirror cannot drift from the server one field at a time - which is exactly what
+ * happens when a client updates "the name" on one message and "the state" on another.
+ *
+ * A finished call is CLEARED rather than kept in its terminal state. A phone still holding
+ * a declined call would keep offering ANSWER for something nobody is ringing, and the
+ * player would press it and see nothing happen.
+ */
+void NetworkWorldSystem::HandleNotifyCall(const PacketEvent<server::NotifyCall>& aMessage)
+{
+    const auto state = aMessage.get_state();
+
+    // Mirrors IsCallOver in the server's CallStore.h. Duplicated as a comparison rather
+    // than shared, because the client must not gain an opinion about what a state MEANS -
+    // it only needs to know whether to keep showing the phone.
+    constexpr uint32_t kDialing = 0;
+    constexpr uint32_t kRinging = 1;
+    constexpr uint32_t kConnected = 2;
+
+    const bool live = state == kDialing || state == kRinging || state == kConnected;
+
+    if (!live)
+    {
+        spdlog::info("[Call] {} ended (state {})", aMessage.get_call_id().c_str(), state);
+
+        m_callState = kNoCall;
+        m_callId.clear();
+        m_callName.clear();
+        m_callNumber.clear();
+        m_callIncoming = false;
+    }
+    else
+    {
+        m_callState = state;
+        m_callId = aMessage.get_call_id().c_str();
+        m_callName = aMessage.get_display_name().c_str();
+        m_callNumber = aMessage.get_number().c_str();
+        m_callIncoming = aMessage.get_incoming();
+
+        spdlog::info("[Call] {} state {} with {} ({}), incoming {}", m_callId, state, m_callName,
+                     m_callNumber, m_callIncoming);
+    }
+
+    /**
+     * Handed to script, which owns the phone.
+     *
+     * The native half holds what came off the wire and the script half presents it - the
+     * same split as money, and the reason the terminal state is still announced rather
+     * than silently cleared: the phone has to be told to take the call DOWN, and "no call"
+     * arriving as an absence would leave it showing one forever.
+     */
+    Red::CallVirtual(Red::GetGameSystem<NetworkWorldSystem>(), "OnCallStateChanged");
+}
+
+void NetworkWorldSystem::RequestCall(const Red::CString& acNumber)
+{
+    const auto& service = Core::Container::Get<NetworkService>();
+    if (!service || !service->IsConnected())
+        return;
+
+    client::CallRequest request;
+    request.set_number(acNumber.c_str());
+    service->Send(request);
+
+    spdlog::info("[Call] asked the server to ring {}", acNumber.c_str());
+}
+
+/**
+ * Answer, decline, hang up.
+ *
+ * All three send the call id the phone is CURRENTLY showing. The server checks it against
+ * the sender's own active call rather than looking one up by it, so a button pressed a
+ * moment too late acts on nothing instead of on the call that replaced the one the player
+ * was looking at.
+ *
+ * Nothing is applied locally. The phone changes when the server says it has, which is what
+ * stops a client that pressed ANSWER from showing "connected" against a call the server
+ * refused.
+ */
+void NetworkWorldSystem::SendCallControl(uint32_t aAction)
+{
+    const auto& service = Core::Container::Get<NetworkService>();
+    if (!service || !service->IsConnected())
+        return;
+
+    if (m_callId.empty())
+        return;
+
+    client::CallControlRequest request;
+    request.set_call_id(m_callId.c_str());
+    request.set_action(aAction);
+    service->Send(request);
+}
+
+void NetworkWorldSystem::AnswerCall()
+{
+    SendCallControl(0);
+}
+
+void NetworkWorldSystem::DeclineCall()
+{
+    SendCallControl(1);
+}
+
+void NetworkWorldSystem::HangUpCall()
+{
+    SendCallControl(2);
+}
+
 void NetworkWorldSystem::HandleNotifyPossessions(const PacketEvent<server::NotifyPossessions>& aMessage)
 {
     // The server changing what we own, rather than answering something we asked.
@@ -3467,6 +3579,7 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleSpawnCharacterResponse>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleOpenCharacterCreator>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleNotifyMoney>(this);
+    pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleNotifyCall>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleNotifyPossessions>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleRequestCharacterName>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleWorldState>(this);
