@@ -1,4 +1,4 @@
-#include "ChatSystem.h"
+﻿#include "ChatSystem.h"
 
 // Explicit rather than transitive. This file uses std::map for /vehseats and the string
 // conversions for the trade commands, and MSVC supplies both through headers that GCC
@@ -1311,7 +1311,7 @@ void ChatSystem::TickMedical()
                 Tell(*pPlayer, "You bled out. Nobody reached you in time.");
                 Tell(*pPlayer, "Use /respawn when you are ready.");
 
-                // A trade does not survive its owner dying - the brief's §36, and the same
+                // A trade does not survive its owner dying - the brief's Â§36, and the same
                 // reasoning as a disconnect: assets must not move on behalf of somebody who
                 // is no longer in a position to agree.
                 if (const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(pPlayer->DiscordId))
@@ -2129,8 +2129,8 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
     // and one place to look in /help.
     if (command == "/tp")
     {
-        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
-            return deny(EPermissionLevel::kAdmin);
+        if (!acSender.HasAtLeast(EPermissionLevel::kEventStaff))
+            return deny(EPermissionLevel::kEventStaff);
 
         const bool goToThem = (target == "to");
 
@@ -2794,8 +2794,8 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
     // Admin: create an owned vehicle. Stands in for a dealership until there is one.
     if (command == "/givecar")
     {
-        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
-            return deny(EPermissionLevel::kAdmin);
+        if (!acSender.HasAtLeast(EPermissionLevel::kEventStaff))
+            return deny(EPermissionLevel::kEventStaff);
 
         const auto space = acLine.find(' ');
         std::string record = (space == std::string::npos) ? std::string{} : acLine.substr(space + 1);
@@ -3828,7 +3828,7 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         }
 
         // One medic per patient. Two procedures on one body and neither can say whose
-        // finished - the brief's §27, and the reason TreatedBy exists at all.
+        // finished - the brief's Â§27, and the reason TreatedBy exists at all.
         if (!pHealth->TreatedBy.empty() && pHealth->TreatmentEndsAt > now)
         {
             Tell(acSender, "Somebody is already working on them.");
@@ -4485,8 +4485,8 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
     // repeatedly testing sunset does not also fast-forward the city's calendar.
     if (command == "/time")
     {
-        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
-            return deny(EPermissionLevel::kAdmin);
+        if (!acSender.HasAtLeast(EPermissionLevel::kEventStaff))
+            return deny(EPermissionLevel::kEventStaff);
 
         auto* pClock = m_pWorld->get_mut<WorldClock>();
         if (!pClock)
@@ -4526,8 +4526,8 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
     // without the game because that is the whole point of the format.
     if (command == "/weather")
     {
-        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
-            return deny(EPermissionLevel::kAdmin);
+        if (!acSender.HasAtLeast(EPermissionLevel::kEventStaff))
+            return deny(EPermissionLevel::kEventStaff);
 
         if (target.empty())
         {
@@ -4578,8 +4578,8 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
     // renders the same person on the same spot.
     if (command == "/npc")
     {
-        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
-            return deny(EPermissionLevel::kAdmin);
+        if (!acSender.HasAtLeast(EPermissionLevel::kEventStaff))
+            return deny(EPermissionLevel::kEventStaff);
 
         auto* pNpcs = m_pWorld->get_mut<NpcSystem>();
         if (!pNpcs)
@@ -4808,8 +4808,8 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
     // pulling a player out of whatever they were doing should be able to undo it.
     if (command == "/return")
     {
-        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
-            return deny(EPermissionLevel::kAdmin);
+        if (!acSender.HasAtLeast(EPermissionLevel::kEventStaff))
+            return deny(EPermissionLevel::kEventStaff);
 
         if (target.empty())
         {

@@ -680,7 +680,13 @@ struct PlayerStore
      */
     static int SlotsForLevel(EPermissionLevel aLevel)
     {
-        return aLevel >= EPermissionLevel::kAdmin ? kStaffSlots : kPlayerSlots;
+        // EVERY staff rank, support included. Cam's call, 2026-09-02: "all should get 4
+        // character slots", and support "just gets extra character slots, nothing else".
+        //
+        // kSupport is the LOWEST staff rung, so this is the widest staff test there is -
+        // and it is deliberately the only check support satisfies. Everything else on the
+        // server asks for `>= kModerator` or higher, which support sits below.
+        return aLevel >= EPermissionLevel::kSupport ? kStaffSlots : kPlayerSlots;
     }
 
     static constexpr int kPlayerSlots = 1;
