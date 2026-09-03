@@ -1074,6 +1074,138 @@ void ChatSystem::AnnounceCall(const CallSession& acSession, CallState aState)
     }
 }
 
+/**
+ * Both sides of a trade, as the server currently understands it.
+ *
+ * Printed on every change, to BOTH people, because a trade is the one place where the two
+ * players must be looking at the same thing before they agree. A private view of a shared
+ * deal is how somebody confirms something they never saw.
+ */
+void ChatSystem::ShowTrade(const TradeSession& acSession)
+{
+    auto& store = GServer->GetPlayerStore();
+
+    const auto describe = [&](const std::string& acCharacterId, const TradeOffer& acOffer)
+    {
+        std::string line = fmt::format("{} eddies", acOffer.Money);
+
+        for (const auto& stack : acOffer.Items)
+            line += fmt::format(", {}x item {:x}", stack.Quantity, stack.Id);
+
+        std::string who = "(gone)";
+
+        if (const auto* pCharacter = store.FindCharacterById(acCharacterId))
+            who = pCharacter->Name.empty() ? acCharacterId : pCharacter->Name;
+
+        return fmt::format("  {}{}: {}", who, acOffer.Confirmed ? " [CONFIRMED]" : "", line);
+    };
+
+    for (const auto& id : {acSession.A, acSession.B})
+    {
+        const auto entity = FindByActiveCharacter(id);
+        if (!entity)
+            continue;
+
+        const auto* pPlayer = entity.get<PlayerComponent>();
+        if (!pPlayer)
+            continue;
+
+        Tell(*pPlayer, "--- trade ---");
+        Tell(*pPlayer, describe(acSession.A, acSession.OfferA));
+        Tell(*pPlayer, describe(acSession.B, acSession.OfferB));
+
+        if (!acSession.BothConfirmed())
+            Tell(*pPlayer, "/trade confirm when you are happy, /trade cancel to walk away.");
+    }
+}
+
+void ChatSystem::EndTradeFor(const std::string& acCharacterId, TradeState aState,
+                             const std::string& acWhy)
+{
+    auto& trades = GServer->GetTrades();
+
+    auto* pSession = trades.EndFor(acCharacterId, aState);
+
+    if (!pSession)
+        return;
+
+    // The other side is told, and told why. A trade window that simply stops responding
+    // reads as the server breaking rather than as the other person leaving.
+    const auto other = pSession->Other(acCharacterId);
+
+    if (const auto entity = FindByActiveCharacter(other))
+    {
+        if (const auto* pPlayer = entity.get<PlayerComponent>())
+            Tell(*pPlayer, fmt::format("Trade cancelled - {}.", acWhy));
+    }
+
+    trades.Sweep();
+}
+
+void ChatSystem::TickTrades()
+{
+    auto& trades = GServer->GetTrades();
+
+    const auto expired = trades.Expired();
+
+    for (auto* pSession : expired)
+    {
+        trades.End(*pSession, TradeState::Expired);
+
+        for (const auto& id : {pSession->A, pSession->B})
+        {
+            if (const auto entity = FindByActiveCharacter(id))
+            {
+                if (const auto* pPlayer = entity.get<PlayerComponent>())
+                    Tell(*pPlayer, "Trade expired.");
+            }
+        }
+    }
+
+    if (!expired.empty())
+        trades.Sweep();
+
+    /**
+     * Distance, checked continuously rather than only at the start.
+     *
+     * A trade agreed face to face and completed from across the district is the shape every
+     * remote scam takes. Checked here rather than at confirm alone so that walking away
+     * ENDS it visibly, instead of leaving somebody holding a window that will refuse them
+     * at the last moment for a reason they cannot see.
+     */
+    std::vector<std::pair<std::string, std::string>> tooFar;
+
+    for (auto* pSession : trades.Live())
+    {
+        if (pSession->State != TradeState::Open)
+            continue;
+
+        const auto left = FindByActiveCharacter(pSession->A);
+        const auto right = FindByActiveCharacter(pSession->B);
+
+        if (!left || !right)
+            continue;   // a disconnect is handled where it happens
+
+        const auto* pLeftPlayer = left.get<PlayerComponent>();
+        const auto* pRightPlayer = right.get<PlayerComponent>();
+
+        if (!pLeftPlayer || !pRightPlayer || !pLeftPlayer->Puppet || !pRightPlayer->Puppet)
+            continue;
+
+        const auto* pLeftMove = pLeftPlayer->Puppet.get<MovementComponent>();
+        const auto* pRightMove = pRightPlayer->Puppet.get<MovementComponent>();
+
+        if (!pLeftMove || !pRightMove)
+            continue;
+
+        if (glm::distance(pLeftMove->Position, pRightMove->Position) > kTradeDistance * 3.f)
+            tooFar.emplace_back(pSession->A, "you moved too far apart");
+    }
+
+    for (const auto& [id, why] : tooFar)
+        EndTradeFor(id, TradeState::Cancelled, why);
+}
+
 void ChatSystem::BeginCall(const PlayerComponent& acPlayer, const std::string& acNumber)
 {
     if (!IsPhoneNumberShaped(acNumber))
@@ -2985,13 +3117,34 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             return true;
         }
 
-        // Read from the SERVER's record, never from anything the client claimed. This is the
-        // entire reason money became server-owned: a transfer must not be talked into
-        // existence by the machine that benefits from it.
-        if (pSenderCharacter->Money < amount)
+        /**
+         * Read from the SERVER's record, never from anything the client claimed. This is
+         * the entire reason money became server-owned: a transfer must not be talked into
+         * existence by the machine that benefits from it.
+         *
+         * AGAINST WHAT IS AVAILABLE, NOT WHAT IS OWNED. Money promised in a live trade is
+         * not spendable here, or the reservation is decorative: somebody with 10,000 who
+         * has offered 8,000 across a trade window could otherwise send 8,000 by phone and
+         * have both succeed, and the 16,000 would come from nowhere. That is the exact
+         * duplication the trade system exists to prevent, and it would arrive through this
+         * command rather than through trading.
+         */
+        const auto reserved = GServer->GetTrades().ReservedMoney(pSenderCharacter->CharacterId);
+        const auto available = PlayerStore::AvailableMoney(*pSenderCharacter, reserved);
+
+        if (available < amount)
         {
-            Tell(acSender, fmt::format("You have {} eddies and tried to send {}.",
-                                       pSenderCharacter->Money, amount));
+            if (reserved > 0)
+            {
+                Tell(acSender, fmt::format("You have {} eddies available - {} is promised in a "
+                                           "trade.", available, reserved));
+            }
+            else
+            {
+                Tell(acSender, fmt::format("You have {} eddies and tried to send {}.",
+                                           pSenderCharacter->Money, amount));
+            }
+
             return true;
         }
 
@@ -3458,6 +3611,445 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         for (const auto& number : pCharacter->Blocked)
             Tell(acSender, fmt::format("  {}", number));
 
+        return true;
+    }
+
+    // ------------------------------------------------------------ /trade ---
+    if (command == "/trade")
+    {
+        auto& store = GServer->GetPlayerStore();
+        auto& trades = GServer->GetTrades();
+
+        const auto* pSelf = store.FindCharacter(acSender.DiscordId);
+
+        if (!pSelf || pSelf->CharacterId.empty())
+        {
+            Tell(acSender, "You have no character yet.");
+            return true;
+        }
+
+        const auto me = pSelf->CharacterId;
+
+        // Sub-commands, parsed off the rest of the line.
+        const auto restStart = acLine.find(' ');
+        std::string rest = (restStart == std::string::npos) ? std::string{} : acLine.substr(restStart + 1);
+
+        while (!rest.empty() && rest.front() == ' ')
+            rest.erase(rest.begin());
+
+        std::string verb = rest;
+        std::string arg;
+
+        if (const auto space = rest.find(' '); space != std::string::npos)
+        {
+            verb = rest.substr(0, space);
+            arg = rest.substr(space + 1);
+        }
+
+        if (verb.empty())
+        {
+            Tell(acSender, "Usage: /trade <player>   then  /trade money <n>, /trade item <id> <n>,");
+            Tell(acSender, "       /trade confirm, /trade view, /trade cancel");
+            return true;
+        }
+
+        // ---- cancel: always allowed, except mid-commit -------------------------
+        if (verb == "cancel")
+        {
+            if (!trades.Active(me))
+            {
+                Tell(acSender, "You are not trading.");
+                return true;
+            }
+
+            Tell(acSender, "Trade cancelled.");
+            EndTradeFor(me, TradeState::Cancelled, "they walked away");
+            return true;
+        }
+
+        // ---- accept an invitation ----------------------------------------------
+        if (verb == "accept")
+        {
+            auto* pSession = trades.Active(me);
+
+            if (!pSession || pSession->State != TradeState::Requested)
+            {
+                Tell(acSender, "Nobody has asked to trade with you.");
+                return true;
+            }
+
+            // Only the person INVITED accepts. The inviter accepting their own invitation
+            // would open a trade the other party never agreed to be in.
+            if (pSession->B != me)
+            {
+                Tell(acSender, "You sent that invitation - wait for them.");
+                return true;
+            }
+
+            pSession->State = TradeState::Open;
+            pSession->TouchedAt = TradeStore::Now();
+
+            ShowTrade(*pSession);
+            return true;
+        }
+
+        auto* pSession = trades.Active(me);
+
+        // ---- view ---------------------------------------------------------------
+        if (verb == "view")
+        {
+            if (!pSession)
+            {
+                Tell(acSender, "You are not trading.");
+                return true;
+            }
+
+            ShowTrade(*pSession);
+            return true;
+        }
+
+        // ---- offer money --------------------------------------------------------
+        if (verb == "money")
+        {
+            if (!pSession || pSession->State != TradeState::Open)
+            {
+                Tell(acSender, "You are not in an open trade.");
+                return true;
+            }
+
+            int64_t amount = 0;
+
+            try
+            {
+                size_t consumed = 0;
+                amount = std::stoll(arg, &consumed);
+
+                if (consumed != arg.size())
+                    throw std::invalid_argument("trailing");
+            }
+            catch (...)
+            {
+                Tell(acSender, fmt::format("'{}' is not an amount.", arg));
+                return true;
+            }
+
+            if (amount < 0)
+            {
+                Tell(acSender, "You cannot offer a negative amount.");
+                return true;
+            }
+
+            /**
+             * Checked against what is AVAILABLE, not what is owned.
+             *
+             * Money already promised in another live trade is not spendable here - though
+             * with one trade per character that is currently always zero, which is exactly
+             * why the check is written against the reservation rather than against the
+             * balance. The day a second concurrent commitment exists, this is already
+             * right instead of being a bug nobody remembered to look for.
+             */
+            const auto reserved = trades.ReservedMoney(me) - pSession->OfferFor(me)->Money;
+            const auto available = PlayerStore::AvailableMoney(*pSelf, reserved);
+
+            if (amount > available)
+            {
+                Tell(acSender, fmt::format("You have {} eddies available.", available));
+                return true;
+            }
+
+            auto* pOffer = pSession->OfferFor(me);
+            pOffer->Money = amount;
+
+            // Both confirmations reset. Somebody who agreed to the old offer has not agreed
+            // to this one, and carrying their confirmation across is how a person ends up
+            // having accepted a deal they never saw.
+            pSession->OfferA.Touch();
+            pSession->OfferB.Touch();
+            pSession->TouchedAt = TradeStore::Now();
+
+            ShowTrade(*pSession);
+            return true;
+        }
+
+        // ---- offer an item ------------------------------------------------------
+        if (verb == "item")
+        {
+            if (!pSession || pSession->State != TradeState::Open)
+            {
+                Tell(acSender, "You are not in an open trade.");
+                return true;
+            }
+
+            std::string idText = arg;
+            std::string qtyText = "1";
+
+            if (const auto space = arg.find(' '); space != std::string::npos)
+            {
+                idText = arg.substr(0, space);
+                qtyText = arg.substr(space + 1);
+            }
+
+            uint64_t itemId = 0;
+            uint32_t quantity = 0;
+
+            try
+            {
+                itemId = std::stoull(idText, nullptr, 0);
+                quantity = static_cast<uint32_t>(std::stoul(qtyText));
+            }
+            catch (...)
+            {
+                Tell(acSender, "Usage: /trade item <id> <quantity>   (see /inventory)");
+                return true;
+            }
+
+            if (quantity == 0)
+            {
+                Tell(acSender, "Offer at least one.");
+                return true;
+            }
+
+            auto* pOffer = pSession->OfferFor(me);
+
+            if (pOffer->Items.size() >= kTradeItemLimit)
+            {
+                Tell(acSender, "That is as much as one trade can carry.");
+                return true;
+            }
+
+            // Against what is HELD, minus anything already promised elsewhere. Clamped
+            // nowhere: asking for more than you have is refused rather than quietly
+            // reduced, because a silently reduced offer is a different deal.
+            const auto held = PlayerStore::HeldQuantity(*pSelf, itemId);
+            const auto reservedElsewhere =
+                trades.ReservedItems(me, itemId) -
+                [&]
+                {
+                    uint32_t mine = 0;
+                    for (const auto& stack : pOffer->Items)
+                        if (stack.Id == itemId)
+                            mine += stack.Quantity;
+                    return mine;
+                }();
+
+            if (quantity > held || quantity > held - reservedElsewhere)
+            {
+                Tell(acSender, fmt::format("You have {} of that.", held - reservedElsewhere));
+                return true;
+            }
+
+            // Replace rather than accumulate, so offering twice sets the amount instead of
+            // doubling it - the shape a double-click takes.
+            pOffer->Items.erase(std::remove_if(pOffer->Items.begin(), pOffer->Items.end(),
+                                               [itemId](const CharacterRecord::ItemStack& acStack)
+                                               { return acStack.Id == itemId; }),
+                                pOffer->Items.end());
+
+            pOffer->Items.push_back({itemId, quantity});
+
+            pSession->OfferA.Touch();
+            pSession->OfferB.Touch();
+            pSession->TouchedAt = TradeStore::Now();
+
+            ShowTrade(*pSession);
+            return true;
+        }
+
+        // ---- confirm, and commit when both have -----------------------------------
+        if (verb == "confirm")
+        {
+            if (!pSession || pSession->State != TradeState::Open)
+            {
+                Tell(acSender, "You are not in an open trade.");
+                return true;
+            }
+
+            pSession->OfferFor(me)->Confirmed = true;
+            pSession->TouchedAt = TradeStore::Now();
+
+            if (!pSession->BothConfirmed())
+            {
+                Tell(acSender, "Confirmed. Waiting for them.");
+                ShowTrade(*pSession);
+                return true;
+            }
+
+            /**
+             * FINAL VALIDATION, against the records as they are NOW.
+             *
+             * Not against what was checked when each item was offered. Everything can have
+             * changed since: money spent elsewhere, items sold, a character deleted. The
+             * brief is explicit that the check at offer time is not the check that matters,
+             * and it is right - the only figures worth trusting are the ones read in the
+             * same breath as the write.
+             */
+            const auto* pLeft = store.FindCharacterById(pSession->A);
+            const auto* pRight = store.FindCharacterById(pSession->B);
+
+            if (!pLeft || !pRight)
+            {
+                Tell(acSender, "That character is no longer there.");
+                EndTradeFor(me, TradeState::Failed, "the other character is gone");
+                return true;
+            }
+
+            // Both still here, and still close enough. A trade agreed face to face and
+            // completed across the district is the shape every remote scam takes.
+            const auto leftEntity = FindByActiveCharacter(pSession->A);
+            const auto rightEntity = FindByActiveCharacter(pSession->B);
+
+            if (!leftEntity || !rightEntity)
+            {
+                Tell(acSender, "They are gone.");
+                EndTradeFor(me, TradeState::Failed, "the other player left");
+                return true;
+            }
+
+            // COMMITTING: from here nothing may cancel it - see TradeStore::EndFor.
+            pSession->State = TradeState::Committing;
+
+            PlayerStore::TradeSide left;
+            left.CharacterId = pSession->A;
+            left.Money = pSession->OfferA.Money;
+            left.Items = pSession->OfferA.Items;
+
+            PlayerStore::TradeSide right;
+            right.CharacterId = pSession->B;
+            right.Money = pSession->OfferB.Money;
+            right.Items = pSession->OfferB.Items;
+
+            std::string reason;
+
+            if (!store.ApplyTrade(left, right, &reason))
+            {
+                // Nothing moved. ApplyTrade validates on copies and assigns only when both
+                // directions succeed, so a failure here means the records are exactly as
+                // they were.
+                spdlog::warn("Trade {} failed: {}", pSession->TradeId, reason);
+
+                trades.End(*pSession, TradeState::Failed);
+
+                for (const auto& id : {pSession->A, pSession->B})
+                {
+                    if (const auto entity = FindByActiveCharacter(id))
+                    {
+                        if (const auto* pPlayer = entity.get<PlayerComponent>())
+                            Tell(*pPlayer, reason == "insufficient_funds"
+                                               ? "Trade failed - somebody could not cover it."
+                                               : "Trade failed - nothing was moved.");
+                    }
+                }
+
+                trades.Sweep();
+                return true;
+            }
+
+            // The ledger, before either client is told. Both directions as separate lines,
+            // so a character's history is a filter on subject alone - the same shape the
+            // money transfer ledger uses.
+            auto& audit = GServer->GetAuditLog();
+
+            audit.Record("trade.completed", acSender.DiscordId, acSender.DiscordId,
+                         {{"trade", pSession->TradeId},
+                          {"a", pSession->A},
+                          {"b", pSession->B},
+                          {"a_money", pSession->OfferA.Money},
+                          {"b_money", pSession->OfferB.Money},
+                          {"a_items", pSession->OfferA.Items.size()},
+                          {"b_items", pSession->OfferB.Items.size()}});
+
+            spdlog::info("Trade {} completed: {} <-> {}", pSession->TradeId, pSession->A,
+                         pSession->B);
+
+            trades.End(*pSession, TradeState::Completed);
+
+            // Both clients are corrected from the SERVER's figures, not from what either
+            // of them believed. Their next autosave would otherwise report the old balance
+            // and undo the exchange - the same race /pay already works around.
+            for (const auto& id : {pSession->A, pSession->B})
+            {
+                const auto entity = FindByActiveCharacter(id);
+                if (!entity)
+                    continue;
+
+                const auto* pPlayer = entity.get<PlayerComponent>();
+                if (!pPlayer)
+                    continue;
+
+                if (const auto* pCharacter = store.FindCharacterById(id))
+                    PushMoney(*pPlayer, static_cast<int32_t>(pCharacter->Money), "trade");
+
+                Tell(*pPlayer, "Trade complete.");
+                Tell(*pPlayer, "Your things are updated - reconnect if anything looks stale.");
+            }
+
+            trades.Sweep();
+            return true;
+        }
+
+        // ---- otherwise: an invitation to a named player ---------------------------
+        const auto invitee = findPlayer(verb);
+
+        if (!invitee)
+        {
+            Tell(acSender, fmt::format("No player called '{}'.", verb));
+            return true;
+        }
+
+        const auto* pInvitee = invitee.get<PlayerComponent>();
+
+        if (!pInvitee)
+        {
+            Tell(acSender, "That player is not here.");
+            return true;
+        }
+
+        const auto* pTheirCharacter = store.FindCharacter(pInvitee->DiscordId);
+
+        if (!pTheirCharacter || pTheirCharacter->CharacterId.empty())
+        {
+            Tell(acSender, "They have no character.");
+            return true;
+        }
+
+        if (pTheirCharacter->CharacterId == me)
+        {
+            Tell(acSender, "You cannot trade with yourself.");
+            return true;
+        }
+
+        if (trades.Active(me))
+        {
+            Tell(acSender, "You are already trading. /trade cancel first.");
+            return true;
+        }
+
+        if (trades.Active(pTheirCharacter->CharacterId))
+        {
+            Tell(acSender, "They are already trading with somebody.");
+            return true;
+        }
+
+        // Close enough to be doing this face to face.
+        const auto* pMyMove = acSender.Puppet ? acSender.Puppet.get<MovementComponent>() : nullptr;
+        const auto* pTheirMove =
+            pInvitee->Puppet ? pInvitee->Puppet.get<MovementComponent>() : nullptr;
+
+        if (!pMyMove || !pTheirMove ||
+            glm::distance(pMyMove->Position, pTheirMove->Position) > kTradeDistance)
+        {
+            Tell(acSender, "You need to be standing next to them.");
+            return true;
+        }
+
+        auto& session = trades.Begin(me, pTheirCharacter->CharacterId);
+
+        Tell(acSender, fmt::format("Asked {} to trade.", pTheirCharacter->Name));
+        Tell(*pInvitee, fmt::format("{} wants to trade. /trade accept, or ignore it.",
+                                    DisplayNameFor(acSender.DiscordId, pSelf, acSender.Username)));
+
+        spdlog::info("{} asked {} to trade ({})", acSender.Username, pInvitee->Username,
+                     session.TradeId);
         return true;
     }
 

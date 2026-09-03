@@ -884,6 +884,127 @@ struct PlayerStore
         return nullptr;
     }
 
+    // ------------------------------------------------------------------- trading ----
+
+    /**
+     * One side of an exchange: what this character GIVES.
+     *
+     * Addressed by CharacterId, like everything else that belongs to a character rather
+     * than an account. A player's two characters are two traders.
+     */
+    struct TradeSide
+    {
+        std::string CharacterId;
+        int64_t Money{0};
+        std::vector<CharacterRecord::ItemStack> Items;
+    };
+
+    /**
+     * Move both sides at once, or move nothing.
+     *
+     * HERE, IN THE STORE, and not in a trade system beside it. This file is already the
+     * authority for money and possessions; a second thing that could also move them would
+     * be a second authority, and the two would disagree the first time either changed.
+     * The trade system decides WHETHER an exchange happens. This decides that it happens
+     * completely.
+     *
+     * ATOMICITY, and honestly what kind. Both records are copied, both copies are mutated,
+     * everything is validated against the copies, and only then are they written back -
+     * followed by ONE flush. So there is no ordering in which a partial exchange becomes
+     * visible to anything else on the server, and no window where one side has paid and
+     * the other has not.
+     *
+     * What this is NOT is durable-transactional. The backing store is a JSON file; if the
+     * process dies inside Flush the file can be truncated, and no amount of care here fixes
+     * that. The brief asks for a write-ahead journal, and that belongs with the move to a
+     * database rather than bolted onto a file - which is also where the replicable-instance
+     * rule takes it. The audit ledger records every completed trade in the meantime, which
+     * is what makes a bad outcome repairable rather than invisible.
+     *
+     * Returns false and changes NOTHING on any failure, with a stable reason.
+     */
+    bool ApplyTrade(const TradeSide& acLeft, const TradeSide& acRight, std::string* apReason = nullptr)
+    {
+        const auto fail = [apReason](const char* acpWhy)
+        {
+            if (apReason)
+                *apReason = acpWhy;
+            return false;
+        };
+
+        if (acLeft.CharacterId == acRight.CharacterId)
+            return fail("same_character");
+
+        auto* pLeftRecord = FindRecordByCharacterId(acLeft.CharacterId);
+        auto* pRightRecord = FindRecordByCharacterId(acRight.CharacterId);
+
+        if (!pLeftRecord || !pRightRecord)
+            return fail("no_character");
+
+        auto* pLeft = FindCharacterInRecord(*pLeftRecord, acLeft.CharacterId);
+        auto* pRight = FindCharacterInRecord(*pRightRecord, acRight.CharacterId);
+
+        if (!pLeft || !pRight)
+            return fail("no_character");
+
+        // Copies. Every mutation below happens on these, so a validation failure halfway
+        // through leaves the real records untouched rather than half-traded.
+        CharacterRecord left = *pLeft;
+        CharacterRecord right = *pRight;
+
+        if (!MoveAssets(left, right, acLeft, apReason))
+            return false;
+
+        if (!MoveAssets(right, left, acRight, apReason))
+            return false;
+
+        // Only now does anything real change.
+        *pLeft = left;
+        *pRight = right;
+
+        const auto now = Now();
+        pLeft->UpdatedAt = now;
+        pRight->UpdatedAt = now;
+
+        m_dirty = true;
+        Flush();
+
+        if (apReason)
+            apReason->clear();
+
+        return true;
+    }
+
+    /**
+     * What a character can actually spend, given what they have already promised.
+     *
+     * The brief's concurrency case: somebody with 10,000 who has offered 8,000 in a live
+     * trade must not also be able to send 8,000 by phone. Reserved money is not available
+     * money, and every path that spends has to ask the same question or the reservation is
+     * decorative.
+     *
+     * The reserved figure comes from the caller - the trade system owns live trades and
+     * this file does not know about them - so that this stays the single authority on what
+     * is OWNED without also becoming the authority on what is promised.
+     */
+    static int64_t AvailableMoney(const CharacterRecord& acCharacter, int64_t aReserved)
+    {
+        const auto available = acCharacter.Money - aReserved;
+        return available > 0 ? available : 0;
+    }
+
+    // How many of an item a character holds. Zero for one they do not.
+    static uint32_t HeldQuantity(const CharacterRecord& acCharacter, uint64_t aItemId)
+    {
+        for (const auto& stack : acCharacter.Inventory)
+        {
+            if (stack.Id == aItemId)
+                return stack.Quantity;
+        }
+
+        return 0;
+    }
+
     // Writes only when something actually changed, so calling this on a timer is cheap.
     void Flush()
     {
@@ -906,6 +1027,108 @@ struct PlayerStore
     }
 
 private:
+    PlayerRecord* FindRecordByCharacterId(const std::string& acCharacterId)
+    {
+        for (auto& record : m_records)
+        {
+            for (auto& character : record.Characters)
+            {
+                if (character.CharacterId == acCharacterId)
+                    return &record;
+            }
+        }
+
+        return nullptr;
+    }
+
+    static CharacterRecord* FindCharacterInRecord(PlayerRecord& aRecord,
+                                                  const std::string& acCharacterId)
+    {
+        for (auto& character : aRecord.Characters)
+        {
+            if (character.CharacterId == acCharacterId)
+                return &character;
+        }
+
+        return nullptr;
+    }
+
+    /**
+     * Take what one side offered off them and put it on the other. Conserving, always.
+     *
+     * The governing rule of the whole trade system: it never CREATES value, it only moves
+     * value that already exists. So every removal is checked against what is actually held,
+     * and every addition is exactly what was removed - no rounding, no clamping to zero
+     * that would silently vaporise the remainder, and no path where a quantity is added
+     * without having been taken.
+     *
+     * Operates on the caller's COPIES. Returning false mid-way leaves those copies
+     * inconsistent, which is exactly why ApplyTrade validates on copies and only assigns
+     * the real records once both directions have succeeded.
+     */
+    static bool MoveAssets(CharacterRecord& aFrom, CharacterRecord& aTo, const TradeSide& acOffer,
+                           std::string* apReason)
+    {
+        const auto fail = [apReason](const char* acpWhy)
+        {
+            if (apReason)
+                *apReason = acpWhy;
+            return false;
+        };
+
+        if (acOffer.Money < 0)
+            return fail("negative_money");   // "pay me" is theft with extra steps
+
+        if (aFrom.Money < acOffer.Money)
+            return fail("insufficient_funds");
+
+        // Items first, so a failure on the last stack does not leave money already moved
+        // in this copy - it costs nothing and keeps the failure shape uniform.
+        for (const auto& offered : acOffer.Items)
+        {
+            if (offered.Quantity == 0)
+                return fail("zero_quantity");
+
+            auto* pStack = FindStack(aFrom, offered.Id);
+
+            if (!pStack || pStack->Quantity < offered.Quantity)
+                return fail("insufficient_items");
+
+            pStack->Quantity -= offered.Quantity;
+        }
+
+        // Erase what is now empty. A zero-quantity stack is not a holding, and leaving one
+        // behind makes "do they have any" answer yes forever.
+        aFrom.Inventory.erase(std::remove_if(aFrom.Inventory.begin(), aFrom.Inventory.end(),
+                                             [](const CharacterRecord::ItemStack& acStack)
+                                             { return acStack.Quantity == 0; }),
+                              aFrom.Inventory.end());
+
+        for (const auto& offered : acOffer.Items)
+        {
+            if (auto* pStack = FindStack(aTo, offered.Id))
+                pStack->Quantity += offered.Quantity;
+            else
+                aTo.Inventory.push_back({offered.Id, offered.Quantity});
+        }
+
+        aFrom.Money -= acOffer.Money;
+        aTo.Money += acOffer.Money;
+
+        return true;
+    }
+
+    static CharacterRecord::ItemStack* FindStack(CharacterRecord& aCharacter, uint64_t aItemId)
+    {
+        for (auto& stack : aCharacter.Inventory)
+        {
+            if (stack.Id == aItemId)
+                return &stack;
+        }
+
+        return nullptr;
+    }
+
     /**
      * A number nobody else has.
      *

@@ -7,6 +7,7 @@
 #include "PlayerStore.h"
 #include "MessageStore.h"
 #include "CallStore.h"
+#include "TradeStore.h"
 #include "AuditLog.h"
 #include "Systems/WorldFacts.h"
 #include "Systems/VehicleStore.h"
@@ -262,6 +263,10 @@ public:
     // see CallStore.h for why that is what keeps the Songbird block intact.
     CallStore& GetCalls() noexcept { return m_calls; }
 
+    // Live trades. Holds the negotiation; PlayerStore::ApplyTrade does the moving, because
+    // two things that could both move money would be two authorities.
+    TradeStore& GetTrades() noexcept { return m_trades; }
+
 private:
 
     Path m_path;
@@ -279,6 +284,7 @@ private:
     AuditLog m_audit;
     MessageStore m_messages;
     CallStore m_calls;
+    TradeStore m_trades;
     std::chrono::steady_clock::time_point m_lastCallCheck;
     std::chrono::steady_clock::time_point m_lastPlayerSave;
     std::chrono::steady_clock::time_point m_lastJailCheck;
