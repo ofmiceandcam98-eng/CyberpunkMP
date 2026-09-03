@@ -24,10 +24,98 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
 
 ## 1. THE LEDGER
 
+### FOR ZELDFEP — where we are, and what we need (2026-09-02)
+
+**Read this first.** A large amount landed today and **none of it has been played.** Branch
+is `feat/world-state` @ `5a68517`; `main` is untouched at `304b492`.
+
+**Shipped as a test build:** `v0.3.113-worldstate-test.19` — pre-release, dev-role only,
+install from Settings → DEV → Test builds. Payload verified to carry the new redscript.
+Test sheet: https://claude.ai/code/artifact/1945eb67-12d0-4602-a9e6-aca164dd0e1c
+
+**Landed today:** voice fix · phone calls in the real in-game phone · texting/contacts/
+blocking · character slots + selector + soft delete · vehicle seat validation · money
+confiscation fix · player trading · downed/medical · the new staff permission ladder.
+
+#### THE BLOCKER — the server has not rebuilt in hours, and we cannot see why
+
+**This is the one thing stopping all testing.** Production (`100.80.243.29`) reports
+**3h+ uptime with 0 players**, so it is serving a pre-flag-day binary while every updated
+client is refused at connect — *"YOUR MOD IS BUILT AGAINST A DIFFERENT PROTOCOL"*.
+
+Two candidate causes, and they are **distinguished by whether the log says anything at all**:
+
+1. **Build failure.** `docker compose up -d --build` fails and the script deliberately
+   **keeps the container on the previous image** — which fits perfectly: uptime unchanged,
+   old protocol still answering. Writes `BUILD FAILED` to `~/nco-update.log`.
+2. **The deploy fetches the wrong remote.** `update-server.sh` runs `git fetch origin` but
+   compares `git rev-parse @{u}`. In this repo `origin` is **tiltedphoques** and `fork` is
+   **ofmiceandcam98-eng**, which is where we push. If the NAS mirrors that, `LOCAL == REMOTE`
+   forever and it exits **silently, with no log line**. That would mean the box has never
+   seen *any* of today's work.
+
+**What we need:** shell on the NAS. Cam's SSH is not working and there is no key on this
+machine. Two commands settle it — the second is the one that matters:
+
+```
+tail -20 ~/nco-update.log
+cd /mnt/vol/NASa/CyberpunkMP && git remote -v && git rev-parse --abbrev-ref @{u} && git log --oneline -1
+```
+
+#### WHAT WE ARE HAVING TROUBLE WITH
+
+- **We cannot verify the Linux build.** The server runs GCC in a container; this machine has
+  **no GCC, no WSL distro, and Docker is not running** (and Cam does not want to use it). So
+  server code is only ever checked against MSVC, and MSVC supplies headers transitively that
+  libstdc++ does not. **Today's lesson:** four new files called `std::snprintf` with no
+  `<cstdio>` and `ChatSystem.cpp` used `std::map` with no `<map>` — fixed in `dcab568`, but
+  **that was NOT confirmed to be the build failure**: `CharacterRecord.h` has done exactly
+  the same since 2026-08-20 and builds fine, so the transitive include is evidently available
+  somehow. *We are still guessing about the actual error.* Anyone with a Linux box can settle
+  it in one command.
+- **Money persistence is still unfixed.** Four `[MONEY]` boundaries are instrumented and have
+  **never once produced data** — they postdate every session in the logs. They distinguish
+  "never recorded" from "recorded and overwritten", which need opposite fixes. We fixed the
+  *destructive* half (the restore could confiscate earned eddies) but not the persistence.
+- **Unknown: does a runtime-built `CName` render on the phone?** `PhoneCallInformation.contactName`
+  is a CName, not a String. Calls will present either way; the caller's *name* may come back
+  blank. Compiling cannot answer it.
+- **Two-player tests are entirely unrun** — trading, vehicle seats (needs four), calls,
+  medical revival. All of it is offline-tested only.
+
+#### WHAT WOULD HELP MOST, in order
+
+1. **NAS shell** to diagnose the deploy — everything else is blocked behind it.
+2. **A Linux/GCC build check** of `code/server` so portability breaks stop being invisible.
+3. **Bodies for two- and four-player tests** once the server is current.
+
 ### IN FLIGHT — what is being worked on right now (2026-09-02)
 Keep this block current; it is the first thing anyone should read. Cam: *"we should update
 the mental map pretty often."* A stale in-flight list is worse than none, because it sends
 people to work that is already done.
+
+- **THE STAFF LADDER CHANGED (`5a68517`).** Cam replaced every moderator and admin role in
+  Discord on 2026-09-02. New set: **dev, SENIOR MODERATOR, EVENT STAFF, MODERATOR, support**.
+  - **Two of them granted nothing at all.** Levels resolve from the lowercased *role name*,
+    and neither `senior moderator` nor `event staff` was in the list — both landed on
+    `kPlayer`. Note `staff` matched and `event staff` did not: a near-miss that reads as the
+    role simply not working rather than a missing string. **If a role stops working, look
+    here first.**
+  - **`kSupport = 5` — slots and NOTHING else.** Cam's rule verbatim. It used to resolve to
+    `kModerator` because no support level existed and the slot rule needed something to test,
+    which handed ticket staff the whole moderator toolkit as a side effect. Sitting *below*
+    moderator is what enforces the rule instead of somebody remembering it — every
+    `>= kModerator` check excludes support automatically, so they cannot pick up a moderation
+    power when one is added later.
+  - **`kEventStaff = 15` — moderator powers plus the event tools.** Needed its own rung
+    because lowering the spawn commands to `kModerator` would have given `/givecar`, `/npc`,
+    `/time` and `/weather` to **support** too. Six commands moved down from `kAdmin`: `/tp`,
+    `/return`, `/givecar`, `/npc`, `/time`, `/weather`. `/ban`, `/unban`, `/rename`, `/quest`,
+    `/fact`, `/setspawn`, `/setstart` stay admin.
+  - **Nothing already stored moved** — player 0, moderator 10, admin 20, owner 30, exactly as
+    the enum's spacing comment promised. Slots now go to `>= kSupport`, the widest staff test.
+  - 30 checks pass, including the four that matter: support fails `>= moderator`,
+    `>= event staff` and `>= admin`, and still gets four slots.
 
 - **TRADING (`f313a61`) and MEDICAL (`70eac6e`) — built, not shipped.**
   - **Trading's governing rule: it never CREATES value.** The commit is
