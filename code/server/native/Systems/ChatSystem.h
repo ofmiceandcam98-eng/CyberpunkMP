@@ -144,6 +144,24 @@ struct ChatSystem
     // announced to one participant and not the other.
     void AnnounceCall(const CallSession& acSession, CallState aState);
 
+    /**
+     * Ring a number, and answer/decline/hang up.
+     *
+     * THE ONE IMPLEMENTATION. The phone app and the chat fallback both land here, so
+     * there is no second copy of the rules for one of them to drift away from - which is
+     * the failure the brief's "do not duplicate call logic" is about, and the reason the
+     * chat commands were reduced to callers rather than left as a parallel path.
+     *
+     * Validation lives here rather than at either surface for the same reason: a rule
+     * enforced where the player typed it is a rule the other surface gets to break.
+     */
+    void BeginCall(const PlayerComponent& acPlayer, const std::string& acNumber);
+
+    // 0 answer, 1 decline, 2 hang up. An empty call id means "whatever I am in", which is
+    // what the chat fallback has - the phone always sends the id it is displaying.
+    void ControlCall(const PlayerComponent& acPlayer, const std::string& acCallId,
+                     uint32_t aAction);
+
     std::vector<PendingSale> m_pendingSales;
 
     // Only players whose puppet is within aRange of acOrigin.
@@ -168,6 +186,11 @@ protected:
 
     // The selector's trash can. Retires rather than destroys - see PlayerStore.
     void HandleDeleteCharacterRequest(const PacketEvent<client::DeleteCharacterRequest>& aMessage);
+
+    // The phone app dialling and pressing buttons. Both relay to BeginCall/ControlCall,
+    // which the chat fallback also uses.
+    void HandleCallRequest(const PacketEvent<client::CallRequest>& aMessage);
+    void HandleCallControlRequest(const PacketEvent<client::CallControlRequest>& aMessage);
 
     // "Play as the character in this slot." Answers nothing directly - the real answer is
     // the spawn that follows, or a refusal carried on the character list.

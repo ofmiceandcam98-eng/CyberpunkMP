@@ -151,6 +151,31 @@ public native class NetworkWorldSystem extends IGameSystem {
     // than swallowed - a button that appears to do nothing is the worst outcome here.
     public native func GetCharacterError() -> String;
 
+    // ---------------------------------------------------------------- calls ----
+    //
+    // Player-to-player calls, shown in the GAME'S OWN PHONE - see Phone.reds. The server
+    // owns every one of these; nothing here decides anything, it only reads what arrived.
+    //
+    // CallState from the server's CallStore.h: 1 ringing, 2 connected. Terminal states are
+    // never held - a finished call clears, so the phone cannot keep offering ANSWER for
+    // something nobody is ringing.
+    public native func GetCallState() -> Uint32;
+    public native func HasCall() -> Bool;
+
+    // Already resolved through THIS character's phone book, on the server. Two people can
+    // save the same number under different names, so this cannot be worked out locally.
+    public native func GetCallName() -> String;
+    public native func GetCallNumber() -> String;
+
+    // True when we are the one being CALLED - decides ANSWER/DECLINE against CANCEL.
+    public native func IsCallIncoming() -> Bool;
+
+    // Requests. Each says only that it was sent; the verdict arrives as a new call state.
+    public native func RequestCall(number: String) -> Void;
+    public native func AnswerCall() -> Void;
+    public native func DeclineCall() -> Void;
+    public native func HangUpCall() -> Void;
+
     // Why the last CONNECTION was refused - the server's own sentence, plus the code
     // (EDenialCode in GameServer.h) and, on manifest denials, the version the server
     // wanted. Empty/zero when the last disconnect was nobody refusing anything. This is
@@ -286,6 +311,37 @@ public native class NetworkWorldSystem extends IGameSystem {
      *
      * Called from native when a NotifyMoney arrives.
      */
+    /**
+     * A player-to-player call changed. Called from native when a NotifyCall arrives.
+     *
+     * Presentation only. The server decided everything - who is calling, whether it is
+     * still ringing, when it ended - and this reads the answer and draws it. There is
+     * deliberately no local timeout, no local state machine and no way for this to end a
+     * call: a client that could would be able to disagree with the server about whether
+     * two people are talking, and nothing repairs that.
+     *
+     * A terminal state arrives as HasCall() == false, which is why the native side clears
+     * rather than holding the last state: the phone has to be TOLD to take a call down,
+     * and an absence would leave it showing one forever.
+     */
+    public func OnCallStateChanged() -> Void {
+        if !this.HasCall() {
+            MpPhoneCall.Dismiss();
+            return;
+        }
+
+        // 2 is Connected in CallStore.h. A connected call is already on screen - re-writing
+        // the blackboard would replay the ringtone and re-present a call the player is
+        // currently in the middle of.
+        if this.GetCallState() == 2u {
+            return;
+        }
+
+        // Rejectable only when the call is coming TO us. An outgoing call shows the same
+        // panel without offering to decline something we started.
+        MpPhoneCall.Present(this.GetCallName(), this.IsCallIncoming());
+    }
+
     public func ApplyServerMoney() -> Void {
         let player = GetPlayer(GetGameInstance());
         let transaction = GameInstance.GetTransactionSystem(GetGameInstance());

@@ -48,6 +48,8 @@ ChatSystem::ChatSystem(gsl::not_null<World*> apWorld)
     GServer->RegisterHandler<&ChatSystem::HandleSaveCharacterRequest>(this);
     GServer->RegisterHandler<&ChatSystem::HandleDeleteCharacterRequest>(this);
     GServer->RegisterHandler<&ChatSystem::HandleSelectCharacterRequest>(this);
+    GServer->RegisterHandler<&ChatSystem::HandleCallRequest>(this);
+    GServer->RegisterHandler<&ChatSystem::HandleCallControlRequest>(this);
 
     // Walks every dummy in a slow circle. Registered here rather than beside the command
     // so it exists exactly once, whatever anyone types.
@@ -959,6 +961,39 @@ void ChatSystem::AnnounceCall(const CallSession& acSession, CallState aState)
     const auto callerAsSeenByTarget = PhoneBookName(pTargetCharacter, acSession.CallerNumber);
     const auto targetAsSeenByCaller = PhoneBookName(pCallerCharacter, acSession.TargetNumber);
 
+    /**
+     * The PHONE first, chat second.
+     *
+     * Both sides get a NotifyCall carrying the finished display name - resolved here,
+     * through the RECIPIENT's own phone book, because the saved name lives in the
+     * character record and the client has no copy of it. Two people must be able to see
+     * different names for the same number, so the resolution cannot be done once and
+     * shared.
+     *
+     * The chat lines below are kept as a FALLBACK, not as the interface. They are what a
+     * player sees if the phone UI fails to present - which is worth having, because a call
+     * that rings somewhere the player cannot see is indistinguishable from the server
+     * being broken.
+     */
+    const auto notify = [&](const PlayerComponent& acPlayer, const std::string& acName,
+                            const std::string& acNumber, bool aIncoming)
+    {
+        server::NotifyCall message;
+        message.set_call_id(acSession.CallId.c_str());
+        message.set_state(static_cast<uint32_t>(aState));
+        message.set_display_name(acName.c_str());
+        message.set_number(acNumber.c_str());
+        message.set_incoming(aIncoming);
+
+        GServer->Send(acPlayer.Connection, message);
+    };
+
+    if (pCallerPlayer)
+        notify(*pCallerPlayer, targetAsSeenByCaller, acSession.TargetNumber, false);
+
+    if (pTargetPlayer)
+        notify(*pTargetPlayer, callerAsSeenByTarget, acSession.CallerNumber, true);
+
     const auto tellCaller = [&](const std::string& acLine)
     {
         if (pCallerPlayer)
@@ -1035,6 +1070,219 @@ void ChatSystem::AnnounceCall(const CallSession& acSession, CallState aState)
     default:
         break;
     }
+}
+
+void ChatSystem::BeginCall(const PlayerComponent& acPlayer, const std::string& acNumber)
+{
+    if (!IsPhoneNumberShaped(acNumber))
+    {
+        Tell(acPlayer, fmt::format("'{}' is not a number. They look like 555-014-372.", acNumber));
+        return;
+    }
+
+    auto& store = GServer->GetPlayerStore();
+    auto& calls = GServer->GetCalls();
+
+    // THE CALLER COMES FROM THE CONNECTION, never from the request. Neither the phone nor
+    // the chat command carries a "who is calling" field, so ringing somebody as a third
+    // party cannot be spelled - the same rule the voice path uses.
+    const auto* pSelf = store.FindCharacter(acPlayer.DiscordId);
+
+    if (!pSelf || pSelf->CharacterId.empty())
+    {
+        Tell(acPlayer, "You have no character yet.");
+        return;
+    }
+
+    if (pSelf->PhoneNumber.empty())
+    {
+        Tell(acPlayer, "You have no number yet - it is assigned on your next save.");
+        return;
+    }
+
+    if (calls.Active(pSelf->CharacterId))
+    {
+        Tell(acPlayer, "You are already on a call.");
+        return;
+    }
+
+    std::string recipientId;
+    const auto* pTarget = store.FindCharacterByPhoneNumber(acNumber, &recipientId);
+
+    if (!pTarget)
+    {
+        Tell(acPlayer, fmt::format("Nobody has the number {}.", acNumber));
+        return;
+    }
+
+    if (pTarget->CharacterId == pSelf->CharacterId)
+    {
+        Tell(acPlayer, "That is your own number.");
+        return;
+    }
+
+    // You blocked them: said plainly, because you already know.
+    if (PlayerStore::IsBlockedBy(*pSelf, acNumber))
+    {
+        Tell(acPlayer, fmt::format("You have blocked {}.", acNumber));
+        return;
+    }
+
+    /**
+     * Offline and "they blocked you" answer identically, on purpose.
+     *
+     * A refusal that differs is a refusal that tells somebody they were blocked, which is
+     * exactly the thing a block exists to withhold. Combined into one branch rather than
+     * two branches with the same text, so a later edit cannot make one of them specific
+     * without noticing it is doing so.
+     */
+    const auto targetEntity = FindByActiveCharacter(pTarget->CharacterId);
+
+    if (!targetEntity || PlayerStore::IsBlockedBy(*pTarget, pSelf->PhoneNumber))
+    {
+        Tell(acPlayer, fmt::format("{} is not answering.", PhoneBookName(pSelf, acNumber)));
+        return;
+    }
+
+    if (calls.Active(pTarget->CharacterId))
+    {
+        auto& session = calls.Begin(pSelf->CharacterId, pSelf->PhoneNumber,
+                                    pTarget->CharacterId, acNumber);
+
+        // Recorded as a real call so both histories show the attempt. A busy signal that
+        // leaves no trace is indistinguishable from never having called.
+        calls.End(session, CallState::Busy);
+        AnnounceCall(session, CallState::Busy);
+        calls.Sweep();
+        return;
+    }
+
+    auto& session = calls.Begin(pSelf->CharacterId, pSelf->PhoneNumber,
+                                pTarget->CharacterId, acNumber);
+
+    AnnounceCall(session, CallState::Ringing);
+
+    spdlog::info("{} is calling {}", acPlayer.Username, acNumber);
+}
+
+void ChatSystem::ControlCall(const PlayerComponent& acPlayer, const std::string& acCallId,
+                             uint32_t aAction)
+{
+    auto& store = GServer->GetPlayerStore();
+    auto& calls = GServer->GetCalls();
+
+    const auto* pSelf = store.FindCharacter(acPlayer.DiscordId);
+
+    if (!pSelf || pSelf->CharacterId.empty())
+    {
+        Tell(acPlayer, "You have no character yet.");
+        return;
+    }
+
+    /**
+     * Resolved from the CONNECTION's own active call, never looked up by the id sent.
+     *
+     * The difference is the whole security story. A call id used as a lookup key is a way
+     * to hang up somebody else's call; a call id CHECKED AGAINST your own is only a way to
+     * notice that the call you were looking at has already been replaced.
+     */
+    auto* pSession = calls.Active(pSelf->CharacterId);
+
+    if (!pSession)
+    {
+        Tell(acPlayer, "You are not on a call.");
+        return;
+    }
+
+    // An empty id means "whatever I am in" - the chat fallback, which has no id to send.
+    // The phone always sends the one it is displaying, so a button pressed a moment too
+    // late acts on nothing instead of on the call that replaced it.
+    if (!acCallId.empty() && acCallId != pSession->CallId)
+        return;
+
+    const bool isTarget = pSession->TargetCharacterId == pSelf->CharacterId;
+
+    switch (aAction)
+    {
+    case 0:   // answer
+    {
+        if (!isTarget || pSession->State != CallState::Ringing)
+            return;
+
+        // The caller may have walked away between the ring and the answer. Connecting
+        // somebody to nobody leaves a call that only the timeout can clear.
+        if (!FindByActiveCharacter(pSession->CallerCharacterId))
+        {
+            calls.End(*pSession, CallState::Failed);
+            AnnounceCall(*pSession, CallState::Failed);
+            calls.Sweep();
+            return;
+        }
+
+        pSession->State = CallState::Connected;
+        pSession->ConnectedAt = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+
+        AnnounceCall(*pSession, CallState::Connected);
+
+        spdlog::info("{} answered a call from {}", acPlayer.Username, pSession->CallerNumber);
+        return;
+    }
+
+    case 1:   // decline
+    {
+        if (!isTarget || pSession->State != CallState::Ringing)
+            return;
+
+        calls.End(*pSession, CallState::Declined);
+        AnnounceCall(*pSession, CallState::Declined);
+        calls.Sweep();
+        return;
+    }
+
+    case 2:   // hang up
+    {
+        // Cancelling a call that never connected and ending one that did are different
+        // history lines, so they are different states rather than one "ended".
+        const auto state =
+            pSession->State == CallState::Connected ? CallState::Ended : CallState::Cancelled;
+
+        calls.End(*pSession, state);
+        AnnounceCall(*pSession, state);
+        calls.Sweep();
+        return;
+    }
+
+    default:
+        // Refused rather than defaulted. An unknown action quietly becoming "hang up"
+        // would drop calls for no visible reason on any client that got the numbering
+        // wrong, and the symptom would look like a network fault.
+        spdlog::warn("{} sent call action {}, which is not one", acPlayer.Username, aAction);
+        return;
+    }
+}
+
+void ChatSystem::HandleCallRequest(const PacketEvent<client::CallRequest>& aMessage)
+{
+    auto* pPlayerManager = m_pWorld->get<PlayerManager>();
+
+    const auto entity = pPlayerManager->GetByConnectionId(aMessage.ConnectionId);
+    if (!entity || !entity.has<PlayerComponent>())
+        return;
+
+    BeginCall(*entity.get<PlayerComponent>(), aMessage.get_number().c_str());
+}
+
+void ChatSystem::HandleCallControlRequest(const PacketEvent<client::CallControlRequest>& aMessage)
+{
+    auto* pPlayerManager = m_pWorld->get<PlayerManager>();
+
+    const auto entity = pPlayerManager->GetByConnectionId(aMessage.ConnectionId);
+    if (!entity || !entity.has<PlayerComponent>())
+        return;
+
+    ControlCall(*entity.get<PlayerComponent>(), aMessage.get_call_id().c_str(),
+                aMessage.get_action());
 }
 
 void ChatSystem::EndCallFor(const std::string& acCharacterId, CallState aState)
@@ -3127,202 +3375,33 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         return true;
     }
 
-    // ------------------------------------------------------------- /call ---
+    // --------------------------------------------------- the chat FALLBACK ---
     //
-    // §9's validation list, in the order that lets each failure be reported honestly.
-    // Nothing here touches PhoneSystem: a player call is never a questTriggerCallRequest,
-    // so the Songbird gate is not consulted, not relaxed, and cannot be regressed by any
-    // of this. See CallStore.h.
+    // Calls belong in the phone app. These are kept so that a player whose phone UI fails
+    // to present still has a way to answer - a call ringing somewhere they cannot see is
+    // indistinguishable from the server being broken.
+    //
+    // Deliberately thin. Every rule lives in BeginCall/ControlCall, which the phone also
+    // uses, so there is no second copy for one surface to drift away from.
     if (command == "/call")
     {
         if (target.empty())
         {
-            Tell(acSender, "Usage: /call 555-014-372");
+            Tell(acSender, "Usage: /call 555-014-372   (or use the phone)");
             return true;
         }
 
-        if (!IsPhoneNumberShaped(target))
-        {
-            Tell(acSender, fmt::format("'{}' is not a number. They look like 555-014-372.", target));
-            return true;
-        }
-
-        auto& store = GServer->GetPlayerStore();
-        auto& calls = GServer->GetCalls();
-
-        // The CALLER IS DERIVED FROM THE CONNECTION, never sent. There is no field on this
-        // command that says who is calling, so "ring them as somebody else" cannot be
-        // spelled - the same rule the voice path uses, and for the same reason.
-        const auto* pSelf = store.FindCharacter(acSender.DiscordId);
-
-        if (!pSelf || pSelf->CharacterId.empty())
-        {
-            Tell(acSender, "You have no character yet.");
-            return true;
-        }
-
-        if (pSelf->PhoneNumber.empty())
-        {
-            Tell(acSender, "You have no number yet - it is assigned on your next save.");
-            return true;
-        }
-
-        if (calls.Active(pSelf->CharacterId))
-        {
-            Tell(acSender, "You are already on a call. /hangup first.");
-            return true;
-        }
-
-        std::string recipientId;
-        const auto* pTarget = store.FindCharacterByPhoneNumber(target, &recipientId);
-
-        if (!pTarget)
-        {
-            Tell(acSender, fmt::format("Nobody has the number {}.", target));
-            return true;
-        }
-
-        if (pTarget->CharacterId == pSelf->CharacterId)
-        {
-            Tell(acSender, "That is your own number.");
-            return true;
-        }
-
-        /**
-         * Blocked in BOTH directions, and reported as unreachable either way.
-         *
-         * If they blocked you, you must not learn that - so the refusal has to read the
-         * same as any other reason the call did not go through. If you blocked them,
-         * ringing them anyway would be absurd, and it is told plainly because you already
-         * know.
-         */
-        if (PlayerStore::IsBlockedBy(*pSelf, target))
-        {
-            Tell(acSender, fmt::format("You have blocked {}. /unblock {} first.", target, target));
-            return true;
-        }
-
-        // A phone that is not being held does not ring. Checked before the block below so
-        // that "offline" and "blocked you" produce the same answer.
-        const auto targetEntity = FindByActiveCharacter(pTarget->CharacterId);
-
-        if (!targetEntity || PlayerStore::IsBlockedBy(*pTarget, pSelf->PhoneNumber))
-        {
-            Tell(acSender, fmt::format("{} is not answering.", PhoneBookName(pSelf, target)));
-            return true;
-        }
-
-        if (calls.Active(pTarget->CharacterId))
-        {
-            auto& session = calls.Begin(pSelf->CharacterId, pSelf->PhoneNumber,
-                                        pTarget->CharacterId, target);
-
-            // Recorded as a real call so both histories show the attempt. A busy signal
-            // that leaves no trace is indistinguishable from never having called.
-            calls.End(session, CallState::Busy);
-            AnnounceCall(session, CallState::Busy);
-            calls.Sweep();
-            return true;
-        }
-
-        auto& session = calls.Begin(pSelf->CharacterId, pSelf->PhoneNumber,
-                                    pTarget->CharacterId, target);
-
-        AnnounceCall(session, CallState::Ringing);
-
-        spdlog::info("{} is calling {}", acSender.Username, target);
+        BeginCall(acSender, target);
         return true;
     }
 
-    // ----------------------------------------------- /answer /decline /hangup ---
     if (command == "/answer" || command == "/decline" || command == "/hangup")
     {
-        auto& store = GServer->GetPlayerStore();
-        auto& calls = GServer->GetCalls();
+        const uint32_t action = command == "/answer" ? 0u : (command == "/decline" ? 1u : 2u);
 
-        const auto* pSelf = store.FindCharacter(acSender.DiscordId);
-
-        if (!pSelf || pSelf->CharacterId.empty())
-        {
-            Tell(acSender, "You have no character yet.");
-            return true;
-        }
-
-        // Resolved from the CONNECTION's active character rather than from a call id the
-        // client supplied. There is no id to guess, so one player cannot hang up another
-        // player's call - which is what a call id parameter would have to be checked for.
-        auto* pSession = calls.Active(pSelf->CharacterId);
-
-        if (!pSession)
-        {
-            Tell(acSender, "You are not on a call.");
-            return true;
-        }
-
-        const bool isTarget = pSession->TargetCharacterId == pSelf->CharacterId;
-
-        if (command == "/answer")
-        {
-            if (!isTarget)
-            {
-                Tell(acSender, "You are the one calling.");
-                return true;
-            }
-
-            if (pSession->State != CallState::Ringing)
-            {
-                Tell(acSender, "That call is no longer ringing.");
-                return true;
-            }
-
-            // The caller may have walked away between the ring and the answer. Answering
-            // into a call whose other end is gone would connect somebody to nobody.
-            if (!FindByActiveCharacter(pSession->CallerCharacterId))
-            {
-                calls.End(*pSession, CallState::Failed);
-                Tell(acSender, "They are gone.");
-                calls.Sweep();
-                return true;
-            }
-
-            pSession->State = CallState::Connected;
-            pSession->ConnectedAt = std::chrono::duration_cast<std::chrono::seconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count();
-
-            AnnounceCall(*pSession, CallState::Connected);
-
-            spdlog::info("{} answered a call from {}", acSender.Username, pSession->CallerNumber);
-            return true;
-        }
-
-        if (command == "/decline")
-        {
-            if (!isTarget)
-            {
-                Tell(acSender, "You are the one calling - /hangup to give up.");
-                return true;
-            }
-
-            if (pSession->State != CallState::Ringing)
-            {
-                Tell(acSender, "That call is no longer ringing.");
-                return true;
-            }
-
-            calls.End(*pSession, CallState::Declined);
-            AnnounceCall(*pSession, CallState::Declined);
-            calls.Sweep();
-            return true;
-        }
-
-        // /hangup. Cancelling a call that never connected and ending one that did are
-        // different history lines, so they are different states rather than one "ended".
-        const auto state =
-            pSession->State == CallState::Connected ? CallState::Ended : CallState::Cancelled;
-
-        calls.End(*pSession, state);
-        AnnounceCall(*pSession, state);
-        calls.Sweep();
+        // No call id: the fallback acts on whatever the player is in. The phone always
+        // sends the id it is showing, which is what makes a stale button press safe there.
+        ControlCall(acSender, {}, action);
         return true;
     }
 

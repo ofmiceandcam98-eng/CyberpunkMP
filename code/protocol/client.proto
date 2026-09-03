@@ -478,6 +478,37 @@ message VoiceFrameRequest {
     uint32 range = 3;
 }
 
+/**
+ * "Ring this number."
+ *
+ * Carries no caller. Who is calling comes from the CONNECTION, exactly as it does for
+ * voice and for every combat message here - so "ring them as somebody else" cannot be
+ * spelled, rather than being spelled and refused.
+ */
+message CallRequest {
+    string number = 1;
+}
+
+/**
+ * Answer, decline, or hang up.
+ *
+ * One message rather than three: the three share a shape, a validation skeleton and a
+ * failure mode, and each separate message costs another presence bitfield to keep in step.
+ *
+ * The call_id is checked against the sender's OWN active call rather than used to look one
+ * up. That difference matters: a call id used as a lookup key is a way to hang up somebody
+ * else's call, while a call id checked against your own is only a way to notice that the
+ * call you were looking at has already been replaced by another one.
+ */
+message CallControlRequest {
+    string call_id = 1;
+
+    // 0 answer, 1 decline, 2 hang up. Anything else is refused rather than defaulted -
+    // a mystery action that quietly becomes "hang up" would drop calls for no visible
+    // reason on any client that got the numbering wrong.
+    uint32 action = 2;
+}
+
 message Protocol {
     oneof content {
         AuthenticationRequest authentication_request = 1;
@@ -499,5 +530,7 @@ message Protocol {
         QuickhackRequest quickhack_request = 17;
         SelectCharacterRequest select_character_request = 18;
         CreateCharacterRequest create_character_request = 19;
+        CallRequest call_request = 20;
+        CallControlRequest call_control_request = 21;
     }
 }
