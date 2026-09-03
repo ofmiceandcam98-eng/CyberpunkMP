@@ -108,12 +108,28 @@ bool VoiceClient::Start(const std::string& acInputDevice, const std::string& acO
     m_audio.SetCaptureCallback([this](const float* apSamples, size_t aFrames, uint32_t aChannels, uint32_t aSampleRate)
                                { OnCaptured(apSamples, aFrames, aChannels, aSampleRate); });
 
-    // Not fatal. Somebody with no working microphone should still hear everyone else, and be
-    // told why nobody can hear them - rather than have voice refuse to start at all.
+    /**
+     * Not fatal. Somebody with no working microphone should still hear everyone else.
+     *
+     * NOTE WHAT THIS RETURN VALUE MEANS, because it used to be read as more than it is:
+     * StartCapture answers "the capture thread was spawned", not "a microphone is open".
+     * It cannot answer the second without waiting on a driver, and waiting on a driver here
+     * would hang the connect path.
+     *
+     * So false means the thread could not even start - rare - and TRUE MEANS NOTHING YET.
+     * The old code logged "[Voice] running" on true, which is how two sessions of logs came
+     * to say "running" while the stats line underneath said "mic NOT CAPTURING" three
+     * hundred times and no error was recorded anywhere.
+     *
+     * The real answer arrives asynchronously: the capture thread logs its own failure now
+     * (see VoiceAudioManager::SetError), and the stats line below reports IsCapturing plus
+     * the reason. This line no longer claims anything it cannot know.
+     */
     if (!m_audio.StartCapture(acInputDevice))
         spdlog::warn("[Voice] no microphone - you can hear others, they cannot hear you: {}", m_audio.GetLastError());
     else
-        spdlog::info("[Voice] running");
+        spdlog::info("[Voice] started - opening {} microphone, result follows",
+                     acInputDevice.empty() ? "the default" : "the saved");
 
     return true;
 }
@@ -354,6 +370,17 @@ void VoiceClient::RenderThread(std::string aDeviceId)
     // A saved device id that is no longer plugged in has the same shape: a specific choice
     // that cannot be honoured must fall back to something that works, not to silence.
     IMMDevice* pDevice = nullptr;
+
+    // The same two Chromium sentinels the capture side handles - see the long note in
+    // VoiceAudioManager::CaptureThread. "default" and "communications" are what the
+    // launcher's web-based device picker calls the system defaults, not endpoint ids.
+    //
+    // This side already fell back when a lookup failed, which is the ONLY reason output
+    // kept working while input died - the asymmetry, not the sentinel, is what made the
+    // bug look like a microphone problem. Handled explicitly anyway, so the log stops
+    // claiming a device "is not connected" when nobody ever chose one.
+    if (aDeviceId == "default" || aDeviceId == "communications")
+        aDeviceId.clear();
 
     if (!aDeviceId.empty())
     {

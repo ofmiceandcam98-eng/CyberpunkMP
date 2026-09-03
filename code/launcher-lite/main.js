@@ -3104,10 +3104,26 @@ async function launchGame () {
     args.push(`--micvolume=${mic}`)
     args.push(`--voicevolume=${chat}`)
 
-    if (voice.voiceInputDevice && voice.voiceInputDevice !== 'default') {
+    // BOTH Chromium sentinels, not just one.
+    //
+    // enumerateDevices() labels the system defaults with the ids 'default' AND
+    // 'communications'. This filtered only the first, so a player who picked the
+    // Communications entry - which is the sensible-looking choice for voice chat - had
+    // '--voicein=communications' passed through as if it were a Windows endpoint id.
+    // It resolves to nothing, and the mod's capture side had no fallback, so the
+    // microphone silently never opened while the speakers (saved as 'default', and so
+    // filtered here) worked fine. That is the "mic NOT CAPTURING / speakers ok" in every
+    // voice log we have.
+    //
+    // The mod now reads both sentinels correctly too, so this is belt and braces - but it
+    // is worth having on this side as well, because passing a value the other end has to
+    // special-case is how the next one of these starts.
+    const isDefaultDevice = (id) => !id || id === 'default' || id === 'communications'
+
+    if (!isDefaultDevice(voice.voiceInputDevice)) {
       args.push(`--voicein=${voice.voiceInputDevice}`)
     }
-    if (voice.voiceOutputDevice && voice.voiceOutputDevice !== 'default') {
+    if (!isDefaultDevice(voice.voiceOutputDevice)) {
       args.push(`--voiceout=${voice.voiceOutputDevice}`)
     }
   }

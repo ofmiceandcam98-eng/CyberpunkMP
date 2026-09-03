@@ -214,10 +214,30 @@ std::vector<VoiceDevice> VoiceAudioManager::EnumerateOutputDevices() const
     return Enumerate(eRender);
 }
 
+/**
+ * Record why audio stopped working, AND SAY SO.
+ *
+ * The logging is the fix for a real bug, not a nicety. StartCapture returns as soon as the
+ * capture thread is spawned - it cannot wait for the thread to open a device without
+ * blocking the connect path behind a driver that may stall - so the thread's failures all
+ * happen AFTER the caller has already been told "true". The caller then logged
+ * "[Voice] running", every single one of these messages went into a string nobody read,
+ * and two sessions of logs said nothing at all about the microphone while reporting
+ * "mic NOT CAPTURING" three hundred times.
+ *
+ * So the failure is announced where it happens. Anything that sets an error here is a
+ * reason voice is not working, which makes it worth a log line by definition - and an
+ * empty string is a CLEAR, not a failure, so it stays quiet.
+ */
 void VoiceAudioManager::SetError(const std::string& acError)
 {
-    std::lock_guard lock(m_errorLock);
-    m_lastError = acError;
+    {
+        std::lock_guard lock(m_errorLock);
+        m_lastError = acError;
+    }
+
+    if (!acError.empty())
+        spdlog::error("[Voice] microphone: {}", acError);
 }
 
 std::string VoiceAudioManager::GetLastError() const
@@ -298,6 +318,30 @@ void VoiceAudioManager::CaptureThread(std::string aDeviceId)
     }
 
     IMMDevice* pDevice = nullptr;
+
+    /**
+     * "default" and "communications" are NOT device ids.
+     *
+     * They are the two sentinels Chromium's enumerateDevices() hands back for the system
+     * defaults, and the launcher's device picker is a web page - so whichever of them the
+     * player chose is what gets saved and passed here. A real Windows endpoint id looks
+     * like {0.0.1.00000000}.{guid}; neither of these resolves to anything.
+     *
+     * THIS WAS THE BUG. The saved input device was "communications", the launcher only
+     * filtered "default", so --voicein=communications arrived here, fell into the branch
+     * below that looks up a literal endpoint id, failed, and killed capture - while the
+     * OUTPUT device happened to be saved as "default", was filtered, and worked. That is
+     * precisely the "mic NOT CAPTURING / speakers ok" in every log.
+     *
+     * Treated as empty rather than looked up, because that is what they MEAN. This is not
+     * a fallback papering over a missing device; it is reading the value correctly.
+     */
+    if (aDeviceId == "default" || aDeviceId == "communications")
+    {
+        spdlog::info("[Voice] input '{}' is a default, not a device - following Windows",
+                     aDeviceId);
+        aDeviceId.clear();
+    }
 
     if (aDeviceId.empty())
     {
@@ -418,6 +462,17 @@ void VoiceAudioManager::CaptureThread(std::string aDeviceId)
     }
 
     m_capturing.store(true, std::memory_order_relaxed);
+
+    // Success is logged as loudly as failure, and with the format, because "it opened" and
+    // "it opened and is handing us samples we can actually read" are different claims - a
+    // format this code cannot interpret is read as silence further down, which looks
+    // exactly like a dead microphone from the outside.
+    spdlog::info("[Voice] microphone open - {}Hz, {} channel(s), {}-bit {}", sampleRate, channels,
+                 bits, isFloat ? "float" : "int");
+
+    // Clears the error, so a microphone that failed and was then reopened does not leave a
+    // stale reason attached to a working capture.
+    SetError({});
     spdlog::info("[Voice] capturing - {} channel(s), {}Hz, {}-bit {}", channels, sampleRate, bits,
                  isFloat ? "float" : "int");
 
