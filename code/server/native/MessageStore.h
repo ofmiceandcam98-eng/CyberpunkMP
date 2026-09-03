@@ -59,6 +59,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <cstdio>   // snprintf - MSVC pulls this in transitively, GCC does not
 #include <fstream>
 #include <filesystem>
 #include <chrono>
