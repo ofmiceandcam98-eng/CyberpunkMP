@@ -2782,12 +2782,13 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
     // So ownership decides what appears in the phone, and the phone does the summoning.
     // The server pushes EnablePlayerVehicle for every model this account owns at least one
     // of; anything they own nothing of is not in their menu at all.
-    if (command == "/call")
-    {
-        Tell(acSender, "Use your phone - your vehicles are in the vehicle menu, like normal.");
-        Tell(acSender, "/garage shows the paperwork: which specific car is which, and its plate.");
-        return true;
-    }
+    // The vehicle half of /call is folded into the phone-call command further down, which
+    // is the only dispatch for it now.
+    //
+    // THIS BLOCK USED TO RETURN HERE, and it made player-to-player calling completely
+    // unreachable: it matched first, printed the vehicle hint, and returned true, so
+    // "/call 555-014-372" answered "use your phone" and rang nobody. Two features wanted
+    // the same verb and the older one silently won.
 
     // ---------------------------------------------------------- /givecar ----
     //
@@ -3655,9 +3656,20 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
     // uses, so there is no second copy for one surface to drift away from.
     if (command == "/call")
     {
+        /*
+         * ONE /call, TWO THINGS PEOPLE MEAN BY IT.
+         *
+         * A number rings a person. No number is almost always somebody reaching for the
+         * vehicle summon, which this command used to be - so that hint lives here rather
+         * than in a second dispatch. It had its own block earlier in this function, which
+         * matched first and returned, and made player calling unreachable.
+         */
         if (target.empty())
         {
-            Tell(acSender, "Usage: /call 555-014-372   (or use the phone)");
+            Tell(acSender, "Usage: /call 555-014-372   (or answer from the phone)");
+            Tell(acSender, "Calling a CAR? Use your phone - your vehicles are in the vehicle "
+                           "menu, like normal.");
+            Tell(acSender, "/garage shows the paperwork: which specific car is which, and its plate.");
             return true;
         }
 

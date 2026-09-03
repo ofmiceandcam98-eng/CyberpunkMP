@@ -253,14 +253,19 @@ message SelectCharacterRequest {
     int32 slot = 1;
 }
 
-// "Make a new character in this slot."
+// CreateCharacterRequest USED TO BE HERE, and it was never wired to anything.
 //
-// Slot is named so a player with four can choose WHERE the new one goes rather than always
-// filling the first hole. The server refuses a slot that is occupied, out of range for this
-// account's allowance, or beyond the lifetime row ceiling.
-message CreateCharacterRequest {
-    int32 slot = 1;
-}
+// It was added with the slot work on the assumption that creating a character in a chosen
+// slot would need its own message. It does not: creation happens through
+// SaveCharacterRequest, which carries the appearance the creator produced, and the server
+// places it. Nothing ever sent this and nothing ever handled it.
+//
+// Removed rather than left, because a declared message with no handler is a trap - the next
+// person to wire a client to it gets silence and a debugging session. Free to remove
+// because it has never shipped: the protocol was already changing this release.
+//
+// Field number 19 in the oneof below is deliberately NOT reused. Numbers are cheap and a
+// recycled one is how two builds come to disagree about what a message means.
 
 // "I want to run this quickhack on this person."
 //
@@ -529,7 +534,7 @@ message Protocol {
         QuickhackUploadRequest quickhack_upload_request = 16;
         QuickhackRequest quickhack_request = 17;
         SelectCharacterRequest select_character_request = 18;
-        CreateCharacterRequest create_character_request = 19;
+        // 19 was CreateCharacterRequest - removed, never used. Not reused.
         CallRequest call_request = 20;
         CallControlRequest call_control_request = 21;
     }
