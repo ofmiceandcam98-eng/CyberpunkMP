@@ -29,6 +29,50 @@ Keep this block current; it is the first thing anyone should read. Cam: *"we sho
 the mental map pretty often."* A stale in-flight list is worse than none, because it sends
 people to work that is already done.
 
+- **PLAYER-TO-PLAYER CALLS — BUILT, NOT SHIPPED (`7be0a20`).** Server only, **no protocol
+  change**. Cam's rule, stricter than the brief that prompted it: *"player to player calls are
+  the only calls that can come through."* Every game-originated call stays blocked.
+  - **THE SONGBIRD GATE IS NOT MODIFIED, AND THAT IS THE DESIGN.** Do not "improve" this by
+    relaxing `PhoneSystem.OnTriggerCall` — read this first. `OnTriggerCall` takes a
+    `questTriggerCallRequest`, which is the **quest system's** request type; the quest system
+    is the only thing that builds one. Its `isPlayerTriggered` field means *"the player
+    triggered this QUEST call"* — ringing a fixer back from the journal — **not** "a
+    multiplayer player started a call". Gating on it would let a class of story calls back in
+    and would make the Songbird block depend on a field the mod never sets and cannot audit.
+  - **A player call never becomes a `questTriggerCallRequest`.** It arrives as a chat command,
+    lives in `CallStore`, and is presented by the mod. The two kinds of call share no field
+    and no entry point, so the origin is unambiguous **by construction** rather than by
+    inspection. "Player calls work AND the prologue stays blocked" is therefore not a test
+    that has to pass — it is a property of the shape.
+  - **Verified, not asserted:** `Quests.reds` is unmodified, and every mention of
+    `PhoneSystem` / `OnTriggerCall` / `questTriggerCallRequest` / `isPlayerTriggered` across
+    all changed files is a **comment**. No line of code in the feature references any of them.
+  - **The brief's "do not build a parallel system, route through PhoneSystem" was declined
+    deliberately.** Routing a player call through `OnTriggerCall` means forging a
+    `questTriggerCallRequest`, after which the gate can no longer tell the two apart. That
+    instruction and the brief's own acceptance criteria are in tension; the criteria win.
+  - **Voice is what makes it a call.** Proximity voice already existed; a connected call also
+    routes the speaker's frames to the other party regardless of distance, checked against the
+    listener's **active** character. Resolved once per frame, not per listener — that loop
+    runs for everybody online, 50×/second per speaker.
+  - **Sessions in memory, history on disk.** A call is a conversation, not property: a restart
+    mid-call should mean the call ended, which an empty session list already means. Held in a
+    `std::list` — `Active()`/`Find()`/`Expired()` hand out pointers, and a vector would
+    reallocate and dangle them intermittently, only on a busy server.
+  - **A blocked call reads exactly like an unanswered one.** A refusal that differs is a
+    refusal that tells somebody they were blocked.
+  - **No call id is accepted from the client.** `/answer`, `/decline`, `/hangup` resolve the
+    sender's own active call, so one player cannot hang up another's.
+  - **Switching characters ends the outgoing character's call** before the switch. Belt and
+    braces today — the puppet check already refuses an in-world switch — but it is the line
+    that stops a call surviving if that rule is ever relaxed.
+  - Commands: `/call`, `/answer`, `/decline`, `/hangup`, `/calls`. Ring timeout 30s.
+  - **35 checks pass** against the real `CallStore.h`, covering the brief's matrix and the
+    "one player's two characters share nothing" case.
+  - **The remaining piece is presentation.** This is surfaced through chat, not the phone UI.
+    A real incoming-call panel is a presentation layer over the same session state — build it
+    against `CallStore`, never as a second call implementation.
+
 - **DIGITAL LIFE: MESSAGING, CONTACT NAMES AND BLOCKING — BUILT, NOT SHIPPED.** Phase 1 of the
   "character digital life" brief ChatGPT wrote on 2026-09-02. **Server-only — no protocol
   change**, so unlike the slot work this could ship on its own.
