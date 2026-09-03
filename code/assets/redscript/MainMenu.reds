@@ -41,6 +41,18 @@ public class MpSelectorPoll extends DelayCallback {
     public let controller: wref<SingleplayerMenuGameController>;
     public let attempts: Int32;
 
+    /**
+     * Whether landing the roster should go straight into the world.
+     *
+     * TWO CALLERS, TWO ANSWERS, and conflating them was a real bug. CONNECT wants the
+     * roster ON SCREEN so somebody can choose; PLAY wants the world. Both polls look
+     * identical - wait for the server to say who this account is - so both used this class,
+     * and this class always entered the world. Pressing CONNECT therefore loaded you
+     * straight in as whoever happened to be active, which is exactly the thing a character
+     * selection screen exists to prevent.
+     */
+    public let enterWhenKnown: Bool;
+
     public func Call() -> Void {
         let network = GameInstance.GetNetworkWorldSystem();
 
@@ -49,17 +61,41 @@ public class MpSelectorPoll extends DelayCallback {
         }
 
         if network.IsCharacterStatusKnown() {
-            // Panel first, so the answer is on screen before the world starts loading -
-            // otherwise the only feedback for a press is the load itself.
+            // Panel first either way, so the answer is on screen before anything else
+            // happens - otherwise the only feedback for a press is a load, or nothing.
             this.controller.MpUpdatePanel();
-            this.controller.MpEnterWithCharacter();
+
+            if this.enterWhenKnown {
+                this.controller.MpEnterWithCharacter();
+            } else {
+                // CONNECT: rebuild the menu so it now offers PLAY, SWITCH and DELETE
+                // against a roster that has actually arrived.
+                this.controller.MpRefreshMenu();
+            }
+
             return;
         }
 
         this.attempts += 1;
 
         if this.attempts >= 10 {
-            // FALL BACK, do not strand them.
+            FTLogError(s"[CyberpunkMP] the server never said what character this account has");
+
+            if !this.enterWhenKnown {
+                /*
+                 * CONNECT that could not connect SAYS SO, and goes nowhere.
+                 *
+                 * The old fallback loaded the world anyway, which was right when the button
+                 * meant "play now" - a slow server cost a pause rather than a session. It is
+                 * wrong for CONNECT: dropping somebody into a singleplayer world they did not
+                 * ask for, because the multiplayer server is down, is worse than telling them
+                 * the server is down. There is nothing to do in that world.
+                 */
+                this.controller.MpConnectFailed();
+                return;
+            }
+
+            // PLAY still falls back, and for the original reason.
             //
             // This is the failure the selector was switched off for: the main menu is the
             // one screen where being wrong means nobody can play at all, and the original
@@ -70,7 +106,7 @@ public class MpSelectorPoll extends DelayCallback {
             // unreachable. None of those should cost someone their session, so this drops
             // to exactly the behaviour that shipped before the selector: load the last save
             // and let the server sort out appearance and position on arrival.
-            FTLogError(s"[CyberpunkMP] the server never said what character this account has - entering the old way");
+            FTLogError(s"[CyberpunkMP] entering the old way");
 
             let network = GameInstance.GetNetworkWorldSystem();
             if IsDefined(network) {
@@ -88,6 +124,7 @@ public class MpSelectorPoll extends DelayCallback {
         let again = new MpSelectorPoll();
         again.controller = this.controller;
         again.attempts = this.attempts;
+        again.enterWhenKnown = this.enterWhenKnown;
 
         GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(again, 0.25, false);
     }
@@ -133,6 +170,39 @@ public class MpDeletePoll extends DelayCallback {
         again.attempts = this.attempts;
 
         GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(again, 0.25, false);
+    }
+}
+
+/**
+ * Rebuild the menu now that the server has answered.
+ *
+ * CONNECT changes what the other entries should be - before it there is nothing to play as
+ * and nothing to switch between, after it there is - and the list is only built when the
+ * screen opens. Without this, connecting would fill the panel with a roster while the menu
+ * beside it still offered nothing but CONNECT.
+ *
+ * Re-entering PopulateMenuItemList rather than poking the list directly, because that
+ * function is the ONE place that decides which entries exist, and a second place that also
+ * decided would disagree with it the first time either changed. Its own wrappedMethod
+ * rebuilds the game's entries from scratch, so this is a rebuild rather than an append.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpRefreshMenu() -> Void {
+    this.PopulateMenuItemList();
+}
+
+/**
+ * CONNECT could not reach the server. Say so on the panel and go nowhere.
+ *
+ * Deliberately NOT the old fallback of loading the world anyway. That was right while the
+ * button meant "play now" - a slow server cost a pause rather than a session. It is wrong
+ * for CONNECT: dropping somebody into a singleplayer world because the multiplayer server
+ * is down leaves them somewhere there is nothing to do, having asked for the opposite.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpConnectFailed() -> Void {
+    if IsDefined(this.m_mpDetail) {
+        this.m_mpDetail.SetText("Could not reach the server. Try again in a moment.");
     }
 }
 
@@ -344,9 +414,23 @@ private func PopulateMenuItemList() -> Void {
     // ripperdocs change everything about how you look except that, and the customization
     // system is native-only so it cannot be opened on demand. Going through New Game is
     // therefore the only route to real character creation that exists.
-    this.AddMenuItem("MULTIPLAYER", n"OnMultiplayerContinue");
+    /*
+     * CONNECT FIRST, THEN CHOOSE, THEN PLAY. Cam's call, 2026-09-03.
+     *
+     * The old single MULTIPLAYER entry did all three at once: it opened the connection,
+     * waited for the roster, and loaded the world as whoever happened to be active. With
+     * one character that is indistinguishable from the right behaviour. With four it means
+     * the selection screen can never be reached, because pressing the only entry that
+     * connects also leaves the menu.
+     *
+     * So the entry that connects now STOPS at the roster, and playing is a second press
+     * against a screen that shows who you are about to be.
+     *
+     * The items below are added on the OTHER side of the connection check, because which
+     * of them make sense depends entirely on whether the server has answered yet.
+     */
 
-    // The warning is IN THE LABEL.
+    // The warning is IN THE LABEL, wherever NEW CHARACTER is added below.
     //
     // Making a character replaces the one the server holds, and that is hours of
     // somebody's evening. "NEW CHARACTER" on its own reads as ADDING one, which is exactly
@@ -355,7 +439,6 @@ private func PopulateMenuItemList() -> Void {
     //
     // A confirmation dialog would be better and needs an API this menu does not obviously
     // have. A label that cannot be misread is available right now and cannot fail to show.
-    this.AddMenuItem("MULTIPLAYER - NEW CHARACTER (REPLACES YOURS)", n"OnMultiplayerNewCharacter");
 
     // The trash can.
     //
@@ -381,8 +464,23 @@ private func PopulateMenuItemList() -> Void {
 
     if IsDefined(network) {
         if network.IsCharacterStatusKnown() {
+            // CONNECTED. The roster is here, so the menu is about WHO, not whether.
             this.MpBuildPanel();
             this.MpUpdatePanel();
+
+            // PLAY is first and is the thing they came for. It reads as an answer to the
+            // panel beside it - "this is who you are, press this to be them" - which is
+            // only true because getting here required the server to have answered.
+            this.AddMenuItem("PLAY", n"OnMultiplayerContinue");
+
+            // Switching only makes sense with somewhere to switch to. One slot means one
+            // character, and an entry that can only ever re-select what you already are is
+            // noise on the one screen everybody sees.
+            if network.GetCharacterSlots() > 1 {
+                this.AddMenuItem("SWITCH CHARACTER", n"OnMultiplayerSwitchCharacter");
+            }
+
+            this.AddMenuItem("NEW CHARACTER (REPLACES YOURS)", n"OnMultiplayerNewCharacter");
 
             // The trash can.
             //
@@ -391,15 +489,15 @@ private func PopulateMenuItemList() -> Void {
             if network.HasCharacter() {
                 this.AddMenuItem("[ TRASH ]  DELETE CHARACTER", n"OnMultiplayerDeleteCharacter");
             }
-
-            // Switching only makes sense with somewhere to switch to. One slot means one
-            // character, and an entry that can only ever re-select what you already are is
-            // noise on the one screen everybody sees.
-            if network.GetCharacterSlots() > 1 {
-                this.AddMenuItem("MULTIPLAYER - SWITCH CHARACTER", n"OnMultiplayerSwitchCharacter");
-            }
         } else {
-            this.AddMenuItem("MULTIPLAYER - CHARACTERS", n"OnMultiplayerCharacters");
+            // NOT CONNECTED YET. Exactly one multiplayer entry, so there is no question
+            // about which one starts things.
+            this.AddMenuItem("CONNECT", n"OnMultiplayerCharacters");
+
+            // Creation stays reachable without a connection, because it runs the game's own
+            // New Game flow and arms the join on the way through - somebody with no
+            // character can still make one while the server is being slow.
+            this.AddMenuItem("NEW CHARACTER (REPLACES YOURS)", n"OnMultiplayerNewCharacter");
         }
     }
 
@@ -455,6 +553,7 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
         let poll = new MpSelectorPoll();
         poll.controller = this;
         poll.attempts = 0;
+        poll.enterWhenKnown = true;
 
         GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(poll, 0.25, false);
         return true;
@@ -501,6 +600,7 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
         let poll = new MpSelectorPoll();
         poll.controller = this;
         poll.attempts = 0;
+        poll.enterWhenKnown = false;
 
         GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(poll, 0.25, false);
         return true;
@@ -558,6 +658,7 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
             let poll = new MpSelectorPoll();
             poll.controller = this;
             poll.attempts = 0;
+            poll.enterWhenKnown = false;
 
             GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(poll, 0.25, false);
         }
