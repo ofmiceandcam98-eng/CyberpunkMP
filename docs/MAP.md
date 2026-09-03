@@ -29,6 +29,41 @@ Keep this block current; it is the first thing anyone should read. Cam: *"we sho
 the mental map pretty often."* A stale in-flight list is worse than none, because it sends
 people to work that is already done.
 
+- **TRADING (`f313a61`) and MEDICAL (`70eac6e`) — built, not shipped.**
+  - **Trading's governing rule: it never CREATES value.** The commit is
+    `PlayerStore::ApplyTrade`, *not* a trade system beside it — `PlayerStore` already owns
+    money and possessions, and a second thing that could move them would be a second
+    authority. `TradeStore` decides *whether*; `PlayerStore` decides that it happens
+    *completely*.
+  - **Atomic, and honestly which kind:** both records copied, both mutated, validated on the
+    copies, assigned back, then **one** flush. No ordering shows a partial exchange. It is
+    **not** durable-transactional — the store is a JSON file. A write-ahead journal belongs
+    with the move to a database, which is where the replicable-instance rule takes it anyway.
+  - **Reservations ARE the offers.** No separate table, deliberately: a table and a set of
+    offers are two representations of one fact and they drift, and a drifted reservation is
+    money promised twice. **`/pay` now checks available money, not owned** — that single line
+    is what makes reservations mean anything, because otherwise 10,000 could fund an 8,000
+    trade *and* an 8,000 phone transfer.
+  - **Confirmations reset on every edit**, both sides. Carrying one across is how somebody
+    accepts a deal they never saw. **`Committing` is not cancellable** — by disconnect, death,
+    timeout or distance; it either moved both sides or neither.
+  - **What this model cannot do:** inventory is `(TweakDBID, quantity)` stacks. There are **no
+    unique item instance ids**, so a weapon's mods/attachments/condition are not modelled and
+    it trades as its base record. Faking instance identity would be worse than not having it.
+  - **Medical is a LAYER, not a system.** `HealthComponent` already held `LifeState` and lethal
+    damage already downed rather than killed. Added: bleedout → death, stabilise, revive.
+    Fields live **on `HealthComponent`** — two components describing "how alive is this
+    person" would disagree, and the disagreement would decide whether somebody could be revived.
+  - **The timer is a DEADLINE, not a countdown.** `DownedAt` is a timestamp; a skipped or
+    doubled tick then delays an outcome without changing it. **Bleedout starts once** — shooting
+    somebody already down does not restart it, or an attacker could hold a victim permanently
+    un-revivable.
+  - **Stabilised means the bleeding stopped**, not "more time" — otherwise a medic who did
+    everything right still watches their patient die on a hidden clock. Revive requires
+    stabilise first, or stabilisation is pointless.
+  - **`kTreatPermission` is `kPlayer` on purpose** — a medics-only rule on a server with no
+    medics means everyone who goes down dies. One constant to raise when roles exist.
+
 - **VOICE: SOLVED (`0ca11ba`). It was never broken — the microphone was never opened.**
   - **The evidence chain, in order.** Two sessions of logs said
     `mic NOT CAPTURING / speakers ok - encoded 0` two hundred times. `encoded 0` means
