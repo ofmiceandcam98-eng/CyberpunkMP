@@ -29,6 +29,71 @@ Keep this block current; it is the first thing anyone should read. Cam: *"we sho
 the mental map pretty often."* A stale in-flight list is worse than none, because it sends
 people to work that is already done.
 
+- **VOICE: SOLVED (`0ca11ba`). It was never broken — the microphone was never opened.**
+  - **The evidence chain, in order.** Two sessions of logs said
+    `mic NOT CAPTURING / speakers ok - encoded 0` two hundred times. `encoded 0` means
+    nothing was ever captured, so codec, network, routing and playback were all innocent.
+    The same WASAPI sequence run standalone on Cam's machine worked perfectly — Apollo Solo,
+    48kHz, **10 channels**, 147,360 frames, peak 0.98. So the sequence was right and the mic
+    was live, and the failure had to be before `Start()`.
+  - **The cause: `voiceInputDevice = "communications"`.** `default` and `communications` are
+    the two sentinel ids **Chromium's `enumerateDevices()`** returns for system defaults. The
+    launcher's picker is a web page, so picking the Communications entry saved that — and the
+    launch-arg code filtered only `default`. `--voicein=communications` reached the mod, which
+    treats any non-empty id as a literal Windows endpoint id (`{0.0.1.00000000}.{guid}`).
+  - **Why it looked like a microphone problem:** the OUTPUT branch falls back to the default
+    when a lookup fails and the CAPTURE branch does not. The same bad value was survivable on
+    one side and fatal on the other. **That asymmetry, not the sentinel, is the real lesson.**
+  - **Why nobody could see it:** `StartCapture` returns when the THREAD IS SPAWNED, not when a
+    device opens — it cannot wait on a driver without blocking the connect path. So every
+    failure happened after the caller was told `true`, and the caller logged `[Voice] running`.
+    Every error went into a string nothing printed. **Fixed independently of the sentinel:**
+    `SetError` logs at the point of failure, the stats line prints the reason, a successful
+    open logs the device format, and `[Voice] running` no longer claims what it cannot know.
+  - Both sentinels are now read as "follow Windows" on **both** sides, and the launcher stops
+    emitting them. A genuinely unplugged saved device still does **not** silently switch the
+    microphone — that decision stands, it just says so out loud now.
+
+- **VEHICLE SEATS (`eff82e0`). Most of it was already built; one thing was missing.**
+  - **Already working, do not rebuild:** `sit_id` on the wire for enter/exit/notify;
+    `AttachmentComponent{Parent, SlotId}` as real server seat state; one-per-seat enforced and
+    **refused rather than reassigned**; stale seat-swap exits recognised; late joiners get a
+    `NotifyVehicleEnter` per occupant (§18); a disconnecting driver hands authority to a
+    passenger and the car survives (§16); `ReleaseVehicleIfEmpty` counts **every** attachment
+    and parks rather than destroys (§17 — already correct).
+  - **Why a fifth person fitted in a four-seat car:** occupancy was checked, seat **identity**
+    never was. Any invented 64-bit id matched no attachment, looked like an empty seat, and
+    was accepted. Four already fitted; a fifth only had to name a position nobody had claimed.
+  - **The check is identity, NOT a count**, deliberately. The server cannot see game data and
+    does not know how many seats a Mackinaw has — counting would mean refusing seats that exist
+    or inventing ones that do not. Which seats a car HAS stays with the game's mount system;
+    which seats EXIST is `VehicleSeats.h`.
+  - **Seat ids are FNV1a64 CName hashes, verified offline** — `FNV1a64("seat_front_left")`
+    reproduces the `0xb000b1d029d0cea0` constant `Level.cpp` always carried. So they are
+    **derived at compile time from names**; all four pasted literals are gone. In
+    `NextOccupant` a mistyped literal would not crash — it would just never match, and a
+    disconnecting driver would hand the car to the wrong passenger.
+  - `/vehseats` (moderator+) prints the server's own view: every occupied vehicle, who is in
+    which seat, and who is simulating it.
+
+- **MONEY: the restore could CONFISCATE earned money (`f53e4df`).**
+  - `owed = stored - held`, and when negative the restore **removed the difference**. Negative
+    means the player holds more than the server last heard — which after creation is the normal
+    state of anyone who has earned anything. That is the exact shape of *"I found 84 eddies and
+    they didn't save"*: the money arrived, the capture had not run, and the next spawn took it
+    back.
+  - **The removal could not simply go** — it is the only thing that strips the world template's
+    balance, because `MpSettleStarterLoadout` deliberately never touches money. So it is
+    **gated to the character's first spawn**, which is the one-shot-at-creation strip the
+    inventory rule allows.
+  - **No new wire field:** the roster already carries `spawned_before` per character and marks
+    the active one, both already exposed to script — so this is the server's own answer.
+  - **This does NOT make money persist.** If the capture reads a stale figure it is still
+    stale. What it does is stop the bug being *destructive* while that is settled: a balance
+    that fails to save can be repaired from the ledger; eddies taken off a player every spawn
+    cannot even be noticed. **The four `[MONEY]` boundaries have still never produced data** —
+    they postdate every session in the logs. One session with the current build settles it.
+
 - **PLAYER-TO-PLAYER CALLS — BUILT, NOT SHIPPED (`7be0a20`).** Server only, **no protocol
   change**. Cam's rule, stricter than the brief that prompted it: *"player to player calls are
   the only calls that can come through."* Every game-originated call stays blocked.
