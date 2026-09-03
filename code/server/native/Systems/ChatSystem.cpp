@@ -5,6 +5,8 @@
 #include "Components/MovementComponent.h"
 #include "Components/AppearanceComponent.h"
 #include "Components/AttachmentComponent.h"   // who is sitting where, for /vehseats
+#include "Components/HealthComponent.h"       // the medical state lives on it
+#include "Medical.h"                          // bleedout, treatment times, life states
 #include "VehicleSeats.h"                     // and what to call the seat they are in
 #include "CharacterRecord.h"
 #include "StarterKit.h"
@@ -1204,6 +1206,110 @@ void ChatSystem::TickTrades()
 
     for (const auto& [id, why] : tooFar)
         EndTradeFor(id, TradeState::Cancelled, why);
+}
+
+void ChatSystem::TickMedical()
+{
+    const auto now = MedicalNow();
+
+    auto* pLevel = m_pWorld->get_mut<Level>();
+
+    // Gathered first, applied after. The loop below sends messages and changes state, and
+    // mutating while iterating a flecs query is how a system starts behaving differently
+    // depending on how many people are on the server.
+    std::vector<flecs::entity> died;
+    std::vector<std::pair<flecs::entity, bool>> finished;   // puppet, wasRevive
+
+    m_pWorld->each(
+        [&](flecs::entity aPuppet, HealthComponent& aHealth)
+        {
+            // A procedure that has run its course, whoever it was on.
+            if (aHealth.TreatmentEndsAt > 0 && now >= aHealth.TreatmentEndsAt)
+            {
+                const bool wasRevive = aHealth.LifeState == LifeState::kReviving;
+                finished.emplace_back(aPuppet, wasRevive);
+                return;
+            }
+
+            if (aHealth.LifeState != LifeState::kDowned)
+                return;
+
+            // Stabilised patients do not bleed out. That is what the treatment IS - see
+            // Medical.h on why this is not modelled as extra time.
+            if (aHealth.Stabilized)
+                return;
+
+            if (aHealth.DownedAt > 0 && now - aHealth.DownedAt >= kBleedoutSeconds)
+                died.push_back(aPuppet);
+        });
+
+    for (const auto& [puppet, wasRevive] : finished)
+    {
+        auto* pHealth = puppet.get_mut<HealthComponent>();
+        if (!pHealth)
+            continue;
+
+        pHealth->TreatmentEndsAt = 0;
+        pHealth->TreatedBy.clear();
+
+        if (wasRevive)
+        {
+            pHealth->LifeState = LifeState::kAlive;
+            pHealth->Health = kRevivedHealth;
+            pHealth->DownedAt = 0;
+            pHealth->Stabilized = false;
+
+            spdlog::info("[MEDICAL] entity {:x} revived at {:.0f}%", puppet.id(), kRevivedHealth);
+        }
+        else
+        {
+            pHealth->Stabilized = true;
+            spdlog::info("[MEDICAL] entity {:x} stabilised", puppet.id());
+        }
+
+        if (pLevel)
+            pLevel->BroadcastCombatState(puppet);
+
+        if (const auto owner = puppet.parent())
+        {
+            if (const auto* pPlayer = owner.get<PlayerComponent>())
+            {
+                Tell(*pPlayer, wasRevive ? "You are back on your feet - barely. Find a ripperdoc."
+                                         : "You have been stabilised. You are still down.");
+            }
+        }
+    }
+
+    for (const auto& puppet : died)
+    {
+        auto* pHealth = puppet.get_mut<HealthComponent>();
+        if (!pHealth)
+            continue;
+
+        pHealth->LifeState = LifeState::kDead;
+        pHealth->TreatedBy.clear();
+        pHealth->TreatmentEndsAt = 0;
+
+        spdlog::info("[MEDICAL] entity {:x} bled out after {}s", puppet.id(), kBleedoutSeconds);
+
+        if (pLevel)
+            pLevel->BroadcastCombatState(puppet);
+
+        if (const auto owner = puppet.parent())
+        {
+            if (const auto* pPlayer = owner.get<PlayerComponent>())
+            {
+                Tell(*pPlayer, "You bled out. Nobody reached you in time.");
+                Tell(*pPlayer, "Use /respawn when you are ready.");
+
+                // A trade does not survive its owner dying - the brief's §36, and the same
+                // reasoning as a disconnect: assets must not move on behalf of somebody who
+                // is no longer in a position to agree.
+                if (const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(pPlayer->DiscordId))
+                    EndTradeFor(pCharacter->CharacterId, TradeState::Cancelled, "they went down");
+            }
+        }
+    }
 }
 
 void ChatSystem::BeginCall(const PlayerComponent& acPlayer, const std::string& acNumber)
@@ -3610,6 +3716,160 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
 
         for (const auto& number : pCharacter->Blocked)
             Tell(acSender, fmt::format("  {}", number));
+
+        return true;
+    }
+
+    // --------------------------------------- /assess /stabilize /revive ---
+    //
+    // Medical. Everything is checked against the SERVER's health state - a client cannot
+    // declare itself downed, cannot declare itself revived, and cannot decide that a
+    // procedure finished. See Medical.h.
+    if (command == "/assess" || command == "/stabilize" || command == "/stabilise" ||
+        command == "/revive")
+    {
+        if (!acSender.HasAtLeast(kTreatPermission))
+            return deny(kTreatPermission);
+
+        if (target.empty())
+        {
+            Tell(acSender, fmt::format("Usage: {} <player>", command));
+            return true;
+        }
+
+        const auto patient = findPlayer(target);
+
+        if (!patient)
+        {
+            Tell(acSender, fmt::format("No player called '{}'.", target));
+            return true;
+        }
+
+        const auto* pPatientPlayer = patient.get<PlayerComponent>();
+
+        if (!pPatientPlayer || !pPatientPlayer->Puppet || !pPatientPlayer->Puppet.is_alive())
+        {
+            Tell(acSender, "They are not in the world.");
+            return true;
+        }
+
+        auto* pHealth = pPatientPlayer->Puppet.get_mut<HealthComponent>();
+
+        if (!pHealth)
+        {
+            Tell(acSender, "You cannot read their condition.");
+            return true;
+        }
+
+        // Hands-on. Checked against server positions, never a distance the client claims.
+        const auto* pMedicMove = acSender.Puppet ? acSender.Puppet.get<MovementComponent>() : nullptr;
+        const auto* pPatientMove = pPatientPlayer->Puppet.get<MovementComponent>();
+
+        if (!pMedicMove || !pPatientMove ||
+            glm::distance(pMedicMove->Position, pPatientMove->Position) > kTreatmentDistance)
+        {
+            Tell(acSender, "You need to be next to them.");
+            return true;
+        }
+
+        const auto now = MedicalNow();
+
+        // ---- assess ---------------------------------------------------------------
+        if (command == "/assess")
+        {
+            const char* condition = "uninjured";
+
+            switch (pHealth->LifeState)
+            {
+            case LifeState::kDowned: condition = pHealth->Stabilized ? "STABLE, still down"
+                                                                     : "CRITICAL, bleeding out"; break;
+            case LifeState::kDead: condition = "DEAD"; break;
+            case LifeState::kReviving: condition = "being revived"; break;
+            default: condition = pHealth->Health < pHealth->MaxHealth ? "injured" : "uninjured"; break;
+            }
+
+            Tell(acSender, fmt::format("--- {} ---", pPatientPlayer->Username));
+            Tell(acSender, fmt::format("  condition: {}", condition));
+            Tell(acSender, fmt::format("  health:    {:.0f}%", pHealth->Health));
+
+            if (pHealth->LifeState == LifeState::kDowned && !pHealth->Stabilized &&
+                pHealth->DownedAt > 0)
+            {
+                const auto left = kBleedoutSeconds - (now - pHealth->DownedAt);
+                Tell(acSender, fmt::format("  time left: {}s", left > 0 ? left : 0));
+            }
+
+            if (!pHealth->TreatedBy.empty())
+                Tell(acSender, "  somebody is already treating them.");
+
+            return true;
+        }
+
+        // ---- both procedures share their preconditions -----------------------------
+        if (pHealth->LifeState == LifeState::kDead)
+        {
+            Tell(acSender, "They are gone. Nothing you do here will help.");
+            return true;
+        }
+
+        if (pHealth->LifeState != LifeState::kDowned && pHealth->LifeState != LifeState::kReviving)
+        {
+            Tell(acSender, "They are on their feet.");
+            return true;
+        }
+
+        // One medic per patient. Two procedures on one body and neither can say whose
+        // finished - the brief's §27, and the reason TreatedBy exists at all.
+        if (!pHealth->TreatedBy.empty() && pHealth->TreatmentEndsAt > now)
+        {
+            Tell(acSender, "Somebody is already working on them.");
+            return true;
+        }
+
+        const auto* pSelf = GServer->GetPlayerStore().FindCharacter(acSender.DiscordId);
+        const auto medicId = pSelf ? pSelf->CharacterId : acSender.DiscordId;
+
+        if (command == "/revive")
+        {
+            // Stabilise first. It is the procedure that stops them dying, and allowing a
+            // revive straight from critical would make stabilisation pointless - which
+            // would in turn make the bleedout timer the only thing that ever mattered.
+            if (!pHealth->Stabilized)
+            {
+                Tell(acSender, "They are not stable enough. /stabilize first.");
+                return true;
+            }
+
+            pHealth->LifeState = LifeState::kReviving;
+            pHealth->TreatedBy = medicId;
+            pHealth->TreatmentEndsAt = now + kReviveSeconds;
+
+            Tell(acSender, fmt::format("Reviving {} - {}s.", pPatientPlayer->Username, kReviveSeconds));
+            Tell(*pPatientPlayer, "Somebody is working on you. Hold on.");
+
+            spdlog::info("[MEDICAL] {} began reviving {}", acSender.Username, pPatientPlayer->Username);
+        }
+        else
+        {
+            if (pHealth->Stabilized)
+            {
+                Tell(acSender, "They are already stable. /revive when you are ready.");
+                return true;
+            }
+
+            pHealth->TreatedBy = medicId;
+            pHealth->TreatmentEndsAt = now + kStabilizeSeconds;
+
+            Tell(acSender, fmt::format("Stabilising {} - {}s.", pPatientPlayer->Username,
+                                       kStabilizeSeconds));
+            Tell(*pPatientPlayer, "Somebody is stabilising you.");
+
+            spdlog::info("[MEDICAL] {} began stabilising {}", acSender.Username,
+                         pPatientPlayer->Username);
+        }
+
+        if (auto* pLevel = m_pWorld->get_mut<Level>())
+            pLevel->BroadcastCombatState(pPatientPlayer->Puppet);
 
         return true;
     }
