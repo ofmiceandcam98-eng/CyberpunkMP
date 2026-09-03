@@ -19,6 +19,7 @@
 #include "PlayerManager.h"
 #include "WorldClock.h"
 #include "Systems/ChatSystem.h"   // telling someone their seat is taken
+#include "VehicleSeats.h"         // seat ids are CName hashes - names, never magic numbers
 #include "Validation.h"           // sanity checks on anything a client sent
 
 #include <chrono>
@@ -311,17 +312,22 @@ void Level::RemovePlayer(flecs::entity aEntity) noexcept
 // The occupant who should inherit a departing simulator's car, front passenger first.
 //
 // Excludes everyone belonging to the departing PLAYER (their puppet may still be marked
-// as sitting in the driver seat at disconnect time). The hashes are CNames - FNV1a64 of
-// the seat names; the algorithm is verified because the front-left constant the seat
-// guard has used all along reproduces exactly from FNV1a64("seat_front_left"). A seat
-// not in the list (a bike pillion, a future vehicle) still counts as a fallback - an
-// arbitrary simulator beats none.
+// as sitting in the driver seat at disconnect time). A seat not in the list (a bike
+// pillion, a future vehicle) still counts as a fallback - an arbitrary simulator beats
+// none.
+//
+// The three ids used to be pasted hex with the names in comments. They are DERIVED now,
+// from VehicleSeats.h, because a pasted hash is unverifiable by eye and goes silently
+// wrong when a digit is mistyped - and the failure here would be subtle: a mistyped
+// priority entry does not crash, it just never matches, so the car quietly hands itself to
+// the wrong passenger or to nobody. The note this replaces had independently confirmed the
+// FNV1a64 claim; that is now the mechanism rather than a comment about one.
 static flecs::entity NextOccupant(flecs::entity aVehicle, flecs::entity aDepartingPlayer) noexcept
 {
     constexpr uint64_t cSeatPriority[] = {
-        0x63c846db887c0035ULL, // seat_front_right
-        0xb06da35221954b3eULL, // seat_back_left
-        0xc90fa7831f484433ULL, // seat_back_right
+        Fnv1a64("seat_front_right"),
+        Fnv1a64("seat_back_left"),
+        Fnv1a64("seat_back_right"),
     };
     constexpr size_t cSeatCount = sizeof(cSeatPriority) / sizeof(cSeatPriority[0]);
 
@@ -2050,10 +2056,10 @@ void Level::HandleEnterVehicleRequest(PacketEvent<client::EnterVehicleRequest>& 
         // never loaded). Honoring it forks a split-brain duplicate: one player driving
         // the real entity, the other sitting in a private copy nobody else can see.
         // Refused the same way a taken seat is refused - told, then left alone.
-        if (aMessage.get_sit_id() != 0xb000b1d029d0cea0ULL) // seat_front_left
+        if (aMessage.get_sit_id() != kDriverSeat)
         {
-            spdlog::warn("Player {:x} tried to spawn a vehicle into seat {:x} - refused as a desync fork (connection {:x})",
-                         aMessage.get_id(), aMessage.get_sit_id(), aMessage.ConnectionId);
+            spdlog::warn("Player {:x} tried to spawn a vehicle into {} - refused as a desync fork (connection {:x})",
+                         aMessage.get_id(), VehicleSeatName(aMessage.get_sit_id()), aMessage.ConnectionId);
 
             if (auto* pChat = GetWorld()->get_mut<ChatSystem>())
                 pChat->Tell(*pPlayer, "Couldn't sync that car - give it a moment, or take the driver's seat.");
@@ -2090,6 +2096,34 @@ void Level::HandleEnterVehicleRequest(PacketEvent<client::EnterVehicleRequest>& 
     // Refused rather than silently reassigned. Being told the seat is taken is something a
     // player can act on; being moved somewhere they did not choose is not.
     const auto requestedSeat = aMessage.get_sit_id();
+
+    /**
+     * IS IT A SEAT? This is what let a fifth person into a four-seat car.
+     *
+     * Occupancy was already enforced - one person per seat, refused rather than reassigned
+     * - but nothing ever asked whether the id WAS a seat. Any 64-bit number a client
+     * invented looked like an empty seat, because no attachment matched it, so it was
+     * accepted and occupied. Four people already fitted; a fifth only had to name a
+     * position nobody else had claimed.
+     *
+     * The check has to be identity, not a count. The server cannot see game data and does
+     * not know how many seats a Mackinaw has, so counting would mean either refusing seats
+     * that exist or inventing ones that do not. Which seats a car HAS is decided by the
+     * game's own mount system when the client picks a door; which seats EXIST at all is
+     * this list, and that is a fact about the game rather than about any one vehicle.
+     */
+    if (!IsKnownSeat(requestedSeat))
+    {
+        spdlog::warn("Player {:x} asked for {} in vehicle {:x} - not a seat, refused (connection {:x})",
+                     aMessage.get_id(), VehicleSeatName(requestedSeat), vehicle.id(),
+                     aMessage.ConnectionId);
+
+        if (auto* pChat = GetWorld()->get_mut<ChatSystem>())
+            pChat->Tell(*pPlayer, "There is no room in that car.");
+
+        return;
+    }
+
     bool seatTaken = false;
 
     GetWorld()->each(
@@ -2104,12 +2138,14 @@ void Level::HandleEnterVehicleRequest(PacketEvent<client::EnterVehicleRequest>& 
 
     if (seatTaken)
     {
-        spdlog::info("Player {:x} tried to take an occupied seat in vehicle {:x}", aMessage.get_id(), vehicle.id());
+        spdlog::info("Player {:x} tried to take {}, already occupied, in vehicle {:x}",
+                     aMessage.get_id(), VehicleSeatName(requestedSeat), vehicle.id());
 
         // Told, then left alone. The client is already sitting there locally, so saying
         // nothing would leave them looking at a seat the server disagrees about.
         if (auto* pChat = GetWorld()->get_mut<ChatSystem>())
-            pChat->Tell(*pPlayer, "Someone is already in that seat - try another door.");
+            pChat->Tell(*pPlayer, fmt::format("Someone is already in {} - try another door.",
+                                              VehicleSeatDescription(requestedSeat)));
 
         return;
     }
