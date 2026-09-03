@@ -55,6 +55,22 @@ in the abstract:
 | stores + ticks wired | a store never `Load()`ed silently holds nothing |
 | unit tests | 103 checks in `tools/tests/` — seats, calls, trading, permissions, contact migration |
 
+**Every failure says WHAT it costs, WHERE it is, and HOW to fix it** — because two
+assistants work on this codebase from separate sessions, and a bare `FAIL` costs whichever
+one picks it up a fresh investigation of something the check already knew:
+
+```
+FAIL  '/call' is dispatched twice
+      what   the FIRST block wins and returns, so the second is dead code. It compiles,
+             it looks reachable, and the only symptom is the command doing the wrong thing
+      where  ChatSystem.cpp:2785 (wins) and ChatSystem.cpp:3656 (unreachable)
+      fix    merge them into one block, or rename one command. Decide which behaviour is
+             wanted FIRST - the live one is whichever is at line 2785
+```
+
+Self-tested: a bogus native was planted, the failure rendered with all three fields, and the
+file was restored to a clean run.
+
 **Tests live in `tools/tests/`, in the repo.** The first set was written in a scratchpad and
 wiped by temp cleanup, which turned "the tests passed" into somebody's word rather than
 something anyone could re-run.
