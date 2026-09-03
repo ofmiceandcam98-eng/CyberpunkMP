@@ -88,6 +88,13 @@ struct DiscordConfig
         if (acName == "owner")     return EPermissionLevel::kOwner;
         if (acName == "admin")     return EPermissionLevel::kAdmin;
         if (acName == "moderator") return EPermissionLevel::kModerator;
+        if (acName == "support")   return EPermissionLevel::kSupport;
+
+        // Both spellings, because roles.json is written by a person and "event staff" is
+        // what the Discord role is called while "eventstaff" is what somebody types.
+        if (acName == "eventstaff" || acName == "event staff")
+            return EPermissionLevel::kEventStaff;
+
         return EPermissionLevel::kPlayer;
     }
 
@@ -112,23 +119,47 @@ struct DiscordConfig
 
         if (acLowerName == "dev" || acLowerName == "devs" || acLowerName == "developer" ||
             acLowerName == "developers" || acLowerName == "admin" || acLowerName == "admins" ||
-            acLowerName == "administrator")
+            acLowerName == "administrator" ||
+            // Cam replaced the old moderator/admin roles on 2026-09-02. SENIOR MODERATOR is
+            // the top staff rank below dev and carries the full admin set - bans, /rename,
+            // world state.
+            acLowerName == "senior moderator" || acLowerName == "senior mod" ||
+            acLowerName == "seniormoderator" || acLowerName == "senior moderators")
             return EPermissionLevel::kAdmin;
 
-        // "support" sits here deliberately.
-        //
-        // Cam created a support role in Discord on 2026-08-28 and said the multi-character
-        // slots are for "support, admins and up". There is no kSupport level and adding one
-        // would renumber a ladder that permission checks already read as `>= kModerator`
-        // everywhere - so support IS the moderator rung, which was otherwise unused.
-        //
-        // Listed by name rather than left to roles.json because of the rule this whole
-        // function exists for: a role that does nothing until somebody finds its snowflake
-        // does nothing, in practice, forever. Cam made the role; it should just work.
+        /**
+         * EVENT STAFF. Everything a moderator has, plus the event tools.
+         *
+         * A rung of its own rather than the moderator rung, because Cam's rule is that
+         * event staff can spawn things and support cannot - and with both on kModerator
+         * there is no way to express that. See EPermissionLevel::kEventStaff.
+         *
+         * Matched before the moderator block below, since "event staff" also contains
+         * "staff" and the plain "staff" entry there would otherwise claim it first and
+         * quietly demote them.
+         */
+        if (acLowerName == "event staff" || acLowerName == "eventstaff" ||
+            acLowerName == "events" || acLowerName == "event team")
+            return EPermissionLevel::kEventStaff;
+
         if (acLowerName == "mod" || acLowerName == "mods" || acLowerName == "moderator" ||
-            acLowerName == "moderators" || acLowerName == "staff" ||
-            acLowerName == "support")
+            acLowerName == "moderators" || acLowerName == "staff")
             return EPermissionLevel::kModerator;
+
+        /**
+         * SUPPORT: extra character slots and nothing else. Cam's rule, 2026-09-02.
+         *
+         * It used to return kModerator, because no support level existed and the slot rule
+         * needed something to test - which handed ticket staff the entire moderator toolkit
+         * as a side effect of wanting to give them slots. kSupport sits BELOW moderator now,
+         * so every `>= kModerator` check excludes them without anyone having to remember to.
+         *
+         * Listed by name rather than left to roles.json for the reason this whole function
+         * exists: a role that does nothing until somebody finds its snowflake does nothing,
+         * in practice, forever.
+         */
+        if (acLowerName == "support" || acLowerName == "support team")
+            return EPermissionLevel::kSupport;
 
         return EPermissionLevel::kPlayer;
     }
