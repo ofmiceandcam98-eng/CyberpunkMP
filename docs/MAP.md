@@ -24,6 +24,45 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
 
 ## 1. THE LEDGER
 
+### VERIFY BEFORE YOU SHIP — `.\tools\Verify.ps1` (2026-09-03)
+
+**Shipping is gated on this.** `Ship.ps1` and `ShipTestBuild.ps1` both run it and refuse to
+publish if it fails. `-SkipVerify` is an escape hatch for a false positive, and every use of
+it is a bug in Verify to fix rather than route around.
+
+```
+.\tools\Verify.ps1              # everything
+.\tools\Verify.ps1 -SkipTests   # static checks only, no compiler needed
+```
+
+**Why it exists.** An audit of one day's work found two bugs that compiled perfectly, were
+reported as working, and would have shipped:
+
+- **`/call` had TWO dispatches.** An older deprecation stub matched first and returned, so
+  the new player-to-player call command was dead code — `/call 555-014-372` answered *"use
+  your phone"* and rang nobody.
+- **`CreateCharacterRequest`** was declared, took a oneof slot, and was never sent or handled.
+
+**Every check maps to a failure that has actually happened here**, not to a category of bug
+in the abstract:
+
+| Check | The failure it catches |
+|---|---|
+| BOM | `Set-Content -Encoding UTF8` on PS 5.1 writes one; breaks redscript with *"syntax error at 1:1"*, which names nothing |
+| natives vs RTTI | a native with no `RTTI_METHOD` fails at **LOAD**, taking every script in the mod down |
+| duplicate dispatch | the `/call` bug — compared by **indentation**, since a nested branch in a compound `if` is not a duplicate |
+| requests all handled | the `CreateCharacterRequest` bug |
+| stores + ticks wired | a store never `Load()`ed silently holds nothing |
+| unit tests | 103 checks in `tools/tests/` — seats, calls, trading, permissions, contact migration |
+
+**Tests live in `tools/tests/`, in the repo.** The first set was written in a scratchpad and
+wiped by temp cleanup, which turned "the tests passed" into somebody's word rather than
+something anyone could re-run.
+
+**What it does NOT cover, and says so on every run:** anything needing the game running or
+two players, and **the Linux build** — there is no GCC on this machine, so server
+portability stays unverifiable locally.
+
 ### FOR ZELDFEP — where we are, and what we need (2026-09-02)
 
 **Read this first.** A large amount landed today and **none of it has been played.** Branch

@@ -34,6 +34,11 @@ param(
     # Override the tag. Defaults to <current version>-worldstate-test.<next number>.
     [string]$Tag,
 
+    # Skip the Verify.ps1 gate. An escape hatch, not a habit - it exists so a genuine false
+    # positive cannot block a ship at midnight, and every use of it is a bug in Verify that
+    # should be fixed rather than routed around.
+    [switch]$SkipVerify,
+
     [switch]$WhatIf
 )
 
@@ -88,6 +93,26 @@ Step "Client mod"
 & (Join-Path $PSScriptRoot "CheckScripts.ps1") | Out-Null
 if ($LASTEXITCODE -ne 0) { Die "redscript does not compile - not publishing" }
 Ok "redscript compiles"
+
+# Then everything a compiler cannot see. Cam's rule, 2026-09-03: run this before shipping
+# anything.
+#
+# GATED RATHER THAN REMEMBERED, because remembering is what failed. /call shipped as dead
+# code - two dispatches, the older one matching first and returning - and it compiled
+# perfectly, was reported as working, and would have gone out. Verify catches that class:
+# duplicate dispatch, natives with no RTTI behind them (which fail at LOAD and take every
+# script down), unhandled requests, BOMs, and the unit tests.
+if ($SkipVerify) {
+    Warn "verification SKIPPED by -SkipVerify"
+} else {
+    & (Join-Path $PSScriptRoot "Verify.ps1") | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host ""
+        & (Join-Path $PSScriptRoot "Verify.ps1")   # re-run visibly, so the failure is readable
+        Die "verification failed - not publishing. Fix it, or pass -SkipVerify if you are certain"
+    }
+    Ok "verified"
+}
 
 if ($WhatIf) {
     Warn "would build and install Client"

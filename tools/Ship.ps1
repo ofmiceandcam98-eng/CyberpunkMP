@@ -58,7 +58,12 @@ param(
     # machine without a signing key warns loudly and ships manifest-less (which every
     # launcher treats as the legacy state) rather than blocking the other contributor's
     # ships. Flip to always-on once both owners hold keys.
-    [switch]$RequireManifest
+    [switch]$RequireManifest,
+
+    # Skip the Verify.ps1 gate. An escape hatch, not a habit - it exists so a genuine false
+    # positive cannot block a release at midnight, and every use of it is a bug in Verify
+    # that should be fixed rather than routed around.
+    [switch]$SkipVerify
 )
 
 $ErrorActionPreference = 'Stop'
@@ -333,6 +338,30 @@ if ($Mod) {
                 Die "redscript does not compile - nothing was deployed, your install is untouched"
             }
             Ok "redscript compiles"
+        }
+
+        # Then everything a compiler cannot see. Cam's rule, 2026-09-03: run this before
+        # shipping anything.
+        #
+        # GATED RATHER THAN REMEMBERED, because remembering is what failed. /call shipped as
+        # dead code - two dispatches, the older matching first and returning - and it
+        # compiled perfectly, was reported as working, and would have gone to players.
+        # Verify catches that class: duplicate dispatch, natives with no RTTI behind them
+        # (which fail at LOAD and take every script down), unhandled requests, BOMs, and the
+        # unit tests.
+        #
+        # This script already refuses to publish anything that failed a check. This is one
+        # more check, on the release path where the cost of being wrong is highest.
+        if ($SkipVerify) {
+            Warn "verification SKIPPED by -SkipVerify"
+        } else {
+            & (Join-Path $PSScriptRoot "Verify.ps1") | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host ""
+                & (Join-Path $PSScriptRoot "Verify.ps1")
+                Die "verification failed - nothing was deployed. Fix it, or pass -SkipVerify if you are certain"
+            }
+            Ok "verified"
         }
 
         # NOW deploy. `xmake install` refreshes the DLL but was caught leaving edited .reds
