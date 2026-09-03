@@ -92,30 +92,26 @@ Test sheet: https://claude.ai/code/artifact/1945eb67-12d0-4602-a9e6-aca164dd0e1c
 blocking · character slots + selector + soft delete · vehicle seat validation · money
 confiscation fix · player trading · downed/medical · the new staff permission ladder.
 
-#### THE BLOCKER — the server has not rebuilt in hours, and we cannot see why
+#### THE BLOCKER — RESOLVED 2026-09-03 (zeldfep stream, from the NAS shell)
 
-**This is the one thing stopping all testing.** Production (`100.80.243.29`) reports
-**3h+ uptime with 0 players**, so it is serving a pre-flag-day binary while every updated
-client is refused at connect — *"YOUR MOD IS BUILT AGAINST A DIFFERENT PROTOCOL"*.
+**Cause: neither candidate.** The remote was correct (`origin` = ofmiceandcam98-eng,
+tracking `origin/feat/world-state`) and the fetch worked — `~/nco-update.log` showed
+`updating 3cde271 -> <new tip>` then **`pull failed` every 10 minutes for hours**. The
+pull was refused by an UNTRACKED file: `tools/deploy/update-wolvenkit.sh` was hand-seeded
+on the box first (the WolvenKit updater's live wiring, ee12df2), then committed to the
+repo (dcc67eb) — and git refuses to overwrite an untracked file with an incoming one.
+Third file to kill deploys this way, after the two coord-api publish files.
 
-Two candidate causes, and they are **distinguished by whether the log says anything at all**:
+**Resolution:** the local copy was byte-identical to the committed one — shelved to
+`~/update-wolvenkit.sh.shelved-20260903`, pull unblocked, checkout at the current tip,
+rebuild launched immediately (the cron would have skipped it: LOCAL==REMOTE after a
+manual pull). The rebuild is also the missing **Linux/GCC check** — its result lands in
+`~/nco-update.log` as `deployed`/`BUILD FAILED` with the real compiler error either way.
 
-1. **Build failure.** `docker compose up -d --build` fails and the script deliberately
-   **keeps the container on the previous image** — which fits perfectly: uptime unchanged,
-   old protocol still answering. Writes `BUILD FAILED` to `~/nco-update.log`.
-2. **The deploy fetches the wrong remote.** `update-server.sh` runs `git fetch origin` but
-   compares `git rev-parse @{u}`. In this repo `origin` is **tiltedphoques** and `fork` is
-   **ofmiceandcam98-eng**, which is where we push. If the NAS mirrors that, `LOCAL == REMOTE`
-   forever and it exits **silently, with no log line**. That would mean the box has never
-   seen *any* of today's work.
-
-**What we need:** shell on the NAS. Cam's SSH is not working and there is no key on this
-machine. Two commands settle it — the second is the one that matters:
-
-```
-tail -20 ~/nco-update.log
-cd /mnt/vol/NASa/CyberpunkMP && git remote -v && git rev-parse --abbrev-ref @{u} && git log --oneline -1
-```
+**Hardened against the class, not the instance:** `update-server.sh` now shelves ANY
+untracked file that the incoming commits are about to create, with a loud log line
+naming it. Tracked local modifications still fail the pull on purpose — those are real
+divergence and deserve a human.
 
 #### WHAT WE ARE HAVING TROUBLE WITH
 
