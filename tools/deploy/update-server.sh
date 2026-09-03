@@ -38,6 +38,23 @@ REMOTE=$(git rev-parse @{u})
 
 [ "$LOCAL" = "$REMOTE" ] && exit 0   # nothing new
 
+# The third file to silently kill every deploy (2026-09-03): a hand-seeded copy of a
+# script that later landed in the repo (update-wolvenkit.sh). Fetch worked, pull
+# refused ("untracked working tree files would be overwritten"), and "pull failed"
+# scrolled unread for hours while every updated client was refused at the door. The
+# two-path checkout above cures only the coord-api flavour; this cures the CLASS:
+# any UNTRACKED file the incoming commits are about to CREATE gets shelved aside with
+# a loud log line. Untracked means the repo never owned it, so nothing of the repo's
+# is lost - and a hand-seeded copy of a soon-to-be-committed file is exactly what
+# this box keeps growing. Tracked local modifications are deliberately NOT touched:
+# those are real divergence and deserve a failed pull someone investigates.
+for f in $(git diff --name-only --diff-filter=A "$LOCAL" "$REMOTE"); do
+    if [ -e "$f" ] && ! git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+        mv "$f" "$f.deploy-shelved-$(date +%Y%m%d%H%M%S)" 2>/dev/null || continue
+        echo "$(date -Is) shelved untracked '$f' - it collided with an incoming file of the same name" >> "$LOG"
+    fi
+done
+
 # Never rebuild under a live session. A deploy is a full native compile on the same
 # 4-core box that is serving the tick loop, followed by a container restart that kicks
 # everyone - which players experienced as the game "getting worse" in windows that
