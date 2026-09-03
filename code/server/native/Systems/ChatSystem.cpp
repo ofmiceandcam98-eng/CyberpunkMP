@@ -1,4 +1,4 @@
-﻿#include "ChatSystem.h"
+#include "ChatSystem.h"
 
 // Explicit rather than transitive. This file uses std::map for /vehseats and the string
 // conversions for the trade commands, and MSVC supplies both through headers that GCC
