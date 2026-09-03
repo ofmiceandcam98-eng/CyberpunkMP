@@ -181,14 +181,23 @@ public class MpDeletePoll extends DelayCallback {
  * screen opens. Without this, connecting would fill the panel with a roster while the menu
  * beside it still offered nothing but CONNECT.
  *
- * Re-entering PopulateMenuItemList rather than poking the list directly, because that
- * function is the ONE place that decides which entries exist, and a second place that also
- * decided would disagree with it the first time either changed. Its own wrappedMethod
- * rebuilds the game's entries from scratch, so this is a rebuild rather than an append.
+ * CALLS THE GAME'S OWN REBUILD, and the distinction is not academic - it is the difference
+ * between this working and reproducing the bug it was written for.
+ *
+ * PopulateMenuItemList does NOT clear the list. Read it in the shipped source
+ * (singleplayerMenu.script:843) and it is nothing but a run of AddMenuItem calls, so
+ * calling it a second time APPENDS a whole second menu - Continue, New Game, Load Game,
+ * Settings, Credits and every one of ours, twice. That is exactly the duplicate-entries
+ * symptom this change exists to fix, and I had written precisely that before checking.
+ *
+ * ShowActionsList is the engine's own answer (menuItemListGameController.script:79):
+ * Clear(), then PopulateMenuItemList(), then Refresh(). Using it rather than composing
+ * those three here means the rebuild stays correct if CDPR ever changes what a rebuild
+ * involves.
  */
 @addMethod(SingleplayerMenuGameController)
 public func MpRefreshMenu() -> Void {
-    this.PopulateMenuItemList();
+    this.ShowActionsList();
 }
 
 /**
