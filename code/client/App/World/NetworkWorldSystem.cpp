@@ -283,9 +283,20 @@ void NetworkWorldSystem::Update(uint64_t aTick)
         {
             const auto stats = m_voiceClient.GetStats();
 
-            spdlog::info("[Voice] mic {} / speakers {} - encoded {}, sent {}, received {}, decoded {}",
+            // The REASON, not just the symptom.
+            //
+            // This line said "mic NOT CAPTURING" three hundred times across two sessions
+            // and never once said why - the capture thread's failures are recorded on a
+            // string that nothing printed. Reading it here means the next log answers
+            // "which stage failed" AND "because of what", which is the whole difference
+            // between a diagnosis and another round trip.
+            const auto reason = m_voiceClient.GetLastError();
+
+            spdlog::info("[Voice] mic {} / speakers {} - encoded {}, sent {}, received {}, decoded {}{}",
                          stats.CaptureAlive ? "ok" : "NOT CAPTURING", stats.PlaybackAlive ? "ok" : "NOT PLAYING",
-                         stats.Encoded, m_voiceSequence, stats.Received, stats.Decoded);
+                         stats.Encoded, m_voiceSequence, stats.Received, stats.Decoded,
+                         (!stats.CaptureAlive && !reason.empty()) ? fmt::format(" - {}", reason)
+                                                                  : std::string{});
         }
 
         auto frames = m_voiceClient.TakeOutgoing();
