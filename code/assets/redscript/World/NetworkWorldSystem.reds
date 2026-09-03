@@ -159,6 +159,18 @@ public native class NetworkWorldSystem extends IGameSystem {
     // CallState from the server's CallStore.h: 1 ringing, 2 connected. Terminal states are
     // never held - a finished call clears, so the phone cannot keep offering ANSWER for
     // something nobody is ringing.
+    /**
+     * Was the game started through the Night City Online launcher?
+     *
+     * The `--online` flag, which the launcher passes and a normal Cyberpunk launch does
+     * not. FALSE means this is somebody's singleplayer game and the mod must be invisible:
+     * no menu entries, no connecting, no character creation.
+     *
+     * Asked of the C++ half rather than tracked here, because that half already gates on
+     * exactly this and two answers to one question is how they come to disagree.
+     */
+    public native func IsModEnabled() -> Bool;
+
     public native func GetCallState() -> Uint32;
     public native func HasCall() -> Bool;
 

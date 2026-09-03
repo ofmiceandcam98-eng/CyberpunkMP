@@ -95,29 +95,26 @@ public class MpSelectorPoll extends DelayCallback {
                 return;
             }
 
-            // PLAY still falls back, and for the original reason.
-            //
-            // This is the failure the selector was switched off for: the main menu is the
-            // one screen where being wrong means nobody can play at all, and the original
-            // version simply logged and returned - leaving the player staring at a menu
-            // that had silently decided to do nothing, with no feedback and no way in.
-            //
-            // Two and a half seconds without an answer means the server is down, slow, or
-            // unreachable. None of those should cost someone their session, so this drops
-            // to exactly the behaviour that shipped before the selector: load the last save
-            // and let the server sort out appearance and position on arrival.
-            FTLogError(s"[CyberpunkMP] entering the old way");
-
-            let network = GameInstance.GetNetworkWorldSystem();
-            if IsDefined(network) {
-                network.RequestJoin();
-
-                // Their own save here too. The fallback exists so a slow server costs a
-                // pause rather than a session - it should not also cost them their face by
-                // quietly dropping them into the template.
-                this.controller.MpLoadOwnCharacterSave();
-            }
-
+            /*
+             * NO SERVER CHARACTER, NO WORLD. Cam's rule, 2026-09-03: "make sure it uses
+             * ONLY the characters THEY made through this, nothing else, only their server
+             * owned characters."
+             *
+             * This used to load the last save and enter anyway. That was the right call
+             * when one button meant "play now" - a slow server cost a pause rather than a
+             * session - but it is the exact hole the rule closes: it puts somebody in the
+             * world as whoever their singleplayer save happens to contain, with a name and
+             * a face the server never issued, and the server then has a player it cannot
+             * identify.
+             *
+             * Removing it is safe now in a way it was not before, and the menu is why. PLAY
+             * is only DRAWN once IsCharacterStatusKnown() is true, so by the time anybody
+             * can press it the roster has already arrived and this poll returns on its
+             * first tick. Reaching this line means the connection died between the menu
+             * being built and the button being pressed - which is not a case for entering
+             * a singleplayer world, it is a case for saying so.
+             */
+            this.controller.MpConnectFailed();
             return;
         }
 
@@ -364,7 +361,7 @@ public func MpUpdatePanel() -> Void {
 
     if !network.HasCharacter() {
         this.m_mpTitle.SetText(slots > 1 ? s"\(slots) CHARACTER SLOTS" : "NO CHARACTER");
-        this.m_mpDetail.SetText("Press MULTIPLAYER to make one");
+        this.m_mpDetail.SetText("Press NEW CHARACTER to make one");
         return;
     }
 
@@ -410,67 +407,65 @@ public func MpUpdatePanel() -> Void {
 
 @wrapMethod(SingleplayerMenuGameController)
 private func PopulateMenuItemList() -> Void {
-    wrappedMethod();
-
-    // Two entries, and this time they genuinely differ.
-    //
-    // An earlier version had CONTINUE and LOAD GAME, which both loaded a save and differed only in
-    // whether you picked it - a choice that changed nothing once the server started owning
-    // appearance and position. That pair was rightly collapsed into one.
-    //
-    // These two are different actions. PLAY drops you into the world. NEW CHARACTER runs
-    // the game's own New Game flow, which is the ONLY place body gender can be chosen -
-    // ripperdocs change everything about how you look except that, and the customization
-    // system is native-only so it cannot be opened on demand. Going through New Game is
-    // therefore the only route to real character creation that exists.
-    /*
-     * CONNECT FIRST, THEN CHOOSE, THEN PLAY. Cam's call, 2026-09-03.
-     *
-     * The old single MULTIPLAYER entry did all three at once: it opened the connection,
-     * waited for the roster, and loaded the world as whoever happened to be active. With
-     * one character that is indistinguishable from the right behaviour. With four it means
-     * the selection screen can never be reached, because pressing the only entry that
-     * connects also leaves the menu.
-     *
-     * So the entry that connects now STOPS at the roster, and playing is a second press
-     * against a screen that shows who you are about to be.
-     *
-     * The items below are added on the OTHER side of the connection check, because which
-     * of them make sense depends entirely on whether the server has answered yet.
-     */
-
-    // The warning is IN THE LABEL, wherever NEW CHARACTER is added below.
-    //
-    // Making a character replaces the one the server holds, and that is hours of
-    // somebody's evening. "NEW CHARACTER" on its own reads as ADDING one, which is exactly
-    // the misreading that costs people their character - and by the time anything could
-    // warn them from in game, the replacement has already happened.
-    //
-    // A confirmation dialog would be better and needs an API this menu does not obviously
-    // have. A label that cannot be misread is available right now and cannot fail to show.
-
-    // The trash can.
-    //
-    // A menu ITEM rather than a hand-built button: menu items are the game's own mechanism
-    // and are reliably clickable, focusable and controller-navigable, none of which a
-    // widget built at runtime gets for free. The glyph carries the meaning; the words are
-    // there because a glyph alone in a list of words reads as a rendering fault.
-    //
-    // Only offered while a character exists to delete. Drawing it against an empty account
-    // would be a button whose only possible outcome is a refusal.
-    // BACK ON, and the reason it was off is fixed rather than ignored.
-    //
-    // The note that replaced these lines said the panel "would say 'signing in...' forever
-    // against a connection nobody opened", which was true: nothing on this screen asked the
-    // server who the account was, so the panel had nothing to draw and no prospect of
-    // getting anything.
-    //
-    // The fix is the entry below, not a timer. CHARACTERS opens the connection deliberately
-    // and polls until the roster lands - the same mechanism the delete entry has always used
-    // - and the panel is built only once the answer is actually here. So it either shows the
-    // roster or it is not on screen; it never sits saying "signing in" at somebody.
     let network = GameInstance.GetNetworkWorldSystem();
 
+    /*
+     * NOT LAUNCHED THROUGH NIGHT CITY ONLINE: the mod is not here.
+     *
+     * Cam's rule, 2026-09-03 - a plain Cyberpunk launch must not be able to connect, play,
+     * or create a character. The C++ half already honoured that (Core::Application::Update
+     * returns early every frame without --online), but redscript is compiled into the game
+     * and runs either way, so the menu was still offering to do all three against a client
+     * that could do none of them.
+     *
+     * wrappedMethod() and nothing else: the vanilla menu, exactly as CDPR built it, with no
+     * trace of the mod on it.
+     */
+    if !IsDefined(network) || !network.IsModEnabled() {
+        wrappedMethod();
+        return;
+    }
+
+    /*
+     * LAUNCHED THROUGH THE LAUNCHER: this is a multiplayer client, so the singleplayer
+     * entries go.
+     *
+     * wrappedMethod() is deliberately NOT called. It is the only thing that adds Continue,
+     * New Game and Load Game (singleplayerMenu.script:843), and on this server those are
+     * three ways to end up playing somebody who is not your character - Continue and Load
+     * Game open a local save directly, and New Game starts a story nobody here is in.
+     *
+     * Settings and Credits are re-added below by hand, because they are the game's and
+     * removing them would be taking something away rather than replacing it. Their labels
+     * and events are copied from the same shipped source, so they behave identically.
+     *
+     * NEW CHARACTER still runs the game's own New Game FLOW - it dispatches OnNewGame
+     * directly - so removing the menu item costs nothing. The flow was never reached
+     * through that button.
+     */
+
+    /*
+     * CONNECT FIRST, THEN CHOOSE, THEN PLAY. Cam's flow, 2026-09-03.
+     *
+     * The old single MULTIPLAYER entry did all three at once: opened the connection, waited
+     * for the roster, and loaded the world as whoever happened to be active. With one
+     * character that is indistinguishable from correct. With four it means the selection
+     * screen can never be reached, because the only entry that connects also leaves the menu.
+     *
+     * So the entry that connects STOPS at the roster, and playing is a second press against
+     * a screen showing who you are about to be.
+     *
+     * NEW CHARACTER carries its warning IN THE LABEL. Making one replaces the character the
+     * server holds - hours of somebody's evening - and "NEW CHARACTER" alone reads as ADDING
+     * one, which is the misreading that costs people their character. By the time anything
+     * in game could warn them, the replacement has happened. A confirmation dialog would be
+     * better and needs an API this menu does not obviously have; a label that cannot be
+     * misread works today and cannot fail to show.
+     *
+     * DELETE is a menu ITEM rather than a hand-built button, because menu items are the
+     * game's own mechanism and are reliably clickable, focusable and controller-navigable -
+     * none of which a widget built at runtime gets for free.
+     */
     if IsDefined(network) {
         if network.IsCharacterStatusKnown() {
             // CONNECTED. The roster is here, so the menu is about WHO, not whether.
@@ -508,6 +503,21 @@ private func PopulateMenuItemList() -> Void {
             // character can still make one while the server is being slow.
             this.AddMenuItem("NEW CHARACTER (REPLACES YOURS)", n"OnMultiplayerNewCharacter");
         }
+
+        /*
+         * Settings and Credits, put back by hand.
+         *
+         * wrappedMethod() is not called on this branch, and it is what normally adds these
+         * along with Continue / New Game / Load Game. Dropping the first three is the point;
+         * dropping these two would be taking away the game's own screens - and Settings in
+         * particular is how somebody fixes their resolution or their controls, which they
+         * need at least as much in multiplayer as out of it.
+         *
+         * Labels and events copied from the shipped source (singleplayer_menu.script:843),
+         * so they resolve and behave exactly as the vanilla entries do.
+         */
+        this.AddMenuItem(GetLocalizedText("UI-Labels-Settings"), n"OnSwitchToSettings");
+        this.AddMenuItem(GetLocalizedText("UI-Labels-Credits"), n"OnCreditsPicker");
     }
 
     // PopulateMenuItemList refreshes at its end, before our item existed. Without

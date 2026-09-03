@@ -260,6 +260,21 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // can never be in.
     static constexpr uint32_t kNoCall = 0xFFFFFFFF;
 
+    /**
+     * Was the game started through the Night City Online launcher?
+     *
+     * True only when `--online` was passed, which is what the launcher does and what
+     * starting Cyberpunk normally does not - see Settings::Load.
+     *
+     * EXPOSED TO SCRIPT BECAUSE THE TWO HALVES WERE DISAGREEING. The C++ half already
+     * honoured this: Core::Application::Update returns early every frame when it is false,
+     * so nothing connects and nothing draws. The REDSCRIPT half had no way to ask, so it
+     * ran regardless - which meant a plain launch still got multiplayer entries on the main
+     * menu, offering to connect and to create characters against a client that could do
+     * neither.
+     */
+    bool IsModEnabled() const;
+
     // ---------------------------------------------------------------------------
     // Voice devices and capture.
     //
@@ -916,6 +931,7 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(DeleteCharacterSlot);
     RTTI_METHOD(EnterWorld);
     RTTI_METHOD(DeleteCharacter);
+    RTTI_METHOD(IsModEnabled);
     RTTI_METHOD(GetCallState);
     RTTI_METHOD(HasCall);
     RTTI_METHOD(GetCallName);

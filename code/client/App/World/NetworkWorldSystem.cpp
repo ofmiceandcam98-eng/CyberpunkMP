@@ -622,12 +622,30 @@ void NetworkWorldSystem::ApplyWorldState()
 
 void NetworkWorldSystem::RequestJoin()
 {
+    // The second door. Connect() opens the socket; this arms the arrival that happens once
+    // the world loads, and arming it without a launcher session would leave a client
+    // expecting to join a server it is not allowed to reach.
+    if (Settings::IsDisabled())
+    {
+        spdlog::warn("[NetworkWorldSystem] join refused - not started through the launcher");
+        return;
+    }
+
     spdlog::info("[NetworkWorldSystem] join requested from the main menu");
     m_joinRequested = true;
 }
 
 void NetworkWorldSystem::MarkNewCharacter()
 {
+    // The third door, and the one Cam named explicitly: they should not "even create a
+    // character". A character is created by capturing an appearance and sending it, so
+    // refusing to arm that capture is where creation stops.
+    if (Settings::IsDisabled())
+    {
+        spdlog::warn("[Character] creation refused - not started through the launcher");
+        return;
+    }
+
     spdlog::info("[Character] NEW CHARACTER chosen - this appearance will replace the stored one");
     m_newCharacterPending = true;
 }
@@ -2702,6 +2720,13 @@ void NetworkWorldSystem::HandleNotifyCall(const PacketEvent<server::NotifyCall>&
     Red::CallVirtual(Red::GetGameSystem<NetworkWorldSystem>(), "OnCallStateChanged");
 }
 
+bool NetworkWorldSystem::IsModEnabled() const
+{
+    // The SAME question Main.cpp and Core::Application::Update already ask, answered from
+    // the same place - not a second flag that could drift from it.
+    return !Settings::IsDisabled();
+}
+
 void NetworkWorldSystem::RequestCall(const Red::CString& acNumber)
 {
     const auto& service = Core::Container::Get<NetworkService>();
@@ -3624,6 +3649,25 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
 
 void NetworkWorldSystem::Connect()
 {
+    /**
+     * NOT THROUGH THE LAUNCHER, NOT CONNECTING. Cam's rule, 2026-09-03.
+     *
+     * Enforced HERE rather than only in the menu, because the menu is a suggestion and this
+     * is the door. Script can be edited by anyone who can open a text file - the entries
+     * are hidden without --online, but hiding a button is not the same as closing the path
+     * behind it, and the difference matters for a server whose characters are its whole
+     * point.
+     *
+     * The same check the rest of the client already makes (Settings::IsDisabled), so there
+     * is one answer to "is this a multiplayer session" rather than two that can disagree.
+     */
+    if (Settings::IsDisabled())
+    {
+        spdlog::warn("[Connect] refused - this game was not started through the Night City "
+                     "Online launcher");
+        return;
+    }
+
     auto address = fmt::format("{}:{}", Settings::Get().ip, Settings::Get().port);
 
     // Log the address we actually dial. The launch arguments must use the
