@@ -284,7 +284,14 @@ void GameServer::ExpireCalls(std::chrono::steady_clock::time_point aNow)
     m_lastCallCheck = aNow;
 
     if (auto* pChat = GetWorld()->get_mut<ChatSystem>())
+    {
         pChat->TickCalls();
+
+        // Trades expire and are distance-checked on the same beat. Both are "has this
+        // stopped being true since we last looked", both are cheap when nothing is
+        // happening, and a second timer for them would only be a second thing to forget.
+        pChat->TickTrades();
+    }
 }
 
 void GameServer::EnforceJail(std::chrono::steady_clock::time_point aNow)
@@ -548,7 +555,16 @@ void GameServer::OnDisconnection(ConnectionId aConnectionId, EDisconnectReason a
             if (const auto* pCharacter = m_players.FindCharacter(pPlayerComponent->DiscordId))
             {
                 if (auto* pChat = GetWorld()->get_mut<ChatSystem>())
+                {
                     pChat->EndCallFor(pCharacter->CharacterId, CallState::Ended);
+
+                    // A trade does not survive its participant. Cancelled rather than
+                    // completed, and nothing moves - which is the correct outcome for
+                    // every state except COMMITTING, and that one refuses to be cancelled
+                    // precisely because it is already past the point of choice.
+                    pChat->EndTradeFor(pCharacter->CharacterId, TradeState::Cancelled,
+                                       "they disconnected");
+                }
             }
 
             // Save BEFORE the puppet is removed - afterwards there is no position left

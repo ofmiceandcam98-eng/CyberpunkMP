@@ -3,6 +3,7 @@
 #include "Components/PlayerComponent.h"
 #include "CharacterRecord.h"
 #include "CallStore.h"
+#include "TradeStore.h"
 
 // How far a line of chat carries, in metres.
 //
@@ -139,6 +140,24 @@ struct ChatSystem
 
     // Rings out calls nobody answered. Driven from the server tick.
     void TickCalls();
+
+    // ------------------------------------------------------------------ trades ----
+
+    // Both sides of a live trade, shown to BOTH people. A private view of a shared deal is
+    // how somebody confirms something they never saw.
+    void ShowTrade(const TradeSession& acSession);
+
+    /**
+     * End this character's trade and tell the other side why.
+     *
+     * Public because disconnect, death and a character switch all need it. Never ends one
+     * that is COMMITTING - see TradeStore::EndFor for why that is not a cancellable state.
+     */
+    void EndTradeFor(const std::string& acCharacterId, TradeState aState,
+                     const std::string& acWhy);
+
+    // Expiry and the continuous distance check. Driven from the server tick.
+    void TickTrades();
 
     // Tells both sides where a call now is. One place, so a state change cannot be
     // announced to one participant and not the other.
