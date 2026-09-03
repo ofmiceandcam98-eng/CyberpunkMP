@@ -291,6 +291,11 @@ void GameServer::ExpireCalls(std::chrono::steady_clock::time_point aNow)
         // stopped being true since we last looked", both are cheap when nothing is
         // happening, and a second timer for them would only be a second thing to forget.
         pChat->TickTrades();
+
+        // Bleedout and finishing procedures. Same beat, same reason: both ask only whether
+        // a stored deadline has passed, so a slow tick delays an outcome without changing
+        // it - see Medical.h on why these are deadlines rather than countdowns.
+        pChat->TickMedical();
     }
 }
 

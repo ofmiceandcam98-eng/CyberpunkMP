@@ -1,5 +1,8 @@
 #pragma once
 
+#include <string>
+#include <cstdint>
+
 // What a combatant has left, owned by the server.
 //
 // The FIRST piece of gameplay state this server owns outright. Position is relayed - a
@@ -42,4 +45,42 @@ struct HealthComponent
     // Fire-rate validation needs a floor to measure from, and it has to be the SERVER's
     // clock - a rate limit measured with the attacker's own timestamps is not a limit.
     uint64_t LastAcceptedMs{0};
+
+    // ----------------------------------------------------------------- medical ----
+    //
+    // The medical state lives HERE, on the component that already owns health and
+    // LifeState, rather than in a MedicalComponent beside it. The brief is explicit about
+    // not creating a second health authority, and two components that both describe
+    // "how alive is this person" would be exactly that - they would disagree the first
+    // time either changed, and the disagreement would decide whether somebody could be
+    // revived.
+
+    /**
+     * When they went down, on the SERVER's clock. Zero when they are not down.
+     *
+     * The bleedout timer is derived from this rather than counted down, because a counter
+     * has to be ticked and a timestamp does not: a tick that is skipped, doubled, or runs
+     * while the server is busy changes a counter and cannot change a timestamp. The client
+     * is sent the deadline and DISPLAYS it; it never decides that it has passed.
+     */
+    int64_t DownedAt{0};
+
+    /**
+     * Stabilised: the bleedout is held off, but they are still down.
+     *
+     * Deliberately not "more time". A stabilised patient does not bleed out at all while
+     * somebody is looking after them - that is what the treatment is FOR - and expressing
+     * it as extra seconds would mean a medic who did everything right still watching their
+     * patient die on a timer they cannot see.
+     */
+    bool Stabilized{false};
+
+    // Which character is treating them, so two medics cannot work on one patient and
+    // neither can tell whose procedure finished. Empty when nobody is.
+    std::string TreatedBy;
+
+    // When the current procedure finishes, on the server's clock. Zero when none is
+    // running. A revive is a procedure with a duration, not a button - an instant one is
+    // indistinguishable from a cheat and removes the entire point of a medic being present.
+    int64_t TreatmentEndsAt{0};
 };

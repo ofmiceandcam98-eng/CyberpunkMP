@@ -159,6 +159,18 @@ struct ChatSystem
     // Expiry and the continuous distance check. Driven from the server tick.
     void TickTrades();
 
+    // ----------------------------------------------------------------- medical ----
+
+    /**
+     * Bleedout, and finishing procedures. Driven from the server tick.
+     *
+     * The ONE place a downed player becomes dead, and the one place a treatment completes.
+     * Both are deadlines rather than countdowns - see Medical.h - so this only ever asks
+     * whether a stored timestamp has passed, and a slow or skipped tick delays an outcome
+     * without changing it.
+     */
+    void TickMedical();
+
     // Tells both sides where a call now is. One place, so a state change cannot be
     // announced to one participant and not the other.
     void AnnounceCall(const CallSession& acSession, CallState aState);

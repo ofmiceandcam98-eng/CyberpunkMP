@@ -1759,7 +1759,21 @@ void Level::HandleCombatEventRequest(PacketEvent<client::CombatEventRequest>& aM
     const bool downed = after <= 0.f;
 
     if (downed)
-        pTargetHealth->LifeState = 1;
+    {
+        // Only on the TRANSITION into down. Shooting somebody who is already down must not
+        // restart their bleedout - that would make a body impossible to lose and, worse,
+        // would let an attacker hold a victim permanently un-revivable by hitting them
+        // occasionally.
+        if (pTargetHealth->LifeState != 1)
+        {
+            pTargetHealth->LifeState = 1;
+            pTargetHealth->DownedAt = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            pTargetHealth->Stabilized = false;
+            pTargetHealth->TreatedBy.clear();
+            pTargetHealth->TreatmentEndsAt = 0;
+        }
+    }
 
     // The combat trace. One line per validated event, with everything needed to compare
     // three machines afterwards.
