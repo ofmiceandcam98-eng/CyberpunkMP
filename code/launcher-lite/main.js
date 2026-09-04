@@ -4970,6 +4970,8 @@ ipcMain.handle('launcher:uninstall', async () => {
 
   if (response !== 0) return { ok: false }
 
+  launcherLog('launcher uninstall: confirmed by the user - the full sweep begins')
+
   // The mod goes first, while the settings that locate it still exist.
   let note = ''
   try {
@@ -5184,15 +5186,23 @@ ipcMain.handle('paths:open', (_event, which) => {
 })
 
 ipcMain.handle('install:everything', async () => {
+  // Trail every step. On 2026-09-04 a mod that had launched fine on the 3rd was simply
+  // GONE, the user's Install everything did not bring it back, and the trail had
+  // NOTHING - neither the disappearance nor the attempt. An install that can fail
+  // invisibly costs a remote log-read session per incident; these lines end that.
+  launcherLog('install everything: pressed')
   try {
     const result = await installEverything((step) => {
+      launcherLog(`install everything: ${typeof step === 'string' ? step : JSON.stringify(step)}`)
       // Progress goes to the renderer as it happens - a silent two-minute install
       // looks identical to a hang.
       if (mainWindow) mainWindow.webContents.send('install-progress', step)
     })
+    launcherLog(`install everything: DONE - mod at ${result?.modDir}, ${result?.prerequisites} prerequisite(s), ${result?.modFiles ?? '?'} payload file(s)`)
     lastUpdateCheck = await checkForUpdates()
     return { ok: true, ...result }
   } catch (err) {
+    launcherLog(`install everything: FAILED - ${err.message}`)
     return { ok: false, error: err.message }
   }
 })
@@ -5206,9 +5216,15 @@ ipcMain.handle('update:verify', async () => {
 })
 
 ipcMain.handle('mod:uninstall', async () => {
+  // Same story as install: a mod folder that disappears with no trail line is a
+  // mystery someone has to solve remotely. Removal is a deliberate act - record it.
+  launcherLog('remove mod: pressed')
   try {
-    return { ok: true, ...(await uninstallMod()) }
+    const result = await uninstallMod()
+    launcherLog(`remove mod: ${JSON.stringify(result)}`)
+    return { ok: true, ...result }
   } catch (err) {
+    launcherLog(`remove mod: FAILED - ${err.message}`)
     return { ok: false, error: err.message }
   }
 })
