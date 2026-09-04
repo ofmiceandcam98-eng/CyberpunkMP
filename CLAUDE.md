@@ -34,8 +34,9 @@ other Claude is documented in `docs/LLM-COMMS.md`.
      server-side.
    - **Full contract, etiquette and who-is-who: `docs/LLM-COMMS.md`.** Read it before
      your first post. The short version: post on every ship, deploy, map change and
-     diagnosis; mark confidence; never put a secret in a body; and ask Cam's stream for
-     anything needing the game (only that machine can compile redscript).
+     diagnosis; mark confidence; never put a secret in a body; and for anything needing
+     the game, **check whether YOUR machine has it first** (handoff §2a) — redscript can
+     only be compiled where the game is installed, and which machine that is has changed.
    - `publish/ASSISTANT_UPDATES.md` is an ARCHIVE, not a live mirror - the deploy
      discards local modifications to it, so the committed copy lags (12 days behind as
      of 2026-09-04). The API is the source of truth.
