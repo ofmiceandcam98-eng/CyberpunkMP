@@ -7,7 +7,7 @@ whoever lands or finds things (both Claude streams included): landing an item re
 from the ledger in the same commit; finding one adds it. A ledger that is not updated in
 the landing commit is how items get missed twice.
 
-Last full revision: 2026-08-22, after v0.3.106 (player combat).
+Last full revision: 2026-09-03 - the era catch-up, restyled back to this ledger format.
 Partial pass 2026-08-30 (Claude Code): the character-start run. Dogtown solved and
 confirmed in game, the Phantom Liberty prologue traced to the gamedef and removed, the
 clean start shipped, phone calls stopped at the right layer, the manifest key minted and
@@ -24,578 +24,13 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
 
 ## 1. THE LEDGER
 
-### VERIFY BEFORE YOU SHIP — `.\tools\Verify.ps1` (2026-09-03)
-
-**Shipping is gated on this.** `Ship.ps1` and `ShipTestBuild.ps1` both run it and refuse to
-publish if it fails. `-SkipVerify` is an escape hatch for a false positive, and every use of
-it is a bug in Verify to fix rather than route around.
-
-```
-.\tools\Verify.ps1              # everything
-.\tools\Verify.ps1 -SkipTests   # static checks only, no compiler needed
-```
-
-**Why it exists.** An audit of one day's work found two bugs that compiled perfectly, were
-reported as working, and would have shipped:
-
-- **`/call` had TWO dispatches.** An older deprecation stub matched first and returned, so
-  the new player-to-player call command was dead code — `/call 555-014-372` answered *"use
-  your phone"* and rang nobody.
-- **`CreateCharacterRequest`** was declared, took a oneof slot, and was never sent or handled.
-
-**Every check maps to a failure that has actually happened here**, not to a category of bug
-in the abstract:
-
-| Check | The failure it catches |
-|---|---|
-| BOM | `Set-Content -Encoding UTF8` on PS 5.1 writes one; breaks redscript with *"syntax error at 1:1"*, which names nothing |
-| natives vs RTTI | a native with no `RTTI_METHOD` fails at **LOAD**, taking every script in the mod down |
-| duplicate dispatch | the `/call` bug — compared by **indentation**, since a nested branch in a compound `if` is not a duplicate |
-| requests all handled | the `CreateCharacterRequest` bug |
-| stores + ticks wired | a store never `Load()`ed silently holds nothing |
-| unit tests | 103 checks in `tools/tests/` — seats, calls, trading, permissions, contact migration |
-
-**Every failure says WHAT it costs, WHERE it is, and HOW to fix it** — because two
-assistants work on this codebase from separate sessions, and a bare `FAIL` costs whichever
-one picks it up a fresh investigation of something the check already knew:
-
-```
-FAIL  '/call' is dispatched twice
-      what   the FIRST block wins and returns, so the second is dead code. It compiles,
-             it looks reachable, and the only symptom is the command doing the wrong thing
-      where  ChatSystem.cpp:2785 (wins) and ChatSystem.cpp:3656 (unreachable)
-      fix    merge them into one block, or rename one command. Decide which behaviour is
-             wanted FIRST - the live one is whichever is at line 2785
-```
-
-Self-tested: a bogus native was planted, the failure rendered with all three fields, and the
-file was restored to a clean run.
-
-**Tests live in `tools/tests/`, in the repo.** The first set was written in a scratchpad and
-wiped by temp cleanup, which turned "the tests passed" into somebody's word rather than
-something anyone could re-run.
-
-**What it does NOT cover, and says so on every run:** anything needing the game running or
-two players, and **the Linux build** — there is no GCC on this machine, so server
-portability stays unverifiable locally.
-
-### FOR ZELDFEP — where we are, and what we need (2026-09-02)
-
-**Read this first.** A large amount landed today and **none of it has been played.** Branch
-is `feat/world-state` @ `5a68517`; `main` is untouched at `304b492`.
-
-**Shipped as a test build:** `v0.3.113-worldstate-test.19` — pre-release, dev-role only,
-install from Settings → DEV → Test builds. Payload verified to carry the new redscript.
-Test sheet: https://claude.ai/code/artifact/1945eb67-12d0-4602-a9e6-aca164dd0e1c
-
-**Landed today:** voice fix · phone calls in the real in-game phone · texting/contacts/
-blocking · character slots + selector + soft delete · vehicle seat validation · money
-confiscation fix · player trading · downed/medical · the new staff permission ladder.
-
-#### THE BLOCKER — RESOLVED 2026-09-03 (zeldfep stream, from the NAS shell)
-
-**Cause: neither candidate.** The remote was correct (`origin` = ofmiceandcam98-eng,
-tracking `origin/feat/world-state`) and the fetch worked — `~/nco-update.log` showed
-`updating 3cde271 -> <new tip>` then **`pull failed` every 10 minutes for hours**. The
-pull was refused by an UNTRACKED file: `tools/deploy/update-wolvenkit.sh` was hand-seeded
-on the box first (the WolvenKit updater's live wiring, ee12df2), then committed to the
-repo (dcc67eb) — and git refuses to overwrite an untracked file with an incoming one.
-Third file to kill deploys this way, after the two coord-api publish files.
-
-**Resolution:** the local copy was byte-identical to the committed one — shelved to
-`~/update-wolvenkit.sh.shelved-20260903`, pull unblocked, checkout at the current tip,
-rebuild launched immediately (the cron would have skipped it: LOCAL==REMOTE after a
-manual pull). The rebuild is also the missing **Linux/GCC check** — its result lands in
-`~/nco-update.log` as `deployed`/`BUILD FAILED` with the real compiler error either way.
-
-**Hardened against the class, not the instance:** `update-server.sh` now shelves ANY
-untracked file that the incoming commits are about to create, with a loud log line
-naming it. Tracked local modifications still fail the pull on purpose — those are real
-divergence and deserve a human.
-
-#### WHAT WE ARE HAVING TROUBLE WITH
-
-- **We cannot verify the Linux build.** The server runs GCC in a container; this machine has
-  **no GCC, no WSL distro, and Docker is not running** (and Cam does not want to use it). So
-  server code is only ever checked against MSVC, and MSVC supplies headers transitively that
-  libstdc++ does not. **Today's lesson:** four new files called `std::snprintf` with no
-  `<cstdio>` and `ChatSystem.cpp` used `std::map` with no `<map>` — fixed in `dcab568`, but
-  **that was NOT confirmed to be the build failure**: `CharacterRecord.h` has done exactly
-  the same since 2026-08-20 and builds fine, so the transitive include is evidently available
-  somehow. *We are still guessing about the actual error.* Anyone with a Linux box can settle
-  it in one command.
-- **Money persistence is still unfixed.** Four `[MONEY]` boundaries are instrumented and have
-  **never once produced data** — they postdate every session in the logs. They distinguish
-  "never recorded" from "recorded and overwritten", which need opposite fixes. We fixed the
-  *destructive* half (the restore could confiscate earned eddies) but not the persistence.
-- **Unknown: does a runtime-built `CName` render on the phone?** `PhoneCallInformation.contactName`
-  is a CName, not a String. Calls will present either way; the caller's *name* may come back
-  blank. Compiling cannot answer it.
-- **Two-player tests are entirely unrun** — trading, vehicle seats (needs four), calls,
-  medical revival. All of it is offline-tested only.
-
-#### WHAT WOULD HELP MOST, in order
-
-1. **NAS shell** to diagnose the deploy — everything else is blocked behind it.
-2. **A Linux/GCC build check** of `code/server` so portability breaks stop being invisible.
-3. **Bodies for two- and four-player tests** once the server is current.
-
-### IN FLIGHT — what is being worked on right now (2026-09-02)
-Keep this block current; it is the first thing anyone should read. Cam: *"we should update
-the mental map pretty often."* A stale in-flight list is worse than none, because it sends
-people to work that is already done.
-
-- **THE STAFF LADDER CHANGED (`5a68517`).** Cam replaced every moderator and admin role in
-  Discord on 2026-09-02. New set: **dev, SENIOR MODERATOR, EVENT STAFF, MODERATOR, support**.
-  - **Two of them granted nothing at all.** Levels resolve from the lowercased *role name*,
-    and neither `senior moderator` nor `event staff` was in the list — both landed on
-    `kPlayer`. Note `staff` matched and `event staff` did not: a near-miss that reads as the
-    role simply not working rather than a missing string. **If a role stops working, look
-    here first.**
-  - **`kSupport = 5` — slots and NOTHING else.** Cam's rule verbatim. It used to resolve to
-    `kModerator` because no support level existed and the slot rule needed something to test,
-    which handed ticket staff the whole moderator toolkit as a side effect. Sitting *below*
-    moderator is what enforces the rule instead of somebody remembering it — every
-    `>= kModerator` check excludes support automatically, so they cannot pick up a moderation
-    power when one is added later.
-  - **`kEventStaff = 15` — moderator powers plus the event tools.** Needed its own rung
-    because lowering the spawn commands to `kModerator` would have given `/givecar`, `/npc`,
-    `/time` and `/weather` to **support** too. Six commands moved down from `kAdmin`: `/tp`,
-    `/return`, `/givecar`, `/npc`, `/time`, `/weather`. `/ban`, `/unban`, `/rename`, `/quest`,
-    `/fact`, `/setspawn`, `/setstart` stay admin.
-  - **Nothing already stored moved** — player 0, moderator 10, admin 20, owner 30, exactly as
-    the enum's spacing comment promised. Slots now go to `>= kSupport`, the widest staff test.
-  - 30 checks pass, including the four that matter: support fails `>= moderator`,
-    `>= event staff` and `>= admin`, and still gets four slots.
-
-- **TRADING (`f313a61`) and MEDICAL (`70eac6e`) — built, not shipped.**
-  - **Trading's governing rule: it never CREATES value.** The commit is
-    `PlayerStore::ApplyTrade`, *not* a trade system beside it — `PlayerStore` already owns
-    money and possessions, and a second thing that could move them would be a second
-    authority. `TradeStore` decides *whether*; `PlayerStore` decides that it happens
-    *completely*.
-  - **Atomic, and honestly which kind:** both records copied, both mutated, validated on the
-    copies, assigned back, then **one** flush. No ordering shows a partial exchange. It is
-    **not** durable-transactional — the store is a JSON file. A write-ahead journal belongs
-    with the move to a database, which is where the replicable-instance rule takes it anyway.
-  - **Reservations ARE the offers.** No separate table, deliberately: a table and a set of
-    offers are two representations of one fact and they drift, and a drifted reservation is
-    money promised twice. **`/pay` now checks available money, not owned** — that single line
-    is what makes reservations mean anything, because otherwise 10,000 could fund an 8,000
-    trade *and* an 8,000 phone transfer.
-  - **Confirmations reset on every edit**, both sides. Carrying one across is how somebody
-    accepts a deal they never saw. **`Committing` is not cancellable** — by disconnect, death,
-    timeout or distance; it either moved both sides or neither.
-  - **What this model cannot do:** inventory is `(TweakDBID, quantity)` stacks. There are **no
-    unique item instance ids**, so a weapon's mods/attachments/condition are not modelled and
-    it trades as its base record. Faking instance identity would be worse than not having it.
-  - **Medical is a LAYER, not a system.** `HealthComponent` already held `LifeState` and lethal
-    damage already downed rather than killed. Added: bleedout → death, stabilise, revive.
-    Fields live **on `HealthComponent`** — two components describing "how alive is this
-    person" would disagree, and the disagreement would decide whether somebody could be revived.
-  - **The timer is a DEADLINE, not a countdown.** `DownedAt` is a timestamp; a skipped or
-    doubled tick then delays an outcome without changing it. **Bleedout starts once** — shooting
-    somebody already down does not restart it, or an attacker could hold a victim permanently
-    un-revivable.
-  - **Stabilised means the bleeding stopped**, not "more time" — otherwise a medic who did
-    everything right still watches their patient die on a hidden clock. Revive requires
-    stabilise first, or stabilisation is pointless.
-  - **`kTreatPermission` is `kPlayer` on purpose** — a medics-only rule on a server with no
-    medics means everyone who goes down dies. One constant to raise when roles exist.
-
-- **VOICE: SOLVED (`0ca11ba`). It was never broken — the microphone was never opened.**
-  - **The evidence chain, in order.** Two sessions of logs said
-    `mic NOT CAPTURING / speakers ok - encoded 0` two hundred times. `encoded 0` means
-    nothing was ever captured, so codec, network, routing and playback were all innocent.
-    The same WASAPI sequence run standalone on Cam's machine worked perfectly — Apollo Solo,
-    48kHz, **10 channels**, 147,360 frames, peak 0.98. So the sequence was right and the mic
-    was live, and the failure had to be before `Start()`.
-  - **The cause: `voiceInputDevice = "communications"`.** `default` and `communications` are
-    the two sentinel ids **Chromium's `enumerateDevices()`** returns for system defaults. The
-    launcher's picker is a web page, so picking the Communications entry saved that — and the
-    launch-arg code filtered only `default`. `--voicein=communications` reached the mod, which
-    treats any non-empty id as a literal Windows endpoint id (`{0.0.1.00000000}.{guid}`).
-  - **Why it looked like a microphone problem:** the OUTPUT branch falls back to the default
-    when a lookup fails and the CAPTURE branch does not. The same bad value was survivable on
-    one side and fatal on the other. **That asymmetry, not the sentinel, is the real lesson.**
-  - **Why nobody could see it:** `StartCapture` returns when the THREAD IS SPAWNED, not when a
-    device opens — it cannot wait on a driver without blocking the connect path. So every
-    failure happened after the caller was told `true`, and the caller logged `[Voice] running`.
-    Every error went into a string nothing printed. **Fixed independently of the sentinel:**
-    `SetError` logs at the point of failure, the stats line prints the reason, a successful
-    open logs the device format, and `[Voice] running` no longer claims what it cannot know.
-  - Both sentinels are now read as "follow Windows" on **both** sides, and the launcher stops
-    emitting them. A genuinely unplugged saved device still does **not** silently switch the
-    microphone — that decision stands, it just says so out loud now.
-
-- **VEHICLE SEATS (`eff82e0`). Most of it was already built; one thing was missing.**
-  - **Already working, do not rebuild:** `sit_id` on the wire for enter/exit/notify;
-    `AttachmentComponent{Parent, SlotId}` as real server seat state; one-per-seat enforced and
-    **refused rather than reassigned**; stale seat-swap exits recognised; late joiners get a
-    `NotifyVehicleEnter` per occupant (§18); a disconnecting driver hands authority to a
-    passenger and the car survives (§16); `ReleaseVehicleIfEmpty` counts **every** attachment
-    and parks rather than destroys (§17 — already correct).
-  - **Why a fifth person fitted in a four-seat car:** occupancy was checked, seat **identity**
-    never was. Any invented 64-bit id matched no attachment, looked like an empty seat, and
-    was accepted. Four already fitted; a fifth only had to name a position nobody had claimed.
-  - **The check is identity, NOT a count**, deliberately. The server cannot see game data and
-    does not know how many seats a Mackinaw has — counting would mean refusing seats that exist
-    or inventing ones that do not. Which seats a car HAS stays with the game's mount system;
-    which seats EXIST is `VehicleSeats.h`.
-  - **Seat ids are FNV1a64 CName hashes, verified offline** — `FNV1a64("seat_front_left")`
-    reproduces the `0xb000b1d029d0cea0` constant `Level.cpp` always carried. So they are
-    **derived at compile time from names**; all four pasted literals are gone. In
-    `NextOccupant` a mistyped literal would not crash — it would just never match, and a
-    disconnecting driver would hand the car to the wrong passenger.
-  - `/vehseats` (moderator+) prints the server's own view: every occupied vehicle, who is in
-    which seat, and who is simulating it.
-
-- **MONEY: the restore could CONFISCATE earned money (`f53e4df`).**
-  - `owed = stored - held`, and when negative the restore **removed the difference**. Negative
-    means the player holds more than the server last heard — which after creation is the normal
-    state of anyone who has earned anything. That is the exact shape of *"I found 84 eddies and
-    they didn't save"*: the money arrived, the capture had not run, and the next spawn took it
-    back.
-  - **The removal could not simply go** — it is the only thing that strips the world template's
-    balance, because `MpSettleStarterLoadout` deliberately never touches money. So it is
-    **gated to the character's first spawn**, which is the one-shot-at-creation strip the
-    inventory rule allows.
-  - **No new wire field:** the roster already carries `spawned_before` per character and marks
-    the active one, both already exposed to script — so this is the server's own answer.
-  - **This does NOT make money persist.** If the capture reads a stale figure it is still
-    stale. What it does is stop the bug being *destructive* while that is settled: a balance
-    that fails to save can be repaired from the ledger; eddies taken off a player every spawn
-    cannot even be noticed. **The four `[MONEY]` boundaries have still never produced data** —
-    they postdate every session in the logs. One session with the current build settles it.
-
-- **PLAYER-TO-PLAYER CALLS — BUILT, NOT SHIPPED (`7be0a20`).** Server only, **no protocol
-  change**. Cam's rule, stricter than the brief that prompted it: *"player to player calls are
-  the only calls that can come through."* Every game-originated call stays blocked.
-  - **THE SONGBIRD GATE IS NOT MODIFIED, AND THAT IS THE DESIGN.** Do not "improve" this by
-    relaxing `PhoneSystem.OnTriggerCall` — read this first. `OnTriggerCall` takes a
-    `questTriggerCallRequest`, which is the **quest system's** request type; the quest system
-    is the only thing that builds one. Its `isPlayerTriggered` field means *"the player
-    triggered this QUEST call"* — ringing a fixer back from the journal — **not** "a
-    multiplayer player started a call". Gating on it would let a class of story calls back in
-    and would make the Songbird block depend on a field the mod never sets and cannot audit.
-  - **A player call never becomes a `questTriggerCallRequest`.** It arrives as a chat command,
-    lives in `CallStore`, and is presented by the mod. The two kinds of call share no field
-    and no entry point, so the origin is unambiguous **by construction** rather than by
-    inspection. "Player calls work AND the prologue stays blocked" is therefore not a test
-    that has to pass — it is a property of the shape.
-  - **Verified, not asserted:** `Quests.reds` is unmodified, and every mention of
-    `PhoneSystem` / `OnTriggerCall` / `questTriggerCallRequest` / `isPlayerTriggered` across
-    all changed files is a **comment**. No line of code in the feature references any of them.
-  - **The brief's "do not build a parallel system, route through PhoneSystem" was declined
-    deliberately.** Routing a player call through `OnTriggerCall` means forging a
-    `questTriggerCallRequest`, after which the gate can no longer tell the two apart. That
-    instruction and the brief's own acceptance criteria are in tension; the criteria win.
-  - **Voice is what makes it a call.** Proximity voice already existed; a connected call also
-    routes the speaker's frames to the other party regardless of distance, checked against the
-    listener's **active** character. Resolved once per frame, not per listener — that loop
-    runs for everybody online, 50×/second per speaker.
-  - **Sessions in memory, history on disk.** A call is a conversation, not property: a restart
-    mid-call should mean the call ended, which an empty session list already means. Held in a
-    `std::list` — `Active()`/`Find()`/`Expired()` hand out pointers, and a vector would
-    reallocate and dangle them intermittently, only on a busy server.
-  - **A blocked call reads exactly like an unanswered one.** A refusal that differs is a
-    refusal that tells somebody they were blocked.
-  - **No call id is accepted from the client.** `/answer`, `/decline`, `/hangup` resolve the
-    sender's own active call, so one player cannot hang up another's.
-  - **Switching characters ends the outgoing character's call** before the switch. Belt and
-    braces today — the puppet check already refuses an in-world switch — but it is the line
-    that stops a call surviving if that rule is ever relaxed.
-  - Commands: `/call`, `/answer`, `/decline`, `/hangup`, `/calls`. Ring timeout 30s.
-  - **35 checks pass** against the real `CallStore.h`, covering the brief's matrix and the
-    "one player's two characters share nothing" case.
-  - **The remaining piece is presentation.** This is surfaced through chat, not the phone UI.
-    A real incoming-call panel is a presentation layer over the same session state — build it
-    against `CallStore`, never as a second call implementation.
-
-- **DIGITAL LIFE: MESSAGING, CONTACT NAMES AND BLOCKING — BUILT, NOT SHIPPED.** Phase 1 of the
-  "character digital life" brief ChatGPT wrote on 2026-09-02. **Server-only — no protocol
-  change**, so unlike the slot work this could ship on its own.
-  - **Read the brief against the code before building any more of it.** Most of its Phase 1
-    and half of Phase 2 already existed: `CharacterId`, a unique per-character `PhoneNumber`,
-    per-character `Contacts`, `/number`, `/addcontact`, `/contacts`, and `/pay` (which is
-    already server-authoritative, atomic, and audit-logged — brief §10 describes what is
-    built). **Two of its instructions would have regressed decisions already made:** it
-    specifies `char_8f31a92c` for character ids, which is the 16-hex shape Cam rejected as
-    "too big" and which has no check symbol; and 10-digit phone numbers, where ours are
-    already unique strings and changing the digit count would break every number handed out.
-    Neither was adopted. Its central rule — **the character owns the digital identity, the
-    account does not** — was already how `CharacterRecord` is built.
-  - **`MessageStore` (`code/server/native/MessageStore.h`), addressed by `CharacterId` and
-    never by account.** Its own store, not a field on `CharacterRecord`, for a reason that
-    matters: `SaveCharacter` REPLACES a character wholesale from what the client reported, so
-    a message arriving between a client's read and its write would vanish silently. Same class
-    of bug as the money thrash.
-  - **Offline is the normal case.** A message is written to disk first and delivered second,
-    and `Delivered` is stored per message rather than assumed — so a recipient who was away,
-    crashed, or dropped the push gets it on their next arrival. `MarkDelivered` runs *after*
-    every line is handed to the connection: showing a message twice is a blemish, losing one
-    is the bug.
-  - **Conversations are keyed on the sorted pair.** A-texts-B and B-texts-A are one thread.
-    Unsorted, they are two threads each holding half of what was said, and both people see
-    the other ignoring them — a bug that reads as a UI problem for a week. Repaired on load
-    too, so a hand edit cannot create it.
-  - **Contacts gained a name (`Contact` struct) with a two-way-safe migration**, verified by
-    a standalone test: an existing bare-string list loads, and an unnamed contact still
-    *writes* as a bare string, so only accounts that actually save a name change shape and a
-    rollback keeps working for everyone else. Deleting a contact never touches message
-    history — that falls out of messages being their own store rather than hanging off the
-    phone book.
-  - **Blocking is per character, silent, and aimed at a number.** Blocked messages are
-    accepted and dropped, never refused: a refusal is a signal, and "delivery failed for this
-    number, sent for that one" tells somebody they were blocked. Nothing is stored either —
-    storing and never delivering would dump the backlog on whoever later unblocks.
-  - **`/addcontact` compared Discord ids, which the slot work made wrong.** It would tell a
-    player their own second character's number was "your own number" and refuse it. Now
-    compared by character. **Look for more of these** — every account-keyed phone lookup is
-    suspect now that an account can hold four characters.
-  - Commands: `/text`, `/texts`, `/read`, `/contactname`, `/delcontact`, `/block`,
-    `/unblock`, `/blocked`. Delivery on arrival hooks the spawn path, which is also where a
-    character *switch* lands — so switching hands over the new character's inbox and none of
-    the old one's.
-  - **Not built, and why:** calls (§12–13) need `PhoneSystem.OnTriggerCall`, which is
-    currently blocking *every* call — see [[project-cyberpunkmp-phone-calls]] before touching
-    it. Money attachments (§9–11) are **blocked on the money persistence bug**, and building
-    transfers on a balance that does not survive a session is how duplication bugs are born.
-    Social, email, computers, files, contracts, taxi and media (§18–28, §41–55) are later
-    phases with no foundation dependency on this one.
-
-- **SLOTS, SOFT DELETE AND THE SELECTOR — BUILT, NOT SHIPPED (`9a70e1d`).** Branch only, no
-  release, `main` untouched. **This is a flag day when it does ship** — `CharacterSummary`
-  gains `slot`/`is_active`, `AuthenticationResponse` gains `character_slots`, and there are
-  two new client messages, so every un-rebuilt client is refused. Batch anything else waiting
-  on a protocol change with it.
-  - **Most of the server model was already here and unused.** `Characters` is a vector,
-    `ActiveSlot` exists, `RetiredCharacters` exists, and `RetireCharacter` already took a slot
-    and already did a **soft delete** — the row moves rather than being erased, so an id is
-    never reissued and a deletion can be undone by hand. What was missing was everything above
-    it, and the fact that `SendCharacterList` collapsed the roster to the active character
-    wrapped in a list of one.
-  - **One slot for a player, four for admin and above** (`PlayerStore::SlotsForLevel`). A
-    permission, so the server decides and the client is told — an allowance the client
-    computes is one it can raise. **Lowering it never deletes anything:** an account over the
-    limit keeps every character and simply cannot make another.
-  - **A lifetime row ceiling of 60, separate from the slot count**, and necessary *because*
-    deletion is soft: create-and-delete-and-create writes a new row every time.
-  - **Slots are NOT contiguous and are NOT an identity.** Retiring the character in slot 1 of
-    three leaves 0 and 2 occupied. The panel draws by walking slots and looking each up in the
-    roster, never by walking the roster — the other way silently renumbers. Anything keyed on
-    a slot number is a bug waiting for a deletion.
-  - **`SelectSlot` refuses an empty slot** rather than falling back to slot 0. "You asked for
-    a character that is not there, so here is a different one" is how somebody ends up playing,
-    and then saving over, a character they did not choose.
-  - **Why the selector was off, fixed at the cause.** The note that replaced those lines said
-    the panel would say *"signing in… forever against a connection nobody opened"* — true,
-    because nothing on that screen asked the server who the account was. A **CHARACTERS** menu
-    entry now opens the connection deliberately and polls until the roster lands, and the panel
-    is built only once the answer is here. It either shows the roster or is not on screen.
-  - Roster accessors bounds-check, and `GetRosterSlot` answers **-1** for a bad index rather
-    than 0 — zero is a real slot, and a caller reading it as one would offer to delete the
-    character in slot 0 when asked about a row that is not there.
-
-- **Built on the branch, NOT shipped (`a0346ce`).** Cam's instruction was to build and not
-  ship. On `feat/world-state` only: no release, and deliberately not pushed to `main`, since
-  `main` is the deploy.
-  - **A character lifecycle STATE, replacing `m_characterLive`.** That boolean was standing
-    in for five states, and the missing one is what cost a character: at the moment of the
-    overwrite Cam had a live connection, a valid record, **and a body in the world that was
-    neither**. `Connected → Selected → Restoring → Live → Detached`, where `Live` is the only
-    state in which writing to the stored record is legal. Every transition logs; `Live →
-    Detached` logs as a **warning**, so that session would have read
-    `Live -> Detached (world detach)` seventy seconds before the save. A refused save now
-    names the state it refused in.
-  - **The wire's presence width is now said out loud.** netpack emits `kXPresenceBits` beside
-    every generated struct (39 of them). The bitfield is sized to a message's optional field
-    count and a reader expecting a different width misreads every field after it — none of
-    which is visible in the `.proto`. Not a guard (the protocol identifier already refuses a
-    mismatched client): a **name**, so a diff of the generated header shows `4 -> 6` rather
-    than showing nothing.
-  - **CORRECTION it caught immediately:** `SpawnCharacterResponse` reads **4** presence bits,
-    not 6. I derived it by hand once while my own two extra fields were still applied, read 6,
-    and repeated that as the baseline in a commit message, a design doc and an artifact. The
-    conclusion never changed; the number was wrong three times. That is the whole argument for
-    naming a value rather than re-deriving it.
-  - **NOT built, deliberately: "placement is not a teleport".** Its own entry in
-    `docs/CHARACTER-LIFECYCLE.md` says it is an experiment and that nobody should fix it
-    speculatively. Building it because it appeared on a list would be exactly that. It stays a
-    question: does 2.31 offer a placement path that preloads streaming, and are we skipping it
-    with `TeleportLocalPlayer`?
-
-- **The character selector is OFF, and two requested features are blocked behind it.**
-  `MainMenu.reds:331-342` disables the trash can and the panel, because both only make sense
-  once the menu has asked the server who this account is — and it no longer does. Consequence
-  worth knowing before anyone re-plans this:
-  - **Delete a character is BUILT.** `DeleteCharacter()` native, the
-    `OnMultiplayerDeleteCharacter` handler, and the confirm flow all exist and still compile.
-    **Uncommenting `MainMenu.reds:338-340` is all it takes to bring the entry back.**
-  - **Four character slots for admins (requested, NOT built)** needs the selector alive
-    first. The plumbing is already there: `AuthenticationResponse` carries a *list* of
-    `CharacterSummary` (deliberately a list, "a list of length one costs nothing today and is
-    the whole difference later"), and `CharacterRecord` already has `Slot` and `CharacterId`.
-    What is missing is the client panel that draws four slots and says which are in use.
-- **"I am not the character I made" — ROOT CAUSE FOUND 2026-09-02. TWO bugs, one fixed.**
-  Cam: *"the character we created would not be the character we play as, it is also not
-  phantom veronica"* — a third person entirely. That is two independent faults stacking:
-  - **(A) `OwnSave` has no idea which save is the character. STILL OPEN — this is the big
-    one.** It loads "the newest save that is not `MultiplayerStart`", which is not an
-    identity, it is an accident of file order. On 2026-09-01 it loaded `AutoSave-12` — a
-    throwaway female Corpo from a probe run two days earlier. Any newer save wins: another
-    test character, a singleplayer session, anything. Fixing it needs a save NAMED for the
-    character (`ManualSave(saveName: String)` exists on `inkISystemRequestsHandler`, so the
-    mod can name its own saves) and a load that matches that name rather than a position in
-    a list. That is ChatGPT's Phase 1 items 1-4 and it is the correct next piece of work.
-  - **(B) A failed appearance restore destroyed its own input. FIXED.** See below.
-- **Appearance restore: the bytes were spent before the attempt. Fixed, NOT VERIFIED LIVE.**
-  On a fresh connect the server sends the appearance while the player is still on the MAIN
-  MENU, because `MpLoadOwnCharacterSave` has not loaded a save yet. From the 2026-09-01 log,
-  in order: `server sent 9206 bytes` → `restore BEGIN` → `FAILED: GetState returned nothing`
-  → **then** `[OwnSave] loading 'AutoSave-12'`. The old code did
-  `const auto bytes = std::move(m_restoreAppearance)` BEFORE trying, so that doomed first
-  attempt consumed the only copy; the world then attached with nothing left to apply and
-  the player looked like whatever save had loaded. Now the code asks whether a live
-  customization state exists BEFORE spending the bytes, keeps them when it does not, and
-  clears them only after a commit is accepted. Cheap to check: the log should say
-  `appearance held - no live customization state yet` once, then a real BEGIN after the
-  world attaches.
-- **Older notes on the same area, still true:**
-  - **The restore runs on characters it promised to skip.** On a brand-new character the
-    log says `NEW character - possessions discarded, restore will run empty` and then
-    immediately `Deserialize ccstate COMPLETE - body is female`. It is applying the stored
-    blob over the character the player just made.
-  - **The stored blob is the contaminated one** — 9141 bytes, female — and it is
-    re-uploaded on every autosave and every disconnect (`sent 9141 bytes of appearance to
-    the server`), so the bad record keeps refreshing itself.
-  - **The commit is inert, which is why nobody is visibly Veronica.** `ReFinalizeState`
-    and `FinalizeState` are refused in gameplay; `InitializeOptionsFromFinalizedState` is
-    accepted and does not rebuild the body. So the restore "succeeds" and changes nothing —
-    it is noise that also gates saving (`MaySaveCharacter` refuses on a FAILED restore).
-  - Cam's report from the field: *"im not the character i just made, im some man but not my
-    male character."* Do not re-attempt the creator-only commit functions
-    (`InitializeState` / `ReFinalizeState` / `FinalizeState`) — all three are measured and
-    refused.
-- **The world-template plan (Cam, 2026-08-28), not started.** Phantom Veronica should
-  propagate WORLD state and nothing else: doors she opened stay open for everyone (excluding
-  housing and vehicles), quests she finished count as finished for everyone, then quests off
-  entirely — all gated on Dogtown being open. Mechanism already exists: `WorldFact` on
-  `SpawnCharacterResponse.facts`. `06af8b5` (open Dogtown on a fresh deployment) and
-  `51756fc` (stop quest calls at `PhoneSystem`) are the first pieces of this.
-
-- **Dogtown is SOLVED — stop looking for a quest.** The gate is the quest fact
-  `ep1_side_content >= 1`, a pause condition in
-  `ep1\openworld\combat_zone_gate\combat_zone_gate.questphase`, which references **no q301
-  fact at all**. Confirmed in game 2026-08-29: Cam drove *and* walked through the border on
-  a character with `q301_done=0`. A live server takes `/fact ep1_side_content 1` once;
-  `06af8b5` seeds it for fresh deployments. Do NOT complete q301 to open Dogtown.
-- **The forced Songbird prologue is a CHARACTER-START problem, not a phone problem.**
-  `MainMenu.reds` fires `SpawnEvent(n"OnNewGame")`; `preGameScenarios.script:308` routes to
-  the EP1 branch whenever Phantom Liberty is installed, so **every character the mod has
-  ever created is a PL standalone start** (level 15, `ep1_standalone=1`, `q301_active=1`).
-  `51756fc` genuinely stops every phone call — zero presented in a full session — and the
-  conversation still happened, because it is a scene the quest drives. Suppression cannot
-  stop a running quest; prevention is the only route.
-- **Clean multiplayer start: SHIPPED 2026-08-30 (`c1518c4`), needs field testing.** A game
-  start is a `.gamedef` — root quests + spawn tag + world, and the game ships 824 of them.
-  `ep1\quest\ep1_standalone.gamedef` lists **three independent** root quests, only one of
-  which is the story. `code\assets\Archives\packed\...\zz_NightCityOnline_CleanStart.archive`
-  (8 KB, a second archive; ArchiveXL is handed the whole directory) overrides it with:
-  `cyberpunk2077_ep1_standalone.quest` (base Night City, prologue skipped) +
-  **`ep1.quest`** (CDPR's non-standalone EP1 root: sets `ep1_installed=1`, enters
-  `ep1.questphase` at `Base`, no story) + `ep1_preorder.quest`. Nothing authored.
-  - **Proven before shipping:** a fresh character came up with an **empty quest log** and
-    **not one EP1 fact** (`ep1_standalone=0 ep1_active=0 q301_active=0` against 1/1/1 in the
-    control), and Songbird never called. Save `ManualSave-132` had a completely empty fact
-    list.
-  - **CONFIRMED WORKING 2026-08-30, shipped build, Cam's machine.** World on, story off,
-    together. The fact signature at spawn:
-    `ep1_installed=1` (only `ep1.quest` sets it — proof the EP1 world entry took),
-    `ep1_standalone=0`, `q301_active=0`, `q301_done=0`. No Songbird, empty quest log,
-    and **Dogtown still reachable**. This is the goal state from Cam's brief — *"we should
-    just spawn in the world, no opener, no songbird dialogue, no quests, nothing"* — reached
-    without completing, skipping or failing a single quest.
-  - **Level 15 came from the story root.** Clean-start characters are level 1 with no base
-    prologue quests marked done. The server will have to grant progression; it already
-    grants the starter kit and eddies.
-  - **A spawn tag is content owned by its quest.** The first probe kept the stock
-    `#q301_spwn_ep1standalone_opener` while deleting the quest that defines it, and players
-    **fell through the map**. Now `#q000_spwn_start` — the base game's own, which is a
-    holding room rather than a place; the server moves new arrivals on connect
-    (`/setstart`). Every shipped gamedef pairs its spawn with its own quest.
-  - **HAZARD:** `Ship.ps1:574` copies `distrib\launcher\mod\assets` wholesale and never
-    cleans it. Anything left in `assets\Archives\` ships to every player — keep probes and
-    experiments out of `distrib`.
-
-- **Manifest signing: key MINTED, deliberately PAUSED (2026-08-30). Read this before
-  touching it.** Cam's ed25519 keypair exists. The public half is
-  `ed25519-public:l9q5uBPf2IRZr1wyVzRCDIvF6LQdMl9r86VQUpyx89c=:38d98b61`. The secret is
-  parked at `~/.nco-manifest-key.paused` — moved OFF the path `Ship.ps1` reads, on purpose.
-  - **Why it is parked and not live.** `Ship.ps1:908` refuses to publish a manifest its own
-    pins cannot verify, but that checks `main.js` in the REPO, not the launcher a player is
-    running. A manifest signed by a key an installed launcher has never seen does not read
-    as "unsigned" — it reads as a **BAD SIGNATURE**, which "refuses Ready and never falls
-    back" (`main.js:867`). Signing before the pin has been delivered locks every player out
-    of the game.
-  - **The trap if you only half-resume.** Renaming the key back WITHOUT pinning it in
-    `MANIFEST_PUBKEYS` does not just fail to sign — it makes `Ship.ps1` die on the verify
-    step and **blocks every future ship**. Key present + pin absent is the one combination
-    that is worse than either alone.
-  - **The safe sequence, when there is budget to watch it:** rename the key back → add the
-    public line to `MANIFEST_PUBKEYS` in `main.js` → ship the LAUNCHER carrying that pin
-    while still unsigned (point `NCO_MANIFEST_KEY_FILE` at a path that does not exist) →
-    wait for players to update → only then let a ship sign. Two releases, and the gap
-    between them is the point.
-  - Paused at Cam's call: *"i dont have enough tokens to fully fix anything until wednesday
-    just in case we break anything doing this."* zeldfep's key (`882c415a`) is already
-    pinned and unaffected.
-- **The version number no longer identifies a build.** `Ship.ps1 -Mod` does NOT cut a new
-  version — it republishes mod assets into whatever release is already `latest`. **Three
-  different `ModPayload.zip` builds now exist under the tag `v0.3.113`** (28 Aug, and two on
-  30 Aug). Players still update correctly because the launcher compares the **asset id**,
-  not the version string, but `.nco-version` reads the same number for three builds, which
-  will mislead the first bug report that quotes it. Cutting a real `v0.3.114` needs a
-  `## What changed - v0.3.114` section in `publish\release-notes.md` and a FULL ship
-  (which also republishes the 103 MB installer). Held on the same 2026-08-30 budget call.
-
-- **NOBODY COULD SEE ANYBODY, and it was never the puppet system. Fixed `ec2858d`,
-  awaiting a live run.** Stop looking at `PuppetDriver`, remote animation, or the
-  appearance path — none of them ever ran. `NetworkWorldSystem::Spawn` was **never called
-  once** in twenty-one session logs: no `[Spawn]` line of any kind, not even the "queued"
-  or "CreatePuppet failed" branches.
-  - **What was happening.** Since `f66a40a` (2026-08-24) the client re-derives each load's
-    cell from its position and drops it when its answer differs from the server's —
-    `[World] dropped map-invalid character load …`. That rejected EVERY character and
-    vehicle load for six days. Movement and appearance are separate messages so they kept
-    arriving, which is why the player list showed people, `/tp` moved them server-side, and
-    the client logged `movement for id … but no puppet is registered under it`. It looked
-    exactly like a spawn bug and was not one.
-  - **Two faults, both server-side.** The grid was declared twice — `Level.cpp` bins by
-    `sCellSize = 6000`, `GameServer.cpp` advertised `60000`, ten times out. And `ToCell`
-    used a float-to-int cast (truncates toward zero) while the client uses `std::floor`;
-    those agree only for positive coordinates and Night City is mostly negative. At
-    `x = -1769` the server sent cell `0` and the client expected `-1`.
-  - **Fix is server-side ONLY** — no client rebuild, no player update. `kCellSize`,
-    `kLoadRadius`, `kUnloadRadius` now live on `Level` as the contract they are;
-    `GameServer` advertises those constants; `ToCell` floors. **Never put a literal back in
-    either place** — the client is entitled to compute what the server computes.
-  - **Verify with:** `[Spawn] remote id … - ccstate N bytes` appearing and
-    `dropped map-invalid` stopping. If the drops stop and players are still invisible, that
-    is a different bug — the puppet spawn itself — and the `[Spawn]` line will name it.
-    Production deploys from this branch but the cron defers while anyone is online.
-
-**Landed since the last pass, so nobody re-opens them:** `/rename` for admins is IMPLEMENTED
-(`ChatSystem.cpp:1513`, `kAdmin`-gated, keyed on the character id, and deliberately does NOT
-clear `NameChosen` — it repairs a name rather than handing out a fresh naming attempt).
-Difficulty is pinned to Very Hard for every connected player (`d5d506f`, `77971ee`,
-`Difficulty.reds`, which reads the index by name rather than hardcoding 3).
-
 ### Standing decrees (law, not open items - violating one is a bug by definition)
 - **Boot policy** (2026-08-21): the game boots STRAIGHT TO THE MENU -
   `-skipStartScreen` + Fast Launch auto-install, both halves stay (main.js).
+
 - **The footprint rule** (2026-08-21): uninstall leaves NOTHING - every write
   location lives in launcherFootprint()/installer.nsh, both layers, always in sync.
+
 - **The helper rule** (2026-08-22): content mods are never load-bearing - "they
   should be there for helping us, not as a variable." No feature depends on a Nexus
   mod, none gates Play/join, none enters the install digest, no load-bearing
@@ -611,6 +46,21 @@ Difficulty is pinned to Very Hard for every connected player (`d5d506f`, `77971e
   read a MISSING `required` field as required, so every modlist entry must keep
   `required:false` until v0.3.108 is the floor. modlist.json says v0.3.108 for
   this reason - do not "correct" it back to .107.
+
+- **The support rule** (2026-09-02, `5a68517`): **kSupport = 5 grants slots and NOTHING
+  else** — Cam's rule verbatim. It used to resolve to kModerator (no support level existed
+  and the slot rule needed something to test), which handed ticket staff the whole moderator
+  toolkit as a side effect. Enforced structurally, not by memory: kSupport sits BELOW
+  kModerator, so every `>= kModerator` check excludes support automatically — support cannot
+  pick up a moderation power when one is added later. **kEventStaff = 15** (moderator powers
+  + the event tools) exists for the same reason: lowering the spawn commands to kModerator
+  would have given `/givecar`, `/npc`, `/time` and `/weather` to support too. Six commands
+  moved kAdmin→kEventStaff: `/tp`, `/return`, `/givecar`, `/npc`, `/time`, `/weather`;
+  `/ban`, `/unban`, `/rename`, `/quest`, `/fact`, `/setspawn`, `/setstart` stay admin. Slots
+  go to `>= kSupport`, the widest staff test. Nothing already stored moved — player 0,
+  moderator 10, admin 20, owner 30, exactly as the enum's spacing comment promised. 30
+  checks pass, including the four that matter: support fails `>= moderator`, `>= event
+  staff` and `>= admin`, and still gets four slots.
 
 ### Needs a live session (built, never validated with humans)
 - **Player combat (Cam) — SHIPPED v0.3.104/105/106, never tested with two humans.**
@@ -647,48 +97,43 @@ Difficulty is pinned to Very Hard for every connected player (`d5d506f`, `77971e
      they cannot be read statically - every hit logs `[HitShape] '<name>'`. Solo: shoot
      any NPC.
   4. Two-client validation of the whole thing. Nothing has crossed between two machines.
-- **Vehicle damage: the native path is PROVEN, the probe is written, nothing has been run.**
-  Read from the game's own sources at `<game>\tools\redmod\scripts` - every claim below has
-  a file and line, none of it is inferred. Vehicle health is a stat pool:
-  `gamedataStatPoolType.Health` on the vehicle's own EntityID, owned by StatPoolsSystem.
-  Read `GetStatPoolValue(id, Health, false)`, set `RequestSettingStatPoolValue(...)`, observe
+
+- **Vehicle damage: native path PROVEN from the game's own sources; probe RUN 2026-08-26
+  on Cam's install - the reported value is EXACT, the server validates against it, never
+  recomputes it.** Sources at `<game>\tools\redmod\scripts`; every claim below has a
+  file+line, none inferred. Vehicle health is a stat pool (`gamedataStatPoolType.Health`
+  on the vehicle's own EntityID, owned by StatPoolsSystem): read
+  `GetStatPoolValue(id, Health, false)`, set `RequestSettingStatPoolValue(...)`, observe
   `RequestRegisteringListener(id, Health, listener)` → `OnStatPoolValueChanged(old, new,
   percToPoints)` (vehicleComponent.script :79, :4543, :4545, :6304). Damage arrives as
-  `gameHitEvent` and **`VehicleObject` already overrides `DamagePipelineFinalized`**
-  (vehicles.script:1123) - the game announcing it finished calculating. Attacker is
-  `evt.attackData.GetInstigator()`, proven in use at vehicles.script:1137; weapon is
+  `gameHitEvent`; `VehicleObject` already overrides `DamagePipelineFinalized`
+  (vehicles.script:1123) - the game announcing it finished calculating. Attacker:
+  `evt.attackData.GetInstigator()` (in use at vehicles.script:1137); weapon:
   `attackData.GetWeapon()` → WeaponObject → `GetWeaponRecord()` (attackData.script:219 -
-  GetWeaponRecord is NOT on AttackData, which cost a compile); amount is
+  GetWeaponRecord is NOT on AttackData, which cost a compile); amount:
   `evt.attackComputed.GetTotalAttackValue(Health)`, the same call Combat.reds:97 already
   uses for players. Destruction: `gameVehicleDestructionEvent` (hitEvents.script:51),
-  destroyed = health custom limit forced to 0.0, stages via `EvaluateDamageLevel` →
-  `m_damageLevel` 0-3. **No CET, no WolvenKit, no native work needed for the core loop.**
-  Design consequence: bullets, explosions, collisions and environment ALL converge on the
-  same Health pool, so one listener catches every source - collision damage needs no special
-  case to synchronise, only to assign blame.
-  **THE OPEN QUESTION IS ANSWERED - 2026-08-26, measured on Cam's install. The reported
-  value is EXACT and the server should validate against it, never recompute it.** One
-  shotgun blast at a parked street car:
-  - **14 hits inside ONE millisecond** (18:32:10.997-.998), each reporting ~8 damage
-  - health 1050.319946 -> 932.885620, so **spent 117.434326**
-  - **sum of the 14 reported values = 117.434414** - agreement to 0.000088, float noise
-  So `evt.attackComputed.GetTotalAttackValue(Health)` is trustworthy. Also confirmed live:
-  the attacker resolves (`by PLAYER`), a street car has ~1050 HP, and
-  `DamagePipelineFinalized` fires BEFORE the pool settles - all 14 read the same "health
-  before", and the probe's 0.15s delayed readback is what caught the settled value.
-  **Protocol consequence, and it is a real design input:** damage arrives PER HIT, not per
-  shot. One trigger pull can be 14 events in a millisecond, so the wire format must batch
-  or tolerate bursts - 14 packets per shotgun blast is not acceptable.
-  **Trap recorded because it nearly produced a wrong conclusion from correct data:** the
-  probe's first verdict compared ONE hit against the WHOLE burst's delta and printed
-  MISMATCH fourteen times. The data was perfect; the comparison was wrong. A single hit is
-  expected to be far smaller than the total. Verdict logic since corrected to say BURST.
-  Still to answer, and it needs two humans: does a REMOTE vehicle (kinematic, physics
-  suppressed by MakeRemoteDriven) receive the damage pipeline at all, and on whose machine?
-  That decides whether the shooter or the owner reports damage.
-  Second unknown the probe also settles: whether a REMOTE vehicle (kinematic, physics
-  suppressed by MakeRemoteDriven) receives the damage pipeline at all, which decides whether
-  the shooter or the owner reports it.
+  destroyed = Health custom limit forced to 0.0, stages via `EvaluateDamageLevel` →
+  `m_damageLevel` 0-3. No CET, no WolvenKit, no native work for the core loop; bullets,
+  explosions, collisions and environment ALL converge on the one Health pool - one
+  listener catches every source, collision damage only needs blame assignment.
+  Measured: one shotgun blast at a parked street car = **14 hits inside ONE millisecond**
+  (18:32:10.997-.998), each ~8 damage; health 1050.319946 → 932.885620 (spent 117.434326)
+  vs sum of the 14 reports 117.434414 - agreement to 0.000088, float noise. Also
+  confirmed live: the attacker resolves (`by PLAYER`), a street car has ~1050 HP, and
+  DamagePipelineFinalized fires BEFORE the pool settles - all 14 read the same "health
+  before"; the probe's 0.15s delayed readback caught the settled value.
+  **Protocol consequence, a real design input:** damage arrives PER HIT, not per shot -
+  one trigger pull can be 14 events in a millisecond, so the wire must batch or tolerate
+  bursts; 14 packets per shotgun blast is not acceptable. **Probe trap, recorded because
+  it nearly turned correct data into a wrong conclusion:** the first verdict compared ONE
+  hit against the WHOLE burst's delta and printed MISMATCH fourteen times - data perfect,
+  comparison wrong (a single hit is expected to be far smaller than the total); verdict
+  logic since corrected to say BURST. Still open, needs two humans (the probe settles
+  it): does a REMOTE vehicle (kinematic, physics suppressed by MakeRemoteDriven) receive
+  the damage pipeline at all, and on whose machine - decides whether the shooter or the
+  owner reports damage.
+
 - **Late-join vehicles** (885f252): join while someone drives → you must see the car,
   and parked cars. **test.14 is DEAD** (2026-08-23, zeldfep hit both failure modes):
   its protocol predates the combat flag-day while the test server runs e15f6f5, AND
@@ -700,6 +145,7 @@ Difficulty is pinned to Very Hard for every connected player (`d5d506f`, `77971e
   safe over .107 even on merge-extract launchers), protocol verified identical to the
   e15f6f5 test server (zero proto/netpack commits since). Checklist rides the release
   notes: late-join vehicles, quickhack live confirm, denial popups, -sync-trace drives.
+
 - **Milestone-1 handshake**: SERVER SIDE VALIDATED LIVE 2026-08-23 - a stale client
   (voice-era protocol) was refused five times with the correct identifiers in the log
   and a clean kRefused close. Still open: the in-game denial POPUP (the refused
@@ -707,15 +153,284 @@ Difficulty is pinned to Very Hard for every connected player (`d5d506f`, `77971e
   script-intact client), MaxPlayer (5th player refused), password check. Also
   validated live the same night: the /character new confirm guard (a bare command
   arrived and retired nothing).
+
 - **Download queue + install lock**: Install-missing shows the queue, strictly one at a
   time; clicking Add-mod mid-queue waits its turn; the INSTALLING strip never shows two
   installs braided.
+
 - **Nexus manager**: YOUR MODS section, Add-mod by link/number, Update lands on the pin.
+
 - **zeldfep's nxm:// hand-off**: broken only on his PC, works for everyone else. v0.3.103
   writes the whole story to his trail — after his next Mod Manager Download click, read
   `logs/clients/zeldfep/launcher-trail.log` on the NAS: no arrival line = browser/registry
   on his machine (browser protocol-block most likely); arrival + failure = the reason is
   in the line.
+
+- **The 2026-09-02 batch — SHIPPED `v0.3.113-worldstate-test.19`, NONE of it played.**
+  feat/world-state @ `5a68517`; `main` untouched at `304b492`. Aboard: voice fix, phone
+  calls in the real in-game phone, texting/contacts/blocking, character slots + selector +
+  soft delete, vehicle seat validation, money confiscation fix (the destructive half of the
+  money bug — see known-bugs), player trading, downed/medical, the new staff permission
+  ladder. The test build is a pre-release, dev-role only, installed from Settings → DEV →
+  Test builds; payload verified to carry the new redscript. Test sheet:
+  https://claude.ai/code/artifact/1945eb67-12d0-4602-a9e6-aca164dd0e1c
+  Genuinely open, in order:
+  1. **Two-player tests entirely unrun** — trading, calls, medical revival; vehicle seat
+     validation needs FOUR bodies. All of it is offline-tested only, and it waits on the
+     server being current with this code.
+  2. **Does a runtime-built `CName` render on the phone?**
+     `PhoneCallInformation.contactName` is a CName, not a String — calls will present
+     either way, but the caller's NAME may come back blank. Compiling cannot answer it;
+     only a live call can.
+
+- **Trading (`f313a61`) — built, not shipped, zero two-player runs.** Governing rule:
+  **trading never CREATES value.** The commit is `PlayerStore::ApplyTrade`
+  (`code/server/native/PlayerStore.h`), NOT a trade system beside it — PlayerStore already
+  owns money and possessions, and a second thing that could move them would be a second
+  authority. `TradeStore` (`TradeStore.h`) decides *whether*; PlayerStore decides that it
+  happens *completely*. Atomic, and honestly which kind: both records copied, both mutated,
+  validated on the copies, assigned back, then ONE flush — no ordering shows a partial
+  exchange. NOT durable-transactional (the store is a JSON file; a write-ahead journal
+  belongs with the move to a database, which is where the replicable-instance rule takes it
+  anyway). **Reservations ARE the offers** — no separate table, deliberately: a table and a
+  set of offers are two representations of one fact and they drift, and a drifted
+  reservation is money promised twice. **`/pay` now checks AVAILABLE money, not owned** —
+  that single line is what makes reservations mean anything, because otherwise 10,000 could
+  fund an 8,000 trade AND an 8,000 phone transfer. Confirmations reset on every edit, both
+  sides — carrying one across is how somebody accepts a deal they never saw. **`Committing`
+  is not cancellable** — by disconnect, death, timeout or distance; it either moved both
+  sides or neither. Honest limit: inventory is `(TweakDBID, quantity)` stacks with NO unique
+  item instance ids, so a weapon's mods/attachments/condition are not modelled and it trades
+  as its base record — faking instance identity would be worse than not having it.
+
+- **Medical revival (`70eac6e`) — built, not shipped, zero two-player runs.** A LAYER, not a
+  system: `HealthComponent` (`Components/HealthComponent.h`) already held `LifeState` and
+  lethal damage already downed rather than killed — added bleedout → death, stabilise,
+  revive. Fields live ON `HealthComponent` — two components describing "how alive is this
+  person" would disagree, and the disagreement would decide whether somebody could be
+  revived. **The timer is a DEADLINE, not a countdown**: `DownedAt` is a timestamp, so a
+  skipped or doubled tick delays an outcome without changing it. **Bleedout starts once** —
+  shooting somebody already down does not restart it, or an attacker could hold a victim
+  permanently un-revivable. **Stabilised means the bleeding STOPPED**, not "more time" —
+  otherwise a medic who did everything right still watches their patient die on a hidden
+  clock. Revive requires stabilise first, or stabilisation is pointless.
+  **`kTreatPermission` is `kPlayer` on purpose** — a medics-only rule on a server with no
+  medics means everyone who goes down dies; one constant to raise when roles exist.
+
+- **Vehicle seats (`eff82e0`) — built, needs FOUR humans in one car.** Why a fifth person
+  fitted in a four-seat car: occupancy was checked, seat IDENTITY never was — any invented
+  64-bit id matched no attachment, looked like an empty seat, and was accepted (four already
+  fitted; a fifth only had to name a position nobody had claimed). **The check is identity,
+  NOT a count, deliberately** — the server cannot see game data and does not know how many
+  seats a Mackinaw has; counting would mean refusing seats that exist or inventing ones that
+  do not. Which seats a car HAS stays with the game's mount system; which seats EXIST is
+  `code/server/native/VehicleSeats.h`. Seat ids are FNV1a64 CName hashes, verified offline —
+  `FNV1a64("seat_front_left")` reproduces the `0xb000b1d029d0cea0` constant `Level.cpp`
+  always carried — so they are derived at compile time from names and all four pasted
+  literals are gone. Failure mode to know: in `NextOccupant` a mistyped literal would not
+  crash — it would just never match, and a disconnecting driver would hand the car to the
+  WRONG passenger. `/vehseats` (moderator+) prints the server's own view: every occupied
+  vehicle, who is in which seat, and who is simulating it.
+
+- **Player-to-player calls (`7be0a20`) — built, NOT shipped; server-only, no protocol
+  change.** Cam's rule, stricter than the brief that prompted it: *"player to player calls
+  are the only calls that can come through"* — every game-originated call stays blocked.
+  Commands: `/call`, `/answer`, `/decline`, `/hangup`, `/calls`; ring timeout 30s. 35 checks
+  pass against the real `CallStore.h` (`code/server/native/CallStore.h`), covering the
+  brief's matrix and the "one player's two characters share nothing" case.
+  **THE SONGBIRD GATE IS NOT MODIFIED, AND THAT IS THE DESIGN — do not "improve" this by
+  relaxing `PhoneSystem.OnTriggerCall`.** `OnTriggerCall` takes a `questTriggerCallRequest`,
+  the QUEST system's request type, and the quest system is the only thing that builds one;
+  its `isPlayerTriggered` field means *"the player triggered this QUEST call"* (ringing a
+  fixer back from the journal), NOT "a multiplayer player started a call". Gating on it
+  would let a class of story calls back in and would make the Songbird block depend on a
+  field the mod never sets and cannot audit. A player call never becomes a
+  `questTriggerCallRequest` — it arrives as a chat command, lives in `CallStore`, and is
+  presented by the mod; the two kinds share no field and no entry point, so the origin is
+  unambiguous BY CONSTRUCTION rather than by inspection — "player calls work AND the
+  prologue stays blocked" is a property of the shape, not a test that has to pass. Verified,
+  not asserted: `Quests.reds` is unmodified, and every mention of `PhoneSystem` /
+  `OnTriggerCall` / `questTriggerCallRequest` / `isPlayerTriggered` across all changed files
+  is a COMMENT — no line of code in the feature references any of them. The brief's "do not
+  build a parallel system, route through PhoneSystem" was DECLINED deliberately: routing
+  through `OnTriggerCall` means forging a `questTriggerCallRequest`, after which the gate
+  can no longer tell the two apart; that instruction and the brief's own acceptance criteria
+  are in tension, and the criteria win.
+  **Voice is what makes it a call**: proximity voice already existed; a connected call also
+  routes the speaker's frames to the other party regardless of distance, checked against the
+  listener's ACTIVE character — resolved once per frame, not per listener, because that loop
+  runs for everybody online, 50×/second per speaker. **Sessions in memory, history on
+  disk**: a call is a conversation, not property — a restart mid-call should mean the call
+  ended, which an empty session list already means; held in a `std::list` because
+  `Active()`/`Find()`/`Expired()` hand out pointers, and a vector would reallocate and
+  dangle them intermittently, only on a busy server. **A blocked call reads exactly like an
+  unanswered one** — a refusal that differs is a refusal that tells somebody they were
+  blocked. **No call id is accepted from the client** — `/answer`, `/decline`, `/hangup`
+  resolve the sender's own active call, so one player cannot hang up another's. **Switching
+  characters ends the outgoing character's call** before the switch — belt and braces today
+  (the puppet check already refuses an in-world switch), but it is the line that stops a
+  call surviving if that rule is ever relaxed. **The remaining piece is presentation**:
+  surfaced through chat, not the phone UI — a real incoming-call panel is a presentation
+  layer over the same session state; build it against `CallStore`, never as a second call
+  implementation.
+
+- **Digital life phase 1 — messaging, contact names, blocking — BUILT, NOT SHIPPED.** Phase 1
+  of ChatGPT's 2026-09-02 "character digital life" brief. **Server-only, no protocol change**,
+  so unlike the slot work it can ship on its own. Commands: `/text`, `/texts`, `/read`,
+  `/contactname`, `/delcontact`, `/block`, `/unblock`, `/blocked`.
+  - **Read the brief against the code before building more of it.** Most of its Phase 1 and
+    half of Phase 2 already existed: `CharacterId`, unique per-character `PhoneNumber`,
+    per-character `Contacts`, `/number`, `/addcontact`, `/contacts`, `/pay` (already
+    server-authoritative, atomic, audit-logged — brief §10 describes what is built). Two of
+    its instructions were REJECTED, deliberately: `char_8f31a92c`-style 16-hex character ids
+    (the shape Cam rejected as "too big", and it has no check symbol) and 10-digit phone
+    numbers (ours are already unique strings; changing the digit count breaks every number
+    handed out). Its central rule — the CHARACTER owns the digital identity, not the account —
+    was already how `CharacterRecord` is built.
+  - **`MessageStore` (`code/server/native/MessageStore.h`), addressed by `CharacterId`, never
+    by account.** Its own store, NOT a field on `CharacterRecord`, for a reason that matters:
+    `SaveCharacter` REPLACES a character wholesale from what the client reported, so a message
+    arriving between a client's read and its write would vanish silently — same class of bug
+    as the money thrash.
+  - **Offline is the normal case.** Written to disk first, delivered second; `Delivered` is
+    stored per message, never assumed — a recipient who was away, crashed, or dropped the
+    push gets it on next arrival. `MarkDelivered` runs AFTER every line is handed to the
+    connection: showing a message twice is a blemish, losing one is the bug.
+  - **Conversations are keyed on the SORTED pair** — A-texts-B and B-texts-A are one thread.
+    Unsorted, they are two threads each holding half of what was said and both people see the
+    other ignoring them — a bug that reads as a UI problem for a week. Repaired on load too,
+    so a hand edit cannot create it.
+  - **Contacts gained a name (`Contact` struct) with a two-way-safe migration**, verified by a
+    standalone test: an existing bare-string list loads, and an unnamed contact still WRITES
+    as a bare string — only accounts that actually save a name change shape, and a rollback
+    keeps working for everyone else. Deleting a contact never touches message history (falls
+    out of messages being their own store, not hanging off the phone book).
+  - **Blocking is per character, silent, and aimed at a number.** Blocked messages are
+    accepted and DROPPED, never refused (a refusal is a signal — "delivery failed for this
+    number, sent for that one" tells somebody they were blocked) and never stored (storing
+    and never delivering would dump the backlog on whoever later unblocks).
+  - **`/addcontact` compared Discord ids, which the slot work made wrong** — it would tell a
+    player their own second character's number was "your own number" and refuse it. Now
+    compared by character. LOOK FOR MORE: every account-keyed phone lookup is suspect now
+    that an account can hold four characters.
+  - Delivery-on-arrival hooks the spawn path, which is also where a character SWITCH lands —
+    switching hands over the new character's inbox and none of the old one's.
+  - **NOT built, and why:** calls (brief §12–13) need `PhoneSystem.OnTriggerCall`, which is
+    currently blocking EVERY call — see [[project-cyberpunkmp-phone-calls]] and the
+    player-to-player-calls entry before touching it. Money attachments (§9–11) are BLOCKED on
+    the money persistence bug — building transfers on a balance that does not survive a
+    session is how duplication bugs are born. Social, email, computers, files, contracts,
+    taxi and media (§18–28, §41–55) are later phases with no foundation dependency on this
+    one.
+
+- **Slots, soft delete and the character selector (`9a70e1d`) — BUILT, NOT SHIPPED.** Branch
+  only, no release, `main` untouched. **FLAG DAY when it ships**: `CharacterSummary` gains
+  `slot`/`is_active`, `AuthenticationResponse` gains `character_slots`, plus two new client
+  messages — every un-rebuilt client is refused. Batch anything else waiting on a protocol
+  change with it.
+  - **Most of the server model was already here, unused**: `Characters` is a vector,
+    `ActiveSlot` exists, `RetiredCharacters` exists, and `RetireCharacter` already took a
+    slot and already did a SOFT delete — the row moves rather than being erased, so an id is
+    never reissued and a deletion can be undone by hand. What was missing was everything
+    above it, and the fact that `SendCharacterList` collapsed the roster to the active
+    character wrapped in a list of one.
+  - **One slot for a player, four for admin and above** (`PlayerStore::SlotsForLevel`). A
+    PERMISSION: the server decides and the client is told — an allowance the client computes
+    is one it can raise. Lowering it never deletes anything: an over-limit account keeps
+    every character and simply cannot make another.
+  - **Lifetime row ceiling of 60, separate from the slot count** — necessary BECAUSE deletion
+    is soft: create-and-delete-and-create writes a new row every time.
+  - **Slots are NOT contiguous and NOT an identity.** Retiring the character in slot 1 of
+    three leaves 0 and 2 occupied. The panel draws by walking slots and looking each up in
+    the roster, NEVER by walking the roster — the other way silently renumbers. Anything
+    keyed on a slot number is a bug waiting for a deletion.
+  - **`SelectSlot` refuses an empty slot** rather than falling back to slot 0 — "you asked
+    for a character that is not there, so here is a different one" is how somebody ends up
+    playing, and then saving over, a character they did not choose.
+  - Roster accessors bounds-check, and `GetRosterSlot` answers **-1** for a bad index, NOT 0
+    — zero is a real slot, and a caller reading it as one would offer to delete the slot-0
+    character when asked about a row that is not there.
+  - **Why the selector was off, fixed at the cause**: nothing on that screen asked the server
+    who the account was — the note that replaced those lines said the panel would sit
+    "signing in… forever against a connection nobody opened", and it was right. On the
+    branch a **CHARACTERS** menu entry opens the connection deliberately, polls until the
+    roster lands, and builds the panel only once the answer is here — it either shows the
+    roster or is not on screen.
+  - **SHIPPED builds still have the selector OFF**: `MainMenu.reds:331-342` disables the
+    trash can and the panel (both only make sense once the menu asks the server who the
+    account is, and shipped builds no longer do). Delete-a-character is BUILT on shipped
+    code too — `DeleteCharacter()` native, the `OnMultiplayerDeleteCharacter` handler, and
+    the confirm flow all exist and still compile; **uncommenting `MainMenu.reds:338-340` is
+    all it takes to bring the entry back**. The requested four-admin-slots feature needed the
+    selector alive first; the plumbing predates the branch — `AuthenticationResponse`
+    deliberately carries a LIST of `CharacterSummary` ("a list of length one costs nothing
+    today and is the whole difference later") and `CharacterRecord` already had `Slot` +
+    `CharacterId` — and the branch supplied the missing client panel that draws four slots
+    and says which are in use.
+
+- **Character lifecycle state + presence-bit names (`a0346ce`) — BUILT, NOT SHIPPED, on Cam's
+  instruction** (build, don't ship). `feat/world-state` only: no release, deliberately not
+  pushed to `main` — `main` is the deploy.
+  - **A character lifecycle STATE replaces `m_characterLive`.** The boolean stood in for five
+    states, and the missing one is what cost a character: at the moment of the overwrite Cam
+    had a live connection, a valid record, and a body in the world that was neither.
+    `Connected → Selected → Restoring → Live → Detached`; `Live` is the ONLY state in which
+    writing to the stored record is legal. Every transition logs; `Live → Detached` logs as a
+    WARNING — that session would have read `Live -> Detached (world detach)` seventy seconds
+    before the save. A refused save names the state it refused in.
+  - **The wire's presence width is now said out loud**: netpack emits `kXPresenceBits` beside
+    every generated struct (39 of them). The bitfield is sized to a message's OPTIONAL field
+    count, and a reader expecting a different width misreads every field after it — none of
+    which is visible in the `.proto`. NOT a guard (the protocol identifier already refuses a
+    mismatched client): a NAME, so a diff of the generated header shows `4 -> 6` rather than
+    showing nothing.
+  - **Correction it caught immediately**: `SpawnCharacterResponse` reads **4** presence bits,
+    not 6. The 6 was hand-derived once while two extra WIP fields were still applied, then
+    repeated as the baseline in a commit message, a design doc and an artifact — the
+    conclusion never changed, the number was wrong three times. That is the whole argument
+    for naming a value rather than re-deriving it.
+  - **NOT built, deliberately: "placement is not a teleport".** Its own entry in
+    `docs/CHARACTER-LIFECYCLE.md` says it is an experiment and nobody should fix it
+    speculatively — building it because it appeared on a list would be exactly that. It stays
+    a question: does 2.31 offer a placement path that preloads streaming, and is
+    `TeleportLocalPlayer` skipping it?
+
+- **Appearance restore: the bytes were spent before the attempt — FIXED (fault B of "I am
+  not the character I made"), NOT VERIFIED LIVE.** On a fresh connect the server sends the
+  appearance while the player is still on the MAIN MENU (`MpLoadOwnCharacterSave` has not
+  loaded a save yet). 2026-09-01 log, in order: `server sent 9206 bytes` → `restore BEGIN` →
+  `FAILED: GetState returned nothing` → only then `[OwnSave] loading 'AutoSave-12'`. Old code
+  did `const auto bytes = std::move(m_restoreAppearance)` BEFORE trying, so that doomed first
+  attempt consumed the only copy — the world then attached with nothing left to apply and the
+  player looked like whatever save had loaded. Now: ask whether a live customization state
+  exists BEFORE spending the bytes, keep them when it does not, clear only after a commit is
+  accepted. Cheap live check: `appearance held - no live customization state yet` once, then
+  a real BEGIN after the world attaches. Fault A — `OwnSave` picking a save by file order
+  instead of identity — is STILL OPEN and the big one; its fix is ChatGPT's Phase 1 items 1-4
+  and the correct next piece of work.
+
+- **"Nobody could see anybody" — never the puppet system. FIXED `ec2858d`, awaiting a live
+  run.** `NetworkWorldSystem::Spawn` was never called ONCE in twenty-one session logs — no
+  `[Spawn]` line of any kind, not even the "queued" or "CreatePuppet failed" branches — so
+  stop looking at `PuppetDriver`, remote animation, or the appearance path: none of them ever
+  ran. Since `f66a40a` (2026-08-24) the client re-derives each load's cell from its position
+  and drops the load when its answer differs from the server's (`[World] dropped map-invalid
+  character load …`) — that rejected EVERY character and vehicle load for six days. Movement
+  and appearance are separate messages and kept arriving, which is why the player list showed
+  people, `/tp` moved them server-side, and the client logged `movement for id … but no
+  puppet is registered under it` — it looked exactly like a spawn bug and was not one. Two
+  faults, both server-side: the grid was declared twice (`Level.cpp` bins by `sCellSize =
+  6000`, `GameServer.cpp` advertised `60000` — ten times out), and `ToCell` used a
+  float-to-int cast (truncates toward zero) while the client uses `std::floor` — those agree
+  only for positive coordinates and Night City is mostly negative (at `x = -1769` the server
+  sent cell `0`, the client expected `-1`). Fix is server-side ONLY — no client rebuild, no
+  player update: `kCellSize`/`kLoadRadius`/`kUnloadRadius` now live on `Level` as the
+  contract they are, `GameServer` advertises those constants, `ToCell` floors. NEVER put a
+  literal back in either place — the client is entitled to compute what the server computes.
+  Verify with: `[Spawn] remote id … - ccstate N bytes` appearing and `dropped map-invalid`
+  stopping; if the drops stop and players are still invisible that is a DIFFERENT bug — the
+  puppet spawn itself — and the `[Spawn]` line will name it. Production deploys from this
+  branch, but the cron defers while anyone is online.
 
 ### Vehicle architecture (audited 2026-08-26 — read before touching the vehicle system)
 - **The live vehicle and the persistent record used to be strangers.** `VehicleComponent`
@@ -728,75 +443,80 @@ Difficulty is pinned to Very Hard for every connected player (`d5d506f`, `77971e
   /givecar sets Model to `std::hash<std::string>` of the record name, which is not a
   TweakDBID and never equals what the client sends, so binding on it compiles, runs, and
   matches nothing forever. The id is recomputed from ModelName with `TweakDBIDFromName`.
+
 - **Parentage is AUTHORITY, not ownership, and that is deliberate.** `child_of(player)`
   answers "whose machine simulates this", `HandleMoveEntityRequest` refuses movement from
   anyone but the parent's connection, and `TransferAuthority` re-parents plus bumps an epoch
   so late packets from the old simulator are dropped (revoke before assign, so the failure
   mode is a brief freeze rather than two simulators fighting). Keep that mechanism. What it
   should stop doing is doubling as the vehicle's identity and lifetime.
-- **Already true, do not "fix" it again:** `ReleaseVehicleIfEmpty` PARKS rather than
-  destroys - the destruction it used to do was a workaround for a different bug (entering a
-  car spawned a fresh entity every time; seven copies once stacked in one road), and that is
-  prevented at the other end now.
+
+- **Seat/occupancy state — already built and already true, do not rebuild or "fix" again
+  (audited with `eff82e0`):** `sit_id` on the wire for enter/exit/notify;
+  `AttachmentComponent{Parent, SlotId}` as real server seat state; one-per-seat enforced and
+  REFUSED rather than reassigned; stale seat-swap exits recognised; late joiners get a
+  `NotifyVehicleEnter` per occupant (§18); a disconnecting driver hands authority to a
+  passenger and the car survives (§16); `ReleaseVehicleIfEmpty` counts EVERY attachment and
+  PARKS rather than destroys (§17 — already correct; the destruction it used to do was a
+  workaround for a different bug — entering a car spawned a fresh entity every time, seven
+  copies once stacked in one road — prevented at the other end now).
+
 - **Persisted today:** id, owner, model, ModelName, plate, price, and a SALE lock (not a
   door lock). **Not persisted:** position, rotation, health, damage, driver, garage/stored
   state, destroyed state, customization.
+
 - **Honest limit on the whole system:** the server is authoritative over identity and
   permission, not physics. It relays positions and sanity-checks them; it does not simulate
   vehicles and realistically cannot. Anywhere a brief says "server-authoritative physics",
   what is achievable is server-authoritative STATE with validated client motion.
+
 - **Design call nobody has made:** the phone lists MODELS and cannot list instances, so
   "summon my second Quadra" has no native expression. The server must decide which instance
   a model-summon resolves to - nearest stored, last driven, or explicit via /garage.
 
 ### Known bugs, diagnosed, unfixed
-- **THE crash: SOLVED 2026-08-26/27 - it was never entity readiness. It was a genuine
-  data race: two threads inside flecs' `flecs_stack_restore_cursor` on the same stack
-  allocator at the same instant** (`0da3c9b`, `559828f`, `0fa2bb9`). flecs's stack
-  allocator is deliberately unlocked - documented as per-stage, single-threaded - and the
-  game's own job system was calling into our flecs world off the main thread from THREE
-  places: the combat hit hook (every bullet), `VehicleSystem::OnVehicleEnter`, and
-  `OnVehicleReady`. All three were wrongly assumed main-thread "because they are RTTI
-  methods called from redscript" - a caller being redscript says nothing about which
-  thread the engine's job system dispatches it on, and that wrong assumption cost a full
-  day before someone measured instead of read. Fixed by removing flecs from every
-  off-thread path (a lock-free `ServerIdRegistry`, modelled on `PuppetRegistry`) rather
-  than locking the allocator - locking it would have cost frame rate on the hit hook,
-  which fires for every bullet in Night City. A second, unrelated structural bug
-  (`98b12fa`) was fixed alongside it: an `OnAdd` observer that added a component during
-  its own dispatch, which flecs's own source warns against.
-  **Confirms the vehicle-mount crash and the weapon-fire crash were the SAME bug** - the
-  v0.3.112 release notes say so directly ("Same cause behind the crash when getting on a
-  bike or into a car"), and `0fa2bb9`'s follow-up session recorded ZERO 0xC0000005 crashes
-  after the fix, on a session that used to reliably produce them within seconds.
-  **The entity-readiness theory in `docs/CRASH-FIX-BRIEF.md` and the female-appearance
-  correlation below were both red herrings** - real, honestly-reported dead ends, not
-  wrong observations, but not the cause. Do not resume that brief's Tier 1/Tier 3 work;
-  it was chasing the wrong mechanism. Treat CRASH-FIX-BRIEF.md as historical from here.
-  **STILL OPEN, and it is a DESIGN question now, not a crash:** A disconnects while
-  driving, B stays online, C joins later - the car legitimately survives (parking on
-  zero-players doesn't cover it) and hands C a car with no valid driver. Whether this
-  still misbehaves post-race-fix is UNMEASURED; worth one session confirming it merely
-  looks odd now rather than crashing, before spending time on it as a crash.
-  Historical shape of the investigation, kept for anyone re-deriving it: dies within
-  seconds of `[Interpolation] movement for id N but no puppet is registered` ->
-  `HandleVehicleEnterMessage: queueing mount` -> `OnVehicleReady` -> `DoMount` /
-  `MakeRemoteDriven: SetKinematic ... done`. Reproduced on demand 2026-08-26 via the
-  mundane trigger (disconnect while driving, then rejoin - the car survives in the live
-  flecs world with no persistence trail, gets replayed to the rejoiner, dead 1.6s after
-  `MakeRemoteDriven` finishes). A parallel, separately-chased correlation (never proven,
-  now understood to be the same race): remote APPEARANCE apply (`AddItemToSlot failed`
-  x106/evening for one player), matching a female-character bias that turned out to be
-  coincidental exposure to the race rather than a female-specific code path. Two things
-  landed from that investigation and remain true and useful regardless of the real cause:
-  `Level::ClearAbandonedVehicles` clears every vehicle server-side when the player count
-  hits zero (`0e00c77`), and the CRASH-FIX-BRIEF.md fixes I (Copilot) actually implemented
-  2026-08-24 - the AppearanceSystem span-lifetime UB and the CMPReader silent-corruption
-  fix - were real bugs worth having fixed even though they were not THE crash.
+- **THE crash: SOLVED 2026-08-26/27 (`0da3c9b`, `559828f`, `0fa2bb9`) - never entity
+  readiness; a genuine data race, two threads inside flecs' `flecs_stack_restore_cursor`
+  on the same stack allocator at the same instant.** flecs' stack allocator is
+  deliberately unlocked (documented per-stage, single-threaded); the game's job system
+  called into our flecs world off the main thread from THREE places: the combat hit hook
+  (every bullet), `VehicleSystem::OnVehicleEnter`, and `OnVehicleReady` - all three
+  wrongly assumed main-thread "because they are RTTI methods called from redscript". A
+  redscript caller says NOTHING about which thread the engine's job system dispatches on;
+  that assumption cost a full day before someone measured instead of read. Fix: flecs
+  removed from every off-thread path (lock-free `ServerIdRegistry`, modelled on
+  `PuppetRegistry`) rather than locking the allocator - a lock would cost frame rate on
+  the every-bullet hit hook. Fixed alongside, unrelated (`98b12fa`): an `OnAdd` observer
+  adding a component during its own dispatch, which flecs' own source warns against.
+  Vehicle-mount and weapon-fire crashes were the SAME bug - v0.3.112 release notes say so
+  directly ("Same cause behind the crash when getting on a bike or into a car"), and
+  `0fa2bb9`'s follow-up session recorded ZERO 0xC0000005 on a session that used to
+  produce them within seconds. **Red herrings, both closed - real observations, wrong
+  mechanism:** the entity-readiness theory (docs/CRASH-FIX-BRIEF.md - historical from
+  here, do not resume its Tier 1/Tier 3 work) and the female-appearance correlation
+  (incl. remote APPEARANCE apply, `AddItemToSlot failed` x106/evening for one player) -
+  coincidental exposure to the race, not a female-specific code path. Historical
+  signature, kept for anyone re-deriving it: dies within seconds of `[Interpolation]
+  movement for id N but no puppet is registered` → `HandleVehicleEnterMessage: queueing
+  mount` → `OnVehicleReady` → `DoMount` / `MakeRemoteDriven: SetKinematic ... done`;
+  reproduced on demand 2026-08-26 via the mundane trigger - disconnect while driving,
+  then rejoin: the car survives in the live flecs world with no persistence trail, gets
+  replayed to the rejoiner, dead 1.6s after MakeRemoteDriven finishes. **Kept from the
+  investigation, true regardless of cause:** `Level::ClearAbandonedVehicles` clears every
+  vehicle server-side at zero players (`0e00c77`), and the CRASH-FIX-BRIEF fixes Copilot
+  implemented 2026-08-24 (the AppearanceSystem span-lifetime UB, the CMPReader
+  silent-corruption fix) were real bugs, just not THE crash. **STILL OPEN - a DESIGN
+  question now, not a crash:** A disconnects while driving, B stays online, C joins
+  later - the car legitimately survives (parking on zero-players doesn't cover it) and
+  hands C a car with no valid driver. Post-race-fix behaviour is UNMEASURED; worth one
+  session confirming it merely looks odd rather than crashes, before spending time on it
+  as a crash.
+
 - **EACCES shell-fallback destroys crash telemetry: FIXED** (`681e3af`, 2026-08-24/29,
   Copilot). The shell wrapper's own near-instant exit (always code 0) is no longer logged
   through the same path that writes "game exited with code N" - it has its own distinct
   log line, and the real game process is still tracked separately by `watchForGameExit()`.
+
 - **Ghost remotes on join: SOLVED (2026-08-23) - they are /npc entries with garbage
   records.** The test server's npcs.json holds 7 NPCs; FIVE carry the literal string
   `Character.<record>` (the usage line's placeholder, typed verbatim and persisted),
@@ -809,23 +529,24 @@ Difficulty is pinned to Very Hard for every connected player (`d5d506f`, `77971e
   game). Code fix: /npc now REFUSES records containing `<`/`>` (placeholder paste),
   not just warns (`681e3af`, 2026-08-24/29) - the base-game-records warning added
   2026-08-23 only ever described the problem, this actually stops it.
-- **Parked persisted vehicles + MakeRemoteDriven: DISAGREEMENT, unresolved, needs a
+
+- **Parked persisted vehicles + MakeRemoteDriven: two positions contradict - needs a
   human call, not another edit.** This entry originally claimed a parked replayed car
-  must NOT be made kinematic and that MakeRemoteDriven belongs to occupied vehicles
-  only. Current `VehicleSystem.cpp::OnVehicleReady` argues the opposite on purpose, in
-  its own comment: physics-off (`MakeRemoteDriven`) runs for EVERY network-spawned
-  vehicle unconditionally, occupied or not, specifically so a parked copy can never
-  simulate physics against the local world's own copy of the same car. I (Copilot,
-  2026-08-24) read that comment and did not touch this, because the two positions
-  contradict each other and I could not tell which one was reasoning about a live bug
-  versus which one was the fix already applied. Whoever picks this up: check `git log`
-  on that function before changing it either direction - one of these two claims is
-  stale.
+  must NOT be made kinematic (MakeRemoteDriven belongs to occupied vehicles only).
+  Current `VehicleSystem.cpp::OnVehicleReady` argues the opposite ON PURPOSE, in its own
+  comment: physics-off (`MakeRemoteDriven`) runs for EVERY network-spawned vehicle
+  unconditionally, occupied or not, specifically so a parked copy can never simulate
+  physics against the local world's own copy of the same car. Left untouched (Copilot,
+  2026-08-24): one claim is reasoning about a live bug and the other is the fix already
+  applied, and which is which is not recorded. Check `git log` on that function before
+  changing it either direction - one of the two claims is stale.
+
 - **Mod 22114 (70 files, still unnamed) verify-flip churn**: reinstalled 4x with
   IDENTICAL archive hashes yet verification keeps flipping back to broken on Cam's
   machine - something on disk rewrites or removes its files after install. Identify the
   mod first (tools/hackid.py will not help - it is a Nexus id; check the page when
   Cloudflare allows, or Cam names it), then diff which recorded files fail.
+
 - **Death-respawn loop for creator-flow players** (ashencorridor 17, rimtek 59 respawns).
   Mechanism: immortality blocks death but not damage; the health floor fires "downed",
   revive teleports to the respawn point, where a naked level-1 keeps getting farmed →
@@ -834,34 +555,33 @@ Difficulty is pinned to Very Hard for every connected player (`d5d506f`, `77971e
   immunity post-revive (gameGodModeType.Invulnerable window) and/or full-health revive;
   operational relief: `/setspawn` somewhere safe. Owner: whoever grabs it first — it
   spans Cam's creator flow and the Death.reds layers.
-- **Character face/body loads from the LOCAL save, not the server: ACTIVELY BEING FIXED
-  BY CAM, 2026-08-28, not the stale "known/unfixed" state v0.3.113's notes still describe.**
-  Real progress since that release, in order: `54d9a85` wired the server to send the owner
-  their OWN stored appearance (previously it only ever went to everyone else) and the
-  client to attempt applying it locally. `78713d7` found `InitializeState` was never even
-  reached - every customization method lives on `gameuiICharacterCustomizationSystem`, the
-  INTERFACE, not the concrete class the game hands back (which has an empty function
-  list) - fixed the dispatch to resolve against the interface explicitly. `e795a52`
-  (latest) overturned the earlier conclusion that a live customization state requires the
-  creator: `equipmentSystem.script:4992` calls `GetState()` during ordinary gameplay, so
-  `GetLiveCustomizationState()` now resolves the same way instead of requiring
-  `InitializeState` at all.
-  **STILL UNPROVEN, and it is a pure visual check nothing here can substitute for:**
-  whether deserializing into that live state and calling `ReFinalizeState` actually
-  rebuilds the body mid-session. Cam's own words: "Phantom Veronica on screen is the only
-  test that counts." Needs one live join to answer. Do not restart this investigation from
-  scratch - the dispatch bug and the InitializeState/live-state question are BOTH already
-  closed; only the visual outcome of the final apply is open.
-  **RULED OUT BY CAM 2026-08-30: the mod-spawned-puppet approach is NOT the way.** The
-  Phase 1 experiment (`2356232`, `LocalPuppet.reds`, the `-mod-local-puppet` flag and its
+
+- **Character face/body loads from the LOCAL save, not the server - Cam actively fixing,
+  2026-08-28 (v0.3.113's notes still say "known/unfixed": stale).** Landed since that
+  release, in order: `54d9a85` - the server now sends the owner their OWN stored
+  appearance (previously it only ever went to everyone else) and the client attempts the
+  local apply. `78713d7` - `InitializeState` was never even reached: every customization
+  method lives on `gameuiICharacterCustomizationSystem`, the INTERFACE, not the concrete
+  class the game hands back (empty function list); dispatch now resolves against the
+  interface explicitly. `e795a52` - overturned "a live customization state requires the
+  creator": `equipmentSystem.script:4992` calls `GetState()` during ordinary gameplay,
+  so `GetLiveCustomizationState()` resolves the same way, no `InitializeState` at all.
+  **Only the visual outcome is open** - whether deserializing into that live state and
+  calling `ReFinalizeState` actually rebuilds the body mid-session; a pure visual check
+  nothing else substitutes for. Cam: "Phantom Veronica on screen is the only test that
+  counts." One live join answers it; the dispatch bug and the InitializeState/live-state
+  question are BOTH closed - do not restart the investigation from scratch.
+  **RULED OUT BY CAM 2026-08-30: the mod-spawned-puppet approach.** The Phase 1
+  experiment (`2356232`, `LocalPuppet.reds`, the `-mod-local-puppet` flag and its
   `IsModLocalPuppet*` natives) asked whether a mod-spawned puppet could BECOME the local
-  player, as an alternative to changing the vanilla V's body in place. Cam's call: *"we wont
-  be doing the mod-spawned puppet thing."* Do not revive it, and do not treat it as the
-  fallback when the `GetState` path is tested. The remaining route is the one already
-  written - write the stored ccstate into the live customization state and re-finalize.
-  The experiment code is now dead weight: it is off unless `-mod-local-puppet` is passed, so
-  it harms nothing shipping, but it should be removed rather than left to look like an open
-  option. See the "Local Puppet Migration" artifact for the reasoning it was built on.
+  player, as an alternative to changing the vanilla V's body in place. Cam: "we wont be
+  doing the mod-spawned puppet thing." Do not revive it, and do not treat it as the
+  fallback when the `GetState` path is tested - the remaining route is the one already
+  written: write the stored ccstate into the live customization state and re-finalize.
+  The experiment code is dead weight (off unless `-mod-local-puppet` is passed, harms
+  nothing shipping) but should be removed rather than left looking like an open option.
+  Reasoning it was built on: the "Local Puppet Migration" artifact.
+
 - **The template's inventory lands on the player. FIX WRITTEN 2026-08-28, UNTESTED
   (d926ca9).** Same disease as the row above - Phantom Veronica supplying identity instead of
   just the world. The strip runs, the kit lands correctly (5 items, 20,000 eddies, no chrome),
@@ -878,11 +598,33 @@ Difficulty is pinned to Very Hard for every connected player (`d5d506f`, `77971e
   bought. It arms ONLY inside `ShouldEquipRestored()`, true only for a starter kit, true only
   at character creation. NEXT: make a character, watch `settlement: armed` -> `INITIALIZED`,
   then buy something, reconnect, confirm it survived.
-- **Money does not persist. NOT STARTED (2026-08-28).** 84 eddies picked up; every subsequent
-  capture read exactly `20000`. Nothing decayed - a gain never entered the record. Candidate:
-  a second restore ran mid-session (`restore DONE: money 20000 -> 20000`) re-applying the
-  server's snapshot, which would also violate the items-must-stay rule above. Instrument every
-  boundary before touching it: capture -> send -> record -> save -> reload -> apply.
+
+- **Money does not persist — but the restore no longer CONFISCATES earned money (`f53e4df`,
+  untested live).** The 2026-08-28 observation stands: 84 eddies picked up; every subsequent
+  capture read exactly `20000` — nothing decayed, a gain never entered the record.
+  Candidate: a second restore ran mid-session (`restore DONE: money 20000 -> 20000`)
+  re-applying the server's snapshot, which would also violate the items-must-stay rule. The
+  DESTRUCTIVE half is fixed: `owed = stored - held`, and when negative the restore REMOVED
+  the difference — negative means the player holds more than the server last heard, which
+  after creation is the normal state of anyone who has earned anything; that is the exact
+  shape of *"I found 84 eddies and they didn't save"* (the money arrived, the capture had
+  not run, the next spawn took it back). The removal could not simply go — it is the only
+  thing that strips the world template's balance, because `MpSettleStarterLoadout`
+  deliberately never touches money — so it is **gated to the character's first spawn**, the
+  one-shot-at-creation strip the inventory rule allows. No new wire field: the roster
+  already carries `spawned_before` per character and marks the active one, both already
+  exposed to script — the server's own answer. **This does NOT make money persist** — a
+  stale capture is still stale; it stops the bug being destructive while that is settled (a
+  balance that fails to save can be repaired from the ledger; eddies taken off a player
+  every spawn cannot even be noticed). The four `[MONEY]` boundaries on the chain capture →
+  send → record → save → reload → apply have STILL never produced data — they postdate every
+  session in the logs. One session with the current build settles it.
+  The instrument-before-touching demand (capture -> send -> record -> save -> reload ->
+  apply) is answered: four `[MONEY]` boundaries are instrumented, but they postdate every
+  session in the logs and have NEVER once produced data. They distinguish "never
+  recorded" from "recorded and overwritten", which need OPPOSITE fixes - the first live
+  session with them running decides which fix to write.
+
 - **Character overwrite - FIXED 2026-08-28 (fbdff4a), and the fix needed a second fix
   (019a4cc).** Cam lost a character: connected, restored correctly (13 stacks, 20,000 eddies),
   pressed join from the main menu - which detaches the world and rebuilds it from the LOCAL
@@ -895,6 +637,7 @@ Difficulty is pinned to Very Hard for every connected player (`d5d506f`, `77971e
   down on the engine's schedule - trading a rare catastrophic loss for a routine small one.
   The save now runs at the TOP of `OnBeforeWorldDetach`, the last instant the body is still
   the server's character. Cam caught this: *"also make sure the game saves when you quit."*
+
 - **The invisible chat box - SOLVED 2026-08-28 (96da4bf, shipped v0.3.113).** Never a
   visibility problem. A native parent-chain walk (`LogWidgetAncestry`, added because
   `inkWidget` in 2.31 has `Reparent` and **no `GetParentWidget`**, so script can only walk
@@ -911,12 +654,15 @@ Difficulty is pinned to Very Hard for every connected player (`d5d506f`, `77971e
   list of all 70 entries and is otherwise field-for-field identical to `new_phone`. Decoded by
   building the WolvenKit CLI from source (`dotnet build WolvenKit.CLI`, then
   `convert serialize`) - worth knowing that route exists.
+
 - **Exit-grace 250m pop**: the 4s vehicle-exit grace freezes the puppet's interpolation
   target while the real player keeps moving → teleport-pop when grace ends
   (`[MultiMovement] delta runaway (250m)`, live). Fix: keep updating the target during
   grace, only withhold the controller attach. (VehicleSystem.cpp / InterpolationSystem.)
+
 - **`AddItemToSlot failed`** on remote puppets' equipment (cosmetic: some clothing
   missing on remotes; possibly items the viewer lacks). Not investigated.
+
 - **rimtek-class ping (170ms) vs the fixed 100ms interpolation budget** — far players
   look the choppiest. NOW MEASURABLE: `tools/netlab/` (Python lab; README has the
   charter — Python is the lab, C++ is the ship). First synthetic results (2026-08-22):
@@ -944,16 +690,59 @@ Difficulty is pinned to Very Hard for every connected player (`d5d506f`, `77971e
   DELAYED on zeldfep's call (2026-08-22) - cut it when he says go; the test server
   is already rebuilt at e15f6f5 to pair with it.
 
+- **"I am not the character I made" — root cause found 2026-09-02: TWO independent faults
+  stacking, one still open.** Cam's report: *"the character we created would not be the
+  character we play as, it is also not phantom veronica"* — a third person entirely.
+  - **(A) STILL OPEN — the big one: `OwnSave` has no idea which save is the character.** It
+    loads "the newest save that is not `MultiplayerStart`", which is not an identity, it is
+    an accident of file order. On 2026-09-01 it loaded `AutoSave-12` — a throwaway female
+    Corpo from a probe run two days earlier. ANY newer save wins: another test character, a
+    singleplayer session, anything. The fix needs a save NAMED for the character
+    (`ManualSave(saveName: String)` exists on `inkISystemRequestsHandler`, so the mod can
+    name its own saves) and a load that matches that name rather than a position in a list.
+    That is ChatGPT's Phase 1 items 1-4 and it is the correct next piece of work.
+  - **(B) FIXED**: the stacked second fault — a failed appearance restore destroying its own
+    input — see the appearance-restore entry.
+
+- **Appearance restore's contaminated-blob loop (older notes, still true)**: the restore runs
+  on characters it promised to skip — log says `NEW character - possessions discarded, restore
+  will run empty` then immediately `Deserialize ccstate COMPLETE - body is female`, applying
+  the stored blob over the character the player just made. The stored blob IS the contaminated
+  one (9141 bytes, female) and is re-uploaded on every autosave and every disconnect (`sent
+  9141 bytes of appearance to the server`), so the bad record keeps refreshing itself. The
+  commit is inert — why nobody is visibly Veronica: `ReFinalizeState`/`FinalizeState` are
+  refused in gameplay, `InitializeOptionsFromFinalizedState` is accepted and does not rebuild
+  the body — the restore "succeeds", changes nothing, and still gates saving
+  (`MaySaveCharacter` refuses on a FAILED restore). Cam, from the field: "im not the character
+  i just made, im some man but not my male character." Do NOT re-attempt the creator-only
+  commit functions (`InitializeState`/`ReFinalizeState`/`FinalizeState`) — all three are
+  measured and refused.
+
 ### Manifest system: built, waiting on two keys and one deploy
-- **Cam's signing key**: he runs `node tools/manifest/keygen.cjs`, posts the PUBLIC line
-  to the feed; it gets pinned in `MANIFEST_PUBKEYS` (main.js) next to zeldfep's
-  (`882c415a`). Until then his -Mod ships warn and go manifest-less (migration state, by
-  design).
-- **First real manifest ship**: any -Mod ship from a keyed machine publishes
-  `server-manifest.json` + `.sig`; launchers start verifying automatically.
+- **Cam's signing key: MINTED 2026-08-30 (`node tools/manifest/keygen.cjs`), deliberately
+  PAUSED — do not half-resume.** Public half
+  `ed25519-public:l9q5uBPf2IRZr1wyVzRCDIvF6LQdMl9r86VQUpyx89c=:38d98b61`, NOT yet pinned in
+  `MANIFEST_PUBKEYS` (main.js, next to zeldfep's `882c415a`, which is pinned and
+  unaffected); secret parked at `~/.nco-manifest-key.paused`, moved OFF
+  `~/.nco-manifest-key` (the path Ship.ps1 reads) on purpose. Key renamed back WITHOUT the
+  pin kills every future ship at Ship.ps1:908's verify; signing before players hold the pin
+  reads as BAD SIGNATURE, not "unsigned" — main.js:867 refuses Ready and never falls back —
+  locking every player out. While parked, -Mod ships warn and go manifest-less (migration
+  state, by design): v0.3.107 through v0.3.113 ALL ship without `server-manifest.json`, so
+  players get no manifest verification yet — not new, and the key fixes it permanently once
+  resumed in order.
+
+- **First real manifest ship — pin FIRST, sign second, two releases apart.** Ship the
+  LAUNCHER carrying the new pin while still unsigned (point `NCO_MANIFEST_KEY_FILE` at a
+  path that does not exist), wait for players to update, THEN any -Mod ship from the keyed
+  machine publishes `server-manifest.json` + `.sig` and launchers start verifying
+  automatically. Reversing the order locks players out (see the key entry above); the gap
+  between the two releases is the point.
+
 - **Server-side arming**: copy the shipped manifest to the server's `config/` dir —
   absent file = checks disabled (migration). Then manifest_version + install_digest
   gates go live at the door.
+
 - **Milestone 2** (docs/MANIFEST-ARCHITECTURE.md §11): transactional installs with
   rollback; launcher self-update signature gate (closes the trust loop); HashProtocol
   hashing dependency CONTENT (until then: a common.proto change is a protocol change BY
@@ -995,24 +784,63 @@ Difficulty is pinned to Very Hard for every connected player (`d5d506f`, `77971e
      committed, pushed to main, and verified in the local build - then v0.3.113 shipped
      without it, because the release had already been cut. The launcher can only deliver what
      is in a release.
+
 - **No manifest signing key** (`~/.nco-manifest-key`), so releases ship without
   `server-manifest.json` and players get no manifest verification. NOT new - v0.3.107 through
   v0.3.113 all lack it. `tools\manifest\keygen.cjs` fixes it permanently; it generates a key,
   so it is Cam's to run.
-- **Live server runs feat-built code while `main` lags** — Cam deploys the live box by
-  hand from feat; the NAS cron tracks main. Either merge feat→main at a stable point or
-  keep the cron pointed where deploys actually come from. Divergence is how a "clean"
-  push to main could someday roll the live server BACKWARD.
+
+- **Live server runs feat-built code while `main` lags** — the cron half is FIXED: the NAS
+  cron now pulls `origin/feat/world-state` (remote `ofmiceandcam98-eng`, confirmed live
+  2026-09-03 via `~/nco-update.log`), so deploys and cron finally agree; the old "cron
+  tracks main" note is dead. The remaining debt is `main` itself: untouched at `304b492`
+  while feat sits at `5a68517` (2026-09-02). Merge feat→main at a stable point; until then,
+  anyone "correcting" the production checkout back to main rolls the live server BACKWARD.
+
 - **Nexus SSO application** still unanswered (publish/nexus-sso-request.md) — manual
   API-key paste remains the sign-in path.
+
 - **Server password has wire+server support but no launcher UI** (settings.serverPassword
   is settable by hand only).
+
 - **Puppet record flip** (mannequin → Character.Jackie/WaPanam story rigs) still waits
   on live validation via `-puppet-record` / `/npc`.
+
 - **reason 4 disconnects** are abrupt game closes, not crashes — cosmetic, but mapping
   GNS close reasons better would stop them reading as failures in every log review.
 
 ---
+
+- **Server code is only ever checked against MSVC — the Linux/GCC build is locally
+  unverifiable, so portability breaks are invisible until the NAS rebuild.** The server
+  runs GCC in a container; the dev machine has no GCC, no WSL distro, and Docker is not
+  running (and Cam does not want to use it). MSVC supplies headers transitively that
+  libstdc++ does not. 2026-09-02 lesson: four new files called `std::snprintf` with no
+  `<cstdio>` and `ChatSystem.cpp` used `std::map` with no `<map>` — fixed in `dcab568`,
+  but NOT confirmed to be the actual build failure: `CharacterRecord.h` has done exactly
+  the same since 2026-08-20 and builds fine, so the transitive include is evidently
+  available somehow. The real error is still a guess; anyone with a Linux box settles it
+  in one command. The NAS rebuild launched 2026-09-03 (when the deploy unblocked) IS the
+  missing GCC check for this code — its verdict lands in `~/nco-update.log` as
+  `deployed`/`BUILD FAILED` with the real compiler error either way. Read that before
+  guessing further.
+
+- **World-template plan (Cam, 2026-08-28), not started**: phantom Veronica propagates WORLD
+  state and nothing else — doors she opened stay open for everyone (housing and vehicles
+  excluded), quests she finished count as finished for everyone, then quests off entirely;
+  all gated on Dogtown being open. Mechanism already exists: `WorldFact` on
+  `SpawnCharacterResponse.facts`. First pieces landed: `06af8b5` (open Dogtown on a fresh
+  deployment), `51756fc` (stop quest calls at `PhoneSystem`).
+
+- **The version number no longer identifies a build — a real v0.3.114 is owed.**
+  `Ship.ps1 -Mod` does NOT cut a new version — it republishes mod assets into whatever
+  release is already `latest`, so THREE different `ModPayload.zip` builds now exist under the
+  tag `v0.3.113` (28 Aug, and two on 30 Aug). Players still update correctly because the
+  launcher compares the ASSET ID, not the version string, but `.nco-version` reads the same
+  number for three builds — which will mislead the first bug report that quotes it. Cutting
+  v0.3.114 needs a `## What changed - v0.3.114` section in `publish\release-notes.md` and a
+  FULL ship (which also republishes the 103 MB installer). Held on the same 2026-08-30 budget
+  call as the signing-key pause.
 
 ## 2. CODE MAP — where things live, and the gotcha that bites there
 
@@ -1028,17 +856,22 @@ Difficulty is pinned to Very Hard for every connected player (`d5d506f`, `77971e
 | Client settings | `code/client/App/Settings.cpp` | ALL launch args (`--key=value` form ONLY — space-separated silently ignored) | The launcher→DLL channel is argv, one-shot; there is no config file |
 | Client net | `code/client/App/Network/NetworkService.cpp` | Auth request fill (build_stamp, manifest attest, unmanaged, password), denial capture → NetworkWorldSystem | Denials must be stored BEFORE Close() or the popup has nothing to say |
 | Client world | `code/client/App/World/` | NetworkWorldSystem (join/detach/denial natives), VehicleSystem (load/enter queue, exit grace), InterpolationSystem, AppearanceSystem, PuppetRegistry | Every native needs a matching `native func` line in the .reds or ALL scripts fail with UNRESOLVED_METHOD |
-| Scripts | `code/assets/redscript/` | MainMenu (join arming), Death.reds (immortality + floor + menu backstop), Combat.reds (hit hook, weapon poll, quickhack requests), Hackable.reds, World/*.reds | redscript is ONE compilation unit — one broken file boots the game with no scripts at all. **No hex literals** (`0xFF...` is a parse error that kills every script). Match integer widths exactly — `GetMagazineAmmoCount` returns Uint32, and mixing it with Int32 is NO_MATCHING_OVERLOAD |
+| Scripts | `code/assets/redscript/` | MainMenu (join arming), Death.reds (immortality + floor + menu backstop), Combat.reds (hit hook, weapon poll, quickhack requests), Hackable.reds, Difficulty.reds (pins Very Hard for every connected player — `d5d506f`, `77971ee`), World/*.reds | redscript is ONE compilation unit — one broken file boots the game with no scripts at all. **No hex literals** (`0xFF...` is a parse error that kills every script). Match integer widths exactly — `GetMagazineAmmoCount` returns Uint32, and mixing it with Int32 is NO_MATCHING_OVERLOAD. Difficulty.reds reads the difficulty index BY NAME rather than hardcoding 3 — keep it that way |
 | Combat | `code/server/native/Game/Level.cpp` (handlers) + `Components/{Health,Weapon,Quickhack}Component.h` + `code/assets/redscript/Combat.reds` | Detect → validate → broadcast → apply. Server owns health, magazine, RAM pool | **The game computes, the server bounds.** Weapon damage, quickhack damage and RAM cost all come from the client because they are native calculations needing a live StatsSystem — `GetCost()` runs `CalculateStatModifiers` against the attacker's deck and perks and can include a RANDOM modifier. Quickhack damage MUST stay 0 in the rule table: Cyberpunk applies it through the ordinary hit pipeline, so a number there double-counts (the v0.3.104 bug). A TweakDBID is **CRC32** of the name + length in bits 32-39, not FNV — guarded by a static_assert against a value dumped from the game |
 | Making players targetable | `code/assets/Tweaks/CyberpunkMP.tweak` + `Hackable.reds` | `objectActions` on the puppet records; hostile attitude at spawn | **`MaMuppet`/`WaMuppet` inherit from `Character.Panam`, NOT from `Character.Muppet`** — editing Muppet does nothing. Quickhack action names in the game's scripts are WRONG (`BaseBlindHack` not `BlindHack`, `MadnessHackBase` not `MadnessLvl3Hack`) — they were dumped live. Hostile attitude satisfies BOTH gates: `Att_Hostile` for `TSF_EnemyNPC` and the fourth route to `IsAggressive()`. The entity templates were never missing targeting components (16 `gameTargetingComponent`s, confirmed via WolvenKit CLI). Behind `--hackable-puppets` |
 | Runtime inspection | `bin/x64/plugins/cyber_engine_tweaks/mods/nco_hackdump` (not in repo) | Dumps TweakDB data the game will not reveal statically | CET only honours `registerForEvent` from `init.lua`; a required module's registration is ignored. Mod globals are NOT reachable from the console — export by returning a table. `io` is sandboxed to the mod folder. **Lua output goes to `scripting.log`**, not `cyber_engine_tweaks.log` |
-| World/asset editing | External tool, not in repo: [WolvenKit](https://github.com/WolvenKit/Wolvenkit/releases) | Editor + CLI for the game's own resource formats (`.ent`, `.mesh`, `.app`, world/sector nodes, TweakDB). Already used once to confirm the puppet templates' `gameTargetingComponent`s statically (see the targeting row above) — it is the tool for any future world-building, level-editing, or static-asset-inspection work, not just confirmation checks. **LIVE on the NAS as of 2026-08-29**: `tools/deploy/update-wolvenkit.sh` is wired into `truenas_admin@100.90.85.33`'s crontab (`0 * * * *`, self-throttled to ~72h internally — see the script's own header for why cron frequency and check cadence are deliberately decoupled) and the seed run succeeded — `~/wolvenkit-console/VERSION` reads `8.20.0`, `~/wolvenkit-console/current/` holds the full `WolvenKit.ConsoleLinux` extraction. Deployed by copying the file directly rather than through the tracked git pull, because that checkout is on `feat/world-state` (see the Deploy row below) and does not have this file yet — if `feat/world-state` is ever reset/rebuilt from git, this script and the cron line survive independently of it, but a fresh checkout elsewhere would need both re-applied by hand until this lands on that branch too. **LOCAL CLI, built from source, 2026-08-30 — the route to use on Cam's PC when you need to READ an asset now.** No installed WolvenKit exists on that machine; only `C:\Users\Cam\Downloads\WolvenKit-main.zip` (source, 89MB). Recipe: extract, then `dotnet build WolvenKit.CLI\WolvenKit.CLI.csproj -c Release`. It needs the .NET SDK and **the CLI targets `net10.0`**, so the exe lands at `WolvenKit.CLI\bin\Release\net10.0\WolvenKit.CLI.exe` — Cam's box has SDKs 6/8/9/10, so it builds; a box with only 9 will not. Decode with `convert serialize <file>`, which writes `<file>.json` beside it (`convert deserialize` goes back). JSON gotchas that cost time: entry names are at `hudEntryName.'$value'`, not `.hudEntryName`; a widget library item's tree is at `item.package.Data.File.RootChunk.rootWidget`; and `rootWidget` is often `{"HandleRefId": "N"}` pointing at a `"HandleId": "N"` defined elsewhere in the same package, so you cannot always walk it with plain property access — search the raw text for the id. **What it settled:** decoding `prototype_hud.inkhud` and `multiplayer_ui.inkwidget` proved the invisible-chat-box bug was NOT the asset — `multiplayer_ui` carries the most permissive `gameContextVisibility` of all 70 entries and is field-for-field identical to `new_phone` apart from `ignoreHudScaleOverride`, and the chat canvas matches its authored state exactly (1000x1000, `Fixed`, `Fill/Fill`, opacity 1). I was one step from "fixing" an asset that was never at fault. | **Check the releases page for the version matched to game patch 2.31** before using it on this project — WolvenKit versions track specific game patches, and a mismatched version can misread or corrupt resource formats it does not recognise. Read-only inspection (CLI dumps) is low-risk; anything that WRITES a resource file should be treated the same as an engine version pin — verify against 2.31 first. |
+| World/asset editing | External tool, not in repo: [WolvenKit](https://github.com/WolvenKit/Wolvenkit/releases) | Editor + CLI for the game's own resource formats (`.ent`, `.mesh`, `.app`, world/sector nodes, TweakDB) — the tool for any world-building, level-editing, or static-asset-inspection work, not just confirmation checks (already confirmed the puppet templates' `gameTargetingComponent`s statically — see the targeting row). **NAS updater LIVE 2026-08-29**: `tools/deploy/update-wolvenkit.sh` in `truenas_admin@100.90.85.33`'s crontab (`0 * * * *`, self-throttled to ~72h internally — cron frequency and check cadence are deliberately decoupled, see the script's own header); seed run succeeded — `~/wolvenkit-console/VERSION` reads `8.20.0`, `~/wolvenkit-console/current/` holds the full `WolvenKit.ConsoleLinux` extraction. The script was hand-seeded on the box first (live wiring `ee12df2`) and is NOW TRACKED (`dcc67eb`) — the leftover untracked copy refused the NAS pull for hours until shelved to `~/update-wolvenkit.sh.shelved-20260903` (2026-09-03); the cron LINE still lives only in the crontab, so a rebuilt box needs it re-added by hand. **Local CLI, built from source 2026-08-30 — the route on Cam's PC to READ an asset now**: no installed WolvenKit there, only `C:\Users\Cam\Downloads\WolvenKit-main.zip` (source, 89MB); extract, then `dotnet build WolvenKit.CLI\WolvenKit.CLI.csproj -c Release` — needs the .NET SDK, and **the CLI targets `net10.0`**, so the exe lands at `WolvenKit.CLI\bin\Release\net10.0\WolvenKit.CLI.exe` (Cam's box has SDKs 6/8/9/10, so it builds; a box with only 9 will not). Decode with `convert serialize <file>` (writes `<file>.json` beside it; `convert deserialize` goes back). Proven use: decoding `prototype_hud.inkhud` + `multiplayer_ui.inkwidget` exonerated the asset in the invisible-chat-box bug BEFORE anyone "fixed" a file that was never at fault (see the SOLVED chat-box entry) — `multiplayer_ui` is field-for-field identical to `new_phone` apart from `ignoreHudScaleOverride`, and the chat canvas matches its authored state exactly (1000x1000, `Fixed`, `Fill/Fill`, opacity 1) | JSON traps that cost time: entry names are at `hudEntryName.'$value'`, NOT `.hudEntryName`; a widget library item's tree is at `item.package.Data.File.RootChunk.rootWidget`; and `rootWidget` is often `{"HandleRefId": "N"}` pointing at a `"HandleId": "N"` defined elsewhere in the same package — plain property walks fail, search the raw text for the id. **Version pin**: WolvenKit versions track specific game patches — check the releases page for the version matched to 2.31 before use; a mismatch can misread or corrupt resource formats it does not recognise. Read-only inspection (CLI dumps) is low-risk; anything that WRITES a resource file is engine-pin-grade — verify against 2.31 first |
 | Launcher | `code/launcher-lite/main.js` | Discord identity (membership: only 200/404 are verdicts), roles (10-min memo), manifest state machine, install lock + queue, Nexus manager, game detect (A–Z drives), footprint/uninstall | **CSS specificity**: base `button.action` (0,1,1) beats bare class rules — trio overrides must be `button.action.x`. Electron packaged: new source files MUST be added to package.json `build.files` (v0.3.97 shipped importing a file it didn't contain). **Uninstall is a two-layer mirror**: footprint in main.js AND `build/installer.nsh` — a new write location goes in BOTH. The `nxm://` class is cleared only when its command points at OUR exe (Vortex/MO2 write the same key; empirically tested both ways 2026-08-22) |
 | Manifest kit | `code/launcher-lite/manifest.js` (+ selftest) | Signature verify vs pins, §2.1 availability states, install digest, ownership index, unmanaged classifier, tailnet check | Pure functions, Electron-free; run `node manifest.selftest.mjs` (82 checks) before shipping launcher changes |
-| Ship tooling | `tools/Ship.ps1`, `tools/manifest/*.cjs` | Gate battery, staging, carry-forward, manifest generate/sign/verify-vs-pins, prerelease→verify→promote | Ship bumps package.json but never commits — carry the bump or the next ship collides with an existing tag and silently uploads into an old release |
-| Deploy | `tools/deploy/update-server.sh` | NAS cron: player-count gate + server-relevant-path filter | **Deploys whatever branch the checkout is ON — production `/mnt/vol/NASa/CyberpunkMP` is on `feat/world-state`, not main** (verified 2026-08-22). The repo dir is the script's first ARG and defaults to `~/CyberpunkMP`, which is not where production lives — calling it without the arg fails with "no such directory". Two traps beyond that: it DEFERS while Players>0 (so a deploy can silently not happen), and it skips the rebuild when no server-relevant path changed — a docs-only commit logs "pulled, nothing changed" and leaves earlier unbuilt server code still unbuilt. Verify a deploy by checking the running binary for a symbol, never by reading the log |
+| Ship tooling | `tools/Ship.ps1`, `tools/manifest/*.cjs` | Gate battery, staging, carry-forward, manifest generate/sign/verify-vs-pins, prerelease→verify→promote | Ship bumps package.json but never commits — carry the bump or the next ship collides with an existing tag and silently uploads into an old release. `Ship.ps1:574` copies `distrib\launcher\mod\assets` wholesale and never cleans it — anything left in `assets\Archives\` ships to every player, so keep probes and experiments out of `distrib` |
+| Deploy | `tools/deploy/update-server.sh` | NAS cron: player-count gate + server-relevant-path filter + untracked-file shelving | **Deploys whatever branch the checkout is ON — production `/mnt/vol/NASa/CyberpunkMP` is on `feat/world-state`, not main** (verified 2026-08-22). The repo dir is the script's first ARG and defaults to `~/CyberpunkMP`, which is not where production lives — calling it without the arg fails with "no such directory". Two traps beyond that: it DEFERS while Players>0 (so a deploy can silently not happen), and it skips the rebuild when no server-relevant path changed — a docs-only commit logs "pulled, nothing changed" and leaves earlier unbuilt server code still unbuilt. Verify a deploy by checking the running binary for a symbol, never by reading the log. **Untracked files kill pulls**: git refuses to overwrite an untracked file with an incoming one — three kills so far: the two coord-api publish files, then `tools/deploy/update-wolvenkit.sh` (hand-seeded on the box as the WolvenKit updater's live wiring, `ee12df2`, later committed to the repo, `dcc67eb`). Fingerprint in `~/nco-update.log`: `updating 3cde271 -> <new tip>` then `pull failed` every 10 minutes for hours. Diagnosed 2026-09-03 (zeldfep stream, from the NAS shell) — the remote (`origin` = ofmiceandcam98-eng, tracking `origin/feat/world-state`) and the fetch were both correct; neither suspected candidate was the cause. The byte-identical local copy was shelved to `~/update-wolvenkit.sh.shelved-20260903`, pull unblocked, checkout at the tip. HARDENED against the class, not the instance: the script now shelves ANY untracked file the incoming commits are about to create, with a loud log line naming it. Tracked local modifications still fail the pull ON PURPOSE — that is real divergence and deserves a human; do not "fix" it. Last trap: after a MANUAL pull the cron sees LOCAL==REMOTE and skips the rebuild — launch the rebuild yourself (why the 2026-09-03 rebuild was launched immediately by hand) |
 | Coordination | `code/coord-api/`, `publish/assistant-updates.json` | The feed both Claude streams post to; dev-key handout | Personal key `~/.ncoa-coord-key`; posts as "zeldfep (Claude)" |
 | Published surface | `publish/` | server.json (address, republished by workflow), modlist.json (curated Nexus list), roles.json (written by server), manifest-source.json (curated components), release-notes.md (EVERY release's body), fullinstall-base/ | All fetched from `releases/latest/download/<name>` — a launcher-only ship must carry mod assets forward or every launcher 404s (v0.3.1 lesson, automated since) |
+| Ship-gate verify | `tools/Verify.ps1` + `tools/tests/` | The pre-ship check battery; every check maps to a failure that has actually happened here, never a category of bug in the abstract: **BOM** (`Set-Content -Encoding UTF8` on PS 5.1 writes one — breaks redscript with "syntax error at 1:1", which names nothing) · **natives vs RTTI** (a native with no `RTTI_METHOD` fails at LOAD, taking every script in the mod down) · **duplicate dispatch** (the `/call` bug: an older deprecation stub at ChatSystem.cpp:2785 matched first and returned, so `/call 555-014-372` answered "use your phone" and rang nobody while the new player-to-player call dispatch at ChatSystem.cpp:3656 sat unreachable dead code — fix is merge into one block or rename one command, deciding which behaviour is wanted FIRST since the live one is whichever wins at 2785; comparison is by INDENTATION, because a nested branch in a compound `if` is not a duplicate) · **requests all handled** (`CreateCharacterRequest`: declared, took a oneof slot, never sent or handled) · **stores + ticks wired** (a store never `Load()`ed silently holds nothing) · **unit tests** (103 checks in `tools/tests/`: seats, calls, trading, permissions, contact migration) | Every failure prints three fields — **what** it costs, **where** it is, **fix** — because two assistants work this codebase from separate sessions and a bare `FAIL` costs whichever one picks it up a fresh investigation of something the check already knew. Self-tested: a bogus native was planted, the failure rendered all three fields, the file was restored to a clean run. **Tests stay IN THE REPO** — the first set was written in a scratchpad and wiped by temp cleanup, turning "the tests passed" into somebody's word rather than something anyone could re-run; do not move them out |
+| Permissions | `code/server/native/PermissionLevel.h` (ladder) + `Config.h` (role-name→level) + `ChatSystem.cpp` (command gates) | Staff ladder kPlayer 0 / kSupport 5 / kModerator 10 / kEventStaff 15 / kAdmin 20 / kOwner 30; Discord staff set since 2026-09-02 (Cam replaced every moderator/admin role): dev, SENIOR MODERATOR, EVENT STAFF, MODERATOR, support | **Levels resolve from the LOWERCASED role NAME, and a name not in the list lands on kPlayer silently.** When the roles changed, `senior moderator` and `event staff` granted nothing at all — and `staff` matched while `event staff` did not, a near-miss that reads as the role simply not working rather than a missing string (`5a68517` added both). **If a role stops working, look here first** |
+| Voice | `code/client/App/Voice/` (VoiceAudioManager, VoiceClient) + launcher device picker (main.js) + `Settings.cpp` arg filter | Capture/encode/route/playback; device choice travels as `--voicein=` launch arg | **"It was never broken — the microphone was never opened" (`0ca11ba`).** Two sessions of logs said `mic NOT CAPTURING / speakers ok - encoded 0` two hundred times — `encoded 0` means nothing was ever captured, so codec, network, routing and playback were all innocent; the same WASAPI sequence run standalone on Cam's machine worked perfectly (Apollo Solo, 48kHz, **10 channels**, 147,360 frames, peak 0.98), so the failure had to be before `Start()`. Cause: `voiceInputDevice = "communications"` — `default` and `communications` are the two sentinel ids **Chromium's `enumerateDevices()`** returns for system defaults; the launcher's picker is a web page, the launch-arg code filtered only `default`, and `--voicein=communications` reached the mod, which treats any non-empty id as a literal Windows endpoint id (`{0.0.1.00000000}.{guid}`). **The real lesson is the asymmetry, not the sentinel**: the OUTPUT branch falls back to the default when a lookup fails and the CAPTURE branch does not — the same bad value was survivable on one side and fatal on the other. Why nobody could see it: `StartCapture` returns when the THREAD IS SPAWNED, not when a device opens (it cannot wait on a driver without blocking the connect path), so every failure happened after the caller was told `true` and logged `[Voice] running`, and every error went into a string nothing printed. Fixed independently of the sentinel: `SetError` logs at the point of failure, the stats line prints the reason, a successful open logs the device format, and `[Voice] running` no longer claims what it cannot know. Both sentinels now read as "follow Windows" on BOTH sides and the launcher stops emitting them. A genuinely unplugged saved device still does NOT silently switch the microphone — that decision stands, it just says so out loud now |
+| Clean start & quest gating | `code/assets/Archives/packed/archive/pc/mod/zz_NightCityOnline_CleanStart.archive` (8 KB, second archive — ArchiveXL is handed the whole directory) | The multiplayer game start. A start is a `.gamedef` — root quests + spawn tag + world, and the game ships 824 of them. Ours overrides `ep1\quest\ep1_standalone.gamedef` (THREE independent root quests, only one of which is the story) with `cyberpunk2077_ep1_standalone.quest` (base Night City, prologue skipped) + `ep1.quest` (CDPR's non-standalone EP1 root: sets `ep1_installed=1`, enters `ep1.questphase` at `Base`, no story) + `ep1_preorder.quest` — nothing authored. Shipped `c1518c4` 2026-08-30. Proven pre-ship: fresh character with empty quest log, not one EP1 fact (`ep1_standalone=0 ep1_active=0 q301_active=0` against 1/1/1 in the control), no Songbird call; `ManualSave-132` had a completely empty fact list. CONFIRMED WORKING 2026-08-30, shipped build, Cam's machine — spawn signature `ep1_installed=1` (only `ep1.quest` sets it — proof the EP1 world entry took), `ep1_standalone=0 q301_active=0 q301_done=0`, no Songbird, empty quest log, Dogtown still reachable: Cam's brief ("we should just spawn in the world, no opener, no songbird dialogue, no quests, nothing") reached without completing, skipping or failing a single quest. Wider field testing still owed | A spawn tag is content OWNED by its quest — the first probe kept `#q301_spwn_ep1standalone_opener` while deleting the quest that defines it and players FELL THROUGH THE MAP; now `#q000_spwn_start` (the base game's own — a holding room, not a place; the server moves new arrivals on connect, `/setstart`); every shipped gamedef pairs its spawn with its own quest. Level 15 came from the story root — clean-start characters are level 1 with no base prologue quests marked done, so the server must grant progression (it already grants the starter kit and eddies). The forced Songbird prologue was a CHARACTER-START problem, not a phone problem: `MainMenu.reds` fires `SpawnEvent(n"OnNewGame")` and `preGameScenarios.script:308` routes to the EP1 branch whenever Phantom Liberty is installed — every pre-clean-start character was a PL standalone start (level 15, `ep1_standalone=1`, `q301_active=1`); `51756fc` genuinely stopped every phone call (zero presented in a full session) and the conversation still happened, because a quest drives the scene — suppression cannot stop a running quest, prevention is the only route. Dogtown is SOLVED, stop looking for a quest: the gate is quest fact `ep1_side_content >= 1`, a pause condition in `ep1\openworld\combat_zone_gate\combat_zone_gate.questphase` that references NO q301 fact at all (confirmed in game 2026-08-29 — Cam drove AND walked through the border with `q301_done=0`); a live server takes `/fact ep1_side_content 1` once, `06af8b5` seeds it for fresh deployments — do NOT complete q301 to open Dogtown |
+| Chat / admin commands | `code/server/native/Systems/ChatSystem.cpp` | Slash commands; `/rename <character-id> <new name>` for admins is IMPLEMENTED (ChatSystem.cpp:1513) | `/rename` is `kAdmin`-gated, keyed on the CHARACTER id, and deliberately does NOT clear `NameChosen` — it repairs a name rather than handing out a fresh naming attempt; do not "fix" it to reset the flag |
 
 ---
 
@@ -1080,11 +913,36 @@ announce flag-days, ships, pulls, and diagnoses — check it before shipping or 
 
 ---
 
+- **Verify gate — `.\tools\Verify.ps1`** (2026-09-03): every ship is gated on it —
+`Ship.ps1` AND `ShipTestBuild.ps1` both run it and refuse to publish if it fails.
+`.\tools\Verify.ps1` runs everything; `.\tools\Verify.ps1 -SkipTests` runs the static
+checks only (no compiler needed). `-SkipVerify` is an escape hatch for a FALSE POSITIVE
+only — every use of it is a bug in Verify to fix, never a route around the gate. Born of
+an audit of one day's work that found two bugs that compiled perfectly, were reported as
+working, and would have shipped (the `/call` double dispatch and the never-handled
+`CreateCharacterRequest` — both are now permanent checks; details in the ship-gate verify
+row of the code map). Every run names its own blind spots: anything needing the game
+running or two players, and the Linux build — no GCC on this machine, so server
+portability stays unverifiable locally.
+
+- **Feat → live server**: the NAS cron — 10-min tick logged in `~/nco-update.log`, pulls
+  `origin/feat/world-state` into the production checkout and deploys whatever branch that
+  checkout is on (confirmed live 2026-09-03); defers while Players>0, rebuilds only when
+  server-relevant paths changed. Cam can also deploy by hand from feat. The old "cron
+  watches main" note is dead — see the Deploy row's gotchas before trusting any deploy, and
+  the ledger for the main-lag debt.
+
 ## 4. IDENTITY & VERSION SURFACES (one line each)
 
-- **One project version**: launcher `package.json` → tag `v0.3.NN`; only launcher ships move it; ships don't commit the bump (carry it).
-- **Protocol**: the kIdentifier pair, per build; recorded in test-release notes and (once shipping) the manifest.
-- **Mod build**: `BUILD_COMMIT` + `NCO_BUILD_VERSION` via BuildInfo.h (dev builds say 0.0.0-dev honestly).
-- **Mod-on-disk**: `.nco-version` marker + settings `installedStamp` (assetId:size — the only identity that survives tag-clobbering).
-- **Manifest**: `manifestVersion` date.serial, monotonic client-side, THE client-facing environment identity once live.
+- **One project version**: launcher `package.json` → tag `v0.3.NN`; only launcher ships move
+  it; ships don't commit the bump (carry it).
+- **Protocol**: the kIdentifier pair, per build; recorded in test-release notes and (once
+  shipping) the manifest.
+- **Mod build**: `BUILD_COMMIT` + `NCO_BUILD_VERSION` via BuildInfo.h (dev builds say
+  0.0.0-dev honestly).
+- **Mod-on-disk**: `.nco-version` marker + settings `installedStamp` (assetId:size — the
+  only identity that survives tag-clobbering).
+- **Manifest**: `manifestVersion` date.serial, monotonic client-side, THE client-facing
+  environment identity once live.
 - **Server**: status API `ManifestVersion`/`Release` (empty = migration).
+
