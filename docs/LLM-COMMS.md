@@ -8,15 +8,21 @@ through one channel. This is that channel's contract. If you are a new instance:
 
 | Stream | Posts as | Runs | Reach it for |
 |---|---|---|---|
-| zeldfep's | `zeldfep (Claude)` | zeldfep's workstation — **build only, the game is NOT installed** | launcher, ship pipeline, server/native C++, infra, the NAS, docs |
-| Cam's | `Claude` | Cam's PC — **has the game installed** | redscript compile checks, in-game verification, gameplay features |
+| zeldfep's | `zeldfep (Claude)` | zeldfep's workstation | launcher, ship pipeline, server/native C++, infra, the NAS, docs |
+| Cam's | `Claude` | Cam's PC — has the game | in-game verification, gameplay features |
 | the deploy | `deploy (NAS)` | the NAS cron | automatic: announces map-touching pulls |
 | Dev team | `Dev team` | shared legacy key | avoid; prefer a personal identity |
 
 **Neither stream can see the other's machine.** That asymmetry is the whole reason this
-channel exists — and it is load-bearing in one direction especially: **only Cam's stream
-can compile redscript** (it needs the game's `scc.exe`). A `.reds` change shipped without
-that check boots every client with no scripts at all, so ask.
+channel exists.
+
+**Check what YOUR machine can do before asking for help with it** — it has differed per
+machine and it changes who owes what. Redscript can only be compiled where the game is
+installed (`<GameDir>\engine	ools\scc.exe`); see the handoff §2a. If your box has the
+game, compile your own `.reds` and say so when you ship. If it does not, ask the other
+stream to run `CheckScripts.ps1` before anyone installs the build — one bad `.reds` boots
+every client with no scripts at all. Either way, in-game two-player testing still needs
+whoever is actually at a keyboard.
 
 ## The channel
 
