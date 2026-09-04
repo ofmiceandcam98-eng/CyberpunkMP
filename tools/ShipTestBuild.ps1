@@ -199,8 +199,35 @@ the shipped one. Restore puts the current release back.
 $shortNum = if ($Tag -match 'test\.(\d+)') { $Matches[1] } else { '?' }
 $title = "test.$shortNum - $Name"
 
-& gh release create $Tag --repo $GhRepo --prerelease --title $title --notes $notes $payload $dll
-if ($LASTEXITCODE -ne 0) { Die "publishing failed" }
+# UPDATE an existing tag rather than failing on it.
+#
+# Iterating on one test build is the normal case, not the exception: a tester finds
+# something, it gets fixed, and the SAME build number should carry the fix so nobody has to
+# be told which of four rows to click. `gh release create` refuses an existing tag, and the
+# refusal came after a full verify-and-build - so every iteration ended in a dead script and
+# a hand-run `gh release upload --clobber`, three times in one evening before this was
+# written. The recovery was always identical, which is the sign it belonged in the tool.
+#
+# Explicitly NOT deleting and recreating the release: that would break the download URLs the
+# launcher may already be holding, and briefly leave the dev panel with no build at all.
+$exists = & gh release view $Tag --repo $GhRepo --json tagName 2>$null
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "  $Tag exists - updating it in place" -ForegroundColor DarkGray
 
-Ok "published $Tag"
+    & gh release upload $Tag --repo $GhRepo --clobber $payload $dll
+    if ($LASTEXITCODE -ne 0) { Die "uploading the new assets to $Tag failed" }
+
+    # The title carries what to LOOK for, so it has to move with the payload - a refreshed
+    # build under last iteration's description is how a tester tests the wrong thing.
+    & gh release edit $Tag --repo $GhRepo --title $title --notes $notes | Out-Null
+    if ($LASTEXITCODE -ne 0) { Die "updating the title and notes on $Tag failed" }
+
+    Ok "updated $Tag"
+}
+else {
+    & gh release create $Tag --repo $GhRepo --prerelease --title $title --notes $notes $payload $dll
+    if ($LASTEXITCODE -ne 0) { Die "publishing failed" }
+
+    Ok "published $Tag"
+}
 Write-Host "`nInstall it from Settings > DEV > Test builds." -ForegroundColor Green
