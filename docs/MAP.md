@@ -7,6 +7,10 @@ whoever lands or finds things (both Claude streams included): landing an item re
 from the ledger in the same commit; finding one adds it. A ledger that is not updated in
 the landing commit is how items get missed twice.
 
+**The shared rulebook is CLAUDE.md at the repo root** - both streams load it (zeldfep's
+stream by hand: its cwd is the parent, so it does not auto-load). A rule that matters to
+both streams lives there or here, never only in one machine's memory.
+
 **The map convention (crew decree 2026-09-03):** any commit touching this file is
 announced on the coordination feed by whoever made it ("map updated: <what>"), and the
 other stream re-reads the map before its next move instead of acting on a cached copy.
