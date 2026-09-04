@@ -246,3 +246,17 @@ The two that need real work rather than a patch:
 Upstream is GPL-3.0 and so is this. The six bundled prerequisite mods ship their own licence
 texts in `publish/fullinstall-base/LICENSES/` — that inclusion is the condition that makes
 redistributing them legitimate, so do not drop it when changing the install package.
+
+## The server in Docker
+
+The NAS deployments build exactly this way; it is also the only GCC/Linux check the
+project has (MSVC supplies headers transitively that libstdc++ does not — a local-MSVC
+pass proves nothing about the container build).
+
+1. `git submodule update --init`
+2. `docker build . -t cyberpunkmp`
+3. `docker run -p 11778:11778 cyberpunkmp`
+
+Bind mounts you probably want: `-v $(pwd)/config:/app/config` (server config) and
+`-v $(pwd)/plugins:/app/plugins` (custom plugins). If you change the port in the
+config, expose the new one.
