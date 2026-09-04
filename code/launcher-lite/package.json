@@ -1,7 +1,7 @@
 {
   "name": "nightcity-launcher",
   "productName": "Night City Online",
-  "version": "0.3.113",
+  "version": "0.3.114",
   "description": "Lightweight launcher with Discord login verification",
   "main": "main.js",
   "type": "module",

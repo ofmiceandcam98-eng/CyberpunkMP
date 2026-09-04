@@ -743,13 +743,13 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   players get no manifest verification yet — not new, and the key fixes it permanently once
   resumed in order.
 
-- **First real manifest ship — pin FIRST, sign second, two releases apart.** Ship the
-  LAUNCHER carrying the new pin while still unsigned (point `NCO_MANIFEST_KEY_FILE` at a
-  path that does not exist), wait for players to update, THEN any -Mod ship from the keyed
-  machine publishes `server-manifest.json` + `.sig` and launchers start verifying
-  automatically. Reversing the order locks players out (see the key entry above); the gap
-  between the two releases is the point.
-
+- **FIRST MANIFEST SHIPPED (2026-09-04, v0.3.114)**: `server-manifest.json` + `.sig`
+  are on the release, signed by zeldfep's key (`882c415a` - pinned in every launcher
+  since v0.3.97, so verification is immediate; Cam's key stays PAUSED per its entry).
+  Launchers now verify instead of "manifest absent - legacy path". Server-side arming
+  (copy the manifest into each server's `config/`) is now ACTIONABLE - do it at a
+  quiet moment AFTER most players are on v0.3.114, since the digest gate refuses
+  mismatched installs at the door.
 - **Server-side arming**: copy the shipped manifest to the server's `config/` dir —
   absent file = checks disabled (migration). Then manifest_version + install_digest
   gates go live at the door.
@@ -843,12 +843,16 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   `SpawnCharacterResponse.facts`. First pieces landed: `06af8b5` (open Dogtown on a fresh
   deployment), `51756fc` (stop quest calls at `PhoneSystem`).
 
-- **The version number no longer identifies a build — a real v0.3.114 is owed.**
-  Waiting aboard it: the world-contract connection fix (`f2d2a55` - client-side, every
-  connection refused since Aug 30 until it ships) and the mod-folder auto-derivation
-  (zeldfep, 2026-09-04: Settings shows WHERE the mod installs the moment the game is
-  found - modInstallDestination() in main.js - instead of 'not installed' plus a Browse
-  button pointing nowhere).
+- **v0.3.114 SHIPPED 2026-09-04 (zeldfep's machine, full -Mod ship).** Carried: the
+  world-contract connection fix (`f2d2a55`), the post-flag-day protocol (the 09-03/04
+  server deploys had moved both boxes past `6ac90d1`'s protocol-message removal, so
+  EVERY v0.3.113 client was refused at the door until this ship - live-verified by
+  zeldfep's own denial popup), mod-folder auto-derivation, install/remove trail
+  tracing, character slots + selector, phone calls, the new menu. Ship ran on a
+  game-less machine: CYBERPUNKMP_GAME_DIR stub satisfies the assert, the scc check
+  soft-skips, and distrib\launcher\mod\Rpc must be assembled by hand (extracted from
+  the previous payload; 9/10 stubs byte-match the repo, RedTypes.cs is the generated
+  aggregate).
   `Ship.ps1 -Mod` does NOT cut a new version — it republishes mod assets into whatever
   release is already `latest`, so THREE different `ModPayload.zip` builds now exist under the
   tag `v0.3.113` (28 Aug, and two on 30 Aug). Players still update correctly because the
