@@ -4,6 +4,8 @@
 // conversions for the trade commands, and MSVC supplies both through headers that GCC
 // does not - which is a difference that only shows up on the Linux build the server
 // actually runs on, long after it compiles cleanly here.
+#include <algorithm>   // std::transform, for folding a /help topic to lower case
+#include <cctype>      // std::tolower - reached transitively under MSVC, not under GCC
 #include <map>
 #include <string>
 #include <vector>
@@ -2129,6 +2131,60 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
     // and one place to look in /help.
     if (command == "/tp")
     {
+        /*
+         * /tp spawn - the unstick, and the one form of /tp anybody may use.
+         *
+         * Cam, 2026-09-04: "we should make it where we can also /tp to spawn", asked while
+         * he was stuck under the map: "we can now no longer free roam the world, only box
+         * and underneath the map."
+         *
+         * DELIBERATELY NOT STAFF-ONLY, unlike every other form of /tp. A player who has
+         * fallen out of the world cannot play at all, and the alternative is waiting for a
+         * moderator to be online - which on a test build is most of the time nobody. It
+         * moves ONLY the person who typed it, to a fixed published location, so the worst
+         * it can be abused for is walking back from wherever you were. That is a real cost
+         * on an RP server and a smaller one than an unplayable session; say the word and
+         * this drops behind the same gate as the rest.
+         *
+         * Handled before the permission check on purpose - putting it after would refuse
+         * exactly the players it exists for.
+         */
+        if (target == "spawn")
+        {
+            glm::vec3 position;
+            float yaw = 0.f;
+
+            if (!GServer->GetRespawnPoint(position, yaw))
+            {
+                Tell(acSender, "No spawn point is set. Ask an admin to run /setspawn.");
+                return true;
+            }
+
+            // Where they were, so /return still works on somebody who unstuck themselves.
+            if (const auto* pMine = acSender.Puppet ? acSender.Puppet.get<MovementComponent>() : nullptr)
+            {
+                auto* pSelf = aSender.get_mut<PlayerComponent>();
+                pSelf->ReturnPosition = pMine->Position;
+                pSelf->ReturnRotation = pMine->Rotation;
+                pSelf->HasReturnPoint = true;
+            }
+
+            server::NotifyTeleport teleport;
+            common::Vector3 destination;
+            destination.set_x(position.x);
+            destination.set_y(position.y);
+            destination.set_z(position.z);
+            teleport.set_position(destination);
+            teleport.set_rotation(yaw);
+
+            GServer->Send(acSender.Connection, teleport);
+
+            spdlog::info("{} teleported themselves to spawn", acSender.Username);
+
+            Tell(acSender, "Sent you to the spawn point.");
+            return true;
+        }
+
         if (!acSender.HasAtLeast(EPermissionLevel::kEventStaff))
             return deny(EPermissionLevel::kEventStaff);
 
@@ -2304,21 +2360,123 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             return true;
         }
 
+        if (!pVictim->Puppet)
+        {
+            Tell(acSender, fmt::format("{} has not spawned in yet.", pVictim->Username));
+            return true;
+        }
+
+        auto* pHealth = pVictim->Puppet.get_mut<HealthComponent>();
+        if (!pHealth)
+        {
+            Tell(acSender, fmt::format("{} has no health state on the server yet.", pVictim->Username));
+            return true;
+        }
+
+        if (pHealth->LifeState != LifeState::kAlive)
+        {
+            Tell(acSender, fmt::format("{} is already down.", pVictim->Username));
+            return true;
+        }
+
+        // Downed WHERE THEY STAND, not teleported to the respawn point.
+        //
+        // Cam, 2026-09-04: "/kill doesnt actually down or flatline the player." It did not,
+        // and the old comment here explained why it deliberately did not - a FLATLINED
+        // screen ends the session, which is the thing the medical system exists to replace.
+        // That reasoning was right about death and wrong about downing: the medical system
+        // has modelled a downed state, a bleedout timer and a revive since it was built, and
+        // /kill was the one route into it nobody had wired up. So this now enters that state
+        // rather than inventing a death - the player collapses, medics can reach them, and
+        // the bleedout decides what happens if nobody does.
+        //
+        // The teleport is gone with it. Moving a downed body to the respawn point would skip
+        // the whole medical loop, which is the part worth having.
+        pHealth->Health = 0.f;
+        pHealth->LifeState = LifeState::kDowned;
+        pHealth->DownedAt = std::chrono::duration_cast<std::chrono::seconds>(
+                                std::chrono::system_clock::now().time_since_epoch())
+                                .count();
+        pHealth->Stabilized = false;
+        pHealth->TreatedBy.clear();
+        pHealth->TreatmentEndsAt = 0;
+
+        // What actually makes it visible. Without this the state lives only on the server
+        // and the player keeps walking around - which is exactly the bug being fixed.
+        if (auto* pLevel = m_pWorld->get_mut<Level>())
+            pLevel->BroadcastCombatState(pVictim->Puppet);
+
+        spdlog::info("{} downed {} ({})", acSender.Username, pVictim->Username, rest);
+
+        Tell(*pVictim, fmt::format("You were put down by {}{}", acSender.Username,
+                                   rest.empty() ? "." : (" - " + rest)));
+        Tell(*pVictim, fmt::format("A medic can revive you. You have {} seconds.", kBleedoutSeconds));
+
+        Broadcast("SERVER", fmt::format("{} was put down by {}{}", pVictim->Username, acSender.Username,
+                                        rest.empty() ? "" : (" - " + rest)).c_str());
+        return true;
+    }
+
+    // ------------------------------------------------------------ /respawn ----
+    //
+    // Back on your feet at the respawn point, after bleeding out.
+    //
+    // BUILT BECAUSE IT WAS ALREADY BEING ADVERTISED. The bleedout path has told players
+    // "Use /respawn when you are ready" since the medical system landed, and the command it
+    // names was never written - so anybody who actually bled out was told to type something
+    // that did nothing, and stayed dead with no route back. Nobody hit it because /kill was
+    // the only way to go down and /kill never downed anyone, so the two gaps hid each other.
+    //
+    // Not staff-gated: this is how a dead player rejoins the world.
+    if (command == "/respawn")
+    {
+        if (!acSender.Puppet)
+        {
+            Tell(acSender, "You are not in the world yet.");
+            return true;
+        }
+
+        auto* pHealth = acSender.Puppet.get_mut<HealthComponent>();
+        if (!pHealth)
+        {
+            Tell(acSender, "No health state on the server for you yet.");
+            return true;
+        }
+
+        // Only from DEAD. Respawning out of a downed state would make every medic pointless
+        // and turn the bleedout into a 180-second inconvenience nobody would ever wait out.
+        if (pHealth->LifeState != LifeState::kDead)
+        {
+            if (pHealth->LifeState == LifeState::kAlive)
+                Tell(acSender, "You are not down.");
+            else
+                Tell(acSender, "You are down, not dead - a medic can still reach you. Wait it out.");
+
+            return true;
+        }
+
         glm::vec3 position;
         float yaw = 0.f;
 
         if (!GServer->GetRespawnPoint(position, yaw))
         {
-            Tell(acSender, "No respawn point set - stand where you want it and run /setspawn first.");
+            Tell(acSender, "No respawn point is set. Ask an admin to run /setspawn.");
             return true;
         }
 
-        // Jail wins, same as an ordinary death. Being killed should not be a way out.
-        if (const auto* pRecord = GServer->GetPlayerStore().Find(pVictim->DiscordId))
+        // Jail wins, same as an ordinary death. Dying should not be a way out of a cell.
+        if (const auto* pRecord = GServer->GetPlayerStore().Find(acSender.DiscordId))
         {
             if (pRecord->JailedUntil > 0)
                 position = {pRecord->JailX, pRecord->JailY, pRecord->JailZ};
         }
+
+        pHealth->Health = kRevivedHealth;
+        pHealth->LifeState = LifeState::kAlive;
+        pHealth->DownedAt = 0;
+        pHealth->Stabilized = false;
+        pHealth->TreatedBy.clear();
+        pHealth->TreatmentEndsAt = 0;
 
         server::NotifyTeleport teleport;
         common::Vector3 destination;
@@ -2328,12 +2486,17 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         teleport.set_position(destination);
         teleport.set_rotation(yaw);
 
-        GServer->Send(pVictim->Connection, teleport);
+        GServer->Send(acSender.Connection, teleport);
 
-        spdlog::info("{} killed {} ({})", acSender.Username, pVictim->Username, rest);
+        // State after the move. The client stands them up on this, and doing it second means
+        // they are never briefly upright at the place they died.
+        if (auto* pLevel = m_pWorld->get_mut<Level>())
+            pLevel->BroadcastCombatState(acSender.Puppet);
 
-        Broadcast("SERVER", fmt::format("{} was killed by {}{}", pVictim->Username, acSender.Username,
-                                        rest.empty() ? "" : (" - " + rest)).c_str());
+        spdlog::info("{} respawned at ({:.1f}, {:.1f}, {:.1f})", acSender.Username, position.x, position.y,
+                     position.z);
+
+        Tell(acSender, fmt::format("You are back on your feet at {:.0f}% health.", kRevivedHealth));
         return true;
     }
 
@@ -5018,39 +5181,170 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
     // Nobody discovers a chat channel by accident, and an unlisted feature may as well
     // not exist. Only the commands the asker can actually use are listed - offering
     // someone /ban and then refusing it is worse than not mentioning it.
+    /*
+     * /help, and /help <topic>.
+     *
+     * Cam, 2026-09-04: "make sure you also update the /help command so we can see all the
+     * new commands and actions we can do."
+     *
+     * It had drifted badly. The phone, trading, medical, vehicles and character systems all
+     * shipped without ever being listed, so roughly forty commands existed that no player
+     * could discover from inside the game - and the four lines that WERE listed described
+     * /kill as something it no longer does.
+     *
+     * TOPICS RATHER THAN ONE WALL. Printing every command at once is around fifty lines
+     * into a chat box that shows a handful, which scrolls the answer away as it arrives.
+     * The bare command is a map; each topic is the detail. Staff sections stay folded into
+     * the same scheme so nobody has to remember a second command to find their own tools.
+     */
     if (command == "/help")
     {
-        Tell(acSender, "Chat:");
-        Tell(acSender, fmt::format("  just type          - local, heard within {:.0f}m", ChatRange::kLocal));
-        Tell(acSender, fmt::format("  /yell <message>    - heard within {:.0f}m", ChatRange::kYell));
-        Tell(acSender, fmt::format("  /whisper <message> - heard within {:.0f}m", ChatRange::kWhisper));
+        // Folded here rather than through a helper - this file has no ToLower, and adding
+        // one for a single use would be a header change for nothing. "/help PHONE" should
+        // work, because somebody who types it that way is not making a mistake.
+        std::string topic = target;
+        std::transform(topic.begin(), topic.end(), topic.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
-        if (acSender.HasAtLeast(EPermissionLevel::kAdmin))
-            Tell(acSender, "  /advert <message>  - the whole server");
-
-        Tell(acSender, "Other: /who");
-
-        if (acSender.HasAtLeast(EPermissionLevel::kModerator))
+        if (topic.empty())
         {
-            Tell(acSender, "Staff: /kick <player> [reason], /bans");
-            Tell(acSender, "       /jail <player> <minutes> [reason] - cell is where you stand");
-            Tell(acSender, "       /unjail <player>");
-            Tell(acSender, "       /kill <player> [reason] - sends them to the respawn point");
+            Tell(acSender, "Type /help <topic> for detail. Topics:");
+            Tell(acSender, "  chat     talking, and who can hear you");
+            Tell(acSender, "  me       your character, name and id");
+            Tell(acSender, "  phone    numbers, contacts, texts and calls");
+            Tell(acSender, "  money    paying people, and trading face to face");
+            Tell(acSender, "  cars     your garage, buying and selling");
+            Tell(acSender, "  medical  being down, and helping someone who is");
+            Tell(acSender, "  stuck    fell through the world? start here");
+
+            if (acSender.HasAtLeast(EPermissionLevel::kModerator))
+                Tell(acSender, "  staff    moderation and admin tools");
+
+            return true;
         }
 
-        if (acSender.HasAtLeast(EPermissionLevel::kAdmin))
+        if (topic == "chat")
         {
-            Tell(acSender, "Admin: /ban <player> [reason], /unban <discord id>");
-            Tell(acSender, "       /tp <player>    - brings them to you");
-            Tell(acSender, "       /tp to <player> - sends you to them");
-            Tell(acSender, "       /return <player>");
-            Tell(acSender, "       /setspawn - where players wake up after being downed");
-            Tell(acSender, "       /setstart - where brand-new characters arrive");
-            Tell(acSender, "       /time HH:MM - set the shared world clock (/time real = mirror reality)");
-            Tell(acSender, "       /weather <state> - set the shared sky (sunny, rain, fog...)");
-            Tell(acSender, "       /npc <record> [name] - declare a persistent NPC here (/npc clear)");
+            Tell(acSender, fmt::format("  just type          - local, heard within {:.0f}m", ChatRange::kLocal));
+            Tell(acSender, fmt::format("  /yell <message>    - heard within {:.0f}m", ChatRange::kYell));
+            Tell(acSender, fmt::format("  /whisper <message> - heard within {:.0f}m", ChatRange::kWhisper));
+            Tell(acSender, "  /who               - everyone online");
+
+            if (acSender.HasAtLeast(EPermissionLevel::kAdmin))
+                Tell(acSender, "  /advert <message>  - the whole server");
+
+            return true;
         }
 
+        if (topic == "me")
+        {
+            Tell(acSender, "  /character         - your character sheet (/char works too)");
+            Tell(acSender, "  /name <name>       - set your character's name");
+            return true;
+        }
+
+        if (topic == "phone")
+        {
+            Tell(acSender, "  /number            - your own number");
+            Tell(acSender, "  /contacts          - your contact list");
+            Tell(acSender, "  /addcontact <number> [name]");
+            Tell(acSender, "  /contactname <number> <name>   - rename a contact");
+            Tell(acSender, "  /delcontact <number>");
+            Tell(acSender, "  /text <number> <message>       - send a text");
+            Tell(acSender, "  /texts             - conversations waiting for you");
+            Tell(acSender, "  /read <number>     - read one conversation");
+            Tell(acSender, "  /call <number>     - ring somebody");
+            Tell(acSender, "  /answer, /decline, /hangup     - a call that is ringing");
+            Tell(acSender, "  /calls             - who is ringing you");
+            Tell(acSender, "  /block <number>, /unblock <number>, /blocked");
+            return true;
+        }
+
+        if (topic == "money")
+        {
+            Tell(acSender, "  /pay <player> <amount>         - hand over eddies");
+            Tell(acSender, "  /trade <player>    - start a face-to-face trade");
+            Tell(acSender, "  /trade money <amount>          - put money in");
+            Tell(acSender, "  /trade item <name> [qty]       - put an item in");
+            Tell(acSender, "  /trade view        - what is on the table");
+            Tell(acSender, "  /trade accept      - agree to it");
+            Tell(acSender, "  /trade confirm     - final, both sides must confirm");
+            Tell(acSender, "  /trade cancel      - walk away");
+            return true;
+        }
+
+        if (topic == "cars")
+        {
+            Tell(acSender, "  /garage            - what you own");
+            Tell(acSender, "  /sellcar <player> <vehicle> <price>");
+            Tell(acSender, "  /buycar            - accept an offer made to you");
+            Tell(acSender, "  /declinecar        - refuse one");
+
+            if (acSender.HasAtLeast(EPermissionLevel::kEventStaff))
+                Tell(acSender, "  /givecar <player> <vehicle>    - event staff");
+
+            if (acSender.HasAtLeast(EPermissionLevel::kModerator))
+                Tell(acSender, "  /vehseats <player> - who is sitting where");
+
+            return true;
+        }
+
+        if (topic == "medical")
+        {
+            Tell(acSender, fmt::format("  Down is not dead. You have {} seconds before you bleed out.",
+                                       kBleedoutSeconds));
+            Tell(acSender, "  /assess <player>   - how badly hurt are they");
+            Tell(acSender, "  /stabilize <player>            - stop their bleedout clock");
+            Tell(acSender, "  /revive <player>   - bring them back up");
+            Tell(acSender, "  /respawn           - only once you have actually bled out");
+            return true;
+        }
+
+        if (topic == "stuck")
+        {
+            Tell(acSender, "  /tp spawn          - sends you to the spawn point");
+            Tell(acSender, "  Use it if you fall through the world or cannot move.");
+            Tell(acSender, "  /return            - undoes it, if staff moved you here");
+            return true;
+        }
+
+        if (topic == "staff")
+        {
+            if (!acSender.HasAtLeast(EPermissionLevel::kModerator))
+                return deny(EPermissionLevel::kModerator);
+
+            Tell(acSender, "Moderator:");
+            Tell(acSender, "  /kick <player> [reason], /bans");
+            Tell(acSender, "  /jail <player> <minutes> [reason] - cell is where you stand");
+            Tell(acSender, "  /unjail <player>");
+            Tell(acSender, "  /kill <player> [reason] - puts them down where they stand");
+            Tell(acSender, "  /whois <player>    - their ids");
+
+            if (acSender.HasAtLeast(EPermissionLevel::kEventStaff))
+            {
+                Tell(acSender, "Event staff:");
+                Tell(acSender, "  /tp <player>       - brings them to you");
+                Tell(acSender, "  /tp to <player>    - sends you to them");
+                Tell(acSender, "  /return <player>   - puts them back");
+                Tell(acSender, "  /time HH:MM        - the shared clock (/time real mirrors reality)");
+                Tell(acSender, "  /weather <state>   - the shared sky (sunny, rain, fog...)");
+                Tell(acSender, "  /npc <record> [name] - a persistent NPC here (/npc clear)");
+            }
+
+            if (acSender.HasAtLeast(EPermissionLevel::kAdmin))
+            {
+                Tell(acSender, "Admin:");
+                Tell(acSender, "  /ban <player> [reason], /unban <discord id>");
+                Tell(acSender, "  /rename <character> <name>");
+                Tell(acSender, "  /setspawn          - where players wake up after dying");
+                Tell(acSender, "  /setstart          - where brand-new characters arrive");
+                Tell(acSender, "  /quest, /fact      - quest and world state");
+            }
+
+            return true;
+        }
+
+        Tell(acSender, fmt::format("No help topic called '{}'. Type /help for the list.", topic));
         return true;
     }
 

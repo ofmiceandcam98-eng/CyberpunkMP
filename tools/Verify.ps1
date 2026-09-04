@@ -123,6 +123,37 @@ Select-String -Path $chat -Pattern 'if \(command == "(/[a-z]+)"' | ForEach-Objec
 if (-not $dupeFound) { Pass "$($top.Count) commands, each dispatching once" }
 
 # ---------------------------------------------------------------------------
+# Every command the server ADVERTISES has to be a command the server ANSWERS.
+#
+# Cam, 2026-09-04: "/kill doesnt actually down or flatline the player" - and chasing that
+# turned up something worse sitting behind it. The bleedout path had been telling players
+# "Use /respawn when you are ready" since the medical system shipped, and /respawn was never
+# written. Anybody who actually bled out was told to type a command that did nothing and had
+# no route back into the world.
+#
+# It survived because the two gaps hid each other: /kill was the only way to go down, /kill
+# never downed anyone, so nothing ever reached the message. That is the shape of this bug
+# class - the broken half is only reachable through another broken half - and it is why this
+# is a check rather than a fix. The compiler cannot see inside a string literal, and neither
+# can a code review that is looking at the command being changed.
+Head "advertised commands"
+$advertised = @{}
+Select-String -Path $chat -Pattern 'Tell\(' | ForEach-Object {
+    foreach ($m in [regex]::Matches($_.Line, '(?<![\w/])(/[a-z]{2,})')) {
+        $name = $m.Groups[1].Value
+        if (-not $advertised.ContainsKey($name)) { $advertised[$name] = $_.LineNumber }
+    }
+}
+$ghosts = $advertised.Keys | Where-Object { -not $top.ContainsKey($_) } | Sort-Object
+foreach ($g in $ghosts) {
+    Fail -Summary "$g is advertised to players but never dispatched" `
+         -What "a player who is told to type $g types it and nothing happens - the server does not recognise it, so they get no reply at all. When the text offering it is the ONLY way out of a state (a respawn prompt, a trade confirmation), that player is stuck with no way forward and no error to report" `
+         -Where "$chat`:$($advertised[$g]) offers it; no 'if (command == \"$g\")' block exists" `
+         -Fix "either implement $g beside the other commands in this file, or change the message to name a command that does exist. Check which states can reach that message before deciding - if it is the only exit from one, it has to be implemented"
+}
+if ($ghosts.Count -eq 0) { Pass "$($advertised.Count) advertised command(s), all dispatched" }
+
+# ---------------------------------------------------------------------------
 Head "protocol"
 foreach ($p in @("client","server")) {
     $path = "code\protocol\$p.proto"
