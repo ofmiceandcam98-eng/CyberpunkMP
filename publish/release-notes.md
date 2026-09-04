@@ -55,6 +55,34 @@ Launcher only — no game or server changes.
 - **Fixed the machine-specific fallback path.** The launcher no longer assumes Cam's Windows profile when no saved install path is present. It now resolves the local repo/build layout generically, so it works on any machine and no longer silently points at the wrong server/game folder.
 - **Portable startup path is now reliable.** The fallback logic checks repo/build candidates before using any default, which prevents a broken install when the launcher is opened on a second PC or a fresh checkout.
 
+## What changed — v0.3.114
+
+**Update required.** The protocol moved (new character and phone messages), so older
+builds see "YOUR MOD IS BUILT AGAINST A DIFFERENT PROTOCOL" at the door until they take
+this update — the launcher does it in one click.
+
+- **Connecting works again.** A world-consistency check added at the end of August was
+  refusing every connection ever since. If the server looked permanently unreachable
+  lately, this was why — not your setup.
+- **Pick who you are.** Character slots with a selector: keep several characters, choose
+  at connect, retire one without losing the rest (soft delete). `/character new` still
+  asks before retiring anyone.
+- **Your phone makes real calls.** Player-to-player calls ring inside the game's own
+  phone — `/call`, `/answer`, `/decline`, `/hangup` — and the `/call` command actually
+  connects now (an old stub was eating it). Story calls stay blocked; only player calls
+  come through.
+- **A cleaner main menu.** CONNECT, then choose your character, then PLAY — the
+  singleplayer entries are gone from the multiplayer menu, and the pause menu no longer
+  pauses the world (it can't — other people are in it) or offers Save/Load.
+- **Voice actually captures now** if you'd picked the "Communications" device in
+  settings — that choice used to silently record nothing.
+- **Money can no longer be confiscated by a respawn.** Earned eddies stopped being
+  stripped on spawn; whether they *save* reliably is still being instrumented.
+- **Launcher: the mod folder finds itself.** The moment your game is found, Settings
+  shows exactly where the mod installs — no more "not installed" with a Browse button.
+  Installs and removals are also fully logged now, so a failed install can be diagnosed
+  from its own record instead of guesswork.
+
 ## What changed — v0.3.108
 
 Launcher only — no game or server changes, nothing to re-test in a session.
