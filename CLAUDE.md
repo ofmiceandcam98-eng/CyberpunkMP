@@ -4,6 +4,14 @@ Two assistant streams work this codebase from separate machines (zeldfep's and C
 This file is the SHARED rulebook both load; machine-local memory is where it goes to die.
 A rule that matters to both streams lives here or in the map — nowhere else.
 
+## New instance? Start here
+
+**`docs/CLAUDE-HANDOFF.md`** is the drop-in brief: the setup that is not obvious (this
+session's cwd is the repo's PARENT, so this file does not auto-load), machines and
+addresses, where every credential lives, the recipes that took a while to get right, the
+gotchas that cost evenings, and the current state. A curated permission set to start from
+is at `docs/deploy/claude-settings.local.json`.
+
 ## Read first, every session
 
 1. **`docs/MAP.md`** — the ledger. Open items, standing decrees, code geography, the
