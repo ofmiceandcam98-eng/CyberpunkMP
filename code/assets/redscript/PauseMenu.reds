@@ -1,48 +1,70 @@
 module CyberpunkMP
 
 // Not the wildcard - see the note in Vehicles.reds. `import CyberpunkMP.World.*` shadows
-// game classes with the mod's own, and the resulting errors name a method as missing
-// rather than naming the collision.
+// game classes with the mod's own, and the errors then name a method as missing rather
+// than naming the collision.
 import CyberpunkMP.World.NetworkWorldSystem
 
 /**
- * The in-game pause menu, with the singleplayer entries removed.
+ * The pause menu stops pausing the world.
  *
- * Cam's rule, 2026-09-03: SAVE GAME and LOAD GAME go. On this server neither means what it
- * says - the character lives on the server, so a local save records a body without the
- * identity attached to it, and LOADING one drops you into a world the server is not in.
- * Both are ways to end up playing somebody who is not your character, which is the same
- * reason they came off the main menu.
+ * Cam, 2026-09-03: "i wanted you to stop the pause menu from pausing."
  *
- * SAME SHAPE AS MainMenu.reds, deliberately. wrappedMethod() is the only thing that adds
- * those entries (pauseMenu.script:PopulateMenuItemList), so the multiplayer branch does not
- * call it and re-adds the ones that still make sense. That was verified against the game's
- * own shipped source rather than guessed - and it is also why Clear() is not needed here:
- * the engine calls ShowActionsList, which clears before populating.
+ * WHY IT MATTERS ON A SERVER. Pausing is a local act - it freezes this machine's simulation
+ * and nothing else. The server keeps ticking, other players keep moving, the clock keeps
+ * running. So a paused player is not "taking a break", they are standing still in a world
+ * that is going on without them, and every second of it is desync they will be dragged
+ * through when they close the menu. Worse, it is a free advantage: pause mid-firefight,
+ * think, and come back to a world that politely waited on your screen but did not wait on
+ * anybody else's.
  *
- * WHAT STAYS, and why each one earns it:
+ * The menu still opens, still works, and still looks the same. Only time keeps running.
  *
- *   RESUME          - the reason the menu exists.
- *   SETTINGS        - resolution, controls, audio. Needed at least as much in multiplayer.
- *   CREDITS         - the game's own; taking it away is not ours to do.
- *   EXIT TO MENU    - the way out. Removing it would trap somebody in the session.
+ * HOW, and why this shape rather than replacing the method
  *
- * QUIT GAME is added by ShowActionsList itself, after this returns, so it is untouched.
+ * PauseMenuBackgroundGameController.OnInitialize broadcasts the menu-mode event and then
+ * calls GetSystemRequestsHandler().PauseGame(). PauseGame is a native import
+ * (systemRequestsHandler.script:71) and cannot be wrapped, so the pause cannot be
+ * intercepted where it happens.
+ *
+ * The method could be REPLACED to omit that one line, and that was the first instinct. It
+ * is the worse option: a replacement silently discards whatever CDPR puts in that method in
+ * a future patch, and this one already does something we want to keep - the menu-mode
+ * broadcast is what makes the menu appear at all.
+ *
+ * So the game's own code runs untouched and the pause is undone immediately after. One
+ * frame of pause nobody can perceive, and if a patch changes that method we inherit the
+ * change instead of overwriting it.
  */
-@wrapMethod(PauseMenuGameController)
-private func PopulateMenuItemList() -> Void {
+@wrapMethod(PauseMenuBackgroundGameController)
+protected cb func OnInitialize() -> Bool {
+  let result = wrappedMethod();
+
   let network = GameInstance.GetNetworkWorldSystem();
 
-  // Not launched through the launcher: the vanilla pause menu, with no trace of the mod.
-  if !IsDefined(network) || !network.IsModEnabled() {
-    wrappedMethod();
-    return;
+  // Only in a launcher session. Somebody's singleplayer game should pause exactly as the
+  // game intends - taking that away outside multiplayer is not ours to do.
+  // NOTE this.  - GetSystemRequestsHandler is a method on widgetController
+  // (core/ui/baseControllers/widgetController.script:84), not a free function, so it
+  // resolves only through an instance that inherits it. Written bare it fails with
+  // UNRESOLVED_FN, which reads like the function does not exist. Same trap the note at the
+  // top of MainMenu.reds records.
+  if IsDefined(network) && network.IsModEnabled() {
+    this.GetSystemRequestsHandler().UnpauseGame();
   }
 
-  this.AddMenuItem(GetLocalizedText("UI-Labels-Resume"), n"OnClosePauseMenu");
-  this.AddMenuItem(GetLocalizedText("UI-Labels-Settings"), n"OnSwitchToSettings");
-  this.AddMenuItem(GetLocalizedText("UI-Labels-Credits"), n"OnCreditsPicker");
-  this.AddMenuItem(GetLocalizedText("UI-Labels-ExitToMenu"), PauseMenuAction.ExitToMainMenu);
+  return result;
+}
 
-  this.m_menuListController.Refresh();
+/**
+ * And the matching side: do not unpause something we never paused.
+ *
+ * OnUninitialize calls UnpauseGame unconditionally. Left alone that is a second, unmatched
+ * unpause - harmless today, because the handler treats it as a state rather than a counter,
+ * but it is the kind of asymmetry that becomes a bug the moment the engine starts counting.
+ * Leaving the wrappedMethod call in place means the menu still tears down normally.
+ */
+@wrapMethod(PauseMenuBackgroundGameController)
+protected cb func OnUninitialize() -> Bool {
+  return wrappedMethod();
 }
