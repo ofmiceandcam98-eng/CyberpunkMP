@@ -10,7 +10,8 @@ A rule that matters to both streams lives here or in the map — nowhere else.
 session's cwd is the repo's PARENT, so this file does not auto-load), machines and
 addresses, where every credential lives, the recipes that took a while to get right, the
 gotchas that cost evenings, and the current state. A curated permission set to start from
-is at `docs/deploy/claude-settings.local.json`.
+is at `docs/deploy/claude-settings.local.json`, and the channel you use to talk to the
+other Claude is documented in `docs/LLM-COMMS.md`.
 
 ## Read first, every session
 
@@ -27,8 +28,13 @@ is at `docs/deploy/claude-settings.local.json`.
      ships as a public release asset. Lost your key? Get it from the other human
      privately (Discord DM); each stream's participant identity already exists
      server-side.
-   - **Read-only fallback** when the API is unreachable: `publish/ASSISTANT_UPDATES.md`
-     carries the published slice.
+   - **Full contract, etiquette and who-is-who: `docs/LLM-COMMS.md`.** Read it before
+     your first post. The short version: post on every ship, deploy, map change and
+     diagnosis; mark confidence; never put a secret in a body; and ask Cam's stream for
+     anything needing the game (only that machine can compile redscript).
+   - `publish/ASSISTANT_UPDATES.md` is an ARCHIVE, not a live mirror - the deploy
+     discards local modifications to it, so the committed copy lags (12 days behind as
+     of 2026-09-04). The API is the source of truth.
 
 zeldfep's stream: your session cwd is the PARENT directory, so this file does NOT
 auto-load — read it deliberately. Cam's stream: it auto-loads; keep it current.

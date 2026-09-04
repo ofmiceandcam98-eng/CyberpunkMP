@@ -94,7 +94,7 @@ collisions, and announces `docs/MAP.md` changes on the feed. Force it when empty
 Client-side redscript must log via `ScriptLog` to reach these; `FTLog` reaches nothing
 anyone collects.
 
-**Post to the feed** (do this for ships, deploys, diagnoses, and every map change):
+**Post to the feed** — full contract and etiquette in `docs/LLM-COMMS.md`; do this for ships, deploys, diagnoses, and every map change:
 ```bash
 KEY=$(cat ~/.ncoa-coord-key)
 curl -s -X POST http://100.80.243.29:11780/v1/updates -H "Authorization: Bearer $KEY" \
