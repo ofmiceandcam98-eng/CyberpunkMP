@@ -99,6 +99,26 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   `test/character-selector` on 21 Aug and was never merged. Cherry-picked. *Check for an
   existing fix on a side branch before writing a new one.*
 
+- **A SYMLINKED PLUGIN DLL SILENTLY KILLS THE WHOLE MOD.** Cam's game came up with a
+  completely stock main menu, nothing crashed, and it looked like every menu change had
+  been reverted. It had not: RED4ext loaded the plugin, the plugin resolved its OWN path
+  to find `assets/redscript` beside itself, and through a symlink "beside itself" is the
+  LINK TARGET — the build tree. It threw during `Load`, RED4ext unloaded it, and since the
+  plugin is what registers the mod's scripts with redscript, all 46 `.reds` sat on disk
+  and never compiled. **A dead mod that leaves a working game is the nastiest failure
+  shape there is** — no crash, and the symptom reads as a revert.
+  - It broke because `code/server/admin/xmake.lua` deletes and recreates
+    `build/windows/x64/release/assets` on EVERY build to stage the admin panel — the same
+    directory name the mod's assets used. The mod's link was displaced to `assets$D`.
+    **Raised with zeldfep on the feed; his infra, not changed unilaterally.**
+  - **`tools/DevInstall.ps1` is now the dev live-update path** and it COPIES rather than
+    links, so the mod resolves its assets in the game folder like every tester's install.
+    It refuses to run while the game is open, mirrors `.reds` from SOURCE (deleting stale
+    ones — they compile as one unit, so a leftover can abort everything), and verifies the
+    installed DLL is not a reparse point.
+  - **First diagnostic for "the mod did nothing": `red4ext/logs/red4ext-*.log`.** A plugin
+    that fails during `Load` says so there and nowhere else.
+
 ### Needs a live session (built, never validated with humans)
 - **Pause menu unpause is BEST-EFFORT, 2026-09-04.** The menu opens again (an inline
   `UnpauseGame()` in `OnInitialize` was killing it — the `SetMenuModeEvent` is queued and
