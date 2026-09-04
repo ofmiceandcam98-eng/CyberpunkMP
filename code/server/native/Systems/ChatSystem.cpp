@@ -1311,7 +1311,7 @@ void ChatSystem::TickMedical()
                 Tell(*pPlayer, "You bled out. Nobody reached you in time.");
                 Tell(*pPlayer, "Use /respawn when you are ready.");
 
-                // A trade does not survive its owner dying - the brief's Â§36, and the same
+                // A trade does not survive its owner dying - the brief's §36, and the same
                 // reasoning as a disconnect: assets must not move on behalf of somebody who
                 // is no longer in a position to agree.
                 if (const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(pPlayer->DiscordId))
@@ -3840,7 +3840,7 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         }
 
         // One medic per patient. Two procedures on one body and neither can say whose
-        // finished - the brief's Â§27, and the reason TreatedBy exists at all.
+        // finished - the brief's §27, and the reason TreatedBy exists at all.
         if (!pHealth->TreatedBy.empty() && pHealth->TreatmentEndsAt > now)
         {
             Tell(acSender, "Somebody is already working on them.");

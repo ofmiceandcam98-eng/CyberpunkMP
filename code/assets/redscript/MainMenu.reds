@@ -365,7 +365,26 @@ public func MpUpdatePanel() -> Void {
         return;
     }
 
-    this.m_mpTitle.SetText(slots > 1 ? s"YOUR CHARACTERS  (\(slots) SLOTS)" : "YOUR CHARACTER");
+    /*
+     * "1/4" - used out of total. Cam's ask, 2026-09-03.
+     *
+     * Counted from the roster rather than from HasCharacter, because with four slots the
+     * question is not "do you have one" but "how many of your slots are spoken for" - and
+     * that is the number that tells somebody whether NEW CHARACTER will cost them the one
+     * they already have.
+     */
+    let used = 0;
+    let counted = 0u;
+
+    while counted < network.GetRosterCount() {
+        if network.GetRosterSlot(counted) >= 0 {
+            used += 1;
+        }
+
+        counted += 1u;
+    }
+
+    this.m_mpTitle.SetText(s"YOUR CHARACTERS   \(used)/\(slots)");
 
     // One line per SLOT, not per character - the empty ones have to be visible, or there is
     // no way to see that a slot is free without trying to use it.
@@ -400,6 +419,28 @@ public func MpUpdatePanel() -> Void {
         }
 
         slot += 1;
+    }
+
+    /*
+     * Say what to press next. Cam's flow: pick a character or make one, THEN hit play.
+     *
+     * The panel is the only thing on this screen that knows which state the account is in,
+     * so it is the only thing that can name the right next step. A list of characters with
+     * no instruction leaves somebody looking at their own name wondering what it is for -
+     * which is exactly the report that prompted this.
+     */
+    lines += "\n";
+
+    if used == 0 {
+        lines += "NEW CHARACTER to make one.";
+    } else {
+        lines += "> is who you will play as.\n";
+
+        if slots > 1 && used > 1 {
+            lines += "SWITCH CHARACTER to change, then PLAY.";
+        } else {
+            lines += "PLAY to enter the world.";
+        }
     }
 
     this.m_mpDetail.SetText(lines);

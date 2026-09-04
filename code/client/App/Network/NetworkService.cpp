@@ -207,17 +207,60 @@ void NetworkService::HandleAuthentication(const PacketEvent<server::Authenticati
     }
 
     const auto& settings = aResponse.get_settings();
-    if (settings.get_world_id() != "night-city" ||
-        settings.get_coordinate_version() != 1 ||
-        settings.get_cell_size() != 60000 ||
-        settings.get_interest_radius() != 3)
+
+    /**
+     * THE CONTRACT IS THE MAP AND THE ENCODING, NOT THE GRID NUMBERS.
+     *
+     * This used to demand cell_size == 60000 and interest_radius == 3 exactly, and it
+     * refused every connection from 2026-08-30 onward. That is the day ec2858d - "nobody
+     * could see anybody - the grid was declared twice, differently" - set the server's
+     * Level::kCellSize to 60 * 100 = 6000. It fixed two declarations and did not know about
+     * this third one, so the client went on demanding a number the server had stopped
+     * sending, and every login died with "incompatible world contract".
+     *
+     * The literal was the bug, not the value. Every OTHER consumer on this side already
+     * reads settings.get_cell_size() and works from whatever the server advertises -
+     * InterpolationSystem, VehicleSystem, NetworkWorldSystem. Only this check duplicated it,
+     * and a duplicated constant is exactly what ec2858d was fixing.
+     *
+     * So the contract keeps the two things a client genuinely cannot adapt to:
+     *
+     *   world_id            - a different map is a different game; nothing can reconcile it.
+     *   coordinate_version  - how positions are ENCODED. Guess this wrong and every
+     *                         coordinate is silently in the wrong place, which is far worse
+     *                         than a refusal.
+     *
+     * The grid numbers are sanity-bounded instead of asserted: zero would divide by zero in
+     * the cell math, and an absurd value means the server is misconfigured rather than
+     * merely different. Anything sane is adopted as-is, because the server is the authority
+     * on its own grid.
+     */
+    constexpr uint32_t kMaxSaneCellSize = 10'000'000;   // 100km cells; anything past this is a typo
+    constexpr uint32_t kMaxSaneRadius = 32;             // radius is in CELLS, not metres
+
+    if (settings.get_world_id() != "night-city" || settings.get_coordinate_version() != 1)
     {
-        spdlog::error("Authentication failed: incompatible world contract (world '{}', coordinate {}, cell {}, radius {})",
-                      settings.get_world_id(), settings.get_coordinate_version(),
+        spdlog::error("Authentication failed: this server is running a different world "
+                      "(world '{}', coordinate version {}). Expected 'night-city' version 1.",
+                      settings.get_world_id(), settings.get_coordinate_version());
+        Close();
+        return;
+    }
+
+    if (settings.get_cell_size() == 0 || settings.get_cell_size() > kMaxSaneCellSize ||
+        settings.get_interest_radius() == 0 || settings.get_interest_radius() > kMaxSaneRadius)
+    {
+        spdlog::error("Authentication failed: the server's grid is not usable "
+                      "(cell {}, radius {}). Zero divides by zero in the cell maths; the "
+                      "upper bounds catch a misconfigured server.",
                       settings.get_cell_size(), settings.get_interest_radius());
         Close();
         return;
     }
+
+    spdlog::info("[World] contract accepted: '{}' coordinate v{}, cell {}, radius {}",
+                 settings.get_world_id(), settings.get_coordinate_version(),
+                 settings.get_cell_size(), settings.get_interest_radius());
 
     m_settings = settings;
 
