@@ -45,8 +45,18 @@ It decides what you can verify yourself, and it has differed per machine — the
 was first written on had no game; the machine it was written FOR does.
 
 ```powershell
-Test-Path "<GameDir>\engine\tools\scc.exe"   # the redscript compiler ships INSIDE the game
+Test-Path "<GameDir>\bin\x64\Cyberpunk2077.exe"   # is the GAME here?
+Test-Path "<GameDir>\engine\tools\scc.exe"        # is the redscript COMPILER here?
 ```
+**These are two separate questions and the second is the one that matters.** `scc.exe` does
+NOT ship with the game - a stock Steam install of 2.31 does not contain it anywhere. It
+arrives with **redscript**, one of the prerequisites the Night City Online launcher installs,
+which puts it at `engine\tools\scc.exe` (the path `CheckScripts.ps1` looks at); the REDmod
+DLC is the other source, at `tools\redmod\bin\scc.exe`. Verified 2026-09-04 on a fresh box:
+game present and reporting 2.31, no `scc.exe` anywhere, no `engine\tools`, no `r6\scripts`,
+no `red4ext\plugins`. **So "the game is installed" does not mean you can compile redscript** -
+install the mod once through the launcher, which brings the prerequisites and creates the mod
+folder, and then both `CheckScripts.ps1` and `DevInstall.ps1` work.
 Point the tooling at it once and everything below follows:
 ```
 copy tools\ship.local.example.ps1 tools\ship.local.ps1   # then set $GameDir

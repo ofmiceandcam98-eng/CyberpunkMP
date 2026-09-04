@@ -74,9 +74,21 @@ timestamp on `distrib/launcher/mod/CyberpunkMP.dll` actually changed.
 
 The same applies to `Archives`, `Inputs`, `Tweaks` and `redscript`.
 
-On the development machine, the game's `red4ext/plugins/zzzCyberpunkMP` is a **junction** to
-`<repo>/distrib/launcher/mod`, so a deployed build is live without copying. Note the `zzz`
-prefix — the folder is not called `CyberpunkMP`.
+To get a build into your own game, use **`.\tools\DevInstall.ps1`** (add `-Build` to build
+first). It copies the DLL and mirrors every `.reds` from source, then proves both arrived.
+Note the `zzz` prefix on the installed folder — it is `red4ext/plugins/zzzCyberpunkMP`, not
+`CyberpunkMP`, so the mod sorts last and loads after Codeware/ArchiveXL/TweakXL.
+
+**Do not symlink the plugin DLL into the build tree.** It looks like a free live-update and
+it silently kills the entire mod. The plugin resolves its OWN path to find `assets/redscript`
+beside itself, and through a symlink "beside itself" is the LINK TARGET — the build output —
+where the Admin target deletes and recreates `assets` on every build. The plugin then throws
+during `Load`, RED4ext unloads it, and because the plugin is what registers our scripts with
+redscript, all 48 `.reds` sit on disk and never compile. The game starts perfectly normally
+with none of the mod in it. That happened on 2026-09-04 and read as a reverted menu, not a
+failure. **A dead mod that leaves a working game is the nastiest shape a failure can take.**
+First diagnostic when the mod "did nothing": `red4ext/logs/red4ext-*.log` — a plugin that
+fails during `Load` says so there and nowhere else.
 
 ---
 

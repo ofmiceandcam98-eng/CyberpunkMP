@@ -119,6 +119,48 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   - **First diagnostic for "the mod did nothing": `red4ext/logs/red4ext-*.log`.** A plugin
     that fails during `Load` says so there and nowhere else.
 
+### Landed 2026-09-04 (zeldfep stream) — the launcher is open source
+- **THE RED SMARTSCREEN SCREEN IS UNSIGNED CODE, NOT MALWARE — and the obvious fix does not
+  work any more.** Players get "Windows protected your PC" on install. No antivirus is
+  involved and Defender has never quarantined anything; SmartScreen is reporting that it does
+  not recognise the publisher. Cause, verified: **we have no Authenticode signing at all** -
+  no `certificateFile`, `certificateSubjectName`, `signtool` or `CSC_LINK` anywhere, so both
+  `NightCityOnline-Setup.exe` and the portable exe ship unsigned.
+  **Do not confuse this with our manifest signing.** The ed25519 key `882c415a` proves to OUR
+  LAUNCHER that OUR PAYLOAD is ours; Windows has never heard of it. Two unrelated trust
+  systems, and "first signed manifest aboard" does NOT mean the binary is signed.
+  **Buying an EV certificate no longer fixes it** - Microsoft dropped instant SmartScreen
+  reputation for EV in 2024, so EV, OV and Azure all accrue reputation the same slow way.
+  Worse, **reputation binds to the SPECIFIC CERTIFICATE with no transfer path** - not between
+  CAs, not even across a routine renewal of the same company's cert. **Consequence, and it is
+  the rule to remember: pick the final signing identity ONCE, then start the clock.** Signing
+  under a throwaway identity burns whatever reputation it earns.
+- **`code/launcher-lite` is now also public and MIT: `github.com/NightCityOnline/launcher`.**
+  Split out with history intact (219 commits; zeldfep 134, Cameron 78, ofmiceandcam98-eng 4,
+  Felipe Retana 2). Verified before publishing: it does not exist upstream at all (404 against
+  `tiltedphoques/CyberpunkMP` - their launcher is a different thing at `code/launcher`), it is
+  self-contained, no Tilted Phoques source is copied into it, and its full path history
+  contains no secret. **Why it had to be its own repo:** the free signing route is SignPath
+  Foundation, which requires an OSI-approved licence across ALL components - `LICENSE.md` is
+  Tilted Phoques' custom licence with a non-compete, GitHub reads it as `NOASSERTION`, and we
+  cannot relicense code we do not own. The launcher we DO own.
+  **MIT over Apache-2.0** because every dependency is already MIT, patent exposure on an
+  Electron launcher is nil, Apache's NOTICE and state-your-changes duties are friction for no
+  benefit here, and Tilted Phoques used MIT for their own carve-outs.
+  **THE MONOREPO IS UNCHANGED AND THIS IS DELIBERATE** - `code/launcher-lite` is still here
+  and `Ship.ps1` still builds from it. Publishing the mirror and migrating the pipeline are
+  two operations; doing both at once would have broken shipping. **The public repo is a
+  point-in-time split, not a live mirror** - it drifts until someone re-runs
+  `git subtree split -P code/launcher-lite` and pushes, and SignPath builds from the public
+  source, so the two must be in sync at application time.
+  **Open:** the SignPath application itself (deferred by Cam until the current build is done).
+  Honest risk - they also require no proprietary component, and a launcher whose job is
+  installing non-open-source software is a fair thing for them to refuse. If they do, the
+  fallback is a paid certificate, which needs the LLC that does not exist yet: Azure's
+  organisation validation wants three years of verifiable history, so a new entity means a
+  commercial CA at roughly 200-500/yr plus a hardware token. Publisher name will be
+  **OfficialCutProductions**; nothing is signed until that identity exists, on purpose.
+
 ### Needs a live session (built, never validated with humans)
 - **Pause menu unpause is BEST-EFFORT, 2026-09-04.** The menu opens again (an inline
   `UnpauseGame()` in `OnInitialize` was killing it — the `SetMenuModeEvent` is queued and
@@ -893,26 +935,39 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   2026-08-28.** Every time, a correct fix looked broken because the thing under test was not
   the thing that was built, and each cost a full test round-trip with Cam. Verify the artifact
   contains the specific change, **by string, not by timestamp**, before asking anyone to test.
-  1. **Redscript does not ship with the build.** The DLL is a symlink into
-     `build\windows\x64\release\`, so it is live the instant it links. Redscript is not: the
-     plugin's `assets` folder is a JUNCTION to `distrib\launcher\mod\assets`, and
-     **`xmake install -o distrib Client` prints "install ok!" and leaves edited `.reds` at
-     their previous contents.** Force-copy, then check the deployed file. Never
-     mirror/`/PURGE` - `distrib` legitimately carries `World\CharacterProfile.reds` and
-     `World\KiroshiScanner.reds`, which are not in `code`. `Ship.ps1` is safe (line 343
-     force-copies, 346-348 verify), so releases were never affected - only the manual path.
-  2. **The launcher writes THROUGH the symlink.** Installing a release replaces the dev build
-     with the release binary, so a fix built minutes earlier silently disappears and the game
-     logs behaviour from code no longer in the tree. Rebuild after any launcher install.
+  1. **Redscript does not ship with the build.** `xmake install -o distrib Client` prints
+     "install ok!" and **leaves edited `.reds` at their previous contents**. Force-copy, then
+     check the deployed file. Never mirror/`/PURGE` - `distrib` legitimately carries
+     `World\CharacterProfile.reds` and `World\KiroshiScanner.reds`, which are not in `code`.
+     `Ship.ps1` is safe (line 343 force-copies, 346-348 verify), so releases were never
+     affected - only the manual path. **`tools\DevInstall.ps1` is the dev install path and it
+     COPIES** - it mirrors `.reds` from source and verifies arrival, which is what closes this
+     surface. The older symlink-the-DLL setup this entry used to describe is RETIRED and must
+     not be recreated: see the symlinked-plugin entry above and CONTRIBUTING.md.
+  2. **Installing a release replaces the dev build.** A fix built minutes earlier is gone and
+     the game logs behaviour from code no longer in the tree. Re-run `DevInstall.ps1` after
+     any launcher install.
   3. **A fix that exists only in git reaches nobody.** The appearance fix (`e795a52`) was
      committed, pushed to main, and verified in the local build - then v0.3.113 shipped
      without it, because the release had already been cut. The launcher can only deliver what
      is in a release.
 
-- **No manifest signing key** (`~/.nco-manifest-key`), so releases ship without
-  `server-manifest.json` and players get no manifest verification. NOT new - v0.3.107 through
-  v0.3.113 all lack it. `tools\manifest\keygen.cjs` fixes it permanently; it generates a key,
-  so it is Cam's to run.
+- **Manifest is signed on the RELEASE but not armed on any SERVER.** The old "no signing key"
+  debt is CLOSED - the key exists, is pinned, and v0.3.114 shipped `server-manifest.json` +
+  `.sig` (see the manifest section). What remains is the server half, and it is MEASURED, not
+  assumed: the live server's status endpoint answers `"ManifestVersion": "", "Release": ""`
+  (checked 2026-09-04), so no deployment has been given a copy of the manifest and the
+  digest gate is not running for anyone. Absent file = checks disabled, by design, so
+  nothing is broken - it is simply not on yet. Arming is a copy into each server's `config/`,
+  and the map's advice stands: do it once most players are on v0.3.114, because the gate
+  refuses mismatched installs at the door.
+
+- **The live server cannot reach the server list.** `Server could not reach the server list!
+  Could not establish connection`, logged EVERY 60 SECONDS, continuously (observed
+  2026-09-04 across a 3-hour-old container). Direct joins are unaffected, so this is public
+  DISCOVERY being dead rather than the server being down - which is exactly why it has gone
+  unnoticed. Not yet diagnosed: whether the list host is gone, moved, or unreachable from
+  inside the tailscale sidecar's netns.
 
 - **Live server runs feat-built code while `main` lags** — the cron half is FIXED: the NAS
   cron now pulls `origin/feat/world-state` (remote `ofmiceandcam98-eng`, confirmed live
