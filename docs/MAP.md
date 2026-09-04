@@ -177,7 +177,7 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   on his machine (browser protocol-block most likely); arrival + failure = the reason is
   in the line.
 
-- **The 2026-09-02 batch — SHIPPED `v0.3.113-worldstate-test.19`, NONE of it played.**
+- **The 2026-09-02 batch — SHIPPED `v0.3.114-worldstate-test.19 (the consolidated build - test.15-18 and the old .19 are deleted; byte-identical to v0.3.114, pairs with both servers)`, NONE of it played.**
   feat/world-state @ `5a68517`; `main` untouched at `304b492`. Aboard: voice fix, phone
   calls in the real in-game phone, texting/contacts/blocking, character slots + selector +
   soft delete, vehicle seat validation, money confiscation fix (the destructive half of the
