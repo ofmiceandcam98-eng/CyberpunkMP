@@ -1956,6 +1956,7 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         flecs::entity byDiscordId{};
         flecs::entity byCharacterName{};
         flecs::entity byUsername{};
+        flecs::entity byCharacterPrefix{};
 
         m_pWorld->each(
             [&](flecs::entity aEntity, const PlayerComponent& aOther)
@@ -1984,13 +1985,47 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
                 {
                     if (!byCharacterName) byCharacterName = aEntity;
                 }
+
+                // People type the FIRST NAME.
+                //
+                // Exact matching alone meant "/revive aldi" could not find "Aldi Do" -
+                // live, 2026-09-04: zeldfep tried "aldi do", then "aldi", then gave up
+                // and used the Discord name, which is the one name nobody in the world
+                // is called. A prefix match on the character's own name is what a person
+                // reading a nameplate will type. Ranked BELOW every exact match, so an
+                // exact name can never be stolen by somebody else's prefix.
+                if (!pCharacter->Name.empty() && acQuery.size() >= 2 &&
+                    pCharacter->Name.size() >= acQuery.size() &&
+                    equalsInsensitive(pCharacter->Name.substr(0, acQuery.size()), acQuery))
+                {
+                    if (!byCharacterPrefix) byCharacterPrefix = aEntity;
+                }
             });
 
-        if (byCharacterId)   return byCharacterId;
-        if (byDiscordId)     return byDiscordId;
-        if (byCharacterName) return byCharacterName;
+        if (byCharacterId)     return byCharacterId;
+        if (byDiscordId)       return byDiscordId;
+        if (byCharacterName)   return byCharacterName;
+        if (byUsername)        return byUsername;
 
-        return byUsername;
+        return byCharacterPrefix;
+    };
+
+    // The name to SAY to people: the one its owner picked, not their Discord handle.
+    //
+    // zeldfep, live 2026-09-04: "revive feature should not be discord name it should be
+    // player picked name." In the world nobody is called by their Discord account - the
+    // nameplate over their head is their character's name, so a message about them that
+    // uses anything else is asking the reader to translate. Falls back to the account
+    // name only when a character has not been named yet, because an empty name in a
+    // sentence is worse than the wrong one. Server LOGS keep the Discord name - there
+    // the account is the point, and it is what a ban or a role check acts on.
+    const auto sayName = [](const PlayerComponent& acPlayer) -> std::string
+    {
+        const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(acPlayer.DiscordId);
+        if (pCharacter && !pCharacter->Name.empty())
+            return pCharacter->Name;
+
+        return acPlayer.Username;
     };
 
     // ---------------------------------------------------------------- /kick ---
@@ -3925,7 +3960,7 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
 
         if (!patient)
         {
-            Tell(acSender, fmt::format("No player called '{}'.", target));
+            Tell(acSender, fmt::format("No player called '{}' - try their character name, or the first part of it.", target));
             return true;
         }
 
@@ -3972,7 +4007,7 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             default: condition = pHealth->Health < pHealth->MaxHealth ? "injured" : "uninjured"; break;
             }
 
-            Tell(acSender, fmt::format("--- {} ---", pPatientPlayer->Username));
+            Tell(acSender, fmt::format("--- {} ---", sayName(*pPatientPlayer)));
             Tell(acSender, fmt::format("  condition: {}", condition));
             Tell(acSender, fmt::format("  health:    {:.0f}%", pHealth->Health));
 
@@ -4028,7 +4063,7 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             pHealth->TreatedBy = medicId;
             pHealth->TreatmentEndsAt = now + kReviveSeconds;
 
-            Tell(acSender, fmt::format("Reviving {} - {}s.", pPatientPlayer->Username, kReviveSeconds));
+            Tell(acSender, fmt::format("Reviving {} - {}s.", sayName(*pPatientPlayer), kReviveSeconds));
             Tell(*pPatientPlayer, "Somebody is working on you. Hold on.");
 
             spdlog::info("[MEDICAL] {} began reviving {}", acSender.Username, pPatientPlayer->Username);
@@ -4044,7 +4079,7 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             pHealth->TreatedBy = medicId;
             pHealth->TreatmentEndsAt = now + kStabilizeSeconds;
 
-            Tell(acSender, fmt::format("Stabilising {} - {}s.", pPatientPlayer->Username,
+            Tell(acSender, fmt::format("Stabilising {} - {}s.", sayName(*pPatientPlayer),
                                        kStabilizeSeconds));
             Tell(*pPatientPlayer, "Somebody is stabilising you.");
 
