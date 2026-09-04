@@ -803,6 +803,31 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
 - **Unconfirmed ids**: 22114 (police/prison RP, unnamed). Confirm on Nexus before
   naming. (4198 is CONFIRMED ArchiveXL and pulled — see modlist `_pulled`.)
 
+### Migration (server + Claude, weekend of 2026-09-05)
+- **`docs/MIGRATION.md` is the checklist** - written 2026-09-04 from a survey of the live
+  box, not from memory. The rule it exists to state: **git carries the code and the deploy
+  machinery and NONE of the state or secrets.** Hand-carry list, per deployment:
+  `config/` wholesale (players.json is the big one - characters, money, positions,
+  contacts; plus the `discord-bot-token` SECRET and server.json's admin password),
+  `coord-data/` on the live box (updates.jsonl is the real feed record, participants.json
+  holds every bearer KEY), `.env` (TS_AUTHKEY + admin password), and the cron lines.
+- **GAP FOUND AND CLOSED: the test deployment's `docker-compose.override.yml` was
+  UNTRACKED** - three lines (container names, tailnet hostname, image tag) that are the
+  only thing making a second deployment separate rather than a collision, reproducible
+  from nowhere. Template now committed at `docs/deploy/docker-compose.authority.yml`;
+  the live file still belongs beside its deployment.
+- **Tailscale node identity does NOT move.** New hardware = new tailnet nodes, so the
+  published address changes: update `publish/server.json` (every launcher fetches it from
+  releases/latest) and re-issue the invite. The launcher checkup's server-target row is
+  the fastest way to confirm players followed.
+- **The signing key is the irreplaceable one.** `~/.nco-manifest-key` (keyid `882c415a`)
+  is pinned in every launcher since v0.3.97; losing it stops signed releases until a new
+  key is pinned and shipped two releases apart (see the manifest entry).
+- **Claude migration needs nothing from a machine.** Both streams' durable context is in
+  git - `CLAUDE.md`, this map, MANIFEST-ARCHITECTURE.md, CRASH-FIX-BRIEF.md, MIGRATION.md.
+  A stream's memory directory is a CACHE of what those already say; carry it if convenient,
+  never as a source of truth.
+
 ### Operational debts
 - **"Built and pushed" is NOT "deployed" - three surfaces, each of which bit once on
   2026-08-28.** Every time, a correct fix looked broken because the thing under test was not
