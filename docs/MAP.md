@@ -542,8 +542,9 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   a real BEGIN after the world attaches. Fault A — `OwnSave` picking a save by file order
   instead of identity — is FIXED 2026-09-04 by always loading the template and letting the
   server own identity; see the "I am not the character I made" entry for why the named-save
-  plan was dropped. **Both halves are now client redscript that has NOT been compiled** — the
-  gate below applies to this pair together.
+  plan was dropped. **COMPILE-CHECKED 2026-09-04 against the real 2.31 install on this box.**
+  Still unproven live: whether always starting from the template leaves a player visibly
+  Veronica when the appearance restore does not land — that is one join away from an answer.
 
 - **"Nobody could see anybody" — never the puppet system. FIXED `ec2858d`, awaiting a live
   run.** `NetworkWorldSystem::Spawn` was never called ONCE in twenty-one session logs — no
@@ -886,7 +887,7 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   stacking, one still open.** Cam's report: *"the character we created would not be the
   character we play as, it is also not phantom veronica"* — a third person entirely.
   - **(A) FIXED 2026-09-04 by REMOVING THE CHOICE — not by the plan of record, and the
-    reason matters. NOT COMPILE-CHECKED (see below).** `OwnSave` loaded "the newest save that
+    reason matters. COMPILE-CHECKED 2026-09-04 (`CheckScripts.ps1`, real 2.31 install).** `OwnSave` loaded "the newest save that
     is not `MultiplayerStart`", which is not an identity, it is an accident of file order; on
     2026-09-01 it took `AutoSave-12`, a throwaway female Corpo from a probe two days earlier,
     and ANY newer save would have won — another test character, a singleplayer session,

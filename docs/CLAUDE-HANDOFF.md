@@ -52,11 +52,17 @@ Test-Path "<GameDir>\engine\tools\scc.exe"        # is the redscript COMPILER he
 NOT ship with the game - a stock Steam install of 2.31 does not contain it anywhere. It
 arrives with **redscript**, one of the prerequisites the Night City Online launcher installs,
 which puts it at `engine\tools\scc.exe` (the path `CheckScripts.ps1` looks at); the REDmod
-DLC is the other source, at `tools\redmod\bin\scc.exe`. Verified 2026-09-04 on a fresh box:
-game present and reporting 2.31, no `scc.exe` anywhere, no `engine\tools`, no `r6\scripts`,
-no `red4ext\plugins`. **So "the game is installed" does not mean you can compile redscript** -
-install the mod once through the launcher, which brings the prerequisites and creates the mod
-folder, and then both `CheckScripts.ps1` and `DevInstall.ps1` work.
+DLC is the other source, at `tools\redmod\bin\scc.exe`. **Both halves were observed on one
+box on 2026-09-04, hours apart, which is the whole argument for checking rather than
+assuming:** before the mod was installed — game present and reporting 2.31, no `scc.exe`
+anywhere, no `engine\tools`, no `r6\scripts`,
+no `red4ext\plugins`. After the launcher installed the mod: `engine\tools\scc.exe` present,
+`red4ext\` populated, and `CheckScripts.ps1` answering `OK - redscript compiles` against the
+real 2.31 scripts. **So "the game is installed" does not mean you can compile redscript, and
+"it could not compile an hour ago" does not mean it cannot now** — run the check, do not
+carry the answer forward. Installing the mod once through the launcher brings the
+prerequisites and creates the mod folder, and both `CheckScripts.ps1` and `DevInstall.ps1`
+work from that point on.
 Point the tooling at it once and everything below follows:
 ```
 copy tools\ship.local.example.ps1 tools\ship.local.ps1   # then set $GameDir
