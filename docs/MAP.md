@@ -844,6 +844,11 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   deployment), `51756fc` (stop quest calls at `PhoneSystem`).
 
 - **The version number no longer identifies a build — a real v0.3.114 is owed.**
+  Waiting aboard it: the world-contract connection fix (`f2d2a55` - client-side, every
+  connection refused since Aug 30 until it ships) and the mod-folder auto-derivation
+  (zeldfep, 2026-09-04: Settings shows WHERE the mod installs the moment the game is
+  found - modInstallDestination() in main.js - instead of 'not installed' plus a Browse
+  button pointing nowhere).
   `Ship.ps1 -Mod` does NOT cut a new version — it republishes mod assets into whatever
   release is already `latest`, so THREE different `ModPayload.zip` builds now exist under the
   tag `v0.3.113` (28 Aug, and two on 30 Aug). Players still update correctly because the
