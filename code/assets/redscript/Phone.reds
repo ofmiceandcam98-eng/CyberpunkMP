@@ -108,7 +108,28 @@ public class MpPhoneCall {
      * rather than in this field.
      */
     info.contactName = StringToName(contactName);
-    info.callPhase = questPhoneCallPhase.StartCall;
+
+    /*
+     * IncomingCall for a call that is RINGING, StartCall for one already under way.
+     *
+     * This was StartCall for both, and that was the bug behind "the phone shows the call
+     * but I cannot answer it". The vanilla answer and decline are not on the call widget -
+     * IncomingCallLogicController has only OnInitialize, SetCallInfo, OnRingAnimFinished
+     * and SetCallingPaused, which is what the earlier note here concluded and stopped at.
+     * They are in NewHudPhoneGameController.OnAction, and BOTH branches begin by testing
+     *
+     *     m_CurrentCallInformation.callPhase == questPhoneCallPhase.IncomingCall
+     *
+     * so a call presented as StartCall can never be answered or declined by the player, no
+     * matter what they press. The phone was showing a call the game did not believe was
+     * ringing.
+     *
+     * The earlier note also recorded the enum as "exactly StartCall, EndCall and
+     * RejectCall". It is not: phoneSystem.script:9 declares
+     * { Undefined, IncomingCall, StartCall, EndCall } - IncomingCall exists and RejectCall
+     * does not. Read from the game's own source this time rather than probed.
+     */
+    info.callPhase = rejectable ? questPhoneCallPhase.IncomingCall : questPhoneCallPhase.StartCall;
     info.isAudioCall = true;
     info.isRejectable = rejectable;
 
@@ -153,6 +174,80 @@ public class MpPhoneCall {
 
     bb.SetVariant(GetAllBlackboardDefs().UI_ComDevice.PhoneCallInformation, ToVariant(info), true);
   }
+}
+
+/**
+ * ANSWER, DECLINE and HANG UP, through the game's own phone controls.
+ *
+ * Cam / the phone brief, 2026-09-04: "Answer/Decline should happen through the vanilla call
+ * UI... The chat menu is NOT the phone."
+ *
+ * WHERE THE VANILLA CONTROLS ACTUALLY ARE. The note above records the earlier search giving
+ * up: OnAccept, OnReject, AcceptCall and RejectCall are genuinely absent from
+ * IncomingCallLogicController, which has only OnInitialize, SetCallInfo, OnRingAnimFinished
+ * and SetCallingPaused. That was true and it was the wrong place to look. The controls are
+ * input actions on the HUD phone controller
+ * (newHudPhoneGameController.script:512 OnAction):
+ *
+ *     'PhoneInteract', BUTTON_RELEASED       -> answer
+ *     'PhoneReject',   BUTTON_HOLD_COMPLETE  -> decline
+ *
+ * Both are already bound, already on screen as button hints, and both already fire while a
+ * call is ringing - the only reason they did nothing for a player call is that they test
+ * for the IncomingCall phase and we were presenting StartCall. See Present().
+ *
+ * WHY WRAPPING OnAction RATHER THAN REPLACING IT. Vanilla queues a PickupPhoneRequest on
+ * these actions, which stops the ringtone and sets the talking fact. All of that is wanted -
+ * it is the phone behaving normally - so the game's handler runs untouched and this only
+ * adds the network half beside it.
+ *
+ * THE SERVER STILL DECIDES. Pressing answer sends AnswerCall(); it does not put this client
+ * into a connected call. The call becomes connected when the SERVER says so and
+ * OnCallStateChanged draws that - so a decline that races an approach, or an answer arriving
+ * after the caller hung up, resolves the same way every other disagreement does.
+ *
+ * Guarded on IsCallIncoming() - the server's fact, not a widget's - so pressing the phone
+ * button during a story call, or with no call at all, does nothing here.
+ */
+@wrapMethod(NewHudPhoneGameController)
+protected cb func OnAction(action: ListenerAction, consumer: ListenerActionConsumer) -> Bool {
+  let network = GameInstance.GetNetworkWorldSystem();
+
+  if IsDefined(network) && network.IsConnected() && network.HasCall() {
+    let actionName = ListenerAction.GetName(action);
+    let actionType = ListenerAction.GetType(action);
+
+    if network.IsCallIncoming() {
+      // Answer. Released rather than pressed, matching vanilla - a press that turns into a
+      // hold is the "open the phone" gesture, and answering on press would eat it.
+      if Equals(actionName, n"PhoneInteract") && Equals(actionType, gameinputActionType.BUTTON_RELEASED) {
+        network.ScriptLog("phone: answer pressed on the vanilla phone");
+        network.AnswerCall();
+      }
+      else {
+        if Equals(actionName, n"PhoneReject") && Equals(actionType, gameinputActionType.BUTTON_HOLD_COMPLETE) {
+          network.ScriptLog("phone: decline held on the vanilla phone");
+          network.DeclineCall();
+        }
+      }
+    }
+    else {
+      /*
+       * Hang up: the same hold that declines a ringing call, once it is connected.
+       *
+       * Vanilla has no hang-up control because story calls end themselves - the quest that
+       * started one also finishes it. A player call has nobody to end it, so the decline
+       * gesture is reused for the state where there is nothing to decline. It is the same
+       * button hint already on screen and the meaning is the one people expect.
+       */
+      if Equals(actionName, n"PhoneReject") && Equals(actionType, gameinputActionType.BUTTON_HOLD_COMPLETE) {
+        network.ScriptLog("phone: hang up held on the vanilla phone");
+        network.HangUpCall();
+      }
+    }
+  }
+
+  return wrappedMethod(action, consumer);
 }
 
 public class MpPhone {

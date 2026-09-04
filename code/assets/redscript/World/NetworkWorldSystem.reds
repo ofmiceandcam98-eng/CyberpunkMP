@@ -342,10 +342,23 @@ public native class NetworkWorldSystem extends IGameSystem {
             return;
         }
 
-        // 2 is Connected in CallStore.h. A connected call is already on screen - re-writing
-        // the blackboard would replay the ringtone and re-present a call the player is
-        // currently in the middle of.
+        /*
+         * 2 is Connected in CallStore.h.
+         *
+         * This used to return without drawing anything, on the reasoning that a connected
+         * call is already on screen. That was true only while every call was presented in
+         * the same phase. Now that a RINGING call is presented as IncomingCall (see the
+         * long note in Phone.reds), a connected one has to be re-presented as StartCall or
+         * the phone goes on showing a call that is still ringing after it was answered -
+         * with the answer prompt still on screen for a call already in progress.
+         *
+         * Presented as not-rejectable, which is what moves it to StartCall and is also
+         * correct on its own terms: a call you are in is not one you can decline. That path
+         * plays no ringtone either, so re-entering it costs nothing if the server sends the
+         * connected state more than once.
+         */
         if this.GetCallState() == 2u {
+            MpPhoneCall.Present(this.GetCallName(), false);
             return;
         }
 

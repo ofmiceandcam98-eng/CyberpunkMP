@@ -2198,25 +2198,27 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
     if (command == "/tp")
     {
         /*
-         * /tp spawn - the unstick, and the one form of /tp anybody may use.
+         * /tp spawn - sends the caller to the spawn point.
          *
          * Cam, 2026-09-04: "we should make it where we can also /tp to spawn", asked while
-         * he was stuck under the map: "we can now no longer free roam the world, only box
-         * and underneath the map."
+         * he was stuck under the map.
          *
-         * DELIBERATELY NOT STAFF-ONLY, unlike every other form of /tp. A player who has
-         * fallen out of the world cannot play at all, and the alternative is waiting for a
-         * moderator to be online - which on a test build is most of the time nobody. It
-         * moves ONLY the person who typed it, to a fixed published location, so the worst
-         * it can be abused for is walking back from wherever you were. That is a real cost
-         * on an RP server and a smaller one than an unplayable session; say the word and
-         * this drops behind the same gate as the rest.
+         * STAFF-GATED, like every other form of /tp. It shipped open for one build on my
+         * reading that an unstuck player beats a clean rule, and Cam closed it: "i want
+         * /tp spawn staff-gated". On an RP server a free ride back to a known location is
+         * an escape from anything - a fight, a chase, a robbery - and that is worth more
+         * than the convenience.
          *
-         * Handled before the permission check on purpose - putting it after would refuse
-         * exactly the players it exists for.
+         * Players who fall out of the world are covered without this: the client-side
+         * fall-through guard re-places them automatically, and the server now refuses to
+         * hand out an origin start point at all. This is the manual backstop for when both
+         * of those miss, which is a staff job.
          */
         if (target == "spawn")
         {
+            if (!acSender.HasAtLeast(EPermissionLevel::kEventStaff))
+                return deny(EPermissionLevel::kEventStaff);
+
             glm::vec3 position;
             float yaw = 0.f;
 
@@ -5425,9 +5427,15 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
 
         if (topic == "stuck")
         {
-            Tell(acSender, "  /tp spawn          - sends you to the spawn point");
-            Tell(acSender, "  Use it if you fall through the world or cannot move.");
-            Tell(acSender, "  /return            - undoes it, if staff moved you here");
+            Tell(acSender, "  Fell through the world? It should put you back on its own -");
+            Tell(acSender, "  wait a couple of seconds before doing anything else.");
+            Tell(acSender, "  If you are still stuck, ask a staff member in chat.");
+
+            // Only shown to people who can actually run it. Advertising a staff command to
+            // everybody is how you get a queue of players typing it and getting refused.
+            if (acSender.HasAtLeast(EPermissionLevel::kEventStaff))
+                Tell(acSender, "  /tp spawn          - staff: sends you to the spawn point");
+
             return true;
         }
 
