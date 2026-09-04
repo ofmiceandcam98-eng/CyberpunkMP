@@ -515,7 +515,20 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
     // The character's own flag answers it properly, and a replacement character defaults
     // to false so it is sent to the start point without anything having to reset it.
     const auto* pExistingCharacter = GServer->GetPlayerStore().FindCharacter(pComponent->DiscordId);
-    const bool isNewHere = (pExistingCharacter == nullptr) || !pExistingCharacter->SpawnedBefore;
+
+    // A character record is REQUIRED, not optional, and that is the fire-once guarantee.
+    //
+    // This used to also fire when there was no character record at all - and the flag that
+    // stops it repeating is written onto that record, so with no record there was nothing
+    // to write it to: the arrivals teleport fired again on the NEXT join, and the next,
+    // and the next. The comment ten lines up warns about exactly this failure ("would
+    // teleport everybody to the arrivals point on every single join") while the code below
+    // left one path open to it.
+    //
+    // Nothing is lost by requiring the record. Somebody with no character is about to go
+    // through the creator, which makes one with SpawnedBefore=false - so they still get
+    // the arrivals point, on the join after, once, with a record to remember it by.
+    const bool isNewHere = (pExistingCharacter != nullptr) && !pExistingCharacter->SpawnedBefore;
 
     bool placedAtStart = false;
 
@@ -541,12 +554,25 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
                      pComponent->Username, startPosition.x, startPosition.y, startPosition.z);
 
         // Recorded straight away, so this happens once per character rather than on every
-        // join. Written through with the rest of the character.
-        if (pExistingCharacter)
+        // join. Written through with the rest of the character. Unconditional now - the
+        // record is guaranteed by isNewHere above, and making the write conditional is
+        // what let the repeat happen.
+        auto updated = *pExistingCharacter;
+        updated.SpawnedBefore = true;
+        GServer->GetPlayerStore().SaveCharacter(pComponent->DiscordId, pComponent->Username, updated);
+
+        // Say it out loud, to the person it happened to.
+        //
+        // Being silently moved somewhere on arrival is indistinguishable from the mod
+        // being broken - zeldfep, 2026-09-04, landing in an enclosed arrivals point:
+        // "I'm in the damn box... don't just toss me in there." The placement is a
+        // feature; being unable to tell it apart from a bug is not. Whoever lands here
+        // now knows what moved them and that it is movable.
+        if (auto* pChat = GetWorld()->get_mut<ChatSystem>())
         {
-            auto updated = *pExistingCharacter;
-            updated.SpawnedBefore = true;
-            GServer->GetPlayerStore().SaveCharacter(pComponent->DiscordId, pComponent->Username, updated);
+            pChat->Tell(*pComponent,
+                        "You have arrived at the crew's arrivals point. An admin can move it "
+                        "with /setstart while standing somewhere better.");
         }
     }
 
