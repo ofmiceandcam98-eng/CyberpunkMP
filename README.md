@@ -5,7 +5,11 @@ needed to run on **Cyberpunk 2077 patch 2.31**, plus a launcher, Discord-backed
 permissions, chat with range, and server-side persistence. Upstream targets patch 2.2 and
 will not start on current game versions.
 
-**Play:** [download the launcher](https://github.com/ofmiceandcam98-eng/CyberpunkMP/releases/latest)
+### ⬇ [Download the launcher — one click, always the newest](https://github.com/ofmiceandcam98-eng/CyberpunkMP/releases/latest/download/NightCityOnline-Setup.exe)
+
+That link never goes stale — it always serves the current release's installer directly.
+The launcher installs everything else (the mod, the frameworks) and keeps itself updated.
+Browsing instead: [all releases](https://github.com/ofmiceandcam98-eng/CyberpunkMP/releases/latest)
 · **Discord:** https://discord.gg/M9NSWsndC7
 
 **Contribute:** read [CONTRIBUTING.md](CONTRIBUTING.md) first — the build has version pins
