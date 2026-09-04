@@ -36,6 +36,22 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
 ## 1. THE LEDGER
 
 ### Standing decrees (law, not open items - violating one is a bug by definition)
+- **The server must be portable, and git is how it moves** (Cam, restated 2026-09-04
+  ahead of the weekend migration): *"server build should be able to be transferred and
+  build should be on git for quick deployment."* A deployment stands up by cloning the
+  repo and building — never by copying a built artifact off the old box, and never from
+  a step that lives only in somebody's shell history. Two consequences that bite:
+  - **Anything the build needs is IN THE REPO.** A hand-seeded file on one machine is a
+    deploy that cannot be reproduced — and worse, an untracked file the incoming commits
+    are about to create *refuses the pull outright*. That has killed deploys three times
+    (see the Deploy row). If you put a file on a box, commit it the same day.
+  - **git carries the CODE and the machinery, never the STATE or the SECRETS.** Those are
+    hand-carried, per `docs/MIGRATION.md` §2. The rule cuts both ways: a build step that
+    only works because of an untracked local file breaks portability just as badly as a
+    secret committed by accident.
+  Sits with, and is the operational half of, zeldfep's replicable-instances rule:
+  authoritative state must never live only in one process's memory or one box's disk.
+
 - **Boot policy** (2026-08-21): the game boots STRAIGHT TO THE MENU -
   `-skipStartScreen` + Fast Launch auto-install, both halves stay (main.js).
 
