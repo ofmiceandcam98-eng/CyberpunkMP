@@ -642,22 +642,20 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   on both sides in one commit, and expect the drop-loads path to be the thing that bites.
 
 ### Known bugs, diagnosed, unfixed
-- **`RpcService::Call` derefs null on a default-constructed slot — INFERRED from reading
-  2026-09-04, not yet observed as a crash, and it sits in the path the phone RPC work grows.**
-  `HandleRpcDefinitions` does `m_clientRpcs.resize(client_definitions.size())` then
-  `m_clientRpcs[rpc.get_id()] = {...}` — an UNCHECKED index write. `Call()` then reads
-  `const auto& rpc = m_clientRpcs[id]` and guards with
-  `if (rpc.Id.Klass != 0 && !pContext) return false;` before doing `pContext->function`.
-  **A slot that was never written has `Klass == 0` AND a null handler, so it passes that guard
-  and derefs on the next line — the guard protects the wrong case.** Nothing produces such a
-  slot today: the server hands out dense sequential ids (`RegisterClient` takes
-  `m_serverRpcs.size()`) and `Serialize` sends all of them, so every slot gets filled. The
-  operation that could ever leave a gap is ADDING REGISTRATIONS, which is exactly what the
-  phone ClientRpc pair does. Fix is three lines: bounds-check the write, make the null test
-  unconditional. Flagged to Cam's stream with the approval below.
-  Second, cosmetic but real: a refused call logs `Rpc failed` EVERY time, so a snapshot pushed
-  to a client that predates the function logs once per push per player forever — log the first
-  refusal per id and stay quiet.
+- ~~`RpcService::Call` derefs null on a default-constructed slot~~ **LANDED 2026-09-04 (Cam
+  stream), all three parts, and the read turned up a worse one than was reported.** zeldfep's
+  inference was right: the guard `if (rpc.Id.Klass != 0 && !pContext)` lets through the one
+  shape it needed to catch, because an unwritten slot has `Klass == 0` AND a null handler.
+  Now an unconditional `if (!pContext)`.
+  **The worse bug underneath it:** `HandleRpcDefinitions` sized the table by
+  `client_definitions.size()` — a COUNT — and wrote to it by `rpc.get_id()` — an ID. Those
+  agree only while ids are dense from zero, so any id ≥ count was an out-of-bounds WRITE, not
+  a null read. Heap corruption in a handler driven by whatever the server sends. Now sized by
+  highest id + 1. Same root as the reported bug (count-vs-id), strictly worse consequence.
+  Refusals also log once per id per connection now (cleared when definitions arrive), so a
+  snapshot pushed to an older client cannot spam a line per push per player.
+  **This was the blocker on the phone RPC** — the operation that could leave a gap is adding
+  registrations, which is what the phone pair does. That path is now safe to grow.
 
 - **THE OBSERVER CRASH: cause found 2026-09-04, and it was REPETITION, not memory.**
   zeldfep died (exit `0x80000003`) with his log ending mid-apply, one line after
