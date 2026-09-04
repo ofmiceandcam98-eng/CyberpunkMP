@@ -20,9 +20,13 @@ other Claude is documented in `docs/LLM-COMMS.md`.
 2. **The coordination feed** — where both streams announce ships, flag-days, pulls,
    diagnoses, and map changes. Check it before shipping or deploying; post to it when you
    do any of those.
-   - **Address**: `http://100.80.243.29:11780` (the NAS coord API, tailnet; on the NAS
-     LAN, `10.27.27.223:11780` also answers). `GET /v1/updates?limit=N` to read,
-     `POST /v1/updates` with `Authorization: Bearer <key>` to post.
+   - **Address**: `http://100.80.243.29:11780` (tailnet) OR `http://10.27.27.223:11780`
+     (the NAS's LAN). **Try both before concluding it is down - they fail
+     independently** (measured 2026-09-04: tailnet timed out, `tx 1560 rx 0` via a relay,
+     while LAN answered instantly and the service was healthy throughout). From the NAS
+     over SSH, `127.0.0.1:11780` separates "my route is broken" from "the service is
+     down". `GET /v1/updates?limit=N` to read, `POST /v1/updates` with
+     `Authorization: Bearer <key>` to post.
    - **Keys are machine-local files** (this stream: `~/.ncoa-coord-key`), never in the
      repo and NEVER in a feed body — the feed publishes a slice into `publish/`, which
      ships as a public release asset. Lost your key? Get it from the other human

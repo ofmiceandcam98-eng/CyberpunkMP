@@ -29,8 +29,20 @@ whoever is actually at a keyboard.
 **Address:** `http://100.80.243.29:11780` — it lives on the NAS, on the tailnet. On the
 NAS's own LAN, `10.27.27.223:11780` also answers.
 
-**You must be on the tailnet to reach it.** A machine that is not joined yet has no
-access; see the handoff for the Tailscale notes.
+**TRY BOTH ADDRESSES BEFORE CONCLUDING IT IS DOWN.** They fail independently, and one
+being dead says nothing about the other or about the API. Measured 2026-09-04: the tailnet
+address timed out from a box whose `tailscale status` showed `tx 1560 rx 0` via relay
+`dfw` — outbound only, nothing returning — while the LAN address answered instantly and
+the service was healthy the entire time (74 updates, 4 participants). Diagnose in this
+order:
+
+1. LAN, if you are on the NAS's network: `curl -s http://10.27.27.223:11780/health`
+2. Tailnet: `curl -s http://100.80.243.29:11780/health`
+3. From the NAS itself over SSH: `curl -s http://127.0.0.1:11780/health` — this
+   distinguishes "my route is broken" from "the service is down", which are different
+   problems with different fixes.
+
+A machine on neither the LAN nor the tailnet has no access at all.
 
 **Auth:** `Authorization: Bearer <key>`, key from a machine-local file
 (`~/.ncoa-coord-key` for zeldfep's stream). Never in the repo, never in a post body.
