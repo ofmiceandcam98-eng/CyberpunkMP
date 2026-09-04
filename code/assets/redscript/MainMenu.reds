@@ -302,8 +302,15 @@ public func MpBuildPanel() -> Void {
     let panel = new inkVerticalPanel();
     panel.SetName(n"mp_character_panel");
     panel.SetAnchor(inkEAnchor.TopRight);
+
+    // Anchor point as well as anchor. SetAnchor alone puts the widget's own top-LEFT
+    // corner at the screen's top-right, so a fit-to-content panel grows off the edge and
+    // only its first characters stay visible - which is exactly what it did. (1,0) means
+    // "line up MY top-right with that corner", so it grows inwards instead.
+    panel.SetAnchorPoint(1.0, 0.0);
     panel.SetMargin(new inkMargin(0.0, 120.0, 90.0, 0.0));
     panel.SetFitToContent(true);
+    panel.SetHAlign(inkEHorizontalAlign.Right);
     panel.Reparent(root);
 
     let title = new inkText();
@@ -313,6 +320,8 @@ public func MpBuildPanel() -> Void {
     title.SetFontStyle(n"Medium");
     title.SetFontSize(28);
     title.SetLetterCase(textLetterCase.UpperCase);
+    title.SetHorizontalAlignment(textHorizontalAlignment.Right);
+    title.SetHAlign(inkEHorizontalAlign.Right);
 
     // The same yellow the game uses for prompts, so it reads as the game speaking.
     title.SetTintColor(new HDRColor(2.0, 1.75, 0.25, 1.0));
@@ -323,8 +332,12 @@ public func MpBuildPanel() -> Void {
     detail.SetText("signing in...");
     detail.SetFontFamily("base\\gameplay\\gui\\fonts\\raj\\raj.inkfontfamily");
     detail.SetFontStyle(n"Regular");
-    detail.SetFontSize(42);
+    // 42 was wide enough that a long character name reached most of the way across the
+    // screen on its own. The title above it is the label; this is the value.
+    detail.SetFontSize(32);
     detail.SetMargin(new inkMargin(0.0, 6.0, 0.0, 0.0));
+    detail.SetHorizontalAlignment(textHorizontalAlignment.Right);
+    detail.SetHAlign(inkEHorizontalAlign.Right);
     detail.Reparent(panel);
 
     this.m_mpPanel = panel;
