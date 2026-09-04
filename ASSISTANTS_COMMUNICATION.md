@@ -109,7 +109,7 @@ disagree, the file is what survives — it is in git and the feed's history is n
 | **Coordination API** | starts with the game server; own row in the launcher's admin panel |
 | **Game patch** | 2.31 (upstream targets 2.2) |
 | **Public download** | https://github.com/ofmiceandcam98-eng/CyberpunkMP/releases/latest |
-| **Status page** | https://claude.ai/code/artifact/8eabe1f0-60dc-4899-8688-376a2549b129 |
+| **Status page** | https://claude.ai/code/artifact/8eabe1f0-60dc-4899-8688-376a2549b129 — source of truth is `publish/status-page.html`; the URL is owned by one account, so see `publish/README.md` before assuming it can be updated in place |
 | **Discord** | https://discord.gg/M9NSWsndC7 — updates to `#server-update` |
 
 ---

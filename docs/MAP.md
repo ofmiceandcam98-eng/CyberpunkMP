@@ -241,8 +241,10 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   soft delete, vehicle seat validation, money confiscation fix (the destructive half of the
   money bug — see known-bugs), player trading, downed/medical, the new staff permission
   ladder. The test build is a pre-release, dev-role only, installed from Settings → DEV →
-  Test builds; payload verified to carry the new redscript. Test sheet:
-  https://claude.ai/code/artifact/1945eb67-12d0-4602-a9e6-aca164dd0e1c
+  Test builds; payload verified to carry the new redscript. **The test checklist lives in
+  the `v0.3.114-worldstate-test.19` RELEASE NOTES on GitHub** - durable, public, and it
+  travels with the build it tests. (It was previously a chat-session artifact link, which
+  only resolved for one account.)
   Genuinely open, in order:
   1. **Two-player tests entirely unrun** — trading, calls, medical revival; vehicle seat
      validation needs FOUR bodies. All of it is offline-tested only, and it waits on the
