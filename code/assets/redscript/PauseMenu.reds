@@ -1,159 +1,48 @@
 module CyberpunkMP
 
-import CyberpunkMP.World.*
+// Not the wildcard - see the note in Vehicles.reds. `import CyberpunkMP.World.*` shadows
+// game classes with the mod's own, and the resulting errors name a method as missing
+// rather than naming the collision.
+import CyberpunkMP.World.NetworkWorldSystem
 
-// No loading a save while you are on the server.
-//
-// Loading detaches and rebuilds the whole world. The server still holds the puppet from
-// before, so everyone else is left looking at a frozen copy of someone who has already
-// gone somewhere else - and the person who loaded is now in a singleplayer world from
-// before any of the session happened. That is the desync Cam hit, and it takes both
-// players out of the session, not just the one who pressed the button.
-//
-// The entry is removed rather than greyed out or refused on click. A disabled option
-// still reads as something you are supposed to be able to use, and an option that shows
-// an error when pressed is worse - it puts the explanation after the mistake.
-//
-// This hooks AddMenuItem rather than the pause menu itself, because that is the single
-// point every menu entry passes through, and it means the item is never created at all
-// instead of being created and then hunted down and deleted.
-//
-// Only 'OnSwitchToLoadGame' is affected - the pause menu's Load Game. The main menu uses
-// 'OnLoadGame', which is untouched: you are not connected there, and it is how you get
-// into the game in the first place.
-// NOTE script_ref<String>, not String. The game declares this as
-// `const label : ref< String >`, and that dialect's `ref` on a String is redscript's
-// script_ref - getting it wrong fails the whole file with UNRESOLVED_METHOD, which takes
-// every other script in the mod down with it.
-// SAVING is removed for a different reason than loading.
-//
-// Loading is dangerous: it rebuilds the world and desyncs everyone. Saving is merely
-// MISLEADING - a Cyberpunk save records a singleplayer game and knows nothing about the
-// server, so a player who saves and expects that to preserve their session has been told
-// something untrue by the menu. The server writes their position continuously and that is
-// the only thing that survives.
-//
-// So the entry goes, for honesty rather than safety.
-//
-// Worth being clear about the limit: this removes the pause-menu entries. The QUICKSAVE
-// hotkey and the game's own autosaves are native and cannot be blocked from redscript -
-// checked against the 2.31 type hierarchy, which has no save system exposed to scripts at
-// all. Those still write a file. That file is harmless: it only becomes a problem if it is
-// LOADED, and loading is what is actually blocked above.
-@wrapMethod(gameuiMenuItemListGameController)
-protected func AddMenuItem(label: script_ref<String>, spawnEvent: CName) -> Void {
-    let system = GameInstance.GetNetworkWorldSystem();
-    let connected = IsDefined(system) && system.IsConnected();
-
-    // Every menu item, everywhere, once per menu build.
-    //
-    // Menu event names are ink events and do not appear in the type dump, so the only way
-    // to learn them is to watch them go past. This covers the NEW GAME menu too, which is
-    // built before connecting and so was invisible to the connected-only logging below.
-    FTLog(s"[Menu] item '\(NameToString(spawnEvent))'");
-
-    if connected {
-        // Every entry, once, so the exact names are on record rather than guessed at.
-        // The save entry's event name is not in the type dump - it is an ink event - so if
-        // the list below misses it, this line is what tells us what to add.
-        FTLog(s"[PauseMenu] item: \(NameToString(spawnEvent))");
-
-        if Equals(spawnEvent, n"OnSwitchToLoadGame") {
-            FTLog(s"[PauseMenu] connected to a server - not offering Load Game");
-            return;
-        }
-
-        // Several candidates, because the name could not be verified offline. Filtering a
-        // CName that does not exist is harmless - nothing matches and the entry is left
-        // alone - so guessing wide costs nothing and guessing narrow costs a round trip.
-        if Equals(spawnEvent, n"OnSwitchToSaveGame")
-            || Equals(spawnEvent, n"OnSaveGame")
-            || Equals(spawnEvent, n"OnQuickSave")
-            || Equals(spawnEvent, n"OnSwitchToSave") {
-            FTLog(s"[PauseMenu] connected to a server - not offering Save Game");
-            return;
-        }
-    }
-
-    wrappedMethod(label, spawnEvent);
-}
-
-// Quitting saves first.
-//
-// Disconnect() saves the character and then closes the socket - but it was reachable from
-// exactly one place, the mod's own disconnect button. Anybody who left through the pause
-// menu instead, which is how people actually leave a game, never touched it. Their session
-// fell back to the ninety-second autosave timer, so up to ninety seconds of shopping,
-// looting and eddies could be gone on the next join - and it looks precisely like the
-// server eating what you earned.
-//
-// Both exits count. EXIT TO MAIN MENU ends the session as completely as EXIT GAME does:
-// the world is torn down either way and the server is left holding a puppet for somebody
-// who has gone.
-//
-// The action names come from the game's own source, cyberpunk\UI\fullscreen\ingame\
-// pauseMenu.script - PauseMenuAction.ExitGame and .ExitToMainMenu, dispatched from
-// OnMenuItemActivated at line 189. Saving BEFORE wrappedMethod, because the original call
-// is what tears the session down; afterwards there is nothing left to send.
-//
-// Not covered, deliberately: Alt-F4 and killing the process. Nothing script-side runs on
-// those, which is exactly why the ninety-second timer exists as well as this.
+/**
+ * The in-game pause menu, with the singleplayer entries removed.
+ *
+ * Cam's rule, 2026-09-03: SAVE GAME and LOAD GAME go. On this server neither means what it
+ * says - the character lives on the server, so a local save records a body without the
+ * identity attached to it, and LOADING one drops you into a world the server is not in.
+ * Both are ways to end up playing somebody who is not your character, which is the same
+ * reason they came off the main menu.
+ *
+ * SAME SHAPE AS MainMenu.reds, deliberately. wrappedMethod() is the only thing that adds
+ * those entries (pauseMenu.script:PopulateMenuItemList), so the multiplayer branch does not
+ * call it and re-adds the ones that still make sense. That was verified against the game's
+ * own shipped source rather than guessed - and it is also why Clear() is not needed here:
+ * the engine calls ShowActionsList, which clears before populating.
+ *
+ * WHAT STAYS, and why each one earns it:
+ *
+ *   RESUME          - the reason the menu exists.
+ *   SETTINGS        - resolution, controls, audio. Needed at least as much in multiplayer.
+ *   CREDITS         - the game's own; taking it away is not ours to do.
+ *   EXIT TO MENU    - the way out. Removing it would trap somebody in the session.
+ *
+ * QUIT GAME is added by ShowActionsList itself, after this returns, so it is untouched.
+ */
 @wrapMethod(PauseMenuGameController)
-protected cb func OnMenuItemActivated(index: Int32, target: ref<ListItemController>) -> Bool {
-    let system = GameInstance.GetNetworkWorldSystem();
+private func PopulateMenuItemList() -> Void {
+  let network = GameInstance.GetNetworkWorldSystem();
 
-    if IsDefined(system) && system.IsConnected() {
-        let data = target.GetData() as PauseMenuListItemData;
+  // Not launched through the launcher: the vanilla pause menu, with no trace of the mod.
+  if !IsDefined(network) || !network.IsModEnabled() {
+    wrappedMethod();
+    return;
+  }
 
-        if IsDefined(data)
-            && (Equals(data.action, PauseMenuAction.ExitGame)
-                || Equals(data.action, PauseMenuAction.ExitToMainMenu)) {
-            FTLog(s"[PauseMenu] leaving the server - saving before exit");
-            system.Disconnect();
-        }
-    }
+  this.AddMenuItem(GetLocalizedText("UI-Labels-Resume"), n"OnClosePauseMenu");
+  this.AddMenuItem(GetLocalizedText("UI-Labels-Settings"), n"OnSwitchToSettings");
+  this.AddMenuItem(GetLocalizedText("UI-Labels-Credits"), n"OnCreditsPicker");
+  this.AddMenuItem(GetLocalizedText("UI-Labels-ExitToMenu"), PauseMenuAction.ExitToMainMenu);
 
-    return wrappedMethod(index, target);
-}
-
-// REGULAR START is removed from the new-game screen.
-//
-// The first attempt at this filtered menu-item names on gameuiMenuItemListGameController,
-// which was the wrong screen entirely. The choice in Cam's screenshot is not a menu list -
-// it is ExpansionNewGame, a BaseCharacterCreationController with two bound buttons, and it
-// never passes through AddMenuItem at all. The logging that replaced the guesses is what
-// showed this: the only names that ever appeared were OnNewGame, OnLoadGame,
-// OnSwitchToSettings, OnCreditsPicker and our own two. No standard-start event exists,
-// because the standard start is a button on a later screen.
-//
-// Written against the game's own source, which is authoritative for the installed patch:
-//   cyberpunk/UI/fullscreen/pregame/expansionNewGame.script
-//     m_baseGameButton   -> REGULAR START            -> OnPressBaseGame
-//     m_standaloneButton -> SKIP AHEAD TO PHANTOM LIBERTY -> OnPressExpansion
-//
-// A regular new game begins in the prologue - the whole of Act 1, which is exactly what
-// the multiplayer start exists to skip. Phantom Liberty's start lands post-Act-1 at level
-// 15, and the expansion is already required to play here at all, so nothing is lost.
-@wrapMethod(ExpansionNewGame)
-protected cb func OnInitialize() -> Bool {
-    let result = wrappedMethod();
-
-    FTLog(s"[Menu] new game screen - hiding REGULAR START");
-    inkWidgetRef.SetVisible(this.m_baseGameButton, false);
-
-    return result;
-}
-
-// Belt and braces: the button is hidden above, but a hidden widget can still be reachable
-// by controller focus in some menus. If the press ever lands anyway, it is answered with
-// the expansion start rather than being silently swallowed - a dead button is worse than
-// no button, and this way the outcome is the one we want either way.
-@replaceMethod(ExpansionNewGame)
-protected cb func OnPressBaseGame(evt: ref<inkPointerEvent>) -> Bool {
-    if evt.IsAction(n"click") && !this.m_isInputLocked {
-        FTLog(s"[Menu] REGULAR START pressed - starting the Phantom Liberty one instead");
-        this.m_characterCustomizationState.SetIsExpansionStandalone(true);
-        this.PlaySound(n"Button", n"OnPress");
-        this.NextMenu();
-    }
+  this.m_menuListController.Refresh();
 }
