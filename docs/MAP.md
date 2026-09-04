@@ -73,7 +73,45 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   checks pass, including the four that matter: support fails `>= moderator`, `>= event
   staff` and `>= admin`, and still gets four slots.
 
+### Landed 2026-09-04 (Cam stream) — the "advertised but never built" class
+- **`/kill` never downed anyone, and the reason was a missing inch.** Server tracked
+  `LifeState`, sent `NotifyCombatState.life_state`, the DLL stored `m_downed` and exposed
+  `IsDowned()` to script — and **nothing anywhere called `IsDowned()`**. Every layer
+  reported success and the player kept standing. Presentation half written in
+  `Combat.reds` (`MpApplyDownedState`, edge-triggered, applies
+  `BaseStatusEffect.Defeated`, deliberately NOT `BlockAllMenu`). `/kill` now downs in
+  place rather than teleporting, so it enters the medical loop instead of skipping it.
+- **`/respawn` did not exist.** The bleedout path had told players "Use /respawn when you
+  are ready" since medical shipped. Anyone who bled out was stuck dead with no route
+  back. It survived because `/kill` was the only way down and `/kill` never downed
+  anyone — **the two gaps hid each other.** Implemented (from `kDead` only, jail wins).
+- **`/inventory` did not exist** either, and `/trade item` pointed at it. Found by the new
+  check below, not by a person. Lists ids + quantity (ids, not names — the 2.31 name
+  helper returns empty strings).
+- **NEW VERIFY CHECK — "advertised commands".** Every `/command` inside a `Tell()` must
+  have a dispatch block. The compiler cannot see inside a string literal, and neither can
+  a review looking at the command being changed. Knows about `||` alias chains, the
+  `ChatChannel` table, and `line ==` sub-verb dispatch — all three were false positives
+  first, and a gate that cries wolf gets ignored.
+- **`/help` listed 4 commands out of 48.** Phone, trading, medical, vehicles and character
+  all shipped unlisted. Now topic-based and permission-aware.
+- **Selector panel drew off-screen** — and `d96e5ce` had fixed exactly that on
+  `test/character-selector` on 21 Aug and was never merged. Cherry-picked. *Check for an
+  existing fix on a side branch before writing a new one.*
+
 ### Needs a live session (built, never validated with humans)
+- **Pause menu unpause is BEST-EFFORT, 2026-09-04.** The menu opens again (an inline
+  `UnpauseGame()` in `OnInitialize` was killing it — the `SetMenuModeEvent` is queued and
+  consumed a frame later, so the unpause landed before the layer read it). The unpause is
+  now deferred 0.25s. **Unconfirmed: whether `DelaySystem` ticks at all while the game is
+  paused.** If it does not, the callback never fires — menu works, world still pauses.
+  That is the safe failure mode, but it needs one look: open the pause menu and watch
+  whether NPCs behind it keep moving.
+- **`/tp spawn` is deliberately NOT staff-gated** — flagged to Cam, reversible in one
+  line. A player who has fallen out of the world cannot play at all and the alternative is
+  waiting for a moderator; it moves only the caller, to a published location.
+- **Start-point origin guard is SERVER code and the test box has no cron.** Until that box
+  rebuilds, only zeldfep's client-side recovery guard is protecting new arrivals.
 - **Player combat (Cam) — SHIPPED v0.3.104/105/106, never tested with two humans.**
   Stages 1-10 of the brief: PvP damage server-decided, quickhacks on players, hack-warning
   telegraphs, server-owned health/ammo/RAM pool, wanted-level clear on down, scan shows

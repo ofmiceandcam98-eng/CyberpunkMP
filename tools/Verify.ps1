@@ -137,6 +137,33 @@ if (-not $dupeFound) { Pass "$($top.Count) commands, each dispatching once" }
 # is a check rather than a fix. The compiler cannot see inside a string literal, and neither
 # can a code review that is looking at the command being changed.
 Head "advertised commands"
+
+$known = @{}
+foreach ($k in $top.Keys) { $known[$k] = $top[$k] }
+
+# EVERY literal compared against `command`, not just the first on its line. Plenty of
+# commands are aliases sharing one block - /character || /char, /answer || /decline ||
+# /hangup, /block || /unblock, /stabilize || /stabilise, /assess || /revive - and some of
+# those chains wrap onto a continuation line. Taking only the first literal per line
+# reported six live commands as missing.
+Select-String -Path $chat -Pattern 'command == "(/[a-z]+)"' -AllMatches | ForEach-Object {
+    foreach ($m in $_.Matches) { $known[$m.Groups[1].Value] = $_.LineNumber }
+}
+
+# And the chat CHANNELS - /yell, /whisper, /advert - are rows in a table (search this file
+# for ChatChannel::) rather than branches, because they differ only by range, prefix and
+# permission. A check that knew only about if-blocks reported /advert as missing, which is
+# exactly the kind of false positive that teaches people to ignore the gate.
+Select-String -Path $chat -Pattern '\{\s*"(/[a-z]+)"' | ForEach-Object {
+    $known[$_.Matches[0].Groups[1].Value] = $_.LineNumber
+}
+
+# A few diagnostics match the WHOLE line rather than the parsed command, because they take a
+# fixed sub-verb (`/dummy servertick`). Same dispatch, different variable.
+Select-String -Path $chat -Pattern 'line == "(/[a-z]+)' | ForEach-Object {
+    $known[$_.Matches[0].Groups[1].Value] = $_.LineNumber
+}
+
 $advertised = @{}
 Select-String -Path $chat -Pattern 'Tell\(' | ForEach-Object {
     foreach ($m in [regex]::Matches($_.Line, '(?<![\w/])(/[a-z]{2,})')) {
@@ -144,11 +171,11 @@ Select-String -Path $chat -Pattern 'Tell\(' | ForEach-Object {
         if (-not $advertised.ContainsKey($name)) { $advertised[$name] = $_.LineNumber }
     }
 }
-$ghosts = $advertised.Keys | Where-Object { -not $top.ContainsKey($_) } | Sort-Object
+$ghosts = $advertised.Keys | Where-Object { -not $known.ContainsKey($_) } | Sort-Object
 foreach ($g in $ghosts) {
     Fail -Summary "$g is advertised to players but never dispatched" `
          -What "a player who is told to type $g types it and nothing happens - the server does not recognise it, so they get no reply at all. When the text offering it is the ONLY way out of a state (a respawn prompt, a trade confirmation), that player is stuck with no way forward and no error to report" `
-         -Where "$chat`:$($advertised[$g]) offers it; no 'if (command == \"$g\")' block exists" `
+         -Where "$chat`:$($advertised[$g]) offers it; no dispatch block for $g exists" `
          -Fix "either implement $g beside the other commands in this file, or change the message to name a command that does exist. Check which states can reach that message before deciding - if it is the only exit from one, it has to be implemented"
 }
 if ($ghosts.Count -eq 0) { Pass "$($advertised.Count) advertised command(s), all dispatched" }

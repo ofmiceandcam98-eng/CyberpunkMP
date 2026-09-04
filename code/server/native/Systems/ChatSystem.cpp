@@ -2535,6 +2535,62 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         return true;
     }
 
+    // ---------------------------------------------------------- /inventory ----
+    //
+    // What the SERVER believes you are carrying, and the ids /trade item wants.
+    //
+    // BUILT BECAUSE IT WAS ALREADY BEING ADVERTISED, same as /respawn. The trade error for a
+    // malformed item said "Usage: /trade item <id> <quantity>   (see /inventory)" and there
+    // was no /inventory - so the one message whose whole job was to tell somebody where to
+    // find an item id pointed at nothing. Found by the new Verify check, not by a person.
+    //
+    // Ids, not names. The server stores raw TweakDBIDs and deliberately does not interpret
+    // them (see CharacterRecord::ItemStack) - and the client-side helper that turns one into
+    // a name returns empty strings on 2.31, which is how equipment sync once spent a week
+    // looking fine and shipping nothing. A number you can paste into /trade is worth more
+    // than a name that might be blank.
+    if (command == "/inventory")
+    {
+        const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(acSender.DiscordId);
+
+        if (!pCharacter)
+        {
+            Tell(acSender, "No character loaded for you on the server yet.");
+            return true;
+        }
+
+        Tell(acSender, fmt::format("Eddies: {}", pCharacter->Money));
+
+        if (pCharacter->Inventory.empty())
+        {
+            Tell(acSender, "Carrying nothing the server has recorded yet.");
+            return true;
+        }
+
+        Tell(acSender, fmt::format("Carrying {} stack(s) - the id is what /trade item takes:",
+                                   pCharacter->Inventory.size()));
+
+        // Capped. A full character carries hundreds of stacks and the chat box shows a
+        // handful of lines, so an uncapped list scrolls its own beginning away - the same
+        // reason /help became topic-based.
+        constexpr size_t kMaxLines = 20;
+        size_t shown = 0;
+
+        for (const auto& stack : pCharacter->Inventory)
+        {
+            if (shown >= kMaxLines)
+            {
+                Tell(acSender, fmt::format("...and {} more.", pCharacter->Inventory.size() - shown));
+                break;
+            }
+
+            Tell(acSender, fmt::format("  {:#018x}  x{}", stack.Id, stack.Quantity));
+            ++shown;
+        }
+
+        return true;
+    }
+
     // ----------------------------------------------------------- /setspawn ----
     //
     // Where players reappear after dying. Recorded from where the admin is standing,
@@ -5274,6 +5330,7 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         if (topic == "me")
         {
             Tell(acSender, "  /character         - your character sheet (/char works too)");
+            Tell(acSender, "  /inventory         - what you are carrying, and your eddies");
             Tell(acSender, "  /name <name>       - set your character's name");
             return true;
         }
