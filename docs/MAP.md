@@ -7,6 +7,13 @@ whoever lands or finds things (both Claude streams included): landing an item re
 from the ledger in the same commit; finding one adds it. A ledger that is not updated in
 the landing commit is how items get missed twice.
 
+**The map convention (crew decree 2026-09-03):** any commit touching this file is
+announced on the coordination feed by whoever made it ("map updated: <what>"), and the
+other stream re-reads the map before its next move instead of acting on a cached copy.
+The NAS deploy announces map-touching pulls automatically as a backstop (posts as
+"deploy (NAS)"), so a push alone still signals - but the manual post carries the WHY,
+so do not lean on the backstop.
+
 Last full revision: 2026-09-03 - the era catch-up, restyled back to this ledger format.
 Partial pass 2026-08-30 (Claude Code): the character-start run. Dogtown solved and
 confirmed in game, the Phantom Liberty prologue traced to the gamedef and removed, the
