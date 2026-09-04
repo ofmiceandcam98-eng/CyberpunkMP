@@ -659,6 +659,18 @@ public native class NetworkWorldSystem extends IGameSystem {
         FTLog(s"[NetworkWorldSystem] teleporting to \(position.X), \(position.Y), \(position.Z)");
         GameInstance.GetTeleportationFacility(GetGameInstance()).Teleport(player, position, angles);
 
+        // Fall-through recovery.
+        //
+        // The teleportation facility prefetches streaming, but on a fresh spawn the world
+        // at the destination is not always collision-ready by the time the player lands -
+        // so they drop through the floor, and the game's own out-of-bounds recovery dumps
+        // them in a holding volume ("a box"). If nothing catches this it loops: fall,
+        // recover, fall. Both spawn AND respawn come through here, so guarding here guards
+        // both. Arm a watchdog: if the player is far from where the server just placed
+        // them a moment later, streaming has since caught up - put them back, a few times,
+        // then give up rather than loop forever.
+        this.ArmFallThroughGuard(position, yaw, 3);
+
         // Belt and braces. If the forced exit above did not take, the client would keep
         // reporting the car's position as the player's from the other side of the map -
         // and the symptom of that is not "still in a car", it is "this player is
@@ -667,6 +679,51 @@ public native class NetworkWorldSystem extends IGameSystem {
         if IsDefined(vehicles) && VehicleComponent.IsMountedToVehicle(GetGameInstance(), player) {
             FTLogWarning(s"[NetworkWorldSystem] still mounted after teleporting - clearing the vehicle link anyway");
             vehicles.OnVehicleExit();
+        }
+    }
+
+    // Schedules the fall-through check after a teleport. Separate method so both the
+    // initial arm (from DoTeleport) and each re-arm (from the check itself) go through
+    // one place. 1.5s is long enough for the facility's prefetch to finish streaming the
+    // destination and short enough that a real player has not walked anywhere yet.
+    public func ArmFallThroughGuard(destination: Vector4, yaw: Float, attemptsLeft: Int32) -> Void {
+        let guard = new MpFallThroughGuard();
+        guard.system = this;
+        guard.position = destination;
+        guard.yaw = yaw;
+        guard.attemptsLeft = attemptsLeft;
+        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(guard, 1.5, false);
+    }
+
+    // Did the last placement stick, or did the player fall through unstreamed collision?
+    public func CheckFallThrough(destination: Vector4, yaw: Float, attemptsLeft: Int32) -> Void {
+        let player = GetPlayer(GetGameInstance());
+        if !IsDefined(player) {
+            return;
+        }
+
+        let here = player.GetWorldPosition();
+        let dropped = destination.Z - here.Z;
+        let dx = here.X - destination.X;
+        let dy = here.Y - destination.Y;
+        let horizontal = dx * dx + dy * dy;
+
+        // Well below where they were placed (fell through) OR flung far from it (the
+        // game's out-of-bounds recovery moved them). Right after a server teleport, either
+        // one means the placement did not hold - a real player has not gone 20m down or
+        // 30m sideways in a second and a half.
+        if dropped > 20.0 || horizontal > 900.0 {
+            // ScriptLog, not FTLog: FTLog reaches the game's own log, which nothing
+            // collects, and a recovery nobody can see is a recovery nobody can diagnose
+            // (the same lesson as the launcher's install trail). ScriptLog lands in the
+            // mod log that ships to the server with the session.
+            if attemptsLeft > 0 {
+                this.ScriptLog(s"[Spawn] placement did not hold - \(dropped)m below, re-placing (\(attemptsLeft) attempt(s) left)");
+                this.DoTeleport(destination, yaw);
+                this.ArmFallThroughGuard(destination, yaw, attemptsLeft - 1);
+            } else {
+                this.ScriptLog("[Spawn] still not holding after 3 attempts - collision at the destination may never have streamed");
+            }
         }
     }
 
@@ -779,6 +836,21 @@ public class MpDelayedTeleportCallback extends DelayCallback {
     public func Call() -> Void {
         if IsDefined(this.system) {
             this.system.DoTeleport(this.position, this.yaw);
+        }
+    }
+}
+
+// Fires 1.5s after a placement to ask whether it held. Carries the destination and a
+// remaining-attempts count so the re-place cannot loop forever.
+public class MpFallThroughGuard extends DelayCallback {
+    public let system: wref<NetworkWorldSystem>;
+    public let position: Vector4;
+    public let yaw: Float;
+    public let attemptsLeft: Int32;
+
+    public func Call() -> Void {
+        if IsDefined(this.system) {
+            this.system.CheckFallThrough(this.position, this.yaw, this.attemptsLeft);
         }
     }
 }
