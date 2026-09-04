@@ -540,8 +540,10 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   exists BEFORE spending the bytes, keep them when it does not, clear only after a commit is
   accepted. Cheap live check: `appearance held - no live customization state yet` once, then
   a real BEGIN after the world attaches. Fault A — `OwnSave` picking a save by file order
-  instead of identity — is STILL OPEN and the big one; its fix is ChatGPT's Phase 1 items 1-4
-  and the correct next piece of work.
+  instead of identity — is FIXED 2026-09-04 by always loading the template and letting the
+  server own identity; see the "I am not the character I made" entry for why the named-save
+  plan was dropped. **Both halves are now client redscript that has NOT been compiled** — the
+  gate below applies to this pair together.
 
 - **"Nobody could see anybody" — never the puppet system. FIXED `ec2858d`, awaiting a live
   run.** `NetworkWorldSystem::Spawn` was never called ONCE in twenty-one session logs — no
@@ -648,11 +650,22 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   character he made. His stored blob also flip-flops 10232 -> 6484 -> 10232 bytes, i.e.
   different appearances competing, not one being resent. The server's sync is INNOCENT
   and working (it logged 6 real changes, not 15, and its unchanged-guard holds); it is
-  faithfully broadcasting a bad capture. Fix belongs at capture: `OwnSave` must pick the
-  save by IDENTITY, not file order. Proposed guard, needs a wire field so it is a
-  flag-day: the client reports the gender of the state it captured and the server refuses
-  a capture that contradicts the character record's `IsMale` - that would have caught
-  this in the first second instead of after a night of crashes.
+  faithfully broadcasting a bad capture. **HALF-ADDRESSED 2026-09-04 and the other half got
+  MORE URGENT, deliberately - read this before concluding the fix made things worse.**
+  `OwnSave` no longer picks a save at all: the template loads every time and identity comes
+  from the server (see fault A). That removes the *random* wrong character - a probe's
+  leftover Corpo can no longer win a file-order race. **It does NOT remove the template's own
+  identity, and it makes every machine start from it.** The body at load is now Phantom
+  Veronica for EVERYBODY until the server's appearance restore lands over the top, where
+  before a player with their own save might have started closer to themselves by luck.
+  That trade is intentional: one known starting state that the restore must beat is a bug
+  with one cause, where two competing sources is a coin flip nobody can reproduce. **The
+  consequence is that the appearance restore is now the single thing standing between a
+  player and being Veronica, so its priority goes UP, not down.**
+  Still worth building, and unchanged by any of this: the client reports the gender of the
+  state it captured and the server refuses a capture contradicting the character record's
+  `IsMale`. Needs a wire field, so it is a flag-day - batch it with the slots work. It would
+  have caught this in the first second instead of after a night of crashes.
 
 - **THE crash: SOLVED 2026-08-26/27 (`0da3c9b`, `559828f`, `0fa2bb9`) - never entity
   readiness; a genuine data race, two threads inside flecs' `flecs_stack_restore_cursor`
@@ -872,14 +885,33 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
 - **"I am not the character I made" — root cause found 2026-09-02: TWO independent faults
   stacking, one still open.** Cam's report: *"the character we created would not be the
   character we play as, it is also not phantom veronica"* — a third person entirely.
-  - **(A) STILL OPEN — the big one: `OwnSave` has no idea which save is the character.** It
-    loads "the newest save that is not `MultiplayerStart`", which is not an identity, it is
-    an accident of file order. On 2026-09-01 it loaded `AutoSave-12` — a throwaway female
-    Corpo from a probe run two days earlier. ANY newer save wins: another test character, a
-    singleplayer session, anything. The fix needs a save NAMED for the character
-    (`ManualSave(saveName: String)` exists on `inkISystemRequestsHandler`, so the mod can
-    name its own saves) and a load that matches that name rather than a position in a list.
-    That is ChatGPT's Phase 1 items 1-4 and it is the correct next piece of work.
+  - **(A) FIXED 2026-09-04 by REMOVING THE CHOICE — not by the plan of record, and the
+    reason matters. NOT COMPILE-CHECKED (see below).** `OwnSave` loaded "the newest save that
+    is not `MultiplayerStart`", which is not an identity, it is an accident of file order; on
+    2026-09-01 it took `AutoSave-12`, a throwaway female Corpo from a probe two days earlier,
+    and ANY newer save would have won — another test character, a singleplayer session,
+    anything.
+    **The planned fix was DROPPED deliberately.** It was "name a save per character
+    (`ManualSave(saveName)`) and load by matching the name", and it needs the mod to WRITE
+    saves. `343b912` closed that door hours earlier on purpose: `SaveLocksManager` is held for
+    the whole launcher session because a local save is a second copy of a server-owned
+    character, and *save with the money, spend it, load, spend it again* is the exploit that
+    follows. Naming saves per character would have punched a hole in a rule Cam asked for
+    personally, to solve a problem with a cheaper answer.
+    **What landed instead: the template is loaded ALWAYS, matched BY NAME.** Identity comes
+    from the server, which was always the design — `HasCharacter()`, `GetCharacterName()` and
+    the appearance restore all run before the load does. No file order, no newest-save race,
+    nothing to name. `MpLoadOwnCharacterSave` is renamed `MpLoadMultiplayerWorld` because the
+    old name now describes the opposite of what it does.
+    **Honest costs, both recorded rather than discovered later:** a returning player's own
+    singleplayer world progress no longer enters a session (nothing consulted it — the server
+    owns position, possessions, money and world facts — and it could not have advanced anyway
+    with saving locked), and **the template's Phantom Veronica identity bleed is NOT fixed
+    here** — `MpStarterSettlement` and the appearance restore are the two fixes in flight for
+    that. What changed is that the bleed now comes from ONE known source on every machine
+    instead of whichever save a player happened to have: a bug you can reproduce rather than a
+    coin flip. Fallback if the template is missing from the list logs LOUDLY and takes the
+    newest save, because a player still needs a world.
   - **(B) FIXED**: the stacked second fault — a failed appearance restore destroying its own
     input — see the appearance-restore entry.
 

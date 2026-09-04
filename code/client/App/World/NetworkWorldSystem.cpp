@@ -1387,7 +1387,7 @@ void NetworkWorldSystem::ApplyStoredAppearance()
     // NOT READY is not the same as FAILED, and conflating them cost us the character.
     //
     // On a fresh connect the server sends the appearance while the player is still on the
-    // MAIN MENU - MpLoadOwnCharacterSave has not loaded their save yet. There is no live
+    // MAIN MENU - MpLoadMultiplayerWorld has not loaded the world yet. There is no live
     // customization state to write into at that moment, and there cannot be. From Cam's
     // log on 2026-09-01, in this exact order:
     //

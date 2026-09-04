@@ -226,17 +226,18 @@ public func MpEnterWithCharacter() -> Void {
         // stand; what changed is that the server already knows who is arriving.
         network.RequestJoin();
 
-        // Their OWN character, not the world template.
+        // The world template, ALWAYS. Identity comes from the server, never from a save.
         //
-        // This used to be LoadLastCheckpoint(false), which loads save index 0 - whatever
-        // is newest. The launcher installs the template as MultiplayerStart, so whenever
-        // that file was the newest the player loaded as Phantom Veronica instead of
-        // themselves, and when one of their own autosaves was newer they loaded correctly.
-        // That coin-flip is why this looked like an appearance bug for a very long time.
+        // This was LoadLastCheckpoint(false) once - save index 0, whatever is newest - and
+        // then briefly "the newest save that is not the template", which sounded like an
+        // identity and was not: it loaded whichever character happened to have the newest
+        // file, including a probe run's throwaway Corpo. That coin flip is why this looked
+        // like an appearance bug for weeks.
         //
-        // See OwnSave.reds. The template is still loaded for somebody who has no save of
-        // their own, which is the case it actually exists for.
-        this.MpLoadOwnCharacterSave();
+        // See OwnSave.reds for the full reasoning, including why the planned fix - naming a
+        // save per character - was dropped: it needs the mod to write saves, and the save
+        // lock (343b912) forbids that on purpose.
+        this.MpLoadMultiplayerWorld();
         return;
     }
 
