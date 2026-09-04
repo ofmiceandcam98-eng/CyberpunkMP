@@ -247,6 +247,23 @@ bool GameServer::GetRespawnPoint(glm::vec3& aPosition, float& aYaw) const
 
 void GameServer::SetStartPoint(const glm::vec3& acPosition, float aYaw)
 {
+    // Caught where the mistake is MADE, not at every spawn afterwards.
+    //
+    // GetStartPoint refuses an origin point too, which is what stops an already-stored bad
+    // value hurting anybody. This stops it being stored in the first place, so whoever ran
+    // the command finds out immediately rather than the next new player finding out by
+    // falling through the world. See the long note in GetStartPoint.
+    constexpr float kOriginRadius = 25.f;
+
+    if (glm::length(acPosition) < kOriginRadius)
+    {
+        spdlog::error("[Start] refusing to store ({:.1f}, {:.1f}, {:.1f}) as the start point - "
+                      "that is the world origin, and every new character sent there falls "
+                      "through the map. Stand somewhere real and run it again.",
+                      acPosition.x, acPosition.y, acPosition.z);
+        return;
+    }
+
     m_startPosition = acPosition;
     m_startYaw = aYaw;
     m_hasStartPoint = true;
@@ -268,6 +285,38 @@ bool GameServer::GetStartPoint(glm::vec3& aPosition, float& aYaw) const
 {
     if (!m_hasStartPoint)
         return false;
+
+    /**
+     * A start point at the world origin is not a place. Refuse it.
+     *
+     * Cam, 2026-09-04: "after creating a character i fell through the map, and now im stuck
+     * in the box". The test server's stored point was (-5.2, 20.9, 0.0) and every new
+     * character was being teleported faithfully into it - which in Night City is under the
+     * terrain, so they fell.
+     *
+     * Nobody sets a spawn within a few metres of (0,0,0) on purpose: it is where an unset,
+     * default-constructed or half-parsed value lands. Treating it as a real destination
+     * turns one bad config write into every new player falling through the world, and the
+     * symptom - "I fell through the map" - points at physics rather than at a number in a
+     * JSON file, which is why this cost an evening to find.
+     *
+     * Refusing means the caller falls back to the player's own remembered position, which
+     * is always somewhere they were actually standing.
+     *
+     * A REAL start point close to the origin would be refused too. That is the right trade:
+     * losing an unusual spawn location is a note in a log, and dropping every new character
+     * into the void is a session nobody can play.
+     */
+    constexpr float kOriginRadius = 25.f;
+
+    if (glm::length(m_startPosition) < kOriginRadius)
+    {
+        spdlog::error("[Start] refusing the stored start point ({:.1f}, {:.1f}, {:.1f}) - that is "
+                      "the world origin, not a location. New arrivals will use their own saved "
+                      "position instead. Fix it with /setstart while standing somewhere real.",
+                      m_startPosition.x, m_startPosition.y, m_startPosition.z);
+        return false;
+    }
 
     aPosition = m_startPosition;
     aYaw = m_startYaw;
