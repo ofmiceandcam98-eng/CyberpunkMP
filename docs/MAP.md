@@ -611,6 +611,36 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   "summon my second Quadra" has no native expression. The server must decide which instance
   a model-summon resolves to - nearest stored, last driven, or explicit via /garage.
 
+### The cell grid does not actually cull anything (measured 2026-09-04)
+- **`kCellSize = 6000` is larger than Night City, so the spatial partition is inert as a
+  RELEVANCE filter — everyone is always in everyone's radius.** Measured against the live
+  server's own stored state (`config/players.json`, `vehicles.json`, `startpoint.json`,
+  `respawn.json` — 11 real positions): `x` spans **-1759.7 .. 672.8**, `y` spans
+  **-1956.5 .. -1261.0**, `z` spans **27.9 .. 69.7**. At `kCellSize = 6000` every one of
+  those falls into **two cells — (-1,-1) and (0,-1)**. `kLoadRadius = 3` then covers a 7×7
+  block, 42,000 units on a side, against a world whose observed extent is ~2,400 × 700.
+- **Consequence, and it is a design input rather than a bug report:** every player receives
+  every other player's and every vehicle's updates regardless of distance, so bandwidth
+  scales with the square of the player count and has no falloff to lean on. The
+  per-connection interpolation-delay work and any future relevance filtering are therefore
+  worth MORE than they look, not less — there is currently nothing else reducing what a far
+  player costs.
+- **It also explains why the cell-size bug was catastrophic rather than merely inefficient.**
+  The grid gates LOADING, so a wrong cell dropped loads entirely ("nobody could see
+  anybody", six days) while never delivering the culling the size was chosen for. The
+  `std::floor` fix and the single-source constants remain correct and necessary; what is
+  wrong is the SIZE, and nothing today depends on that size being large.
+- **Honest limit on the measurement:** 11 stored positions from one server, not a survey of
+  the map. It is last-known player positions, parked vehicles and spawn points, so it does
+  not prove the whole city fits in two cells — but Night City is roughly 5 km across and the
+  cell is 6,000 units, so the whole world is a handful of cells either way. Anyone wanting
+  certainty can widen the sample from `logs/clients/` movement traces.
+- **NOT CHANGED. Do not "fix" this by shrinking `kCellSize` casually** — it is a wire
+  contract the client re-derives (`GameServer` advertises it, the client checks its own
+  answer against the server's and DROPS mismatched loads), so a change is a flag-day-shaped
+  event even though the identifier does not move. Decide the number deliberately, change it
+  on both sides in one commit, and expect the drop-loads path to be the thing that bites.
+
 ### Known bugs, diagnosed, unfixed
 - **`RpcService::Call` derefs null on a default-constructed slot — INFERRED from reading
   2026-09-04, not yet observed as a crash, and it sits in the path the phone RPC work grows.**
@@ -1205,3 +1235,42 @@ portability stays unverifiable locally.
   environment identity once live.
 - **Server**: status API `ManifestVersion`/`Release` (empty = migration).
 
+
+## 5. THE GAME INSTALL AS A TOOL (surveyed 2026-09-04, zeldfep's box)
+
+What a machine with the real game can answer that a build-only box cannot, and what is
+STILL missing here. Recorded because "does this box have the game" turned out to be the
+wrong question — the useful one is "which of these does it have".
+
+| Capability | Needs | Status on this box |
+|---|---|---|
+| Compile redscript (`CheckScripts.ps1`) | `engine\tools\scc.exe`, from the **redscript prerequisite** | **YES** — `OK - redscript compiles` |
+| Live-install a build (`DevInstall.ps1`) | `red4ext\plugins\zzzCyberpunkMP` | **YES** |
+| Read VANILLA SCRIPT SOURCES | **REDmod DLC** → `<game>\tools\redmod\scripts` | **NO — not installed** |
+| Read map/world geometry, `.ent`, `gameHitShapeBVH` | WolvenKit (CLI buildable from source) | **NO — not installed** |
+| Verify prerequisite versions against the pins | the install itself | **YES** |
+
+- **REDmod is the notable gap and it is free on Steam.** Every file+line citation the map
+  leans on — the vehicle-damage audit (`vehicleComponent.script:79/:4543/:6304`,
+  `vehicles.script:1123`, `attackData.script:219`), the phone corrections
+  (`phoneSystem.script:9`, `newHudPhoneGameController.script:512`,
+  `messengerUtils.script:89`), `singleplayerMenu.script:1012`, `saveLocksManager.script:29`
+  — comes from those sources. **They cannot be verified or extended on this box.** Anyone
+  about to do that class of work (read the game's own source rather than guess) should
+  install REDmod first; it is the difference between "answered from the sources" and
+  "answered from a runtime dump", which is the distinction that has decided several of the
+  entries above.
+- **Prerequisite versions match their pins EXACTLY**, verified against
+  `publish/manifest-source.json`: RED4ext **1.29.1**, Codeware **1.18.0**, ArchiveXL
+  **1.26.0**, TweakXL **1.11.1**. Also present: `input_loader`, `zzzCyberpunkMP`.
+- **The game has not been RUN since the mod was installed** — `red4ext\logs` is empty. So
+  the install is unproven, and the first launch is the test. First diagnostic if the mod
+  appears to do nothing is that log, per the symlinked-plugin entry.
+- **A live reproduction of ledger fault A is sitting on this machine**, which is worth
+  keeping rather than tidying away. 23 save folders: `MultiplayerStart`, `ManualSave-0/1`,
+  and twenty AutoSaves — **including `AutoSave-12`, the exact save that produced the wrong
+  character on 2026-09-01**. Every one carries a timestamp inside the same two seconds
+  (07:28:41–43, restored as a batch), so under the OLD "newest save that is not the
+  template" rule which character you became was decided by sub-second tie-breaking. The two
+  newest are `AutoSave-13` and `AutoSave-12`. That is the coin flip made visible, and it is
+  why the fix removes the choice rather than sharpening it.
