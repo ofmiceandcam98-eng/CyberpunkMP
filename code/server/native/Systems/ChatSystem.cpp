@@ -380,6 +380,37 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
     auto& store = GServer->GetPlayerStore();
     const auto* pExisting = store.FindCharacter(pPlayer->DiscordId);
 
+    // BODY TYPE IS CHOSEN ONCE AND CANNOT CHANGE.
+    //
+    // Cyberpunk fixes body type at character creation - no ripperdoc, mirror or menu
+    // changes it - so a save that flips an established character's body is never a
+    // player's decision. It is a capture of somebody, or something, else: the state read
+    // before the creator committed, the world template's default, another character's
+    // save. Whatever the mechanism, the stored appearance is the good copy and the
+    // incoming one is not, so the WHOLE save is refused rather than half-applied.
+    //
+    // Live, 2026-09-04: noremacxxi picked male and every client rendered a female corpo V
+    // in prologue clothes, because the server recorded is_male=false from one such capture
+    // and then faithfully broadcast it to everyone. The server already had the field it
+    // needed to know better - it simply trusted it. It no longer does.
+    //
+    // Deliberately narrow, so it can never block making a character: it fires only for a
+    // character that has an appearance stored AND has actually been played. A character
+    // mid-creation sets its body freely, which is the one time it is allowed to.
+    if (CharacterRecord::WouldFlipEstablishedBody(pExisting, aMessage.get_is_male()))
+    {
+        spdlog::error("[Character] REFUSED a save from {} - it would flip an established "
+                      "character's body type ({} -> {}). Body type is fixed at creation, so "
+                      "this capture is of the wrong character; the stored appearance is kept.",
+                      pPlayer->Username, pExisting->IsMale ? "male" : "female",
+                      aMessage.get_is_male() ? "male" : "female");
+
+        Tell(*pPlayer, "That save was refused - it did not match your character's body type, "
+                       "so your saved look was kept. If you meant to start over, use "
+                       "/character new confirm.");
+        return;
+    }
+
     // Start from the record as stored, and overwrite only what an appearance save is
     // allowed to change. SaveCharacter replaces the stored record wholesale with what it
     // is given (CreatedAt and CharacterId excepted), so every field NOT copied here

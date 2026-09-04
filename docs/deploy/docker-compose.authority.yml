@@ -1,0 +1,22 @@
+# The SECOND deployment's identity - copy to <deploy>/docker-compose.override.yml
+#
+# This file is the only thing that makes a second deployment on the same host a separate
+# deployment rather than a collision: distinct container names, its own hostname on the
+# tailnet, and its own image tag so a rebuild of one never restarts the other.
+#
+# It lived UNTRACKED on the NAS until 2026-09-04, found while surveying what a migration
+# would drop - three lines that no clone could reproduce. Committed as a template, not as
+# the live file, because the live one belongs beside its deployment.
+#
+# Usage, from the second deployment's directory:
+#   cp docs/deploy/docker-compose.authority.yml docker-compose.override.yml
+#   docker compose -p nco-authority up -d --build --build-arg BUILD_JOBS=2
+#
+# The -p (project) name matters as much as this file: it namespaces volumes and networks.
+services:
+  tailscale:
+    container_name: nco-authority-tailscale
+    hostname: nco-test-server
+  server:
+    container_name: nco-authority-server
+    image: nco-authority-server-img

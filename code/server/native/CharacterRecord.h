@@ -132,6 +132,39 @@ struct CharacterRecord
     // it without parsing: it decides which record other clients spawn for this player.
     bool IsMale{true};
 
+    /*
+     * Is this character established - chosen, played, and therefore fixed?
+     *
+     * An appearance save may change a face; it may NOT change a body. Cyberpunk fixes
+     * body type at creation and offers no way to change it afterwards, so the two
+     * conditions below are what separate "still being made" from "this is who they are".
+     */
+    [[nodiscard]] bool IsEstablished() const noexcept
+    {
+        return !Appearance.empty() && SpawnedBefore;
+    }
+
+    /*
+     * Would an incoming save flip an established character's body type?
+     *
+     * A free function on the record so it can be tested without a world, a store or a
+     * connection - see tools/tests/character_body_test.cpp. Passing the record by
+     * pointer because the caller has a lookup result that may be null: a character
+     * being created for the first time has nothing to contradict.
+     *
+     * Live, 2026-09-04: a capture reporting the wrong body was stored and then broadcast
+     * to everyone, so one player appeared to all the others as a completely different
+     * character. The server already had the field it needed to know better.
+     */
+    [[nodiscard]] static bool WouldFlipEstablishedBody(const CharacterRecord* apExisting,
+                                                       const bool aIncomingIsMale) noexcept
+    {
+        if (!apExisting || !apExisting->IsEstablished())
+            return false;
+
+        return apExisting->IsMale != aIncomingIsMale;
+    }
+
     // Progression. Applied on load rather than trusted from the client.
     //
     // Zero level means "not initialised yet" - a freshly created character is brought up
