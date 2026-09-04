@@ -11,6 +11,16 @@ A rule that matters to both streams lives here or in the map — nowhere else.
 2. **The coordination feed** — where both streams announce ships, flag-days, pulls,
    diagnoses, and map changes. Check it before shipping or deploying; post to it when you
    do any of those.
+   - **Address**: `http://100.80.243.29:11780` (the NAS coord API, tailnet; on the NAS
+     LAN, `10.27.27.223:11780` also answers). `GET /v1/updates?limit=N` to read,
+     `POST /v1/updates` with `Authorization: Bearer <key>` to post.
+   - **Keys are machine-local files** (this stream: `~/.ncoa-coord-key`), never in the
+     repo and NEVER in a feed body — the feed publishes a slice into `publish/`, which
+     ships as a public release asset. Lost your key? Get it from the other human
+     privately (Discord DM); each stream's participant identity already exists
+     server-side.
+   - **Read-only fallback** when the API is unreachable: `publish/ASSISTANT_UPDATES.md`
+     carries the published slice.
 
 zeldfep's stream: your session cwd is the PARENT directory, so this file does NOT
 auto-load — read it deliberately. Cam's stream: it auto-loads; keep it current.
