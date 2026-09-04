@@ -28,7 +28,7 @@ things) → the coordination feed (what the other stream just did).
 
 | What | Where | Notes |
 |---|---|---|
-| This workstation | `C:\Users\vboxuser\Documents\Projects\CyberpunkMP` | **BUILD ONLY — the game is NOT installed.** Builds C++ (MSVC) and the launcher; cannot compile redscript (needs the game's `scc.exe`) |
+| Your workstation | the repo checkout | Builds C++ (MSVC) and the launcher. **Whether it can also compile REDSCRIPT depends on whether the game is installed here — check, do not assume (§2a)** |
 | NAS (both servers) | `ssh truenas_admin@10.27.27.223` | LAN SSH, key auth, docker group. **`/home` is mounted noexec** — always `/bin/bash script.sh`, never direct execution (exit 126, silent) |
 | Live/public server | `/mnt/vol/NASa/CyberpunkMP` → tailnet `100.80.243.29:11778` | containers `cyberpunkmp-server` + `cyberpunkmp-tailscale`; cron auto-deploys |
 | Test server | `/mnt/vol/NASa/CyberpunkMP-authority` → `100.125.74.56:11778` | compose project `-p nco-authority`; manual rebuild |
@@ -38,6 +38,33 @@ things) → the coordination feed (what the other stream just did).
 ```
 docker exec cyberpunkmp-tailscale wget -qO- http://localhost:11778/api/v1/status/
 ```
+
+### 2a. Does THIS machine have the game? Check before you ship
+
+It decides what you can verify yourself, and it has differed per machine — the box this
+was first written on had no game; the machine it was written FOR does.
+
+```powershell
+Test-Path "<GameDir>\engine\tools\scc.exe"   # the redscript compiler ships INSIDE the game
+```
+Point the tooling at it once and everything below follows:
+```
+copy tools\ship.local.example.ps1 tools\ship.local.ps1   # then set $GameDir
+```
+(or set `CYBERPUNKMP_GAME_DIR` in the environment).
+
+**With the game installed** — the good case: `tools\CheckScripts.ps1` compiles the
+redscript against the real game, `Ship.ps1 -Mod` runs that gate for real, no stub game
+dir and no hand-assembled `Rpc` folder, and you can test in-game yourself. **A `.reds`
+change should never leave this machine uncompiled again** — that was the ship pipeline's
+one real blind spot.
+
+**Without it:** C++ and launcher work still build and ship, but redscript is unverifiable
+here — `Ship.ps1 -Mod` needs `CYBERPUNKMP_GAME_DIR` pointed at a stub containing only
+`bin\x64\Cyberpunk2077.exe` (the scc check then soft-skips) and
+`distrib\launcher\mod\Rpc` assembled by hand from the previous release's
+`ModPayload.zip`. Then **ask Cam's stream to run `CheckScripts.ps1`** before anyone
+installs it: one bad `.reds` boots every client with no scripts at all.
 
 ## 3. Credentials — locations only, never values
 
@@ -75,13 +102,10 @@ from bash. It bumps `package.json` EARLY — a killed ship leaves the bump, so
 `git checkout -- code/launcher-lite/package.json` before retrying. Notes gate requires a
 `## What changed — v<next>` section in `publish/release-notes.md` first.
 
-**Ship the mod too** (`-Mod`): needs a game dir. On a game-less box,
-`CYBERPUNKMP_GAME_DIR` may point at a stub containing only
-`bin/x64/Cyberpunk2077.exe` (the scc redscript check then soft-skips), and
-`distrib/launcher/mod/Rpc` must be assembled by hand (extract it from the previous
-release's `ModPayload.zip`). **Redscript then ships COMPILE-UNCHECKED — get Cam's stream
-to run `CheckScripts.ps1` on its real install.** One bad `.reds` boots every client with
-no scripts at all.
+**Ship the mod too** (`-Mod`): needs a game dir — see §2a for the two cases. With the
+game installed, the redscript compile gate runs for real and you are done. Without it,
+§2a has the stub-and-hand-assembled-`Rpc` route, and the build must be compile-checked by
+Cam's stream before anyone installs it.
 
 **Deploy** = push to `feat/world-state`. The NAS cron (10 min) pulls, rebuilds only when
 server-relevant paths changed, **defers while players are online**, auto-shelves untracked
