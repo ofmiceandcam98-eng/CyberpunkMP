@@ -5943,6 +5943,24 @@ function initAutoUpdater () {
   })
 
   autoUpdater.checkForUpdatesAndNotify().catch(() => {})
+
+  // The check used to run ONCE, at boot - and this launcher gets left open all night.
+  // A release could ship an hour into a session and the open launcher never learned of
+  // it: by the next manual restart the update had already applied silently, so the
+  // "Restart to update" banner never got its moment (zeldfep, 2026-09-04: "id like to
+  // know there's an update instead of clicking verify every time"). Re-ask every 20
+  // minutes, and immediately when the window regains focus after being away - the
+  // moment someone alt-tabs back is exactly when "a new version shipped" is worth
+  // knowing. Throttled so focus-flapping cannot hammer GitHub.
+  setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 20 * 60 * 1000)
+
+  let lastFocusCheck = 0
+  app.on('browser-window-focus', () => {
+    const now = Date.now()
+    if (now - lastFocusCheck < 5 * 60 * 1000) return
+    lastFocusCheck = now
+    autoUpdater.checkForUpdates().catch(() => {})
+  })
 }
 
 // Restart into the new version on demand. quitAndInstall closes the app and runs the
