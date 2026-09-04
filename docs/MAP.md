@@ -161,6 +161,27 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   commercial CA at roughly 200-500/yr plus a hardware token. Publisher name will be
   **OfficialCutProductions**; nothing is signed until that identity exists, on purpose.
 
+- **DECISION 2026-09-04: the phone ClientRpc pair is APPROVED, and it is NOT a flag day —
+  verified against the code, not accepted on argument.** Cam's stream asked before building
+  contacts + text delivery into the vanilla phone, because it is new traffic in a migration
+  week. Answer: build it. The three legs were checked: (1) `kIdentifier` derives from the
+  `.proto` text ALONE (`netpack/main.cpp:368-369` — `kProtocolString = HashProtocol(...)`,
+  `kIdentifier = FNV1a64` of it), and an RPC pair is a REGISTRATION rather than proto text, so
+  the identifier does not move and the door checks at `GameServer.cpp:819/831` refuse nobody;
+  (2) ids are negotiated PER CONNECTION — `GameServer.cpp:1096-1102` serializes the full
+  `(id, klass, function)` mapping and sends it BEFORE `AuthenticationResponse`; (3) an old
+  client fails safe — `GetRpcHandler` returns null for a function it lacks and `Call()`
+  refuses rather than misdispatching.
+  **TWO CONDITIONS, and the first is the whole point of the ask: LAND IT, DO NOT DEPLOY IT
+  UNTIL THE MIGRATION IS VERIFIED.** `feat/world-state` is what the NAS cron deploys; a server
+  rebuild landing mid-migration is how a clean move becomes an evening. If it must sit on the
+  branch before then, the cron gets PAUSED deliberately rather than both streams assuming the
+  other did it. **Second: the contacts snapshot must tolerate arriving before its
+  definitions** — definitions land at auth, the injection point is the spawn path, and spawn
+  is also where a character SWITCH lands; an unresolved id makes the first snapshot vanish
+  silently, which will read as "contacts are empty for the first character you pick" and get
+  misdiagnosed as a `MessageStore` bug.
+
 ### Needs a live session (built, never validated with humans)
 - **Pause menu unpause is BEST-EFFORT, 2026-09-04.** The menu opens again (an inline
   `UnpauseGame()` in `OnInitialize` was killing it — the `SetMenuModeEvent` is queued and
@@ -588,6 +609,23 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   a model-summon resolves to - nearest stored, last driven, or explicit via /garage.
 
 ### Known bugs, diagnosed, unfixed
+- **`RpcService::Call` derefs null on a default-constructed slot — INFERRED from reading
+  2026-09-04, not yet observed as a crash, and it sits in the path the phone RPC work grows.**
+  `HandleRpcDefinitions` does `m_clientRpcs.resize(client_definitions.size())` then
+  `m_clientRpcs[rpc.get_id()] = {...}` — an UNCHECKED index write. `Call()` then reads
+  `const auto& rpc = m_clientRpcs[id]` and guards with
+  `if (rpc.Id.Klass != 0 && !pContext) return false;` before doing `pContext->function`.
+  **A slot that was never written has `Klass == 0` AND a null handler, so it passes that guard
+  and derefs on the next line — the guard protects the wrong case.** Nothing produces such a
+  slot today: the server hands out dense sequential ids (`RegisterClient` takes
+  `m_serverRpcs.size()`) and `Serialize` sends all of them, so every slot gets filled. The
+  operation that could ever leave a gap is ADDING REGISTRATIONS, which is exactly what the
+  phone ClientRpc pair does. Fix is three lines: bounds-check the write, make the null test
+  unconditional. Flagged to Cam's stream with the approval below.
+  Second, cosmetic but real: a refused call logs `Rpc failed` EVERY time, so a snapshot pushed
+  to a client that predates the function logs once per push per player forever — log the first
+  refusal per id and stay quiet.
+
 - **THE OBSERVER CRASH: cause found 2026-09-04, and it was REPETITION, not memory.**
   zeldfep died (exit `0x80000003`) with his log ending mid-apply, one line after
   `Scheduling change`. The session held **15 remote appearance applies in 16 minutes,
