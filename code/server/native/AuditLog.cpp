@@ -2,7 +2,10 @@
 
 #include "AuditLog.h"
 
+#include <algorithm>   // std::transform, for the case-insensitive search
+#include <cctype>      // std::tolower - transitive under MSVC, not under the GCC container
 #include <chrono>
+#include <deque>       // the ring that keeps only the newest matches
 #include <random>
 
 namespace
@@ -71,6 +74,7 @@ void AuditLog::Open(const std::filesystem::path& acPath)
         }
 
         m_open = true;
+        m_path = acPath;   // retained so Search can read the ledger back
 
         spdlog::info("Audit log open at {} (instance '{}')", acPath.string(), m_instanceId);
     }
@@ -136,4 +140,70 @@ void AuditLog::RecordMoney(const std::string& acActor,
                {"after", aAfter},
                {"delta", aAfter - aBefore},
            });
+}
+
+std::vector<std::string> AuditLog::Search(const std::string& acNeedle, size_t aMax)
+{
+    std::vector<std::string> found;
+
+    // An empty needle would match every line ever written and hand back the tail of the
+    // whole ledger, which is not a search - it is a way to page through other people's
+    // business by accident.
+    if (acNeedle.empty() || aMax == 0)
+        return found;
+
+    std::filesystem::path path;
+
+    {
+        std::lock_guard lock(m_mutex);
+
+        if (!m_open)
+            return found;
+
+        // Flushed under the same lock that Record takes. Without this, an entry written
+        // seconds ago can still be sitting in the buffer - and that is exactly the entry
+        // somebody is searching for, because investigations start from what just happened.
+        m_stream.flush();
+
+        path = m_path;
+    }
+
+    // Opened separately for reading rather than seeking the write stream: the writer is in
+    // append mode and shared between the game thread and the API queue, so moving its
+    // position would be a data race for no benefit.
+    std::ifstream file(path);
+
+    if (!file.is_open())
+        return found;
+
+    const auto fold = [](std::string aText)
+    {
+        std::transform(aText.begin(), aText.end(), aText.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return aText;
+    };
+
+    const auto needle = fold(acNeedle);
+
+    // A ring of the newest matches, not every match. The ledger is append-only and grows for
+    // the life of the deployment, so collecting all of them then trimming would mean holding
+    // an unbounded number of lines to hand back ten.
+    std::deque<std::string> recent;
+    std::string line;
+
+    while (std::getline(file, line))
+    {
+        if (fold(line).find(needle) == std::string::npos)
+            continue;
+
+        recent.push_back(line);
+
+        if (recent.size() > aMax)
+            recent.pop_front();
+    }
+
+    // Newest first - the order an investigation reads in.
+    found.assign(recent.rbegin(), recent.rend());
+
+    return found;
 }

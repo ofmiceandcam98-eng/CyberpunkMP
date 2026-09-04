@@ -5321,6 +5321,129 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
      * The bare command is a map; each topic is the detail. Staff sections stay folded into
      * the same scheme so nobody has to remember a second command to find their own tools.
      */
+    // ------------------------------------------------------------- /audit ----
+    //
+    // Read the ledger back. The trade brief asks for this directly - "allow staff to search
+    // TradeID, CharacterID, ... extremely useful for staff investigating exploits" - and
+    // until now everything was being recorded faithfully and could only be read by someone
+    // with shell access to the box. That is half an audit trail: an exploit report is
+    // answered in minutes or it is not answered.
+    //
+    // ONE SUBSTRING, not a query language. Every id here is already distinctive - a
+    // character id, a Discord id, a trade id, a dotted action like "trade.completed" - so a
+    // contains-match answers every question the brief lists with one code path and nothing
+    // for a moderator to memorise. `/audit TRADE-000184`, `/audit trade.completed`,
+    // `/audit <character id>` all work the same way.
+    //
+    // ADMIN, not moderator. This is every player's money and item history, which is a
+    // heavier thing to hand out than /whois - and per Cam's ladder senior moderator carries
+    // what admin used to, so the people who investigate still have it. One word to lower if
+    // that turns out to be too tight in practice.
+    if (command == "/audit")
+    {
+        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
+            return deny(EPermissionLevel::kAdmin);
+
+        if (target.empty())
+        {
+            Tell(acSender, "Usage: /audit <what> [count]");
+            Tell(acSender, "  <what> is any id or action - a trade id, a character id,");
+            Tell(acSender, "  a Discord id, or an action like trade.completed");
+            Tell(acSender, "  Newest first. Default 8, most 20.");
+            return true;
+        }
+
+        // Count is optional and second. A bad number is treated as "not given" rather than
+        // refused - somebody investigating should not be arguing with the parser.
+        size_t wanted = 8;
+
+        if (const auto space = rest.find_first_not_of(' '); space != std::string::npos)
+        {
+            try
+            {
+                const auto asked = std::stoul(rest.substr(space));
+                if (asked > 0)
+                    wanted = std::min<size_t>(asked, 20);
+            }
+            catch (...)
+            {
+                // Left at the default.
+            }
+        }
+
+        const auto lines = GServer->GetAuditLog().Search(target, wanted);
+
+        if (lines.empty())
+        {
+            Tell(acSender, fmt::format("Nothing in the ledger matches '{}'.", target));
+            return true;
+        }
+
+        Tell(acSender, fmt::format("--- {} entr{} for '{}', newest first ---", lines.size(),
+                                   lines.size() == 1 ? "y" : "ies", target));
+
+        const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::system_clock::now().time_since_epoch())
+                               .count();
+
+        for (const auto& line : lines)
+        {
+            // Rendered rather than dumped. A raw ledger line is JSON with an instance id and
+            // a millisecond timestamp in it - correct for a tool, unreadable in a chat box
+            // that shows a handful of short lines.
+            try
+            {
+                const auto entry = nlohmann::json::parse(line);
+
+                const auto at = entry.value("at", int64_t{0});
+                const auto ageSeconds = at > 0 ? (nowMs - at) / 1000 : 0;
+
+                std::string when = "?";
+                if (at > 0)
+                {
+                    if (ageSeconds < 60)
+                        when = fmt::format("{}s ago", ageSeconds);
+                    else if (ageSeconds < 3600)
+                        when = fmt::format("{}m ago", ageSeconds / 60);
+                    else if (ageSeconds < 86400)
+                        when = fmt::format("{}h ago", ageSeconds / 3600);
+                    else
+                        when = fmt::format("{}d ago", ageSeconds / 86400);
+                }
+
+                const auto action = entry.value("action", std::string{"?"});
+                const auto actor = entry.value("actor", std::string{});
+                const auto subject = entry.value("subject", std::string{});
+
+                std::string who = actor;
+                if (!subject.empty() && subject != actor)
+                    who = fmt::format("{} -> {}", actor, subject);
+
+                std::string details;
+                if (entry.contains("details") && entry["details"].is_object())
+                {
+                    details = entry["details"].dump();
+
+                    // The details are free-form and some carry whole item lists. Truncated
+                    // so one fat entry cannot push the other seven off the screen.
+                    if (details.size() > 90)
+                        details = details.substr(0, 87) + "...";
+                }
+
+                Tell(acSender, fmt::format("  {} {} {} {}", when, action, who, details));
+            }
+            catch (...)
+            {
+                // A line that will not parse is still evidence - show it raw rather than
+                // dropping it, because a malformed entry is itself worth seeing.
+                Tell(acSender, fmt::format("  (unparsed) {}",
+                                           line.size() > 110 ? line.substr(0, 107) + "..." : line));
+            }
+        }
+
+        return true;
+    }
+
     if (command == "/help")
     {
         // Folded here rather than through a helper - this file has no ToLower, and adding
@@ -5467,6 +5590,7 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
                 Tell(acSender, "Admin:");
                 Tell(acSender, "  /ban <player> [reason], /unban <discord id>");
                 Tell(acSender, "  /rename <character> <name>");
+                Tell(acSender, "  /audit <what> [n]  - search the ledger (trade id, character, action)");
                 Tell(acSender, "  /setspawn          - where players wake up after dying");
                 Tell(acSender, "  /setstart          - where brand-new characters arrive");
                 Tell(acSender, "  /quest, /fact      - quest and world state");

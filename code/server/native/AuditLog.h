@@ -40,6 +40,7 @@
  */
 
 #include <string>
+#include <vector>      // Search returns matching lines
 #include <mutex>
 #include <fstream>
 #include <filesystem>
@@ -93,11 +94,39 @@ public:
                      int64_t aBefore,
                      int64_t aAfter);
 
+    /**
+     * Read the ledger back - the newest entries whose line contains `acNeedle`.
+     *
+     * WHY THIS EXISTS. The ledger was write-only: everything worth investigating was being
+     * recorded faithfully and there was no way to look at any of it without shell access to
+     * the box. That is half an audit trail. The trade brief asks for it directly ("allow
+     * staff to search TradeID, CharacterID, ... this will be extremely useful for staff
+     * investigating exploits"), and an exploit report is answered in minutes or not at all.
+     *
+     * A SUBSTRING MATCH, DELIBERATELY, rather than a field query. Every id in this system is
+     * already a distinctive string - a character id, a Discord id, a trade id, a dotted
+     * action like "trade.completed" - so a plain contains-match answers every question the
+     * brief asks with one code path and no query language to learn or to get wrong. The cost
+     * is that a short needle matches too much; the caller caps the result and says so.
+     *
+     * NEWEST FIRST, because an investigation starts from what just happened. The file is
+     * append-only so the last matching lines are the recent ones.
+     *
+     * Not const: the write stream is flushed first, or an entry recorded seconds ago - which
+     * is precisely the one being investigated - may still be sitting in the buffer.
+     */
+    std::vector<std::string> Search(const std::string& acNeedle, size_t aMax);
+
     const std::string& GetInstanceId() const { return m_instanceId; }
 
 private:
     std::mutex m_mutex;      // handlers run on the game thread today, but the API queue does not
     std::ofstream m_stream;
     std::string m_instanceId;
+
+    // Kept so the ledger can be read back, not just written. Open() had no reason to retain
+    // it while this was write-only.
+    std::filesystem::path m_path;
+
     bool m_open{false};
 };
