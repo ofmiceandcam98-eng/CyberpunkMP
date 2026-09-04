@@ -2487,10 +2487,12 @@
     $('gameChecks').innerHTML =
       check(Boolean(paths.gameDir), paths.gameDir ? 'Cyberpunk2077.exe found' : 'Cyberpunk2077.exe not found')
 
-    $('modPathBox').textContent = paths.modDir || 'not installed'
+    $('modPathBox').textContent = paths.modDir || paths.modDestination || 'game not found yet'
     $('modChecks').innerHTML = paths.modDir
       ? check(true, 'Mod folder OK') + check(paths.hasDll, paths.hasDll ? 'CyberpunkMP.dll found' : 'CyberpunkMP.dll missing')
-      : check(false, 'Mod not installed - use Install below')
+      : paths.modDestination
+        ? check('warn', 'Not installed yet - Install everything puts the mod right here')
+        : check(false, 'Find the game first - the mod folder is derived from it')
 
     $('removeDataPath').textContent =
       'Deletes your saved sign-in and settings under ' + paths.userData + '. You will sign in again next time.'

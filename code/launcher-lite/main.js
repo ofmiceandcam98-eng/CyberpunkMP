@@ -1144,6 +1144,26 @@ function gameExecutable () {
 
 // Finds the installed mod folder. Named zzzCyberpunkMP by convention, but RED4ext
 // loads any subfolder, so look for the DLL rather than trusting the name.
+// Where the mod WILL live, the moment the game is found - created on the spot
+// (zeldfep, 2026-09-04: "launcher needs to make mods folder automatically on where it
+// finds the game"). findModDir below stays the "is it INSTALLED" answer (null until
+// CyberpunkMP.dll exists), so nothing that gates on installed-ness changes; this is the
+// destination answer, so Settings can show a real path with "installs here" instead of
+// sending someone browsing for a folder that does not exist yet. An empty plugin folder
+// is inert to RED4ext (it loads DLLs, not directories). A hand-picked modDir override
+// wins here too - the two answers must never disagree about WHERE.
+function modInstallDestination () {
+  const chosen = loadSettings().modDir
+  if (chosen && isSafeModDir(chosen)) return chosen
+
+  const gameDir = findGameDir()
+  if (!gameDir) return null
+
+  const destination = path.join(gameDir, 'red4ext', 'plugins', 'zzzCyberpunkMP')
+  try { mkdirSync(destination, { recursive: true }) } catch { /* read-only game dir - the path is still the answer */ }
+  return destination
+}
+
 function findModDir () {
   // A folder the player pointed at themselves wins over anything found automatically.
   //
@@ -5147,6 +5167,9 @@ ipcMain.handle('paths:get', () => {
     gameDir,
     gameWritable,
     modDir,
+    // Where an install WILL land when modDir is null - so the folder panel shows a
+    // destination instead of "not installed" with a Browse button pointing nowhere.
+    modDestination: modDir || modInstallDestination(),
     hasDll: Boolean(modDir) && existsSync(path.join(modDir, 'CyberpunkMP.dll')),
     userData: app.getPath('userData'),
     appVersion: app.getVersion()
