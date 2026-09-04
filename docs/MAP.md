@@ -486,6 +486,34 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   a model-summon resolves to - nearest stored, last driven, or explicit via /garage.
 
 ### Known bugs, diagnosed, unfixed
+- **THE OBSERVER CRASH: cause found 2026-09-04, and it was REPETITION, not memory.**
+  zeldfep died (exit `0x80000003`) with his log ending mid-apply, one line after
+  `Scheduling change`. The session held **15 remote appearance applies in 16 minutes,
+  every one with an IDENTICAL ccstate** (hash `78a96dec...`); seven were exactly 90s
+  apart - the possessions autosave. The UAF Cam fixed in `c346f5a` was already in that
+  build, so the memory was sound: what killed it was asking the engine to synchronise an
+  appearance the puppet was ALREADY wearing, over and over. Trigger: clothing and
+  customization share one message, and a visual item count that flips on its own (4 items
+  -> 5 -> 4; a holstered weapon does it) makes the server see a real change and broadcast
+  it. FIXED client-side (`fbb7b33`): the scheduled ccstate hash is remembered per entity;
+  a matching update applies clothing and leaves customization alone. **VEHICLES ARE
+  EXONERATED** - the 90s cadence ran for ten minutes before the first mount, and the
+  `[Interpolation] movement for id N but no puppet is registered - this is a frozen
+  remote player` warning is MISLABELLED: those ids were VEHICLES (each followed by
+  `OnVehicleReady: mounting queued character ... into vehicle N`). Rename that warning.
+- **WRONG CHARACTER = the real root cause, still open (ledger fault A).** Cam picked
+  MALE; every other client renders him FEMALE. Proof in zeldfep's log: `remote state
+  produced 24 customization key(s), male=0`, applying `t2_formal_04_q000_corpo_&Female`
+  and friends - the world template's default corpo V in PROLOGUE clothes, not the
+  character he made. His stored blob also flip-flops 10232 -> 6484 -> 10232 bytes, i.e.
+  different appearances competing, not one being resent. The server's sync is INNOCENT
+  and working (it logged 6 real changes, not 15, and its unchanged-guard holds); it is
+  faithfully broadcasting a bad capture. Fix belongs at capture: `OwnSave` must pick the
+  save by IDENTITY, not file order. Proposed guard, needs a wire field so it is a
+  flag-day: the client reports the gender of the state it captured and the server refuses
+  a capture that contradicts the character record's `IsMale` - that would have caught
+  this in the first second instead of after a night of crashes.
+
 - **THE crash: SOLVED 2026-08-26/27 (`0da3c9b`, `559828f`, `0fa2bb9`) - never entity
   readiness; a genuine data race, two threads inside flecs' `flecs_stack_restore_cursor`
   on the same stack allocator at the same instant.** flecs' stack allocator is
