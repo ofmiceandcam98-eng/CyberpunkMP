@@ -713,12 +713,16 @@ public native class NetworkWorldSystem extends IGameSystem {
         // one means the placement did not hold - a real player has not gone 20m down or
         // 30m sideways in a second and a half.
         if dropped > 20.0 || horizontal > 900.0 {
+            // ScriptLog, not FTLog: FTLog reaches the game's own log, which nothing
+            // collects, and a recovery nobody can see is a recovery nobody can diagnose
+            // (the same lesson as the launcher's install trail). ScriptLog lands in the
+            // mod log that ships to the server with the session.
             if attemptsLeft > 0 {
-                FTLogWarning(s"[Spawn] placement did not hold (dropped \(dropped)m) - re-placing (\(attemptsLeft) attempt(s) left)");
+                this.ScriptLog(s"[Spawn] placement did not hold - \(dropped)m below, re-placing (\(attemptsLeft) attempt(s) left)");
                 this.DoTeleport(destination, yaw);
                 this.ArmFallThroughGuard(destination, yaw, attemptsLeft - 1);
             } else {
-                FTLogError(s"[Spawn] still not holding after retries - collision at the destination may never have streamed");
+                this.ScriptLog("[Spawn] still not holding after 3 attempts - collision at the destination may never have streamed");
             }
         }
     }
