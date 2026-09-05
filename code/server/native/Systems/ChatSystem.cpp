@@ -1,9 +1,25 @@
 #include "ChatSystem.h"
 
+// Explicit rather than transitive. This file uses std::map for /vehseats and the string
+// conversions for the trade commands, and MSVC supplies both through headers that GCC
+// does not - which is a difference that only shows up on the Linux build the server
+// actually runs on, long after it compiles cleanly here.
+#include <algorithm>   // std::transform, for folding a /help topic to lower case
+#include <cctype>      // std::tolower - reached transitively under MSVC, not under GCC
+#include <map>
+#include <string>
+#include <vector>
+#include <utility>
+
 #include "GameServer.h"
 #include "Components/PlayerComponent.h"
 #include "Components/MovementComponent.h"
 #include "Components/AppearanceComponent.h"
+#include "Components/AttachmentComponent.h"   // who is sitting where, for /vehseats
+#include "Components/HealthComponent.h"       // the medical state lives on it
+#include "EconomyMutator.h"          // the one place money and inventory change
+#include "Medical.h"                          // bleedout, treatment times, life states
+#include "VehicleSeats.h"                     // and what to call the seat they are in
 #include "CharacterRecord.h"
 #include "StarterKit.h"
 #include "Components/CharacterComponent.h"
@@ -12,6 +28,8 @@
 #include "Systems/NpcSystem.h"
 
 #include "PlayerManager.h"
+#include <functional>
+#include <stdexcept>
 
 /**
  * A dummy that walks, so remote movement can be tested by one person.
@@ -47,6 +65,9 @@ ChatSystem::ChatSystem(gsl::not_null<World*> apWorld)
     GServer->RegisterHandler<&ChatSystem::HandleRespawnRequest>(this);
     GServer->RegisterHandler<&ChatSystem::HandleSaveCharacterRequest>(this);
     GServer->RegisterHandler<&ChatSystem::HandleDeleteCharacterRequest>(this);
+    GServer->RegisterHandler<&ChatSystem::HandleSelectCharacterRequest>(this);
+    GServer->RegisterHandler<&ChatSystem::HandleCallRequest>(this);
+    GServer->RegisterHandler<&ChatSystem::HandleCallControlRequest>(this);
 
     // Walks every dummy in a slow circle. Registered here rather than beside the command
     // so it exists exactly once, whatever anyone types.
@@ -104,16 +125,37 @@ void ChatSystem::SendCharacterList(const PlayerComponent& acPlayer, const std::s
 
     if (!acPlayer.DiscordId.empty())
     {
-        if (const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(acPlayer.DiscordId))
-        {
-            server::CharacterSummary summary;
-            summary.set_id(pCharacter->CharacterId.c_str());
-            summary.set_name(pCharacter->Name.c_str());
-            summary.set_level(pCharacter->Level);
-            summary.set_spawned_before(pCharacter->SpawnedBefore);
+        // EVERY character on the account, not just the one in play.
+        //
+        // This used to send the active character wrapped in a list of one, which made the
+        // list shape a lie: the wire has always carried a list, deliberately, and the server
+        // was the thing collapsing it. A selector cannot draw four slots from a roster that
+        // only ever contains the slot you are already in.
+        const auto& store = GServer->GetPlayerStore();
+        const auto* pRecord = store.Find(acPlayer.DiscordId);
 
+        if (pRecord && !pRecord->Characters.empty())
+        {
             Vector<server::CharacterSummary> characters;
-            characters.push_back(summary);
+
+            for (const auto& character : pRecord->Characters)
+            {
+                server::CharacterSummary summary;
+                summary.set_id(character.CharacterId.c_str());
+                summary.set_name(character.Name.c_str());
+                summary.set_level(character.Level);
+                summary.set_spawned_before(character.SpawnedBefore);
+
+                // The slot is for DRAWING, never for identity. Slots are not contiguous -
+                // retiring the character in slot 1 of three leaves 0 and 2 occupied - so the
+                // client draws holes where the gaps are rather than renumbering. Anything
+                // keyed on a slot number that moves is a bug waiting for a deletion.
+                summary.set_slot(character.Slot);
+                summary.set_is_active(character.Slot == pRecord->ActiveSlot);
+
+                characters.push_back(summary);
+            }
+
             message.set_characters(characters);
         }
     }
@@ -122,6 +164,87 @@ void ChatSystem::SendCharacterList(const PlayerComponent& acPlayer, const std::s
         message.set_error(acError.c_str());
 
     GServer->Send(acPlayer.Connection, message);
+}
+
+/**
+ * "Play as the character in this slot."
+ *
+ * Refuses an empty slot rather than falling back to the first one. "You asked for a
+ * character that is not there, so here is a different one" is exactly how somebody ends up
+ * playing - and then saving over - a character they did not choose.
+ *
+ * Answers nothing directly. Selection is a request; the real answer is the spawn that
+ * follows, or a refusal carried back on the character list. A caller that waits for a
+ * verdict here would wait forever.
+ */
+void ChatSystem::HandleSelectCharacterRequest(const PacketEvent<client::SelectCharacterRequest>& aMessage)
+{
+    auto* pPlayerManager = m_pWorld->get<PlayerManager>();
+
+    const auto entity = pPlayerManager->GetByConnectionId(aMessage.ConnectionId);
+    if (!entity || !entity.has<PlayerComponent>())
+        return;
+
+    const auto* pPlayer = entity.get<PlayerComponent>();
+
+    if (pPlayer->DiscordId.empty())
+    {
+        SendCharacterList(*pPlayer, "Your Discord sign-in could not be verified.");
+        return;
+    }
+
+    // Switching characters while standing in the world as one of them would leave a body
+    // behind belonging to a character nobody is playing any more, and the autosave would
+    // then write the new character's state over the old one's record.
+    if (pPlayer->Puppet && pPlayer->Puppet.is_alive())
+    {
+        SendCharacterList(*pPlayer, "Leave the world before switching characters.");
+        return;
+    }
+
+    auto& store = GServer->GetPlayerStore();
+
+    /**
+     * The outgoing character's call ends here, before the switch.
+     *
+     * A call belongs to the CHARACTER that made it. Carrying one across a switch would put
+     * the previous character's conversation on the next character's phone, which is the
+     * single clearest way to leak one character's digital life into another's - and the
+     * person on the other end would be talking to somebody who has left without ever being
+     * told.
+     *
+     * Read before SelectSlot, because afterwards the active character is the NEW one and
+     * the id that needs hanging up is no longer reachable from this account.
+     *
+     * In practice the puppet check above already refuses a switch made while in the world,
+     * and a call needs both parties in it - so this is belt and braces. It stays because
+     * the puppet rule is a separate decision that could be relaxed later, and if it is,
+     * this is the line that stops a call surviving the change.
+     */
+    if (const auto* pOutgoing = store.FindCharacter(pPlayer->DiscordId))
+    {
+        if (!pOutgoing->CharacterId.empty())
+            EndCallFor(pOutgoing->CharacterId, CallState::Ended);
+    }
+
+    const std::string refusal = store.SelectSlot(pPlayer->DiscordId, aMessage.get_slot());
+
+    if (!refusal.empty())
+    {
+        spdlog::info("{} could not select slot {}: {}", pPlayer->Username, aMessage.get_slot(),
+                     refusal);
+
+        SendCharacterList(*pPlayer, refusal == "empty_slot"
+                                        ? "There is no character in that slot."
+                                        : "That character could not be selected.");
+        return;
+    }
+
+    spdlog::info("{} selected slot {}", pPlayer->Username, aMessage.get_slot());
+
+    // The roster goes back so the panel can redraw with the new active row marked. The
+    // player still has to press play; this only decides who they will be when they do.
+    SendCharacterList(*pPlayer, {});
 }
 
 void ChatSystem::HandleDeleteCharacterRequest(const PacketEvent<client::DeleteCharacterRequest>& aMessage)
@@ -158,11 +281,42 @@ void ChatSystem::HandleDeleteCharacterRequest(const PacketEvent<client::DeleteCh
 
     auto& store = GServer->GetPlayerStore();
 
-    if (!store.FindCharacter(pPlayer->DiscordId))
+    // Which slot the player pointed at. The slot is resolved to a character HERE, on the
+    // server, and everything about that character is re-checked - a client naming a slot it
+    // does not own, or one that is empty, gets a refusal rather than a deletion.
+    //
+    // Falls back to the active slot so an older client, which sends no slot at all, keeps
+    // behaving exactly as it did.
+    const int slot = aMessage.has_slot() ? aMessage.get_slot() : -1;
+
+    const auto* pCharacters = store.GetCharacters(pPlayer->DiscordId);
+    const CharacterRecord* pTarget = nullptr;
+
+    if (pCharacters)
     {
-        SendCharacterList(*pPlayer, "There is no character to delete.");
+        for (const auto& character : *pCharacters)
+        {
+            const bool wanted = (slot < 0) ? (&character == store.FindCharacter(pPlayer->DiscordId))
+                                           : (character.Slot == slot);
+            if (wanted)
+            {
+                pTarget = &character;
+                break;
+            }
+        }
+    }
+
+    if (!pTarget)
+    {
+        SendCharacterList(*pPlayer, "There is no character in that slot.");
         return;
     }
+
+    // Named in the log BEFORE it goes, because after the retire this record is somewhere
+    // else and "which character did they just delete" becomes a question rather than a fact.
+    spdlog::info("{} is deleting '{}' ({}) from slot {}", pPlayer->Username,
+                 pTarget->Name.empty() ? "unnamed" : pTarget->Name, pTarget->CharacterId,
+                 pTarget->Slot);
 
     // Retired, not destroyed. The store keeps it in RetiredCharacters precisely so that
     // "I clicked the wrong thing" has an answer that is not "it is gone" - and nothing
@@ -171,7 +325,7 @@ void ChatSystem::HandleDeleteCharacterRequest(const PacketEvent<client::DeleteCh
     // Owned vehicles and other character-owned records are deliberately NOT cascaded here.
     // Working out what should be deleted, transferred or orphaned is its own decision, and
     // a delete that quietly took someone's cars with it would be discovered far too late.
-    const bool retired = store.RetireCharacter(pPlayer->DiscordId);
+    const bool retired = store.RetireCharacter(pPlayer->DiscordId, pTarget->Slot);
 
     if (!retired)
     {
@@ -228,6 +382,37 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
 
     auto& store = GServer->GetPlayerStore();
     const auto* pExisting = store.FindCharacter(pPlayer->DiscordId);
+
+    // BODY TYPE IS CHOSEN ONCE AND CANNOT CHANGE.
+    //
+    // Cyberpunk fixes body type at character creation - no ripperdoc, mirror or menu
+    // changes it - so a save that flips an established character's body is never a
+    // player's decision. It is a capture of somebody, or something, else: the state read
+    // before the creator committed, the world template's default, another character's
+    // save. Whatever the mechanism, the stored appearance is the good copy and the
+    // incoming one is not, so the WHOLE save is refused rather than half-applied.
+    //
+    // Live, 2026-09-04: noremacxxi picked male and every client rendered a female corpo V
+    // in prologue clothes, because the server recorded is_male=false from one such capture
+    // and then faithfully broadcast it to everyone. The server already had the field it
+    // needed to know better - it simply trusted it. It no longer does.
+    //
+    // Deliberately narrow, so it can never block making a character: it fires only for a
+    // character that has an appearance stored AND has actually been played. A character
+    // mid-creation sets its body freely, which is the one time it is allowed to.
+    if (CharacterRecord::WouldFlipEstablishedBody(pExisting, aMessage.get_is_male()))
+    {
+        spdlog::error("[Character] REFUSED a save from {} - it would flip an established "
+                      "character's body type ({} -> {}). Body type is fixed at creation, so "
+                      "this capture is of the wrong character; the stored appearance is kept.",
+                      pPlayer->Username, pExisting->IsMale ? "male" : "female",
+                      aMessage.get_is_male() ? "male" : "female");
+
+        Tell(*pPlayer, "That save was refused - it did not match your character's body type, "
+                       "so your saved look was kept. If you meant to start over, use "
+                       "/character new confirm.");
+        return;
+    }
 
     // Start from the record as stored, and overwrite only what an appearance save is
     // allowed to change. SaveCharacter replaces the stored record wholesale with what it
@@ -314,11 +499,99 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
             character.Inventory.push_back({stack.get_id(), stack.get_quantity()});
         }
 
+        /*
+         * STAGE 5 OBSERVATION: a client declaring possessions for a MIGRATED character.
+         *
+         * This is exactly the case Stage 7 will refuse, so it is measured first - the
+         * standing instinct in this file is "record, do not refuse, measure first", and it
+         * applies to the cutover as much as it applied to the balance.
+         *
+         * SILENT TODAY BY CONSTRUCTION. Migration is inactive, so no character is migrated,
+         * so this never fires and costs nothing. The moment migration is activated it starts
+         * reporting precisely how often clients would be refused, and for whom - which is
+         * the number needed to decide whether Stage 7 is safe to turn on.
+         *
+         * The client's own revision cannot be compared yet: SaveCharacterRequest carries no
+         * revision field, and adding one changes the proto text and therefore the protocol
+         * identifier - a flag day, which is barred until the server migration. The
+         * classification logic (Economy::ClassifyClientRevision) exists and is tested,
+         * waiting for that field.
+         */
+        if (pExisting && Economy::IsMigrated(*pExisting))
+        {
+            spdlog::warn("[ECONOMY] {} sent a possessions save for MIGRATED character {} "
+                         "(server revision {}). Stage 7 will refuse this; recorded, not "
+                         "refused.",
+                         pPlayer->Username, pExisting->CharacterId, pExisting->EconomyRevision);
+
+            GServer->GetAuditLog().Record("economy.legacy_save", pPlayer->DiscordId,
+                                          pExisting->CharacterId,
+                                          {{"revision", pExisting->EconomyRevision},
+                                           {"claimed_money", aMessage.get_money()}});
+        }
+
         // The balance the SERVER last had for this character, before the client's claim
         // replaces it. Absent for a first capture, where there is nothing to disagree with.
         const int64_t storedMoney = pExisting ? pExisting->Money : 0;
 
-        character.Money = aMessage.get_money();
+        /*
+         * IMPOSSIBLE values are refused. PLAUSIBLE ones are still trusted - deliberately.
+         *
+         * The note below is the standing decision and it stands: the client's figure is
+         * accepted and recorded rather than refused, because there is no server-side balance
+         * to fall back to yet, and refusing a client that is merely AHEAD of the server would
+         * take money off innocent players. Measure first. That is phase 5's job, not this
+         * commit's.
+         *
+         * But "ahead of the server" describes a delta of a few thousand eddies. It does not
+         * describe a negative balance, and it does not describe a number larger than the
+         * game can produce. Those are not a client racing the server; they are a client that
+         * is wrong or lying, and writing them costs something either way:
+         *
+         *   - a NEGATIVE balance makes AvailableMoney negative, so every "can you afford
+         *     this" test fails forever and the character is permanently unable to trade or
+         *     pay. It is also a value no legitimate path produces - spending is already
+         *     floored at zero everywhere it happens.
+         *   - an ABSURD balance is the trivial form of the exploit this whole file worries
+         *     about, and it is the one shape that needs no timing and no race to pull off.
+         *
+         * The ceiling is deliberately far above any real player rather than tuned to be
+         * tight. The point is to refuse what cannot happen, not to police what might - a
+         * limit somebody could reach by playing would be exactly the "taking money off
+         * players" failure the standing decision warns against.
+         *
+         * Refusing means KEEPING THE STORED BALANCE, not zeroing it. A bad claim must not be
+         * able to destroy a character's money either.
+         */
+        constexpr int64_t kMaxPlausibleMoney = 1'000'000'000;
+
+        const int64_t claimed = aMessage.get_money();
+
+        if (claimed < 0 || claimed > kMaxPlausibleMoney)
+        {
+            character.Money = storedMoney;
+
+            spdlog::error("[MONEY] REFUSED an impossible balance from {}: claimed {}, keeping {}. "
+                          "Negative or above {} cannot be produced by play.",
+                          pPlayer->Username, claimed, storedMoney, kMaxPlausibleMoney);
+
+            GServer->GetAuditLog().Record("money.refused", pPlayer->DiscordId, pPlayer->DiscordId,
+                                          {{"claimed", claimed}, {"kept", storedMoney}});
+        }
+        else
+        {
+            character.Money = claimed;
+        }
+
+        // [MONEY] boundary 3 of 4: what the server received, against what it already had.
+        //
+        // Logged unconditionally, not only on disagreement. The existing warning below fires
+        // when the figures differ, which is the interesting case once you know money moves at
+        // all - and right now we do not know that. A line that prints when the numbers AGREE
+        // is what distinguishes "money never changes" from "money changes and is overwritten",
+        // and those need opposite fixes.
+        spdlog::info("[MONEY] 3 received: client says {}, server had {}, delta {}",
+                     character.Money, storedMoney, character.Money - storedMoney);
 
         spdlog::info("{} stored {} item stack(s) and {} eddies", pPlayer->Username,
                      character.Inventory.size(), character.Money);
@@ -466,15 +739,75 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
         {
             const int64_t moneyBefore = character.Money;
 
-            character.Inventory.clear();
-            character.Inventory.reserve(kit.size());
+            /*
+             * Built on a CANDIDATE, granted only if all of it succeeds.
+             *
+             * The old sequence wrote straight into `character`: clear the inventory, push
+             * every item, set the money, then set StarterKitGranted = true. Nothing there
+             * could fail loudly, but nothing stopped a partial grant either - a malformed
+             * kit entry (id 0, quantity 0) would be skipped by the primitives while the
+             * flag still went true, and the character would be permanently marked as having
+             * received a kit they only got part of. StarterKitGranted is a one-way gate, so
+             * that is not recoverable by retrying.
+             *
+             * Now: fill a copy, and only adopt it if every item and the money landed. On
+             * failure the character keeps what it had and the flag stays FALSE, so the grant
+             * can be attempted again once the kit definition is fixed.
+             *
+             * Through Economy for the same reason everything else is: one place that knows
+             * what a valid item and a valid balance are.
+             */
+            CharacterRecord granted = character;
+            granted.Inventory.clear();
+
+            bool kitApplied = true;
+            std::string kitFailure;
 
             for (const auto& item : kit)
-                character.Inventory.push_back({item.Id, item.Quantity});
+            {
+                const auto added = Economy::AddItem(granted, item.Id, item.Quantity);
 
-            character.Money = StarterKit::kStartingMoney;
-            character.Lifepath = StarterKit::ToString(lifepath);
-            character.StarterKitGranted = true;
+                if (added != Economy::Result::Success)
+                {
+                    kitApplied = false;
+                    kitFailure = fmt::format("item {:#x} x{}: {}", item.Id, item.Quantity,
+                                             Economy::Describe(added));
+                    break;
+                }
+            }
+
+            if (kitApplied)
+            {
+                // From zero rather than added to whatever was there - a starter kit sets the
+                // opening balance, it does not top somebody up.
+                granted.Money = 0;
+
+                const auto paid = Economy::Credit(granted, StarterKit::kStartingMoney);
+
+                if (paid != Economy::Result::Success)
+                {
+                    kitApplied = false;
+                    kitFailure = fmt::format("starting money: {}", Economy::Describe(paid));
+                }
+            }
+
+            if (!kitApplied)
+            {
+                spdlog::error("[StarterKit] {} - kit NOT granted ({}). The character keeps "
+                              "what it had and StarterKitGranted stays false, so this can be "
+                              "retried once the kit is fixed.",
+                              pPlayer->Username, kitFailure);
+            }
+            else
+            {
+                // ONE revision for the whole kit - money and every item together are a
+                // single thing that happened, not five. Advanced on the candidate after all
+                // of it succeeded, so a refused kit advances nothing.
+                Economy::AdvanceRevision(granted);
+
+                character = granted;
+                character.Lifepath = StarterKit::ToString(lifepath);
+                character.StarterKitGranted = true;
 
             spdlog::info("[StarterKit] {} - character '{}', lifepath {}, {} eddies",
                          pPlayer->Username, character.Name, character.Lifepath,
@@ -524,6 +857,7 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
             auto& audit = GServer->GetAuditLog();
             audit.RecordMoney(pPlayer->DiscordId, pPlayer->DiscordId, "starterkit.grant",
                               moneyBefore, character.Money);
+            }   // kitApplied
         }
     }
 
@@ -624,6 +958,805 @@ static std::string DisplayNameFor(const std::string& acDiscordId, const Characte
     return acFallback;
 }
 
+/**
+ * What THIS character's phone shows for a number.
+ *
+ * Three answers in priority order, and the order is the whole point:
+ *
+ *  1. The name this character saved. A phone book is a private annotation, so somebody
+ *     saved as "Ripper - Watson" stays that even after the person behind it renames.
+ *  2. Whoever currently holds the number, when nothing was saved. An entry added by
+ *     number should say who it reaches rather than showing a bare string.
+ *  3. The number itself, for a number nobody holds.
+ *
+ * Takes the VIEWER's character rather than an account, because the saved name belongs to
+ * one character. Their other character has a different phone book and must get a
+ * different answer from this function.
+ */
+static std::string PhoneBookName(const CharacterRecord* apViewer, const std::string& acNumber)
+{
+    if (apViewer)
+    {
+        if (const auto* pContact = PlayerStore::FindContact(*apViewer, acNumber))
+        {
+            if (!pContact->Name.empty())
+                return pContact->Name;
+        }
+    }
+
+    std::string ownerId;
+    const auto* pOwner = GServer->GetPlayerStore().FindCharacterByPhoneNumber(acNumber, &ownerId);
+
+    if (pOwner)
+        return DisplayNameFor(ownerId, pOwner, acNumber);
+
+    return acNumber;
+}
+
+/**
+ * The same, for a character named by id rather than by number.
+ *
+ * The inbox stores CharacterIds - that is what makes a thread survive a rename and what
+ * keeps two characters on one account apart - but a player thinks in numbers and names.
+ * This is the one place that translation happens.
+ */
+static std::string PhoneBookNameForCharacter(const CharacterRecord* apViewer,
+                                             const std::string& acCharacterId,
+                                             std::string* apNumber = nullptr)
+{
+    std::string ownerId;
+    const auto* pOther = GServer->GetPlayerStore().FindCharacterById(acCharacterId, &ownerId);
+
+    if (!pOther)
+    {
+        // A retired or deleted character. The thread is still theirs and still readable -
+        // deleting the person does not un-say what was said - so it is labelled rather
+        // than hidden.
+        if (apNumber)
+            apNumber->clear();
+
+        return "(unknown)";
+    }
+
+    if (apNumber)
+        *apNumber = pOther->PhoneNumber;
+
+    // The viewer's own saved name wins here too, for the same reason as above.
+    if (apViewer && !pOther->PhoneNumber.empty())
+    {
+        if (const auto* pContact = PlayerStore::FindContact(*apViewer, pOther->PhoneNumber))
+        {
+            if (!pContact->Name.empty())
+                return pContact->Name;
+        }
+    }
+
+    return DisplayNameFor(ownerId, pOther, pOther->PhoneNumber);
+}
+
+/**
+ * How long ago, in words. "3m", "2h", "4d".
+ *
+ * A phone shows relative time because that is the question being asked - "is this recent"
+ * - and an absolute timestamp makes the reader do arithmetic to answer it. Kept crude on
+ * purpose: nobody needs seconds, and the widest unit that is still true is the most
+ * readable one.
+ */
+static std::string Ago(int64_t aWhen)
+{
+    if (aWhen <= 0)
+        return "?";
+
+    const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+
+    const auto seconds = now - aWhen;
+
+    if (seconds < 60)
+        return "now";
+    if (seconds < 3600)
+        return fmt::format("{}m", seconds / 60);
+    if (seconds < 86400)
+        return fmt::format("{}h", seconds / 3600);
+
+    return fmt::format("{}d", seconds / 86400);
+}
+
+void ChatSystem::DeliverPendingMessages(const PlayerComponent& acPlayer)
+{
+    auto& store = GServer->GetPlayerStore();
+
+    const auto* pCharacter = store.FindCharacter(acPlayer.DiscordId);
+
+    // No character means nothing is addressed to them yet. A message is sent to a
+    // CharacterId, and somebody who has not made one does not have an inbox to fill.
+    if (!pCharacter || pCharacter->CharacterId.empty())
+        return;
+
+    auto& messages = GServer->GetMessages();
+
+    const auto pending = messages.Undelivered(pCharacter->CharacterId);
+
+    if (pending.empty())
+        return;
+
+    Tell(acPlayer, fmt::format("--- {} unread message(s) ---", pending.size()));
+
+    for (const auto& message : pending)
+    {
+        std::string number;
+        const auto who = PhoneBookNameForCharacter(pCharacter, message.FromCharacterId, &number);
+
+        Tell(acPlayer, fmt::format("  {} {}: {}", Ago(message.SentAt),
+                                   number.empty() ? who : fmt::format("{} ({})", who, number),
+                                   message.Body));
+    }
+
+    Tell(acPlayer, "Reply with /text <number> <message>.");
+
+    // Marked only after every line has been handed to the connection. A crash partway
+    // through leaves them undelivered and they arrive again next time, which is the right
+    // way round: showing a message twice is a blemish, losing one is the bug.
+    messages.MarkDelivered(pCharacter->CharacterId);
+}
+
+flecs::entity ChatSystem::FindByActiveCharacter(const std::string& acCharacterId) const
+{
+    flecs::entity found{};
+
+    if (acCharacterId.empty())
+        return found;
+
+    m_pWorld->each(
+        [&](flecs::entity aEntity, const PlayerComponent& aPlayer)
+        {
+            if (found)
+                return;
+
+            // Resolved through the ACTIVE character, not through FindCharacterById.
+            //
+            // FindCharacterById would find the record wherever it sits, including on an
+            // account whose player is currently playing a different character - and
+            // ringing that connection would put one character's call on another
+            // character's screen. The question here is not "does this character exist", it
+            // is "is somebody holding this phone right now".
+            const auto* pActive = GServer->GetPlayerStore().FindCharacter(aPlayer.DiscordId);
+
+            if (pActive && pActive->CharacterId == acCharacterId)
+                found = aEntity;
+        });
+
+    return found;
+}
+
+void ChatSystem::AnnounceCall(const CallSession& acSession, CallState aState)
+{
+    const auto caller = FindByActiveCharacter(acSession.CallerCharacterId);
+    const auto target = FindByActiveCharacter(acSession.TargetCharacterId);
+
+    const auto* pCallerPlayer = caller ? caller.get<PlayerComponent>() : nullptr;
+    const auto* pTargetPlayer = target ? target.get<PlayerComponent>() : nullptr;
+
+    auto& store = GServer->GetPlayerStore();
+
+    // Each side is named the way the OTHER side's phone book has them, so a saved name
+    // wins over whatever the person currently calls themselves.
+    const auto* pCallerCharacter =
+        pCallerPlayer ? store.FindCharacter(pCallerPlayer->DiscordId) : nullptr;
+    const auto* pTargetCharacter =
+        pTargetPlayer ? store.FindCharacter(pTargetPlayer->DiscordId) : nullptr;
+
+    const auto callerAsSeenByTarget = PhoneBookName(pTargetCharacter, acSession.CallerNumber);
+    const auto targetAsSeenByCaller = PhoneBookName(pCallerCharacter, acSession.TargetNumber);
+
+    /**
+     * The PHONE first, chat second.
+     *
+     * Both sides get a NotifyCall carrying the finished display name - resolved here,
+     * through the RECIPIENT's own phone book, because the saved name lives in the
+     * character record and the client has no copy of it. Two people must be able to see
+     * different names for the same number, so the resolution cannot be done once and
+     * shared.
+     *
+     * The chat lines below are kept as a FALLBACK, not as the interface. They are what a
+     * player sees if the phone UI fails to present - which is worth having, because a call
+     * that rings somewhere the player cannot see is indistinguishable from the server
+     * being broken.
+     */
+    const auto notify = [&](const PlayerComponent& acPlayer, const std::string& acName,
+                            const std::string& acNumber, bool aIncoming)
+    {
+        server::NotifyCall message;
+        message.set_call_id(acSession.CallId.c_str());
+        message.set_state(static_cast<uint32_t>(aState));
+        message.set_display_name(acName.c_str());
+        message.set_number(acNumber.c_str());
+        message.set_incoming(aIncoming);
+
+        GServer->Send(acPlayer.Connection, message);
+    };
+
+    if (pCallerPlayer)
+        notify(*pCallerPlayer, targetAsSeenByCaller, acSession.TargetNumber, false);
+
+    if (pTargetPlayer)
+        notify(*pTargetPlayer, callerAsSeenByTarget, acSession.CallerNumber, true);
+
+    const auto tellCaller = [&](const std::string& acLine)
+    {
+        if (pCallerPlayer)
+            Tell(*pCallerPlayer, acLine);
+    };
+
+    const auto tellTarget = [&](const std::string& acLine)
+    {
+        if (pTargetPlayer)
+            Tell(*pTargetPlayer, acLine);
+    };
+
+    switch (aState)
+    {
+    case CallState::Ringing:
+        tellCaller(fmt::format("Calling {} ({})... /hangup to give up.", targetAsSeenByCaller,
+                               acSession.TargetNumber));
+        tellTarget(fmt::format("### Incoming call - {} ({}) ###", callerAsSeenByTarget,
+                               acSession.CallerNumber));
+        tellTarget("/answer to pick up, /decline to send them away.");
+        break;
+
+    case CallState::Connected:
+        // Said on both sides, because the useful half is not "connected" - it is that
+        // voice now reaches somebody who is not standing next to you, which is otherwise
+        // impossible on this server and is the entire point of a call.
+        tellCaller(fmt::format("Connected to {}. They hear you wherever you are. /hangup to end.",
+                               targetAsSeenByCaller));
+        tellTarget(fmt::format("Connected to {}. They hear you wherever you are. /hangup to end.",
+                               callerAsSeenByTarget));
+        break;
+
+    case CallState::Declined:
+        tellCaller(fmt::format("{} declined.", targetAsSeenByCaller));
+        tellTarget("Declined.");
+        break;
+
+    case CallState::Missed:
+        tellCaller(fmt::format("No answer from {}.", targetAsSeenByCaller));
+        tellTarget(fmt::format("Missed call - {} ({}).", callerAsSeenByTarget,
+                               acSession.CallerNumber));
+        break;
+
+    case CallState::Busy:
+        tellCaller(fmt::format("{} is on another call.", targetAsSeenByCaller));
+        break;
+
+    case CallState::Cancelled:
+        tellCaller("Hung up.");
+        tellTarget(fmt::format("{} hung up before you answered.", callerAsSeenByTarget));
+        break;
+
+    case CallState::Ended:
+    {
+        const auto seconds = acSession.ConnectedAt > 0
+                                 ? std::chrono::duration_cast<std::chrono::seconds>(
+                                       std::chrono::system_clock::now().time_since_epoch())
+                                           .count() -
+                                       acSession.ConnectedAt
+                                 : 0;
+
+        const auto line = fmt::format("Call ended ({}s).", seconds);
+
+        tellCaller(line);
+        tellTarget(line);
+        break;
+    }
+
+    case CallState::Failed:
+        tellCaller("The call failed.");
+        tellTarget("The call failed.");
+        break;
+
+    default:
+        break;
+    }
+}
+
+/**
+ * Both sides of a trade, as the server currently understands it.
+ *
+ * Printed on every change, to BOTH people, because a trade is the one place where the two
+ * players must be looking at the same thing before they agree. A private view of a shared
+ * deal is how somebody confirms something they never saw.
+ */
+void ChatSystem::ShowTrade(const TradeSession& acSession)
+{
+    auto& store = GServer->GetPlayerStore();
+
+    const auto describe = [&](const std::string& acCharacterId, const TradeOffer& acOffer)
+    {
+        std::string line = fmt::format("{} eddies", acOffer.Money);
+
+        for (const auto& stack : acOffer.Items)
+            line += fmt::format(", {}x item {:x}", stack.Quantity, stack.Id);
+
+        std::string who = "(gone)";
+
+        if (const auto* pCharacter = store.FindCharacterById(acCharacterId))
+            who = pCharacter->Name.empty() ? acCharacterId : pCharacter->Name;
+
+        return fmt::format("  {}{}: {}", who, acOffer.Confirmed ? " [CONFIRMED]" : "", line);
+    };
+
+    for (const auto& id : {acSession.A, acSession.B})
+    {
+        const auto entity = FindByActiveCharacter(id);
+        if (!entity)
+            continue;
+
+        const auto* pPlayer = entity.get<PlayerComponent>();
+        if (!pPlayer)
+            continue;
+
+        Tell(*pPlayer, "--- trade ---");
+        Tell(*pPlayer, describe(acSession.A, acSession.OfferA));
+        Tell(*pPlayer, describe(acSession.B, acSession.OfferB));
+
+        if (!acSession.BothConfirmed())
+            Tell(*pPlayer, "/trade confirm when you are happy, /trade cancel to walk away.");
+    }
+}
+
+void ChatSystem::EndTradeFor(const std::string& acCharacterId, TradeState aState,
+                             const std::string& acWhy)
+{
+    auto& trades = GServer->GetTrades();
+
+    auto* pSession = trades.EndFor(acCharacterId, aState);
+
+    if (!pSession)
+        return;
+
+    // The other side is told, and told why. A trade window that simply stops responding
+    // reads as the server breaking rather than as the other person leaving.
+    const auto other = pSession->Other(acCharacterId);
+
+    if (const auto entity = FindByActiveCharacter(other))
+    {
+        if (const auto* pPlayer = entity.get<PlayerComponent>())
+            Tell(*pPlayer, fmt::format("Trade cancelled - {}.", acWhy));
+    }
+
+    trades.Sweep();
+}
+
+void ChatSystem::TickTrades()
+{
+    auto& trades = GServer->GetTrades();
+
+    const auto expired = trades.Expired();
+
+    for (auto* pSession : expired)
+    {
+        trades.End(*pSession, TradeState::Expired);
+
+        for (const auto& id : {pSession->A, pSession->B})
+        {
+            if (const auto entity = FindByActiveCharacter(id))
+            {
+                if (const auto* pPlayer = entity.get<PlayerComponent>())
+                    Tell(*pPlayer, "Trade expired.");
+            }
+        }
+    }
+
+    if (!expired.empty())
+        trades.Sweep();
+
+    /**
+     * Distance, checked continuously rather than only at the start.
+     *
+     * A trade agreed face to face and completed from across the district is the shape every
+     * remote scam takes. Checked here rather than at confirm alone so that walking away
+     * ENDS it visibly, instead of leaving somebody holding a window that will refuse them
+     * at the last moment for a reason they cannot see.
+     */
+    std::vector<std::pair<std::string, std::string>> tooFar;
+
+    for (auto* pSession : trades.Live())
+    {
+        if (pSession->State != TradeState::Open)
+            continue;
+
+        const auto left = FindByActiveCharacter(pSession->A);
+        const auto right = FindByActiveCharacter(pSession->B);
+
+        if (!left || !right)
+            continue;   // a disconnect is handled where it happens
+
+        const auto* pLeftPlayer = left.get<PlayerComponent>();
+        const auto* pRightPlayer = right.get<PlayerComponent>();
+
+        if (!pLeftPlayer || !pRightPlayer || !pLeftPlayer->Puppet || !pRightPlayer->Puppet)
+            continue;
+
+        const auto* pLeftMove = pLeftPlayer->Puppet.get<MovementComponent>();
+        const auto* pRightMove = pRightPlayer->Puppet.get<MovementComponent>();
+
+        if (!pLeftMove || !pRightMove)
+            continue;
+
+        if (glm::distance(pLeftMove->Position, pRightMove->Position) > kTradeDistance * 3.f)
+            tooFar.emplace_back(pSession->A, "you moved too far apart");
+    }
+
+    for (const auto& [id, why] : tooFar)
+        EndTradeFor(id, TradeState::Cancelled, why);
+}
+
+void ChatSystem::TickMedical()
+{
+    const auto now = MedicalNow();
+
+    auto* pLevel = m_pWorld->get_mut<Level>();
+
+    // Gathered first, applied after. The loop below sends messages and changes state, and
+    // mutating while iterating a flecs query is how a system starts behaving differently
+    // depending on how many people are on the server.
+    std::vector<flecs::entity> died;
+    std::vector<std::pair<flecs::entity, bool>> finished;   // puppet, wasRevive
+
+    m_pWorld->each(
+        [&](flecs::entity aPuppet, HealthComponent& aHealth)
+        {
+            // A procedure that has run its course, whoever it was on.
+            if (aHealth.TreatmentEndsAt > 0 && now >= aHealth.TreatmentEndsAt)
+            {
+                const bool wasRevive = aHealth.LifeState == LifeState::kReviving;
+                finished.emplace_back(aPuppet, wasRevive);
+                return;
+            }
+
+            if (aHealth.LifeState != LifeState::kDowned)
+                return;
+
+            // Stabilised patients do not bleed out. That is what the treatment IS - see
+            // Medical.h on why this is not modelled as extra time.
+            if (aHealth.Stabilized)
+                return;
+
+            if (aHealth.DownedAt > 0 && now - aHealth.DownedAt >= kBleedoutSeconds)
+                died.push_back(aPuppet);
+        });
+
+    for (const auto& [puppet, wasRevive] : finished)
+    {
+        auto* pHealth = puppet.get_mut<HealthComponent>();
+        if (!pHealth)
+            continue;
+
+        pHealth->TreatmentEndsAt = 0;
+        pHealth->TreatedBy.clear();
+
+        if (wasRevive)
+        {
+            pHealth->LifeState = LifeState::kAlive;
+            pHealth->Health = kRevivedHealth;
+            pHealth->DownedAt = 0;
+            pHealth->Stabilized = false;
+
+            spdlog::info("[MEDICAL] entity {:x} revived at {:.0f}%", puppet.id(), kRevivedHealth);
+        }
+        else
+        {
+            pHealth->Stabilized = true;
+            spdlog::info("[MEDICAL] entity {:x} stabilised", puppet.id());
+        }
+
+        if (pLevel)
+            pLevel->BroadcastCombatState(puppet);
+
+        if (const auto owner = puppet.parent())
+        {
+            if (const auto* pPlayer = owner.get<PlayerComponent>())
+            {
+                Tell(*pPlayer, wasRevive ? "You are back on your feet - barely. Find a ripperdoc."
+                                         : "You have been stabilised. You are still down.");
+            }
+        }
+    }
+
+    for (const auto& puppet : died)
+    {
+        auto* pHealth = puppet.get_mut<HealthComponent>();
+        if (!pHealth)
+            continue;
+
+        pHealth->LifeState = LifeState::kDead;
+        pHealth->TreatedBy.clear();
+        pHealth->TreatmentEndsAt = 0;
+
+        spdlog::info("[MEDICAL] entity {:x} bled out after {}s", puppet.id(), kBleedoutSeconds);
+
+        if (pLevel)
+            pLevel->BroadcastCombatState(puppet);
+
+        if (const auto owner = puppet.parent())
+        {
+            if (const auto* pPlayer = owner.get<PlayerComponent>())
+            {
+                Tell(*pPlayer, "You bled out. Nobody reached you in time.");
+                Tell(*pPlayer, "Use /respawn when you are ready.");
+
+                // A trade does not survive its owner dying - the brief's §36, and the same
+                // reasoning as a disconnect: assets must not move on behalf of somebody who
+                // is no longer in a position to agree.
+                if (const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(pPlayer->DiscordId))
+                    EndTradeFor(pCharacter->CharacterId, TradeState::Cancelled, "they went down");
+            }
+        }
+    }
+}
+
+void ChatSystem::BeginCall(const PlayerComponent& acPlayer, const std::string& acNumber)
+{
+    if (!IsPhoneNumberShaped(acNumber))
+    {
+        Tell(acPlayer, fmt::format("'{}' is not a number. They look like 555-014-372.", acNumber));
+        return;
+    }
+
+    auto& store = GServer->GetPlayerStore();
+    auto& calls = GServer->GetCalls();
+
+    // THE CALLER COMES FROM THE CONNECTION, never from the request. Neither the phone nor
+    // the chat command carries a "who is calling" field, so ringing somebody as a third
+    // party cannot be spelled - the same rule the voice path uses.
+    const auto* pSelf = store.FindCharacter(acPlayer.DiscordId);
+
+    if (!pSelf || pSelf->CharacterId.empty())
+    {
+        Tell(acPlayer, "You have no character yet.");
+        return;
+    }
+
+    if (pSelf->PhoneNumber.empty())
+    {
+        Tell(acPlayer, "You have no number yet - it is assigned on your next save.");
+        return;
+    }
+
+    if (calls.Active(pSelf->CharacterId))
+    {
+        Tell(acPlayer, "You are already on a call.");
+        return;
+    }
+
+    std::string recipientId;
+    const auto* pTarget = store.FindCharacterByPhoneNumber(acNumber, &recipientId);
+
+    if (!pTarget)
+    {
+        Tell(acPlayer, fmt::format("Nobody has the number {}.", acNumber));
+        return;
+    }
+
+    if (pTarget->CharacterId == pSelf->CharacterId)
+    {
+        Tell(acPlayer, "That is your own number.");
+        return;
+    }
+
+    // You blocked them: said plainly, because you already know.
+    if (PlayerStore::IsBlockedBy(*pSelf, acNumber))
+    {
+        Tell(acPlayer, fmt::format("You have blocked {}.", acNumber));
+        return;
+    }
+
+    /**
+     * Offline and "they blocked you" answer identically, on purpose.
+     *
+     * A refusal that differs is a refusal that tells somebody they were blocked, which is
+     * exactly the thing a block exists to withhold. Combined into one branch rather than
+     * two branches with the same text, so a later edit cannot make one of them specific
+     * without noticing it is doing so.
+     */
+    const auto targetEntity = FindByActiveCharacter(pTarget->CharacterId);
+
+    if (!targetEntity || PlayerStore::IsBlockedBy(*pTarget, pSelf->PhoneNumber))
+    {
+        Tell(acPlayer, fmt::format("{} is not answering.", PhoneBookName(pSelf, acNumber)));
+        return;
+    }
+
+    if (calls.Active(pTarget->CharacterId))
+    {
+        auto& session = calls.Begin(pSelf->CharacterId, pSelf->PhoneNumber,
+                                    pTarget->CharacterId, acNumber);
+
+        // Recorded as a real call so both histories show the attempt. A busy signal that
+        // leaves no trace is indistinguishable from never having called.
+        calls.End(session, CallState::Busy);
+        AnnounceCall(session, CallState::Busy);
+        calls.Sweep();
+        return;
+    }
+
+    auto& session = calls.Begin(pSelf->CharacterId, pSelf->PhoneNumber,
+                                pTarget->CharacterId, acNumber);
+
+    AnnounceCall(session, CallState::Ringing);
+
+    spdlog::info("{} is calling {}", acPlayer.Username, acNumber);
+}
+
+void ChatSystem::ControlCall(const PlayerComponent& acPlayer, const std::string& acCallId,
+                             uint32_t aAction)
+{
+    auto& store = GServer->GetPlayerStore();
+    auto& calls = GServer->GetCalls();
+
+    const auto* pSelf = store.FindCharacter(acPlayer.DiscordId);
+
+    if (!pSelf || pSelf->CharacterId.empty())
+    {
+        Tell(acPlayer, "You have no character yet.");
+        return;
+    }
+
+    /**
+     * Resolved from the CONNECTION's own active call, never looked up by the id sent.
+     *
+     * The difference is the whole security story. A call id used as a lookup key is a way
+     * to hang up somebody else's call; a call id CHECKED AGAINST your own is only a way to
+     * notice that the call you were looking at has already been replaced.
+     */
+    auto* pSession = calls.Active(pSelf->CharacterId);
+
+    if (!pSession)
+    {
+        Tell(acPlayer, "You are not on a call.");
+        return;
+    }
+
+    // An empty id means "whatever I am in" - the chat fallback, which has no id to send.
+    // The phone always sends the one it is displaying, so a button pressed a moment too
+    // late acts on nothing instead of on the call that replaced it.
+    if (!acCallId.empty() && acCallId != pSession->CallId)
+        return;
+
+    const bool isTarget = pSession->TargetCharacterId == pSelf->CharacterId;
+
+    switch (aAction)
+    {
+    case 0:   // answer
+    {
+        if (!isTarget || pSession->State != CallState::Ringing)
+            return;
+
+        // The caller may have walked away between the ring and the answer. Connecting
+        // somebody to nobody leaves a call that only the timeout can clear.
+        if (!FindByActiveCharacter(pSession->CallerCharacterId))
+        {
+            calls.End(*pSession, CallState::Failed);
+            AnnounceCall(*pSession, CallState::Failed);
+            calls.Sweep();
+            return;
+        }
+
+        pSession->State = CallState::Connected;
+        pSession->ConnectedAt = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+
+        AnnounceCall(*pSession, CallState::Connected);
+
+        spdlog::info("{} answered a call from {}", acPlayer.Username, pSession->CallerNumber);
+        return;
+    }
+
+    case 1:   // decline
+    {
+        if (!isTarget || pSession->State != CallState::Ringing)
+            return;
+
+        calls.End(*pSession, CallState::Declined);
+        AnnounceCall(*pSession, CallState::Declined);
+        calls.Sweep();
+        return;
+    }
+
+    case 2:   // hang up
+    {
+        // Cancelling a call that never connected and ending one that did are different
+        // history lines, so they are different states rather than one "ended".
+        const auto state =
+            pSession->State == CallState::Connected ? CallState::Ended : CallState::Cancelled;
+
+        calls.End(*pSession, state);
+        AnnounceCall(*pSession, state);
+        calls.Sweep();
+        return;
+    }
+
+    default:
+        // Refused rather than defaulted. An unknown action quietly becoming "hang up"
+        // would drop calls for no visible reason on any client that got the numbering
+        // wrong, and the symptom would look like a network fault.
+        spdlog::warn("{} sent call action {}, which is not one", acPlayer.Username, aAction);
+        return;
+    }
+}
+
+void ChatSystem::HandleCallRequest(const PacketEvent<client::CallRequest>& aMessage)
+{
+    auto* pPlayerManager = m_pWorld->get<PlayerManager>();
+
+    const auto entity = pPlayerManager->GetByConnectionId(aMessage.ConnectionId);
+    if (!entity || !entity.has<PlayerComponent>())
+        return;
+
+    BeginCall(*entity.get<PlayerComponent>(), aMessage.get_number().c_str());
+}
+
+void ChatSystem::HandleCallControlRequest(const PacketEvent<client::CallControlRequest>& aMessage)
+{
+    auto* pPlayerManager = m_pWorld->get<PlayerManager>();
+
+    const auto entity = pPlayerManager->GetByConnectionId(aMessage.ConnectionId);
+    if (!entity || !entity.has<PlayerComponent>())
+        return;
+
+    ControlCall(*entity.get<PlayerComponent>(), aMessage.get_call_id().c_str(),
+                aMessage.get_action());
+}
+
+void ChatSystem::EndCallFor(const std::string& acCharacterId, CallState aState)
+{
+    auto& calls = GServer->GetCalls();
+
+    auto* pSession = calls.Active(acCharacterId);
+
+    if (!pSession)
+        return;
+
+    // The OTHER side is told, and told the truth. A call that simply goes quiet leaves
+    // somebody talking to a phone that will never do anything again, and the natural
+    // reading of that is that the server broke rather than that the other person left.
+    const auto other = pSession->Other(acCharacterId);
+
+    calls.End(*pSession, aState);
+
+    if (const auto entity = FindByActiveCharacter(other))
+    {
+        if (const auto* pPlayer = entity.get<PlayerComponent>())
+        {
+            Tell(*pPlayer, aState == CallState::Ended ? "Call ended - they hung up."
+                                                      : "Call ended - they are gone.");
+        }
+    }
+
+    calls.Sweep();
+}
+
+void ChatSystem::TickCalls()
+{
+    auto& calls = GServer->GetCalls();
+
+    const auto expired = calls.Expired();
+
+    if (expired.empty())
+        return;
+
+    for (auto* pSession : expired)
+    {
+        // Ended BEFORE the announcement, so the history line exists by the time either
+        // player could type /calls and look for it.
+        calls.End(*pSession, CallState::Missed);
+        AnnounceCall(*pSession, CallState::Missed);
+    }
+
+    calls.Sweep();
+}
+
 void ChatSystem::SendQuestSkip(flecs::entity aSubject, const std::string& acQuest)
 {
     const auto* pPlayer = aSubject.get<PlayerComponent>();
@@ -704,8 +1837,52 @@ void ChatSystem::CompleteSale(const PendingSale& acSale, const PlayerComponent& 
     CharacterRecord buyer = *pBuyerCharacter;
     CharacterRecord seller = *pSellerCharacter;
 
-    buyer.Money -= acSale.Price;
-    seller.Money += acSale.Price;
+    /*
+     * Through the economy mutator, for the same reason /pay is.
+     *
+     * The seller's credit was unguarded: a seller near the ceiling wrapped, or ended on a
+     * balance the save path already refuses. Transfer checks the seller's headroom BEFORE
+     * the buyer is charged, so the failure is "no sale" rather than "charged, and the money
+     * went nowhere".
+     */
+    if (Economy::CanAdvanceRevision(buyer) != Economy::Result::Success ||
+        Economy::CanAdvanceRevision(seller) != Economy::Result::Success)
+    {
+        vehicles.Unlock(acSale.VehicleId, acSale.Token);
+
+        spdlog::error("[MONEY] refused a vehicle sale - a participant's economy revision is "
+                      "exhausted. Nobody was charged.");
+
+        Tell(acBuyer, "That sale could not complete. You have not been charged.");
+        return;
+    }
+
+    if (const auto moved = Economy::Transfer(buyer, seller, acSale.Price);
+        moved != Economy::Result::Success)
+    {
+        vehicles.Unlock(acSale.VehicleId, acSale.Token);
+
+        spdlog::warn("[MONEY] refused a vehicle sale of {}: {}", acSale.Price,
+                     Economy::Describe(moved));
+
+        Tell(acBuyer, fmt::format("That sale could not complete - {}. You have not been charged.",
+                                  Economy::Describe(moved)));
+        return;
+    }
+
+    /*
+     * One each for the purchase.
+     *
+     * The refund path below advances them AGAIN rather than rolling back to the previous
+     * number, and that is deliberate. The debit is persisted before the vehicle transfer is
+     * attempted, so by the time a refund happens two authoritative states have really
+     * existed and both were visible - the player saw the money leave and come back. A
+     * revision counts committed changes to authoritative state, not net outcomes, so
+     * pretending the first one did not happen would make the number describe something
+     * other than what the server did.
+     */
+    Economy::AdvanceRevision(buyer);
+    Economy::AdvanceRevision(seller);
 
     store.SaveCharacter(acSale.BuyerId, acBuyer.Username, buyer);
     store.SaveCharacter(acSale.SellerId, seller.Name, seller);
@@ -715,8 +1892,32 @@ void ChatSystem::CompleteSale(const PendingSale& acSale, const PlayerComponent& 
         // Put the money back. A transfer that fails here is a bug rather than a refusal -
         // the lock is ours and ownership was checked - but leaving somebody charged for a
         // car they did not receive is not something to risk on that reasoning.
-        buyer.Money += acSale.Price;
-        seller.Money -= acSale.Price;
+        // The refund goes back through the same boundary, in the other direction. Hand-
+        // written it was the one arithmetic left that could put a balance somewhere the
+        // save path would refuse - and a refund that cannot land is the worst possible
+        // moment to find that out.
+        const auto refunded = Economy::Transfer(seller, buyer, acSale.Price);
+
+        if (refunded == Economy::Result::Success)
+        {
+            // A second committed change, so a second revision each - see the note above.
+            //
+            // Inside the success branch on purpose: a refund that did NOT happen changed no
+            // authoritative state, and advancing for it would make the revision count
+            // attempts rather than changes.
+            Economy::AdvanceRevision(buyer);
+            Economy::AdvanceRevision(seller);
+        }
+        else
+        {
+            // Should be unreachable: the money moved this way a moment ago, so the room
+            // exists. Logged at error rather than assumed away, because if it ever does
+            // happen somebody has been charged for a car they did not get.
+            spdlog::error("[MONEY] vehicle {} refund FAILED ({}) - buyer {} may be charged "
+                          "for a car they did not receive",
+                          acSale.VehicleId, Economy::Describe(refunded), acSale.BuyerId);
+        }
+
         store.SaveCharacter(acSale.BuyerId, acBuyer.Username, buyer);
         store.SaveCharacter(acSale.SellerId, seller.Name, seller);
 
@@ -996,6 +2197,7 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         flecs::entity byDiscordId{};
         flecs::entity byCharacterName{};
         flecs::entity byUsername{};
+        flecs::entity byCharacterPrefix{};
 
         m_pWorld->each(
             [&](flecs::entity aEntity, const PlayerComponent& aOther)
@@ -1024,13 +2226,47 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
                 {
                     if (!byCharacterName) byCharacterName = aEntity;
                 }
+
+                // People type the FIRST NAME.
+                //
+                // Exact matching alone meant "/revive aldi" could not find "Aldi Do" -
+                // live, 2026-09-04: zeldfep tried "aldi do", then "aldi", then gave up
+                // and used the Discord name, which is the one name nobody in the world
+                // is called. A prefix match on the character's own name is what a person
+                // reading a nameplate will type. Ranked BELOW every exact match, so an
+                // exact name can never be stolen by somebody else's prefix.
+                if (!pCharacter->Name.empty() && acQuery.size() >= 2 &&
+                    pCharacter->Name.size() >= acQuery.size() &&
+                    equalsInsensitive(pCharacter->Name.substr(0, acQuery.size()), acQuery))
+                {
+                    if (!byCharacterPrefix) byCharacterPrefix = aEntity;
+                }
             });
 
-        if (byCharacterId)   return byCharacterId;
-        if (byDiscordId)     return byDiscordId;
-        if (byCharacterName) return byCharacterName;
+        if (byCharacterId)     return byCharacterId;
+        if (byDiscordId)       return byDiscordId;
+        if (byCharacterName)   return byCharacterName;
+        if (byUsername)        return byUsername;
 
-        return byUsername;
+        return byCharacterPrefix;
+    };
+
+    // The name to SAY to people: the one its owner picked, not their Discord handle.
+    //
+    // zeldfep, live 2026-09-04: "revive feature should not be discord name it should be
+    // player picked name." In the world nobody is called by their Discord account - the
+    // nameplate over their head is their character's name, so a message about them that
+    // uses anything else is asking the reader to translate. Falls back to the account
+    // name only when a character has not been named yet, because an empty name in a
+    // sentence is worse than the wrong one. Server LOGS keep the Discord name - there
+    // the account is the point, and it is what a ban or a role check acts on.
+    const auto sayName = [](const PlayerComponent& acPlayer) -> std::string
+    {
+        const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(acPlayer.DiscordId);
+        if (pCharacter && !pCharacter->Name.empty())
+            return pCharacter->Name;
+
+        return acPlayer.Username;
     };
 
     // ---------------------------------------------------------------- /kick ---
@@ -1171,8 +2407,64 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
     // and one place to look in /help.
     if (command == "/tp")
     {
-        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
-            return deny(EPermissionLevel::kAdmin);
+        /*
+         * /tp spawn - sends the caller to the spawn point.
+         *
+         * Cam, 2026-09-04: "we should make it where we can also /tp to spawn", asked while
+         * he was stuck under the map.
+         *
+         * STAFF-GATED, like every other form of /tp. It shipped open for one build on my
+         * reading that an unstuck player beats a clean rule, and Cam closed it: "i want
+         * /tp spawn staff-gated". On an RP server a free ride back to a known location is
+         * an escape from anything - a fight, a chase, a robbery - and that is worth more
+         * than the convenience.
+         *
+         * Players who fall out of the world are covered without this: the client-side
+         * fall-through guard re-places them automatically, and the server now refuses to
+         * hand out an origin start point at all. This is the manual backstop for when both
+         * of those miss, which is a staff job.
+         */
+        if (target == "spawn")
+        {
+            if (!acSender.HasAtLeast(EPermissionLevel::kEventStaff))
+                return deny(EPermissionLevel::kEventStaff);
+
+            glm::vec3 position;
+            float yaw = 0.f;
+
+            if (!GServer->GetRespawnPoint(position, yaw))
+            {
+                Tell(acSender, "No spawn point is set. Ask an admin to run /setspawn.");
+                return true;
+            }
+
+            // Where they were, so /return still works on somebody who unstuck themselves.
+            if (const auto* pMine = acSender.Puppet ? acSender.Puppet.get<MovementComponent>() : nullptr)
+            {
+                auto* pSelf = aSender.get_mut<PlayerComponent>();
+                pSelf->ReturnPosition = pMine->Position;
+                pSelf->ReturnRotation = pMine->Rotation;
+                pSelf->HasReturnPoint = true;
+            }
+
+            server::NotifyTeleport teleport;
+            common::Vector3 destination;
+            destination.set_x(position.x);
+            destination.set_y(position.y);
+            destination.set_z(position.z);
+            teleport.set_position(destination);
+            teleport.set_rotation(yaw);
+
+            GServer->Send(acSender.Connection, teleport);
+
+            spdlog::info("{} teleported themselves to spawn", acSender.Username);
+
+            Tell(acSender, "Sent you to the spawn point.");
+            return true;
+        }
+
+        if (!acSender.HasAtLeast(EPermissionLevel::kEventStaff))
+            return deny(EPermissionLevel::kEventStaff);
 
         const bool goToThem = (target == "to");
 
@@ -1346,21 +2638,123 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             return true;
         }
 
+        if (!pVictim->Puppet)
+        {
+            Tell(acSender, fmt::format("{} has not spawned in yet.", pVictim->Username));
+            return true;
+        }
+
+        auto* pHealth = pVictim->Puppet.get_mut<HealthComponent>();
+        if (!pHealth)
+        {
+            Tell(acSender, fmt::format("{} has no health state on the server yet.", pVictim->Username));
+            return true;
+        }
+
+        if (pHealth->LifeState != LifeState::kAlive)
+        {
+            Tell(acSender, fmt::format("{} is already down.", pVictim->Username));
+            return true;
+        }
+
+        // Downed WHERE THEY STAND, not teleported to the respawn point.
+        //
+        // Cam, 2026-09-04: "/kill doesnt actually down or flatline the player." It did not,
+        // and the old comment here explained why it deliberately did not - a FLATLINED
+        // screen ends the session, which is the thing the medical system exists to replace.
+        // That reasoning was right about death and wrong about downing: the medical system
+        // has modelled a downed state, a bleedout timer and a revive since it was built, and
+        // /kill was the one route into it nobody had wired up. So this now enters that state
+        // rather than inventing a death - the player collapses, medics can reach them, and
+        // the bleedout decides what happens if nobody does.
+        //
+        // The teleport is gone with it. Moving a downed body to the respawn point would skip
+        // the whole medical loop, which is the part worth having.
+        pHealth->Health = 0.f;
+        pHealth->LifeState = LifeState::kDowned;
+        pHealth->DownedAt = std::chrono::duration_cast<std::chrono::seconds>(
+                                std::chrono::system_clock::now().time_since_epoch())
+                                .count();
+        pHealth->Stabilized = false;
+        pHealth->TreatedBy.clear();
+        pHealth->TreatmentEndsAt = 0;
+
+        // What actually makes it visible. Without this the state lives only on the server
+        // and the player keeps walking around - which is exactly the bug being fixed.
+        if (auto* pLevel = m_pWorld->get_mut<Level>())
+            pLevel->BroadcastCombatState(pVictim->Puppet);
+
+        spdlog::info("{} downed {} ({})", acSender.Username, pVictim->Username, rest);
+
+        Tell(*pVictim, fmt::format("You were put down by {}{}", acSender.Username,
+                                   rest.empty() ? "." : (" - " + rest)));
+        Tell(*pVictim, fmt::format("A medic can revive you. You have {} seconds.", kBleedoutSeconds));
+
+        Broadcast("SERVER", fmt::format("{} was put down by {}{}", pVictim->Username, acSender.Username,
+                                        rest.empty() ? "" : (" - " + rest)).c_str());
+        return true;
+    }
+
+    // ------------------------------------------------------------ /respawn ----
+    //
+    // Back on your feet at the respawn point, after bleeding out.
+    //
+    // BUILT BECAUSE IT WAS ALREADY BEING ADVERTISED. The bleedout path has told players
+    // "Use /respawn when you are ready" since the medical system landed, and the command it
+    // names was never written - so anybody who actually bled out was told to type something
+    // that did nothing, and stayed dead with no route back. Nobody hit it because /kill was
+    // the only way to go down and /kill never downed anyone, so the two gaps hid each other.
+    //
+    // Not staff-gated: this is how a dead player rejoins the world.
+    if (command == "/respawn")
+    {
+        if (!acSender.Puppet)
+        {
+            Tell(acSender, "You are not in the world yet.");
+            return true;
+        }
+
+        auto* pHealth = acSender.Puppet.get_mut<HealthComponent>();
+        if (!pHealth)
+        {
+            Tell(acSender, "No health state on the server for you yet.");
+            return true;
+        }
+
+        // Only from DEAD. Respawning out of a downed state would make every medic pointless
+        // and turn the bleedout into a 180-second inconvenience nobody would ever wait out.
+        if (pHealth->LifeState != LifeState::kDead)
+        {
+            if (pHealth->LifeState == LifeState::kAlive)
+                Tell(acSender, "You are not down.");
+            else
+                Tell(acSender, "You are down, not dead - a medic can still reach you. Wait it out.");
+
+            return true;
+        }
+
         glm::vec3 position;
         float yaw = 0.f;
 
         if (!GServer->GetRespawnPoint(position, yaw))
         {
-            Tell(acSender, "No respawn point set - stand where you want it and run /setspawn first.");
+            Tell(acSender, "No respawn point is set. Ask an admin to run /setspawn.");
             return true;
         }
 
-        // Jail wins, same as an ordinary death. Being killed should not be a way out.
-        if (const auto* pRecord = GServer->GetPlayerStore().Find(pVictim->DiscordId))
+        // Jail wins, same as an ordinary death. Dying should not be a way out of a cell.
+        if (const auto* pRecord = GServer->GetPlayerStore().Find(acSender.DiscordId))
         {
             if (pRecord->JailedUntil > 0)
                 position = {pRecord->JailX, pRecord->JailY, pRecord->JailZ};
         }
+
+        pHealth->Health = kRevivedHealth;
+        pHealth->LifeState = LifeState::kAlive;
+        pHealth->DownedAt = 0;
+        pHealth->Stabilized = false;
+        pHealth->TreatedBy.clear();
+        pHealth->TreatmentEndsAt = 0;
 
         server::NotifyTeleport teleport;
         common::Vector3 destination;
@@ -1370,12 +2764,73 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         teleport.set_position(destination);
         teleport.set_rotation(yaw);
 
-        GServer->Send(pVictim->Connection, teleport);
+        GServer->Send(acSender.Connection, teleport);
 
-        spdlog::info("{} killed {} ({})", acSender.Username, pVictim->Username, rest);
+        // State after the move. The client stands them up on this, and doing it second means
+        // they are never briefly upright at the place they died.
+        if (auto* pLevel = m_pWorld->get_mut<Level>())
+            pLevel->BroadcastCombatState(acSender.Puppet);
 
-        Broadcast("SERVER", fmt::format("{} was killed by {}{}", pVictim->Username, acSender.Username,
-                                        rest.empty() ? "" : (" - " + rest)).c_str());
+        spdlog::info("{} respawned at ({:.1f}, {:.1f}, {:.1f})", acSender.Username, position.x, position.y,
+                     position.z);
+
+        Tell(acSender, fmt::format("You are back on your feet at {:.0f}% health.", kRevivedHealth));
+        return true;
+    }
+
+    // ---------------------------------------------------------- /inventory ----
+    //
+    // What the SERVER believes you are carrying, and the ids /trade item wants.
+    //
+    // BUILT BECAUSE IT WAS ALREADY BEING ADVERTISED, same as /respawn. The trade error for a
+    // malformed item said "Usage: /trade item <id> <quantity>   (see /inventory)" and there
+    // was no /inventory - so the one message whose whole job was to tell somebody where to
+    // find an item id pointed at nothing. Found by the new Verify check, not by a person.
+    //
+    // Ids, not names. The server stores raw TweakDBIDs and deliberately does not interpret
+    // them (see CharacterRecord::ItemStack) - and the client-side helper that turns one into
+    // a name returns empty strings on 2.31, which is how equipment sync once spent a week
+    // looking fine and shipping nothing. A number you can paste into /trade is worth more
+    // than a name that might be blank.
+    if (command == "/inventory")
+    {
+        const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(acSender.DiscordId);
+
+        if (!pCharacter)
+        {
+            Tell(acSender, "No character loaded for you on the server yet.");
+            return true;
+        }
+
+        Tell(acSender, fmt::format("Eddies: {}", pCharacter->Money));
+
+        if (pCharacter->Inventory.empty())
+        {
+            Tell(acSender, "Carrying nothing the server has recorded yet.");
+            return true;
+        }
+
+        Tell(acSender, fmt::format("Carrying {} stack(s) - the id is what /trade item takes:",
+                                   pCharacter->Inventory.size()));
+
+        // Capped. A full character carries hundreds of stacks and the chat box shows a
+        // handful of lines, so an uncapped list scrolls its own beginning away - the same
+        // reason /help became topic-based.
+        constexpr size_t kMaxLines = 20;
+        size_t shown = 0;
+
+        for (const auto& stack : pCharacter->Inventory)
+        {
+            if (shown >= kMaxLines)
+            {
+                Tell(acSender, fmt::format("...and {} more.", pCharacter->Inventory.size() - shown));
+                break;
+            }
+
+            Tell(acSender, fmt::format("  {:#018x}  x{}", stack.Id, stack.Quantity));
+            ++shown;
+        }
+
         return true;
     }
 
@@ -1824,20 +3279,21 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
     // So ownership decides what appears in the phone, and the phone does the summoning.
     // The server pushes EnablePlayerVehicle for every model this account owns at least one
     // of; anything they own nothing of is not in their menu at all.
-    if (command == "/call")
-    {
-        Tell(acSender, "Use your phone - your vehicles are in the vehicle menu, like normal.");
-        Tell(acSender, "/garage shows the paperwork: which specific car is which, and its plate.");
-        return true;
-    }
+    // The vehicle half of /call is folded into the phone-call command further down, which
+    // is the only dispatch for it now.
+    //
+    // THIS BLOCK USED TO RETURN HERE, and it made player-to-player calling completely
+    // unreachable: it matched first, printed the vehicle hint, and returned true, so
+    // "/call 555-014-372" answered "use your phone" and rang nobody. Two features wanted
+    // the same verb and the older one silently won.
 
     // ---------------------------------------------------------- /givecar ----
     //
     // Admin: create an owned vehicle. Stands in for a dealership until there is one.
     if (command == "/givecar")
     {
-        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
-            return deny(EPermissionLevel::kAdmin);
+        if (!acSender.HasAtLeast(EPermissionLevel::kEventStaff))
+            return deny(EPermissionLevel::kEventStaff);
 
         const auto space = acLine.find(' ');
         std::string record = (space == std::string::npos) ? std::string{} : acLine.substr(space + 1);
@@ -2052,7 +3508,7 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
     {
         if (target.empty())
         {
-            Tell(acSender, "Usage: /addcontact 555-014-372   (ask them for their number)");
+            Tell(acSender, "Usage: /addcontact 555-014-372 [name]   (ask them for their number)");
             return true;
         }
 
@@ -2064,6 +3520,24 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             return true;
         }
 
+        // Everything after the number is the name they want it saved under, spaces and
+        // all. Optional: adding by number alone still works and falls back to whoever
+        // holds it, which is what every existing contact does.
+        std::string savedName;
+        {
+            const auto numberAt = acLine.find(target);
+
+            if (numberAt != std::string::npos)
+            {
+                savedName = acLine.substr(numberAt + target.size());
+
+                while (!savedName.empty() && savedName.front() == ' ')
+                    savedName.erase(savedName.begin());
+                while (!savedName.empty() && savedName.back() == ' ')
+                    savedName.pop_back();
+            }
+        }
+
         std::string ownerId;
         const auto* pOwner = GServer->GetPlayerStore().FindCharacterByPhoneNumber(target, &ownerId);
 
@@ -2073,22 +3547,102 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             return true;
         }
 
-        if (ownerId == acSender.DiscordId)
+        // Compared by CHARACTER, not by account.
+        //
+        // This used to compare Discord ids, which was right while an account had one
+        // character and became wrong the moment slots existed: a player's second character
+        // would be told their first character's number was "your own number" and refused.
+        // Those are two different people who happen to share an owner, and one saving the
+        // other's number is an ordinary thing to do.
+        const auto* pSelf = GServer->GetPlayerStore().FindCharacter(acSender.DiscordId);
+
+        if (pSelf && !pSelf->PhoneNumber.empty() && pSelf->PhoneNumber == target)
         {
             Tell(acSender, "That is your own number.");
             return true;
         }
 
-        if (!GServer->GetPlayerStore().AddContact(acSender.DiscordId, target))
+        if (!GServer->GetPlayerStore().AddContact(acSender.DiscordId, target, savedName))
         {
-            Tell(acSender, fmt::format("{} is already in your contacts.", target));
+            Tell(acSender, fmt::format("{} is already in your contacts. "
+                                       "Rename it with /contactname {} <name>.", target, target));
             return true;
         }
 
         // Only the person who added them is told. Nobody else's phone gains an entry, and
         // the owner is not notified either - looking somebody up is not an event that should
         // announce itself to them.
-        Tell(acSender, fmt::format("Added {} - {}.", DisplayNameFor(ownerId, pOwner, target), target));
+        Tell(acSender, fmt::format("Added {} - {}.",
+                                   savedName.empty() ? DisplayNameFor(ownerId, pOwner, target)
+                                                     : savedName,
+                                   target));
+        return true;
+    }
+
+    // -------------------------------------------------------- /contactname ---
+    //
+    // Renaming an entry, kept separate from adding one. An upsert would silently create a
+    // contact when somebody meant to rename one, and a phone book that grows entries by
+    // typo is worse than one that says "you do not have that number".
+    if (command == "/contactname")
+    {
+        const auto restStart = acLine.find(' ');
+        std::string rest = (restStart == std::string::npos) ? std::string{} : acLine.substr(restStart + 1);
+
+        while (!rest.empty() && rest.front() == ' ')
+            rest.erase(rest.begin());
+
+        std::string number = rest;
+        std::string name;
+
+        if (const auto space = rest.find(' '); space != std::string::npos)
+        {
+            number = rest.substr(0, space);
+            name = rest.substr(space + 1);
+
+            while (!name.empty() && name.front() == ' ')
+                name.erase(name.begin());
+        }
+
+        if (number.empty())
+        {
+            Tell(acSender, "Usage: /contactname 555-014-372 <name>   (empty name clears it)");
+            return true;
+        }
+
+        if (!GServer->GetPlayerStore().SetContactName(acSender.DiscordId, number, name))
+        {
+            Tell(acSender, fmt::format("{} is not in your contacts.", number));
+            return true;
+        }
+
+        if (name.empty())
+            Tell(acSender, fmt::format("Cleared the name on {}.", number));
+        else
+            Tell(acSender, fmt::format("Saved {} as {}.", number, name));
+
+        return true;
+    }
+
+    // -------------------------------------------------------- /delcontact ---
+    if (command == "/delcontact")
+    {
+        if (target.empty())
+        {
+            Tell(acSender, "Usage: /delcontact 555-014-372");
+            return true;
+        }
+
+        if (!GServer->GetPlayerStore().RemoveContact(acSender.DiscordId, target))
+        {
+            Tell(acSender, fmt::format("{} is not in your contacts.", target));
+            return true;
+        }
+
+        // Said out loud, because it is the surprising half. Forgetting somebody's name is
+        // not the same as un-saying what passed between you, and a player who expects a
+        // delete to erase the thread should find out here rather than from the thread.
+        Tell(acSender, fmt::format("Removed {}. Your messages with them are kept.", target));
         return true;
     }
 
@@ -2176,13 +3730,34 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             return true;
         }
 
-        // Read from the SERVER's record, never from anything the client claimed. This is the
-        // entire reason money became server-owned: a transfer must not be talked into
-        // existence by the machine that benefits from it.
-        if (pSenderCharacter->Money < amount)
+        /**
+         * Read from the SERVER's record, never from anything the client claimed. This is
+         * the entire reason money became server-owned: a transfer must not be talked into
+         * existence by the machine that benefits from it.
+         *
+         * AGAINST WHAT IS AVAILABLE, NOT WHAT IS OWNED. Money promised in a live trade is
+         * not spendable here, or the reservation is decorative: somebody with 10,000 who
+         * has offered 8,000 across a trade window could otherwise send 8,000 by phone and
+         * have both succeed, and the 16,000 would come from nowhere. That is the exact
+         * duplication the trade system exists to prevent, and it would arrive through this
+         * command rather than through trading.
+         */
+        const auto reserved = GServer->GetTrades().ReservedMoney(pSenderCharacter->CharacterId);
+        const auto available = PlayerStore::AvailableMoney(*pSenderCharacter, reserved);
+
+        if (available < amount)
         {
-            Tell(acSender, fmt::format("You have {} eddies and tried to send {}.",
-                                       pSenderCharacter->Money, amount));
+            if (reserved > 0)
+            {
+                Tell(acSender, fmt::format("You have {} eddies available - {} is promised in a "
+                                           "trade.", available, reserved));
+            }
+            else
+            {
+                Tell(acSender, fmt::format("You have {} eddies and tried to send {}.",
+                                           pSenderCharacter->Money, amount));
+            }
+
             return true;
         }
 
@@ -2198,8 +3773,45 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         const int64_t senderBefore = sender.Money;
         const int64_t recipientBefore = recipient.Money;
 
-        sender.Money -= amount;
-        recipient.Money += amount;
+        /*
+         * Through the economy mutator rather than by hand.
+         *
+         * The arithmetic here was `sender.Money -= amount; recipient.Money += amount;`, and
+         * the second half was unguarded: a recipient near the int64 ceiling wrapped, and a
+         * transfer that pushed anybody past the plausible-balance ceiling produced a balance
+         * the SAVE path already refuses to accept - legal here, impossible there.
+         *
+         * Transfer checks the recipient's headroom BEFORE the payer is touched, because
+         * money that leaves one side and cannot arrive at the other has been destroyed and
+         * no error code gives it back.
+         */
+        // Revision headroom for BOTH before either moves - see the note in ApplyTrade.
+        if (Economy::CanAdvanceRevision(sender) != Economy::Result::Success ||
+            Economy::CanAdvanceRevision(recipient) != Economy::Result::Success)
+        {
+            spdlog::error("[MONEY] refused a transfer - a participant's economy revision is "
+                          "exhausted. Nothing was moved.");
+
+            Tell(acSender, "That transfer could not be made.");
+            return true;
+        }
+
+        const auto moved = Economy::Transfer(sender, recipient, amount);
+
+        if (moved != Economy::Result::Success)
+        {
+            spdlog::warn("[MONEY] refused a transfer of {} from {}: {}", amount,
+                         acSender.Username, Economy::Describe(moved));
+
+            Tell(acSender, fmt::format("That transfer could not be made - {}.",
+                                       Economy::Describe(moved)));
+            return true;
+        }
+
+        // One each, for the one thing that happened. After the transfer succeeded, on the
+        // copies, before either is saved.
+        Economy::AdvanceRevision(sender);
+        Economy::AdvanceRevision(recipient);
 
         store.SaveCharacter(acSender.DiscordId, acSender.Username, sender);
         store.SaveCharacter(recipientId, pRecipient->Name, recipient);
@@ -2256,18 +3868,1073 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
 
         Tell(acSender, fmt::format("{} contact(s):", pCharacter->Contacts.size()));
 
-        for (const auto& number : pCharacter->Contacts)
+        for (const auto& contact : pCharacter->Contacts)
         {
-            const auto* pOwner = GServer->GetPlayerStore().FindCharacterByPhoneNumber(number);
-
             // A number whose owner has retired still shows, with the truth next to it.
             // Silently dropping it would look like the contact was never added.
-            std::string ownerId;
-            const auto* pResolved = GServer->GetPlayerStore().FindCharacterByPhoneNumber(number, &ownerId);
+            const auto* pResolved =
+                GServer->GetPlayerStore().FindCharacterByPhoneNumber(contact.Number);
 
-            Tell(acSender, fmt::format("  {}  {}", number,
-                                       pResolved ? DisplayNameFor(ownerId, pResolved, number)
-                                                 : "(no longer in service)"));
+            const auto blocked = PlayerStore::IsBlockedBy(*pCharacter, contact.Number);
+
+            Tell(acSender, fmt::format("  {}  {}{}{}", contact.Number,
+                                       PhoneBookName(pCharacter, contact.Number),
+                                       pResolved ? "" : "  (no longer in service)",
+                                       blocked ? "  [blocked]" : ""));
+        }
+
+        return true;
+    }
+
+    // ------------------------------------------------------------- /text ---
+    //
+    // Sending a message. Written against CharacterIds rather than accounts, so a player's
+    // second character has its own inbox and cannot see the first one's - see MessageStore.h.
+    if (command == "/text")
+    {
+        const auto restStart = acLine.find(' ');
+        std::string rest = (restStart == std::string::npos) ? std::string{} : acLine.substr(restStart + 1);
+
+        while (!rest.empty() && rest.front() == ' ')
+            rest.erase(rest.begin());
+
+        std::string number = rest;
+        std::string body;
+
+        if (const auto space = rest.find(' '); space != std::string::npos)
+        {
+            number = rest.substr(0, space);
+            body = rest.substr(space + 1);
+
+            while (!body.empty() && body.front() == ' ')
+                body.erase(body.begin());
+        }
+
+        if (number.empty() || body.empty())
+        {
+            Tell(acSender, "Usage: /text 555-014-372 <message>");
+            return true;
+        }
+
+        if (!IsPhoneNumberShaped(number))
+        {
+            Tell(acSender, fmt::format("'{}' is not a number. They look like 555-014-372.", number));
+            return true;
+        }
+
+        auto& store = GServer->GetPlayerStore();
+
+        const auto* pSelf = store.FindCharacter(acSender.DiscordId);
+
+        if (!pSelf || pSelf->CharacterId.empty())
+        {
+            Tell(acSender, "You have no character yet.");
+            return true;
+        }
+
+        if (pSelf->PhoneNumber.empty())
+        {
+            Tell(acSender, "You have no number yet - it is assigned on your next save.");
+            return true;
+        }
+
+        std::string recipientId;
+        const auto* pRecipient = store.FindCharacterByPhoneNumber(number, &recipientId);
+
+        if (!pRecipient)
+        {
+            Tell(acSender, fmt::format("Nobody has the number {}.", number));
+            return true;
+        }
+
+        // Compared by number, so a player CAN text their own other character. They are two
+        // people; the only thing that must be refused is a thread with itself.
+        if (pRecipient->CharacterId == pSelf->CharacterId)
+        {
+            Tell(acSender, "That is your own number.");
+            return true;
+        }
+
+        /**
+         * Blocked, and told nothing.
+         *
+         * Accepted and dropped rather than refused. A refusal is a signal - somebody who
+         * gets "delivery failed" for one number and "sent" for another has learned they
+         * were blocked, and on a roleplay server that is information a block exists
+         * precisely to withhold.
+         *
+         * Nothing is stored either. Storing it and never delivering would look identical
+         * today and dump the whole backlog on whoever later unblocks them, which is the
+         * opposite of what the block was for.
+         *
+         * Read off the recipient's own record rather than re-resolved from their account:
+         * a block belongs to a CHARACTER, and asking the account again could answer with
+         * whichever of their characters is currently active instead of the one being
+         * texted.
+         */
+        if (PlayerStore::IsBlockedBy(*pRecipient, pSelf->PhoneNumber))
+        {
+            Tell(acSender, fmt::format("Sent to {}.", PhoneBookName(pSelf, number)));
+
+            spdlog::info("{} texted {} - dropped, blocked", acSender.Username, number);
+            return true;
+        }
+
+        std::string reason;
+        const auto messageId = GServer->GetMessages().Send(pSelf->CharacterId,
+                                                           pRecipient->CharacterId, body, &reason);
+
+        if (messageId.empty())
+        {
+            // Stable codes turned into sentences HERE, at the one surface that has a
+            // player in front of it. The store answers in codes so a phone app can answer
+            // differently without the store having opinions about wording.
+            if (reason == "too_long")
+                Tell(acSender, fmt::format("Too long - {} characters at most.", kMessageBodyLimit));
+            else if (reason == "store_unreadable")
+                Tell(acSender, "Messages are unavailable right now. Staff have been told.");
+            else
+                Tell(acSender, "That message could not be sent.");
+
+            return true;
+        }
+
+        Tell(acSender, fmt::format("To {}: {}", PhoneBookName(pSelf, number), body));
+
+        // Delivered immediately if they are here, so a conversation between two people who
+        // are both online reads like a conversation rather than like mail.
+        //
+        // Only when the character they are PLAYING is the one that was texted. Somebody
+        // logged in as their other character is, for this purpose, offline - and the
+        // message stays undelivered until they switch back, which is exactly right.
+        const auto recipientEntity = findPlayer(recipientId);
+
+        if (recipientEntity)
+        {
+            if (const auto* pRecipientPlayer = recipientEntity.get<PlayerComponent>())
+            {
+                const auto* pActive = store.FindCharacter(recipientId);
+
+                if (pActive && pActive->CharacterId == pRecipient->CharacterId)
+                {
+                    Tell(*pRecipientPlayer,
+                         fmt::format("Text from {} ({}): {}",
+                                     PhoneBookName(pActive, pSelf->PhoneNumber),
+                                     pSelf->PhoneNumber, body));
+
+                    GServer->GetMessages().MarkDelivered(pRecipient->CharacterId);
+                }
+            }
+        }
+
+        spdlog::info("{} texted {} ({} chars)", acSender.Username, number, body.size());
+        return true;
+    }
+
+    // ------------------------------------------------------------ /texts ---
+    //
+    // The inbox: who this character has threads with, most recent first.
+    if (command == "/texts")
+    {
+        const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(acSender.DiscordId);
+
+        if (!pCharacter || pCharacter->CharacterId.empty())
+        {
+            Tell(acSender, "You have no character yet.");
+            return true;
+        }
+
+        const auto inbox = GServer->GetMessages().Inbox(pCharacter->CharacterId);
+
+        if (inbox.empty())
+        {
+            Tell(acSender, "No messages. Send one with /text <number> <message>.");
+            return true;
+        }
+
+        Tell(acSender, fmt::format("{} conversation(s):", inbox.size()));
+
+        for (const auto& thread : inbox)
+        {
+            std::string number;
+            const auto who = PhoneBookNameForCharacter(pCharacter, thread.OtherCharacterId, &number);
+
+            // The last line, truncated. Enough to recognise the thread, not so much that
+            // the list becomes the thread.
+            auto preview = thread.LastBody;
+            if (preview.size() > 40)
+                preview = preview.substr(0, 37) + "...";
+
+            Tell(acSender, fmt::format("  {}{}  {}  {}{}",
+                                       thread.Unread ? fmt::format("({}) ", thread.Unread) : "",
+                                       number.empty() ? who : fmt::format("{} {}", who, number),
+                                       Ago(thread.LastMessageAt),
+                                       thread.LastWasMine ? "you: " : "",
+                                       preview));
+        }
+
+        Tell(acSender, "Read one with /read <number>.");
+        return true;
+    }
+
+    // ------------------------------------------------------------- /read ---
+    if (command == "/read")
+    {
+        if (target.empty())
+        {
+            Tell(acSender, "Usage: /read 555-014-372");
+            return true;
+        }
+
+        auto& store = GServer->GetPlayerStore();
+
+        const auto* pCharacter = store.FindCharacter(acSender.DiscordId);
+
+        if (!pCharacter || pCharacter->CharacterId.empty())
+        {
+            Tell(acSender, "You have no character yet.");
+            return true;
+        }
+
+        const auto* pOther = store.FindCharacterByPhoneNumber(target, nullptr);
+
+        if (!pOther)
+        {
+            Tell(acSender, fmt::format("Nobody has the number {}.", target));
+            return true;
+        }
+
+        auto& messages = GServer->GetMessages();
+
+        const auto thread = messages.Thread(pCharacter->CharacterId, pOther->CharacterId);
+
+        if (thread.empty())
+        {
+            Tell(acSender, fmt::format("Nothing between you and {}.",
+                                       PhoneBookName(pCharacter, target)));
+            return true;
+        }
+
+        Tell(acSender, fmt::format("--- {} ({}) ---", PhoneBookName(pCharacter, target), target));
+
+        for (const auto& message : thread)
+        {
+            const bool mine = message.SenderCharacterId == pCharacter->CharacterId;
+
+            Tell(acSender, fmt::format("  {} {}: {}", Ago(message.SentAt),
+                                       mine ? "you" : PhoneBookName(pCharacter, target),
+                                       message.Body));
+        }
+
+        // Reading a thread is what makes it read. Only this character's - MarkDelivered
+        // takes a CharacterId, so their other character's unread messages are untouched.
+        messages.MarkDelivered(pCharacter->CharacterId);
+        return true;
+    }
+
+    // ------------------------------------------------------------ /block ---
+    //
+    // Per character, silent, and aimed at a number. See CharacterRecord::Blocked.
+    if (command == "/block" || command == "/unblock")
+    {
+        const bool blocking = command == "/block";
+
+        if (target.empty())
+        {
+            Tell(acSender, fmt::format("Usage: {} 555-014-372", command));
+            return true;
+        }
+
+        if (!IsPhoneNumberShaped(target))
+        {
+            Tell(acSender, fmt::format("'{}' is not a number. They look like 555-014-372.", target));
+            return true;
+        }
+
+        auto& store = GServer->GetPlayerStore();
+
+        const auto* pSelf = store.FindCharacter(acSender.DiscordId);
+
+        if (pSelf && pSelf->PhoneNumber == target)
+        {
+            Tell(acSender, "That is your own number.");
+            return true;
+        }
+
+        const bool changed = blocking ? store.Block(acSender.DiscordId, target)
+                                      : store.Unblock(acSender.DiscordId, target);
+
+        if (!changed)
+        {
+            Tell(acSender, blocking ? fmt::format("{} is already blocked.", target)
+                                    : fmt::format("{} is not blocked.", target));
+            return true;
+        }
+
+        // Nobody but the blocker is told, ever. The other side finds out by not finding
+        // out, which is the point.
+        Tell(acSender, blocking
+                           ? fmt::format("Blocked {}. They are not told.", target)
+                           : fmt::format("Unblocked {}.", target));
+
+        return true;
+    }
+
+    // --------------------------------------------------- the chat FALLBACK ---
+    //
+    // Calls belong in the phone app. These are kept so that a player whose phone UI fails
+    // to present still has a way to answer - a call ringing somewhere they cannot see is
+    // indistinguishable from the server being broken.
+    //
+    // Deliberately thin. Every rule lives in BeginCall/ControlCall, which the phone also
+    // uses, so there is no second copy for one surface to drift away from.
+    if (command == "/call")
+    {
+        /*
+         * ONE /call, TWO THINGS PEOPLE MEAN BY IT.
+         *
+         * A number rings a person. No number is almost always somebody reaching for the
+         * vehicle summon, which this command used to be - so that hint lives here rather
+         * than in a second dispatch. It had its own block earlier in this function, which
+         * matched first and returned, and made player calling unreachable.
+         */
+        if (target.empty())
+        {
+            Tell(acSender, "Usage: /call 555-014-372   (or answer from the phone)");
+            Tell(acSender, "Calling a CAR? Use your phone - your vehicles are in the vehicle "
+                           "menu, like normal.");
+            Tell(acSender, "/garage shows the paperwork: which specific car is which, and its plate.");
+            return true;
+        }
+
+        BeginCall(acSender, target);
+        return true;
+    }
+
+    if (command == "/answer" || command == "/decline" || command == "/hangup")
+    {
+        const uint32_t action = command == "/answer" ? 0u : (command == "/decline" ? 1u : 2u);
+
+        // No call id: the fallback acts on whatever the player is in. The phone always
+        // sends the id it is showing, which is what makes a stale button press safe there.
+        ControlCall(acSender, {}, action);
+        return true;
+    }
+
+    // ------------------------------------------------------------ /calls ---
+    if (command == "/calls")
+    {
+        const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(acSender.DiscordId);
+
+        if (!pCharacter || pCharacter->CharacterId.empty())
+        {
+            Tell(acSender, "You have no character yet.");
+            return true;
+        }
+
+        // THIS character's history. Their other character's calls are a different list
+        // filed under a different id, and nothing here can reach them.
+        const auto history = GServer->GetCalls().History(pCharacter->CharacterId);
+
+        if (history.empty())
+        {
+            Tell(acSender, "No calls yet. Ring somebody with /call <number>.");
+            return true;
+        }
+
+        Tell(acSender, fmt::format("{} recent call(s):", history.size()));
+
+        for (const auto& entry : history)
+        {
+            Tell(acSender, fmt::format("  {} {} {} {}{}", Ago(entry.StartedAt),
+                                       entry.Direction == "out" ? "->" : "<-",
+                                       PhoneBookName(pCharacter, entry.OtherNumber),
+                                       entry.Result,
+                                       entry.Duration > 0 ? fmt::format(" ({}s)", entry.Duration)
+                                                          : std::string{}));
+        }
+
+        return true;
+    }
+
+    if (command == "/blocked")
+    {
+        const auto* pCharacter = GServer->GetPlayerStore().FindCharacter(acSender.DiscordId);
+
+        if (!pCharacter || pCharacter->Blocked.empty())
+        {
+            Tell(acSender, "Nobody blocked.");
+            return true;
+        }
+
+        Tell(acSender, fmt::format("{} blocked:", pCharacter->Blocked.size()));
+
+        for (const auto& number : pCharacter->Blocked)
+            Tell(acSender, fmt::format("  {}", number));
+
+        return true;
+    }
+
+    // --------------------------------------- /assess /stabilize /revive ---
+    //
+    // Medical. Everything is checked against the SERVER's health state - a client cannot
+    // declare itself downed, cannot declare itself revived, and cannot decide that a
+    // procedure finished. See Medical.h.
+    if (command == "/assess" || command == "/stabilize" || command == "/stabilise" ||
+        command == "/revive")
+    {
+        if (!acSender.HasAtLeast(kTreatPermission))
+            return deny(kTreatPermission);
+
+        if (target.empty())
+        {
+            Tell(acSender, fmt::format("Usage: {} <player>", command));
+            return true;
+        }
+
+        const auto patient = findPlayer(target);
+
+        if (!patient)
+        {
+            Tell(acSender, fmt::format("No player called '{}' - try their character name, or the first part of it.", target));
+            return true;
+        }
+
+        const auto* pPatientPlayer = patient.get<PlayerComponent>();
+
+        if (!pPatientPlayer || !pPatientPlayer->Puppet || !pPatientPlayer->Puppet.is_alive())
+        {
+            Tell(acSender, "They are not in the world.");
+            return true;
+        }
+
+        auto* pHealth = pPatientPlayer->Puppet.get_mut<HealthComponent>();
+
+        if (!pHealth)
+        {
+            Tell(acSender, "You cannot read their condition.");
+            return true;
+        }
+
+        // Hands-on. Checked against server positions, never a distance the client claims.
+        const auto* pMedicMove = acSender.Puppet ? acSender.Puppet.get<MovementComponent>() : nullptr;
+        const auto* pPatientMove = pPatientPlayer->Puppet.get<MovementComponent>();
+
+        if (!pMedicMove || !pPatientMove ||
+            glm::distance(pMedicMove->Position, pPatientMove->Position) > kTreatmentDistance)
+        {
+            Tell(acSender, "You need to be next to them.");
+            return true;
+        }
+
+        const auto now = MedicalNow();
+
+        // ---- assess ---------------------------------------------------------------
+        if (command == "/assess")
+        {
+            const char* condition = "uninjured";
+
+            switch (pHealth->LifeState)
+            {
+            case LifeState::kDowned: condition = pHealth->Stabilized ? "STABLE, still down"
+                                                                     : "CRITICAL, bleeding out"; break;
+            case LifeState::kDead: condition = "DEAD"; break;
+            case LifeState::kReviving: condition = "being revived"; break;
+            default: condition = pHealth->Health < pHealth->MaxHealth ? "injured" : "uninjured"; break;
+            }
+
+            Tell(acSender, fmt::format("--- {} ---", sayName(*pPatientPlayer)));
+            Tell(acSender, fmt::format("  condition: {}", condition));
+            Tell(acSender, fmt::format("  health:    {:.0f}%", pHealth->Health));
+
+            if (pHealth->LifeState == LifeState::kDowned && !pHealth->Stabilized &&
+                pHealth->DownedAt > 0)
+            {
+                const auto left = kBleedoutSeconds - (now - pHealth->DownedAt);
+                Tell(acSender, fmt::format("  time left: {}s", left > 0 ? left : 0));
+            }
+
+            if (!pHealth->TreatedBy.empty())
+                Tell(acSender, "  somebody is already treating them.");
+
+            return true;
+        }
+
+        // ---- both procedures share their preconditions -----------------------------
+        if (pHealth->LifeState == LifeState::kDead)
+        {
+            Tell(acSender, "They are gone. Nothing you do here will help.");
+            return true;
+        }
+
+        if (pHealth->LifeState != LifeState::kDowned && pHealth->LifeState != LifeState::kReviving)
+        {
+            Tell(acSender, "They are on their feet.");
+            return true;
+        }
+
+        // One medic per patient. Two procedures on one body and neither can say whose
+        // finished - the brief's §27, and the reason TreatedBy exists at all.
+        if (!pHealth->TreatedBy.empty() && pHealth->TreatmentEndsAt > now)
+        {
+            Tell(acSender, "Somebody is already working on them.");
+            return true;
+        }
+
+        const auto* pSelf = GServer->GetPlayerStore().FindCharacter(acSender.DiscordId);
+        const auto medicId = pSelf ? pSelf->CharacterId : acSender.DiscordId;
+
+        if (command == "/revive")
+        {
+            // Stabilise first. It is the procedure that stops them dying, and allowing a
+            // revive straight from critical would make stabilisation pointless - which
+            // would in turn make the bleedout timer the only thing that ever mattered.
+            if (!pHealth->Stabilized)
+            {
+                Tell(acSender, "They are not stable enough. /stabilize first.");
+                return true;
+            }
+
+            pHealth->LifeState = LifeState::kReviving;
+            pHealth->TreatedBy = medicId;
+            pHealth->TreatmentEndsAt = now + kReviveSeconds;
+
+            Tell(acSender, fmt::format("Reviving {} - {}s.", sayName(*pPatientPlayer), kReviveSeconds));
+            Tell(*pPatientPlayer, "Somebody is working on you. Hold on.");
+
+            spdlog::info("[MEDICAL] {} began reviving {}", acSender.Username, pPatientPlayer->Username);
+        }
+        else
+        {
+            if (pHealth->Stabilized)
+            {
+                Tell(acSender, "They are already stable. /revive when you are ready.");
+                return true;
+            }
+
+            pHealth->TreatedBy = medicId;
+            pHealth->TreatmentEndsAt = now + kStabilizeSeconds;
+
+            Tell(acSender, fmt::format("Stabilising {} - {}s.", sayName(*pPatientPlayer),
+                                       kStabilizeSeconds));
+            Tell(*pPatientPlayer, "Somebody is stabilising you.");
+
+            spdlog::info("[MEDICAL] {} began stabilising {}", acSender.Username,
+                         pPatientPlayer->Username);
+        }
+
+        if (auto* pLevel = m_pWorld->get_mut<Level>())
+            pLevel->BroadcastCombatState(pPatientPlayer->Puppet);
+
+        return true;
+    }
+
+    // ------------------------------------------------------------ /trade ---
+    if (command == "/trade")
+    {
+        auto& store = GServer->GetPlayerStore();
+        auto& trades = GServer->GetTrades();
+
+        const auto* pSelf = store.FindCharacter(acSender.DiscordId);
+
+        if (!pSelf || pSelf->CharacterId.empty())
+        {
+            Tell(acSender, "You have no character yet.");
+            return true;
+        }
+
+        const auto me = pSelf->CharacterId;
+
+        // Sub-commands, parsed off the rest of the line.
+        const auto restStart = acLine.find(' ');
+        std::string rest = (restStart == std::string::npos) ? std::string{} : acLine.substr(restStart + 1);
+
+        while (!rest.empty() && rest.front() == ' ')
+            rest.erase(rest.begin());
+
+        std::string verb = rest;
+        std::string arg;
+
+        if (const auto space = rest.find(' '); space != std::string::npos)
+        {
+            verb = rest.substr(0, space);
+            arg = rest.substr(space + 1);
+        }
+
+        if (verb.empty())
+        {
+            Tell(acSender, "Usage: /trade <player>   then  /trade money <n>, /trade item <id> <n>,");
+            Tell(acSender, "       /trade confirm, /trade view, /trade cancel");
+            return true;
+        }
+
+        // ---- cancel: always allowed, except mid-commit -------------------------
+        if (verb == "cancel")
+        {
+            if (!trades.Active(me))
+            {
+                Tell(acSender, "You are not trading.");
+                return true;
+            }
+
+            Tell(acSender, "Trade cancelled.");
+            EndTradeFor(me, TradeState::Cancelled, "they walked away");
+            return true;
+        }
+
+        // ---- accept an invitation ----------------------------------------------
+        if (verb == "accept")
+        {
+            auto* pSession = trades.Active(me);
+
+            if (!pSession || pSession->State != TradeState::Requested)
+            {
+                Tell(acSender, "Nobody has asked to trade with you.");
+                return true;
+            }
+
+            // Only the person INVITED accepts. The inviter accepting their own invitation
+            // would open a trade the other party never agreed to be in.
+            if (pSession->B != me)
+            {
+                Tell(acSender, "You sent that invitation - wait for them.");
+                return true;
+            }
+
+            pSession->State = TradeState::Open;
+            pSession->TouchedAt = TradeStore::Now();
+
+            ShowTrade(*pSession);
+            return true;
+        }
+
+        auto* pSession = trades.Active(me);
+
+        // ---- view ---------------------------------------------------------------
+        if (verb == "view")
+        {
+            if (!pSession)
+            {
+                Tell(acSender, "You are not trading.");
+                return true;
+            }
+
+            ShowTrade(*pSession);
+            return true;
+        }
+
+        // ---- offer money --------------------------------------------------------
+        if (verb == "money")
+        {
+            if (!pSession || pSession->State != TradeState::Open)
+            {
+                Tell(acSender, "You are not in an open trade.");
+                return true;
+            }
+
+            int64_t amount = 0;
+
+            try
+            {
+                size_t consumed = 0;
+                amount = std::stoll(arg, &consumed);
+
+                if (consumed != arg.size())
+                    throw std::invalid_argument("trailing");
+            }
+            catch (...)
+            {
+                Tell(acSender, fmt::format("'{}' is not an amount.", arg));
+                return true;
+            }
+
+            if (amount < 0)
+            {
+                Tell(acSender, "You cannot offer a negative amount.");
+                return true;
+            }
+
+            /**
+             * Checked against what is AVAILABLE, not what is owned.
+             *
+             * Money already promised in another live trade is not spendable here - though
+             * with one trade per character that is currently always zero, which is exactly
+             * why the check is written against the reservation rather than against the
+             * balance. The day a second concurrent commitment exists, this is already
+             * right instead of being a bug nobody remembered to look for.
+             */
+            const auto reserved = trades.ReservedMoney(me) - pSession->OfferFor(me)->Money;
+            const auto available = PlayerStore::AvailableMoney(*pSelf, reserved);
+
+            if (amount > available)
+            {
+                Tell(acSender, fmt::format("You have {} eddies available.", available));
+                return true;
+            }
+
+            auto* pOffer = pSession->OfferFor(me);
+            pOffer->Money = amount;
+
+            // Both confirmations reset. Somebody who agreed to the old offer has not agreed
+            // to this one, and carrying their confirmation across is how a person ends up
+            // having accepted a deal they never saw.
+            pSession->OfferA.Touch();
+            pSession->OfferB.Touch();
+            pSession->TouchedAt = TradeStore::Now();
+
+            ShowTrade(*pSession);
+            return true;
+        }
+
+        // ---- offer an item ------------------------------------------------------
+        if (verb == "item")
+        {
+            if (!pSession || pSession->State != TradeState::Open)
+            {
+                Tell(acSender, "You are not in an open trade.");
+                return true;
+            }
+
+            std::string idText = arg;
+            std::string qtyText = "1";
+
+            if (const auto space = arg.find(' '); space != std::string::npos)
+            {
+                idText = arg.substr(0, space);
+                qtyText = arg.substr(space + 1);
+            }
+
+            uint64_t itemId = 0;
+            uint32_t quantity = 0;
+
+            try
+            {
+                itemId = std::stoull(idText, nullptr, 0);
+                quantity = static_cast<uint32_t>(std::stoul(qtyText));
+            }
+            catch (...)
+            {
+                Tell(acSender, "Usage: /trade item <id> <quantity>   (see /inventory)");
+                return true;
+            }
+
+            if (quantity == 0)
+            {
+                Tell(acSender, "Offer at least one.");
+                return true;
+            }
+
+            auto* pOffer = pSession->OfferFor(me);
+
+            if (pOffer->Items.size() >= kTradeItemLimit)
+            {
+                Tell(acSender, "That is as much as one trade can carry.");
+                return true;
+            }
+
+            // Against what is HELD, minus anything already promised elsewhere. Clamped
+            // nowhere: asking for more than you have is refused rather than quietly
+            // reduced, because a silently reduced offer is a different deal.
+            const auto held = PlayerStore::HeldQuantity(*pSelf, itemId);
+            const auto reservedElsewhere =
+                trades.ReservedItems(me, itemId) -
+                [&]
+                {
+                    uint32_t mine = 0;
+                    for (const auto& stack : pOffer->Items)
+                        if (stack.Id == itemId)
+                            mine += stack.Quantity;
+                    return mine;
+                }();
+
+            if (quantity > held || quantity > held - reservedElsewhere)
+            {
+                Tell(acSender, fmt::format("You have {} of that.", held - reservedElsewhere));
+                return true;
+            }
+
+            // Replace rather than accumulate, so offering twice sets the amount instead of
+            // doubling it - the shape a double-click takes.
+            pOffer->Items.erase(std::remove_if(pOffer->Items.begin(), pOffer->Items.end(),
+                                               [itemId](const CharacterRecord::ItemStack& acStack)
+                                               { return acStack.Id == itemId; }),
+                                pOffer->Items.end());
+
+            pOffer->Items.push_back({itemId, quantity});
+
+            pSession->OfferA.Touch();
+            pSession->OfferB.Touch();
+            pSession->TouchedAt = TradeStore::Now();
+
+            ShowTrade(*pSession);
+            return true;
+        }
+
+        // ---- confirm, and commit when both have -----------------------------------
+        if (verb == "confirm")
+        {
+            if (!pSession || pSession->State != TradeState::Open)
+            {
+                Tell(acSender, "You are not in an open trade.");
+                return true;
+            }
+
+            pSession->OfferFor(me)->Confirmed = true;
+            pSession->TouchedAt = TradeStore::Now();
+
+            if (!pSession->BothConfirmed())
+            {
+                Tell(acSender, "Confirmed. Waiting for them.");
+                ShowTrade(*pSession);
+                return true;
+            }
+
+            /**
+             * FINAL VALIDATION, against the records as they are NOW.
+             *
+             * Not against what was checked when each item was offered. Everything can have
+             * changed since: money spent elsewhere, items sold, a character deleted. The
+             * brief is explicit that the check at offer time is not the check that matters,
+             * and it is right - the only figures worth trusting are the ones read in the
+             * same breath as the write.
+             */
+            const auto* pLeft = store.FindCharacterById(pSession->A);
+            const auto* pRight = store.FindCharacterById(pSession->B);
+
+            if (!pLeft || !pRight)
+            {
+                Tell(acSender, "That character is no longer there.");
+                EndTradeFor(me, TradeState::Failed, "the other character is gone");
+                return true;
+            }
+
+            // Both still here, and still close enough. A trade agreed face to face and
+            // completed across the district is the shape every remote scam takes.
+            const auto leftEntity = FindByActiveCharacter(pSession->A);
+            const auto rightEntity = FindByActiveCharacter(pSession->B);
+
+            if (!leftEntity || !rightEntity)
+            {
+                Tell(acSender, "They are gone.");
+                EndTradeFor(me, TradeState::Failed, "the other player left");
+                return true;
+            }
+
+            // COMMITTING: from here nothing may cancel it - see TradeStore::EndFor.
+            pSession->State = TradeState::Committing;
+
+            PlayerStore::TradeSide left;
+            left.CharacterId = pSession->A;
+            left.Money = pSession->OfferA.Money;
+            left.Items = pSession->OfferA.Items;
+
+            PlayerStore::TradeSide right;
+            right.CharacterId = pSession->B;
+            right.Money = pSession->OfferB.Money;
+            right.Items = pSession->OfferB.Items;
+
+            std::string reason;
+
+            if (!store.ApplyTrade(left, right, &reason))
+            {
+                // Nothing moved. ApplyTrade validates on copies and assigns only when both
+                // directions succeed, so a failure here means the records are exactly as
+                // they were.
+                spdlog::warn("Trade {} failed: {}", pSession->TradeId, reason);
+
+                trades.End(*pSession, TradeState::Failed);
+
+                for (const auto& id : {pSession->A, pSession->B})
+                {
+                    if (const auto entity = FindByActiveCharacter(id))
+                    {
+                        if (const auto* pPlayer = entity.get<PlayerComponent>())
+                            Tell(*pPlayer, reason == "insufficient_funds"
+                                               ? "Trade failed - somebody could not cover it."
+                                               : "Trade failed - nothing was moved.");
+                    }
+                }
+
+                trades.Sweep();
+                return true;
+            }
+
+            // The ledger, before either client is told. Both directions as separate lines,
+            // so a character's history is a filter on subject alone - the same shape the
+            // money transfer ledger uses.
+            auto& audit = GServer->GetAuditLog();
+
+            audit.Record("trade.completed", acSender.DiscordId, acSender.DiscordId,
+                         {{"trade", pSession->TradeId},
+                          {"a", pSession->A},
+                          {"b", pSession->B},
+                          {"a_money", pSession->OfferA.Money},
+                          {"b_money", pSession->OfferB.Money},
+                          {"a_items", pSession->OfferA.Items.size()},
+                          {"b_items", pSession->OfferB.Items.size()}});
+
+            spdlog::info("Trade {} completed: {} <-> {}", pSession->TradeId, pSession->A,
+                         pSession->B);
+
+            trades.End(*pSession, TradeState::Completed);
+
+            // Both clients are corrected from the SERVER's figures, not from what either
+            // of them believed. Their next autosave would otherwise report the old balance
+            // and undo the exchange - the same race /pay already works around.
+            for (const auto& id : {pSession->A, pSession->B})
+            {
+                const auto entity = FindByActiveCharacter(id);
+                if (!entity)
+                    continue;
+
+                const auto* pPlayer = entity.get<PlayerComponent>();
+                if (!pPlayer)
+                    continue;
+
+                if (const auto* pCharacter = store.FindCharacterById(id))
+                    PushMoney(*pPlayer, static_cast<int32_t>(pCharacter->Money), "trade");
+
+                Tell(*pPlayer, "Trade complete.");
+                Tell(*pPlayer, "Your things are updated - reconnect if anything looks stale.");
+            }
+
+            trades.Sweep();
+            return true;
+        }
+
+        // ---- otherwise: an invitation to a named player ---------------------------
+        const auto invitee = findPlayer(verb);
+
+        if (!invitee)
+        {
+            Tell(acSender, fmt::format("No player called '{}'.", verb));
+            return true;
+        }
+
+        const auto* pInvitee = invitee.get<PlayerComponent>();
+
+        if (!pInvitee)
+        {
+            Tell(acSender, "That player is not here.");
+            return true;
+        }
+
+        const auto* pTheirCharacter = store.FindCharacter(pInvitee->DiscordId);
+
+        if (!pTheirCharacter || pTheirCharacter->CharacterId.empty())
+        {
+            Tell(acSender, "They have no character.");
+            return true;
+        }
+
+        if (pTheirCharacter->CharacterId == me)
+        {
+            Tell(acSender, "You cannot trade with yourself.");
+            return true;
+        }
+
+        if (trades.Active(me))
+        {
+            Tell(acSender, "You are already trading. /trade cancel first.");
+            return true;
+        }
+
+        if (trades.Active(pTheirCharacter->CharacterId))
+        {
+            Tell(acSender, "They are already trading with somebody.");
+            return true;
+        }
+
+        // Close enough to be doing this face to face.
+        const auto* pMyMove = acSender.Puppet ? acSender.Puppet.get<MovementComponent>() : nullptr;
+        const auto* pTheirMove =
+            pInvitee->Puppet ? pInvitee->Puppet.get<MovementComponent>() : nullptr;
+
+        if (!pMyMove || !pTheirMove ||
+            glm::distance(pMyMove->Position, pTheirMove->Position) > kTradeDistance)
+        {
+            Tell(acSender, "You need to be standing next to them.");
+            return true;
+        }
+
+        auto& session = trades.Begin(me, pTheirCharacter->CharacterId);
+
+        Tell(acSender, fmt::format("Asked {} to trade.", pTheirCharacter->Name));
+        Tell(*pInvitee, fmt::format("{} wants to trade. /trade accept, or ignore it.",
+                                    DisplayNameFor(acSender.DiscordId, pSelf, acSender.Username)));
+
+        spdlog::info("{} asked {} to trade ({})", acSender.Username, pInvitee->Username,
+                     session.TradeId);
+        return true;
+    }
+
+    // -------------------------------------------------------- /vehseats ---
+    //
+    // Who is sitting where, from the SERVER's own state. Exists because every seat bug so
+    // far has started with two people describing what they can see and neither of them
+    // being able to see what the server thinks - and the server's view is the one that
+    // decides who gets refused.
+    if (command == "/vehseats")
+    {
+        if (!acSender.HasAtLeast(EPermissionLevel::kModerator))
+            return deny(EPermissionLevel::kModerator);
+
+        // Vehicle -> its occupants, gathered in one pass. Reported per vehicle rather than
+        // per player because "is this car full" is the question being asked.
+        std::map<uint64_t, std::vector<std::string>> byVehicle;
+
+        m_pWorld->each(
+            [&](flecs::entity aOccupant, const AttachmentComponent& aAttachment)
+            {
+                std::string who = fmt::format("{:x}", aOccupant.id());
+
+                // Name the person where we can. An id is enough to debug with and useless
+                // to talk about.
+                if (const auto owner = aOccupant.parent())
+                {
+                    if (const auto* pOwner = owner.get<PlayerComponent>())
+                    {
+                        const auto* pCharacter =
+                            GServer->GetPlayerStore().FindCharacter(pOwner->DiscordId);
+
+                        who = DisplayNameFor(pOwner->DiscordId, pCharacter, pOwner->Username);
+                    }
+                }
+
+                byVehicle[aAttachment.Parent].push_back(
+                    fmt::format("{} = {}", VehicleSeatName(aAttachment.SlotId), who));
+            });
+
+        if (byVehicle.empty())
+        {
+            Tell(acSender, "Nobody is in a vehicle.");
+            return true;
+        }
+
+        Tell(acSender, fmt::format("{} occupied vehicle(s):", byVehicle.size()));
+
+        for (const auto& [vehicleId, occupants] : byVehicle)
+        {
+            const flecs::entity vehicle(m_pWorld->get_world(), vehicleId);
+
+            // The authority holder, because "who is simulating this car" is the other half
+            // of every vehicle question and is not visible from the seats alone.
+            std::string authority = "parked";
+
+            if (vehicle && vehicle.is_alive())
+            {
+                if (const auto owner = vehicle.parent())
+                {
+                    if (const auto* pOwner = owner.get<PlayerComponent>())
+                        authority = pOwner->Username;
+                }
+            }
+
+            Tell(acSender, fmt::format("  vehicle {:x}  ({} occupant(s), simulated by {})",
+                                       vehicleId, occupants.size(), authority));
+
+            for (const auto& line : occupants)
+                Tell(acSender, fmt::format("    {}", line));
         }
 
         return true;
@@ -2364,8 +5031,8 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
     // repeatedly testing sunset does not also fast-forward the city's calendar.
     if (command == "/time")
     {
-        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
-            return deny(EPermissionLevel::kAdmin);
+        if (!acSender.HasAtLeast(EPermissionLevel::kEventStaff))
+            return deny(EPermissionLevel::kEventStaff);
 
         auto* pClock = m_pWorld->get_mut<WorldClock>();
         if (!pClock)
@@ -2405,8 +5072,8 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
     // without the game because that is the whole point of the format.
     if (command == "/weather")
     {
-        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
-            return deny(EPermissionLevel::kAdmin);
+        if (!acSender.HasAtLeast(EPermissionLevel::kEventStaff))
+            return deny(EPermissionLevel::kEventStaff);
 
         if (target.empty())
         {
@@ -2457,8 +5124,8 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
     // renders the same person on the same spot.
     if (command == "/npc")
     {
-        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
-            return deny(EPermissionLevel::kAdmin);
+        if (!acSender.HasAtLeast(EPermissionLevel::kEventStaff))
+            return deny(EPermissionLevel::kEventStaff);
 
         auto* pNpcs = m_pWorld->get_mut<NpcSystem>();
         if (!pNpcs)
@@ -2687,8 +5354,8 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
     // pulling a player out of whatever they were doing should be able to undo it.
     if (command == "/return")
     {
-        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
-            return deny(EPermissionLevel::kAdmin);
+        if (!acSender.HasAtLeast(EPermissionLevel::kEventStaff))
+            return deny(EPermissionLevel::kEventStaff);
 
         if (target.empty())
         {
@@ -2885,39 +5552,301 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
     // Nobody discovers a chat channel by accident, and an unlisted feature may as well
     // not exist. Only the commands the asker can actually use are listed - offering
     // someone /ban and then refusing it is worse than not mentioning it.
+    /*
+     * /help, and /help <topic>.
+     *
+     * Cam, 2026-09-04: "make sure you also update the /help command so we can see all the
+     * new commands and actions we can do."
+     *
+     * It had drifted badly. The phone, trading, medical, vehicles and character systems all
+     * shipped without ever being listed, so roughly forty commands existed that no player
+     * could discover from inside the game - and the four lines that WERE listed described
+     * /kill as something it no longer does.
+     *
+     * TOPICS RATHER THAN ONE WALL. Printing every command at once is around fifty lines
+     * into a chat box that shows a handful, which scrolls the answer away as it arrives.
+     * The bare command is a map; each topic is the detail. Staff sections stay folded into
+     * the same scheme so nobody has to remember a second command to find their own tools.
+     */
+    // ------------------------------------------------------------- /audit ----
+    //
+    // Read the ledger back. The trade brief asks for this directly - "allow staff to search
+    // TradeID, CharacterID, ... extremely useful for staff investigating exploits" - and
+    // until now everything was being recorded faithfully and could only be read by someone
+    // with shell access to the box. That is half an audit trail: an exploit report is
+    // answered in minutes or it is not answered.
+    //
+    // ONE SUBSTRING, not a query language. Every id here is already distinctive - a
+    // character id, a Discord id, a trade id, a dotted action like "trade.completed" - so a
+    // contains-match answers every question the brief lists with one code path and nothing
+    // for a moderator to memorise. `/audit TRADE-000184`, `/audit trade.completed`,
+    // `/audit <character id>` all work the same way.
+    //
+    // ADMIN, not moderator. This is every player's money and item history, which is a
+    // heavier thing to hand out than /whois - and per Cam's ladder senior moderator carries
+    // what admin used to, so the people who investigate still have it. One word to lower if
+    // that turns out to be too tight in practice.
+    if (command == "/audit")
+    {
+        if (!acSender.HasAtLeast(EPermissionLevel::kAdmin))
+            return deny(EPermissionLevel::kAdmin);
+
+        if (target.empty())
+        {
+            Tell(acSender, "Usage: /audit <what> [count]");
+            Tell(acSender, "  <what> is any id or action - a trade id, a character id,");
+            Tell(acSender, "  a Discord id, or an action like trade.completed");
+            Tell(acSender, "  Newest first. Default 8, most 20.");
+            return true;
+        }
+
+        // Count is optional and second. A bad number is treated as "not given" rather than
+        // refused - somebody investigating should not be arguing with the parser.
+        size_t wanted = 8;
+
+        if (const auto space = rest.find_first_not_of(' '); space != std::string::npos)
+        {
+            try
+            {
+                const auto asked = std::stoul(rest.substr(space));
+                if (asked > 0)
+                    wanted = std::min<size_t>(asked, 20);
+            }
+            catch (...)
+            {
+                // Left at the default.
+            }
+        }
+
+        const auto lines = GServer->GetAuditLog().Search(target, wanted);
+
+        if (lines.empty())
+        {
+            Tell(acSender, fmt::format("Nothing in the ledger matches '{}'.", target));
+            return true;
+        }
+
+        Tell(acSender, fmt::format("--- {} entr{} for '{}', newest first ---", lines.size(),
+                                   lines.size() == 1 ? "y" : "ies", target));
+
+        const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::system_clock::now().time_since_epoch())
+                               .count();
+
+        for (const auto& line : lines)
+        {
+            // Rendered rather than dumped. A raw ledger line is JSON with an instance id and
+            // a millisecond timestamp in it - correct for a tool, unreadable in a chat box
+            // that shows a handful of short lines.
+            try
+            {
+                const auto entry = nlohmann::json::parse(line);
+
+                const auto at = entry.value("at", int64_t{0});
+                const auto ageSeconds = at > 0 ? (nowMs - at) / 1000 : 0;
+
+                std::string when = "?";
+                if (at > 0)
+                {
+                    if (ageSeconds < 60)
+                        when = fmt::format("{}s ago", ageSeconds);
+                    else if (ageSeconds < 3600)
+                        when = fmt::format("{}m ago", ageSeconds / 60);
+                    else if (ageSeconds < 86400)
+                        when = fmt::format("{}h ago", ageSeconds / 3600);
+                    else
+                        when = fmt::format("{}d ago", ageSeconds / 86400);
+                }
+
+                const auto action = entry.value("action", std::string{"?"});
+                const auto actor = entry.value("actor", std::string{});
+                const auto subject = entry.value("subject", std::string{});
+
+                std::string who = actor;
+                if (!subject.empty() && subject != actor)
+                    who = fmt::format("{} -> {}", actor, subject);
+
+                std::string details;
+                if (entry.contains("details") && entry["details"].is_object())
+                {
+                    details = entry["details"].dump();
+
+                    // The details are free-form and some carry whole item lists. Truncated
+                    // so one fat entry cannot push the other seven off the screen.
+                    if (details.size() > 90)
+                        details = details.substr(0, 87) + "...";
+                }
+
+                Tell(acSender, fmt::format("  {} {} {} {}", when, action, who, details));
+            }
+            catch (...)
+            {
+                // A line that will not parse is still evidence - show it raw rather than
+                // dropping it, because a malformed entry is itself worth seeing.
+                Tell(acSender, fmt::format("  (unparsed) {}",
+                                           line.size() > 110 ? line.substr(0, 107) + "..." : line));
+            }
+        }
+
+        return true;
+    }
+
     if (command == "/help")
     {
-        Tell(acSender, "Chat:");
-        Tell(acSender, fmt::format("  just type          - local, heard within {:.0f}m", ChatRange::kLocal));
-        Tell(acSender, fmt::format("  /yell <message>    - heard within {:.0f}m", ChatRange::kYell));
-        Tell(acSender, fmt::format("  /whisper <message> - heard within {:.0f}m", ChatRange::kWhisper));
+        // Folded here rather than through a helper - this file has no ToLower, and adding
+        // one for a single use would be a header change for nothing. "/help PHONE" should
+        // work, because somebody who types it that way is not making a mistake.
+        std::string topic = target;
+        std::transform(topic.begin(), topic.end(), topic.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
-        if (acSender.HasAtLeast(EPermissionLevel::kAdmin))
-            Tell(acSender, "  /advert <message>  - the whole server");
-
-        Tell(acSender, "Other: /who");
-
-        if (acSender.HasAtLeast(EPermissionLevel::kModerator))
+        if (topic.empty())
         {
-            Tell(acSender, "Staff: /kick <player> [reason], /bans");
-            Tell(acSender, "       /jail <player> <minutes> [reason] - cell is where you stand");
-            Tell(acSender, "       /unjail <player>");
-            Tell(acSender, "       /kill <player> [reason] - sends them to the respawn point");
+            Tell(acSender, "Type /help <topic> for detail. Topics:");
+            Tell(acSender, "  chat     talking, and who can hear you");
+            Tell(acSender, "  me       your character, name and id");
+            Tell(acSender, "  phone    numbers, contacts, texts and calls");
+            Tell(acSender, "  money    paying people, and trading face to face");
+            Tell(acSender, "  cars     your garage, buying and selling");
+            Tell(acSender, "  medical  being down, and helping someone who is");
+            Tell(acSender, "  stuck    fell through the world? start here");
+
+            if (acSender.HasAtLeast(EPermissionLevel::kModerator))
+                Tell(acSender, "  staff    moderation and admin tools");
+
+            return true;
         }
 
-        if (acSender.HasAtLeast(EPermissionLevel::kAdmin))
+        if (topic == "chat")
         {
-            Tell(acSender, "Admin: /ban <player> [reason], /unban <discord id>");
-            Tell(acSender, "       /tp <player>    - brings them to you");
-            Tell(acSender, "       /tp to <player> - sends you to them");
-            Tell(acSender, "       /return <player>");
-            Tell(acSender, "       /setspawn - where players wake up after being downed");
-            Tell(acSender, "       /setstart - where brand-new characters arrive");
-            Tell(acSender, "       /time HH:MM - set the shared world clock (/time real = mirror reality)");
-            Tell(acSender, "       /weather <state> - set the shared sky (sunny, rain, fog...)");
-            Tell(acSender, "       /npc <record> [name] - declare a persistent NPC here (/npc clear)");
+            Tell(acSender, fmt::format("  just type          - local, heard within {:.0f}m", ChatRange::kLocal));
+            Tell(acSender, fmt::format("  /yell <message>    - heard within {:.0f}m", ChatRange::kYell));
+            Tell(acSender, fmt::format("  /whisper <message> - heard within {:.0f}m", ChatRange::kWhisper));
+            Tell(acSender, "  /who               - everyone online");
+
+            if (acSender.HasAtLeast(EPermissionLevel::kAdmin))
+                Tell(acSender, "  /advert <message>  - the whole server");
+
+            return true;
         }
 
+        if (topic == "me")
+        {
+            Tell(acSender, "  /character         - your character sheet (/char works too)");
+            Tell(acSender, "  /inventory         - what you are carrying, and your eddies");
+            Tell(acSender, "  /name <name>       - set your character's name");
+            return true;
+        }
+
+        if (topic == "phone")
+        {
+            Tell(acSender, "  /number            - your own number");
+            Tell(acSender, "  /contacts          - your contact list");
+            Tell(acSender, "  /addcontact <number> [name]");
+            Tell(acSender, "  /contactname <number> <name>   - rename a contact");
+            Tell(acSender, "  /delcontact <number>");
+            Tell(acSender, "  /text <number> <message>       - send a text");
+            Tell(acSender, "  /texts             - conversations waiting for you");
+            Tell(acSender, "  /read <number>     - read one conversation");
+            Tell(acSender, "  /call <number>     - ring somebody");
+            Tell(acSender, "  /answer, /decline, /hangup     - a call that is ringing");
+            Tell(acSender, "  /calls             - who is ringing you");
+            Tell(acSender, "  /block <number>, /unblock <number>, /blocked");
+            return true;
+        }
+
+        if (topic == "money")
+        {
+            Tell(acSender, "  /pay <player> <amount>         - hand over eddies");
+            Tell(acSender, "  /trade <player>    - start a face-to-face trade");
+            Tell(acSender, "  /trade money <amount>          - put money in");
+            Tell(acSender, "  /trade item <name> [qty]       - put an item in");
+            Tell(acSender, "  /trade view        - what is on the table");
+            Tell(acSender, "  /trade accept      - agree to it");
+            Tell(acSender, "  /trade confirm     - final, both sides must confirm");
+            Tell(acSender, "  /trade cancel      - walk away");
+            return true;
+        }
+
+        if (topic == "cars")
+        {
+            Tell(acSender, "  /garage            - what you own");
+            Tell(acSender, "  /sellcar <player> <vehicle> <price>");
+            Tell(acSender, "  /buycar            - accept an offer made to you");
+            Tell(acSender, "  /declinecar        - refuse one");
+
+            if (acSender.HasAtLeast(EPermissionLevel::kEventStaff))
+                Tell(acSender, "  /givecar <player> <vehicle>    - event staff");
+
+            if (acSender.HasAtLeast(EPermissionLevel::kModerator))
+                Tell(acSender, "  /vehseats <player> - who is sitting where");
+
+            return true;
+        }
+
+        if (topic == "medical")
+        {
+            Tell(acSender, fmt::format("  Down is not dead. You have {} seconds before you bleed out.",
+                                       kBleedoutSeconds));
+            Tell(acSender, "  /assess <player>   - how badly hurt are they");
+            Tell(acSender, "  /stabilize <player>            - stop their bleedout clock");
+            Tell(acSender, "  /revive <player>   - bring them back up");
+            Tell(acSender, "  /respawn           - only once you have actually bled out");
+            return true;
+        }
+
+        if (topic == "stuck")
+        {
+            Tell(acSender, "  Fell through the world? It should put you back on its own -");
+            Tell(acSender, "  wait a couple of seconds before doing anything else.");
+            Tell(acSender, "  If you are still stuck, ask a staff member in chat.");
+
+            // Only shown to people who can actually run it. Advertising a staff command to
+            // everybody is how you get a queue of players typing it and getting refused.
+            if (acSender.HasAtLeast(EPermissionLevel::kEventStaff))
+                Tell(acSender, "  /tp spawn          - staff: sends you to the spawn point");
+
+            return true;
+        }
+
+        if (topic == "staff")
+        {
+            if (!acSender.HasAtLeast(EPermissionLevel::kModerator))
+                return deny(EPermissionLevel::kModerator);
+
+            Tell(acSender, "Moderator:");
+            Tell(acSender, "  /kick <player> [reason], /bans");
+            Tell(acSender, "  /jail <player> <minutes> [reason] - cell is where you stand");
+            Tell(acSender, "  /unjail <player>");
+            Tell(acSender, "  /kill <player> [reason] - puts them down where they stand");
+            Tell(acSender, "  /whois <player>    - their ids");
+
+            if (acSender.HasAtLeast(EPermissionLevel::kEventStaff))
+            {
+                Tell(acSender, "Event staff:");
+                Tell(acSender, "  /tp <player>       - brings them to you");
+                Tell(acSender, "  /tp to <player>    - sends you to them");
+                Tell(acSender, "  /return <player>   - puts them back");
+                Tell(acSender, "  /time HH:MM        - the shared clock (/time real mirrors reality)");
+                Tell(acSender, "  /weather <state>   - the shared sky (sunny, rain, fog...)");
+                Tell(acSender, "  /npc <record> [name] - a persistent NPC here (/npc clear)");
+            }
+
+            if (acSender.HasAtLeast(EPermissionLevel::kAdmin))
+            {
+                Tell(acSender, "Admin:");
+                Tell(acSender, "  /ban <player> [reason], /unban <discord id>");
+                Tell(acSender, "  /rename <character> <name>");
+                Tell(acSender, "  /audit <what> [n]  - search the ledger (trade id, character, action)");
+                Tell(acSender, "  /setspawn          - where players wake up after dying");
+                Tell(acSender, "  /setstart          - where brand-new characters arrive");
+                Tell(acSender, "  /quest, /fact      - quest and world state");
+            }
+
+            return true;
+        }
+
+        Tell(acSender, fmt::format("No help topic called '{}'. Type /help for the list.", topic));
         return true;
     }
 
@@ -2948,6 +5877,69 @@ void ChatSystem::HandleChatMessageRequest(const PacketEvent<client::ChatMessageR
         return;
     }
     auto* pPlayer = entity.get<PlayerComponent>();
+
+    /*
+     * FLOOD CONTROL, before anything is parsed, logged or relayed.
+     *
+     * Asked for by both briefs - the phone's section 27 ("prevent spam without making
+     * normal RP communication annoying") and the trade brief's section 30 - and chat had
+     * none. Quickhacks have per-hack cooldowns and movement rejects floods; this was the
+     * one path a client could drive as fast as it liked, and it is the path that copies
+     * text to every player in range AND appends it to the log on disk.
+     *
+     * Checked FIRST, so a flooding client costs the server a comparison rather than a
+     * broadcast and a disk write. Everything below this - truncation, control-character
+     * stripping, command dispatch - is work a flood should never reach.
+     *
+     * A SLIDING WINDOW rather than a minimum gap between messages. A fixed delay punishes
+     * somebody firing off several short lines in a scene, which is the thing a roleplay
+     * server exists for, while still permitting a sustained stream at exactly the limit.
+     *
+     * TUNED DELIBERATELY LOOSE. A real flood sends thousands a second, so anything in this
+     * range stops it equally - which means the number should be chosen to never catch a
+     * real player rather than to be tight. Both briefs say the same thing: "prevent spam
+     * WITHOUT making normal RP communication annoying". The first draft was 10 per 5s and
+     * the test caught it refusing a line every 400ms, which is fast but not inhuman. Twenty
+     * is four a second sustained - past anyone typing - and still bounds the server to four
+     * broadcasts and four log writes per player per second, which is the actual cost.
+     *
+     * NOT exempted for staff. A single limit has no privilege hole to find, and no
+     * moderator types faster than this either.
+     */
+    constexpr int64_t kChatWindowMs = 5000;
+    constexpr uint32_t kChatBurst = 20;
+
+    const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::system_clock::now().time_since_epoch())
+                           .count();
+
+    auto* pRate = entity.get_mut<PlayerComponent>();
+
+    if (nowMs - pRate->ChatWindowStartMs >= kChatWindowMs)
+    {
+        pRate->ChatWindowStartMs = nowMs;
+        pRate->ChatInWindow = 0;
+        pRate->ChatFloodWarned = false;
+    }
+
+    ++pRate->ChatInWindow;
+
+    if (pRate->ChatInWindow > kChatBurst)
+    {
+        // Told once per window. Replying to every message of a flood is the same denial of
+        // service with the server volunteering to do the work.
+        if (!pRate->ChatFloodWarned)
+        {
+            pRate->ChatFloodWarned = true;
+
+            Tell(*pPlayer, "You are sending messages too quickly - slow down.");
+
+            spdlog::warn("[chat] rate limited {} ({} in {}ms)", pPlayer->Username, pRate->ChatInWindow,
+                         kChatWindowMs);
+        }
+
+        return;
+    }
 
     // Length is checked before the message is logged, let alone broadcast.
     //

@@ -55,6 +55,14 @@ release is picked up automatically; do not change that link to a specific versio
 
 ## Updating the status page
 
+**`publish/status-page.html` in this repo is the SOURCE OF TRUTH.** The hosted page is a
+publish of that file, and the URL is owned by ONE account — so if the account that
+published it is not available (a machine or assistant migration, say), the page cannot be
+updated in place. In that case: publish `status-page.html` fresh, put the new URL in this
+file and in `ASSISTANTS_COMMUNICATION.md`, and re-share it in Discord, because every link
+already posted there points at the old one. Never let the repo copy drift from the live
+page; the repo copy is what a new publish is built from.
+
 Edit `status-page.html`, then republish it to the **same URL**. From Claude Code:
 
 > Update the status page artifact at

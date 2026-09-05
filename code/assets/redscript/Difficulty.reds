@@ -47,8 +47,22 @@ public class MpDifficultyLock extends DelayCallback {
     public func Call() -> Void {
         let network = GameInstance.GetNetworkWorldSystem();
 
-        if !IsDefined(network) || !network.IsConnected() {
-            // Disconnected. Give the choices back and stop - no re-schedule.
+        /*
+         * GATED ON THE LAUNCHER, NOT ON THE CONNECTION. Changed 2026-09-03.
+         *
+         * IsConnected() was too late, and Cam found it: "when you make a character i can
+         * still choose difficulties". The difficulty screen is part of the New Game flow,
+         * which runs BEFORE the world exists and before anything connects - so the lock had
+         * not started yet and the choice was still on offer at the one moment it matters
+         * most, when the character is being made.
+         *
+         * --online is the honest test. It means the launcher started this game, so it is a
+         * multiplayer session from the main menu onward, whether or not a socket is open at
+         * this instant. It also survives a reconnect, where IsConnected briefly goes false
+         * and would otherwise hand the choices back mid-session.
+         */
+        if !IsDefined(network) || !network.IsModEnabled() {
+            // Not a launcher session. Give the choices back and stop - no re-schedule.
             MpRestoreDifficultyChoices(this.originalValues);
             return;
         }
@@ -59,6 +73,41 @@ public class MpDifficultyLock extends DelayCallback {
         // it is not a settings write every frame.
         GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(this, 10.0, false);
     }
+}
+
+/**
+ * Start the lock from the MAIN MENU, before anything can offer a choice.
+ *
+ * Cam, 2026-09-03: "when you make a character i can still choose difficulties". The
+ * restriction used to begin in MultiplayerGameController - in the world, after connecting -
+ * and the difficulty screen belongs to the New Game flow, which happens before either. So
+ * the one screen that actually asks was the one screen running before the lock existed.
+ *
+ * Idempotent and cheap: MpRestrictDifficultyToHardest returns immediately once the list is
+ * already down to one entry, so pressing the menu repeatedly costs nothing. Armed once per
+ * controller rather than per press, because the lock reschedules itself and a second one
+ * would double the polling forever.
+ */
+@addField(SingleplayerMenuGameController)
+private let m_mpDifficultyArmed: Bool;
+
+@wrapMethod(SingleplayerMenuGameController)
+protected cb func OnInitialize() -> Bool {
+  let result = wrappedMethod();
+
+  let network = GameInstance.GetNetworkWorldSystem();
+
+  if IsDefined(network) && network.IsModEnabled() && !this.m_mpDifficultyArmed {
+    this.m_mpDifficultyArmed = true;
+
+    MpForceHardestDifficulty(network, true);
+
+    let lock = new MpDifficultyLock();
+    lock.originalValues = MpRestrictDifficultyToHardest(network, lock.originalValues);
+    GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(lock, 10.0, false);
+  }
+
+  return result;
 }
 
 /**

@@ -44,4 +44,14 @@ private:
 
     Map<RpcId, uint32_t> m_serverRpcs;
     Vector<CachedRpcHandler> m_clientRpcs;
+
+    // Ids already reported as unhandled, so each is logged ONCE per connection.
+    //
+    // A refusal is not a one-off: a server that pushes a snapshot to a client predating the
+    // function refuses on every push, for every player, forever. That turns a real signal
+    // into noise nobody reads, and it is the failure mode the phone snapshot would create
+    // first. Mutable because Call() is const and this is bookkeeping about logging, not
+    // about the RPC table itself; cleared whenever definitions arrive, since that is a new
+    // table and the old ids mean nothing.
+    mutable Set<uint32_t> m_refusedIds;
 };

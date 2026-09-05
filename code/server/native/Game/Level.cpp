@@ -19,13 +19,19 @@
 #include "PlayerManager.h"
 #include "WorldClock.h"
 #include "Systems/ChatSystem.h"   // telling someone their seat is taken
+#include "VehicleSeats.h"         // seat ids are CName hashes - names, never magic numbers
 #include "Validation.h"           // sanity checks on anything a client sent
 
 #include <chrono>
+#include <cmath>                  // std::floor, for ToCell - see Level::kCellSize
+#include <unordered_map>
+#include <utility>
 
-constexpr static float sCellSize = 60 * 100;
-constexpr static int16_t sCellLoadRadius = 3;
-constexpr static int16_t sCellUnloadRadius = 4;
+// Aliases for the contract in Level.h. Declared there because the client is told these
+// numbers and checks our arithmetic against them - see the comment on Level::kCellSize.
+constexpr static float sCellSize = Level::kCellSize;
+constexpr static int16_t sCellLoadRadius = Level::kLoadRadius;
+constexpr static int16_t sCellUnloadRadius = Level::kUnloadRadius;
 
 static bool IsCellInRange(const GridCell::TPosition aCenter, const GridCell::TPosition aCell,
                           const int16_t aRange) noexcept
@@ -55,7 +61,11 @@ struct PendingReleaseComponent
 
 GridCell::TPosition Level::ToCell(const glm::vec3& acLocation) noexcept
 {
-    return {static_cast<int16_t>(acLocation.x / sCellSize), static_cast<int16_t>(acLocation.y / sCellSize)};
+    // std::floor, matching the client exactly. A plain cast truncates toward zero, which
+    // for x = -1769 gives cell 0 where floor gives -1 - so the client, which floors,
+    // computed a different cell and threw the load away as map-invalid.
+    return {static_cast<int16_t>(std::floor(acLocation.x / sCellSize)),
+            static_cast<int16_t>(std::floor(acLocation.y / sCellSize))};
 }
 
 Level::Level(World* apWorld) noexcept
@@ -304,17 +314,22 @@ void Level::RemovePlayer(flecs::entity aEntity) noexcept
 // The occupant who should inherit a departing simulator's car, front passenger first.
 //
 // Excludes everyone belonging to the departing PLAYER (their puppet may still be marked
-// as sitting in the driver seat at disconnect time). The hashes are CNames - FNV1a64 of
-// the seat names; the algorithm is verified because the front-left constant the seat
-// guard has used all along reproduces exactly from FNV1a64("seat_front_left"). A seat
-// not in the list (a bike pillion, a future vehicle) still counts as a fallback - an
-// arbitrary simulator beats none.
+// as sitting in the driver seat at disconnect time). A seat not in the list (a bike
+// pillion, a future vehicle) still counts as a fallback - an arbitrary simulator beats
+// none.
+//
+// The three ids used to be pasted hex with the names in comments. They are DERIVED now,
+// from VehicleSeats.h, because a pasted hash is unverifiable by eye and goes silently
+// wrong when a digit is mistyped - and the failure here would be subtle: a mistyped
+// priority entry does not crash, it just never matches, so the car quietly hands itself to
+// the wrong passenger or to nobody. The note this replaces had independently confirmed the
+// FNV1a64 claim; that is now the mechanism rather than a comment about one.
 static flecs::entity NextOccupant(flecs::entity aVehicle, flecs::entity aDepartingPlayer) noexcept
 {
     constexpr uint64_t cSeatPriority[] = {
-        0x63c846db887c0035ULL, // seat_front_right
-        0xb06da35221954b3eULL, // seat_back_left
-        0xc90fa7831f484433ULL, // seat_back_right
+        Fnv1a64("seat_front_right"),
+        Fnv1a64("seat_back_left"),
+        Fnv1a64("seat_back_right"),
     };
     constexpr size_t cSeatCount = sizeof(cSeatPriority) / sizeof(cSeatPriority[0]);
 
@@ -502,7 +517,20 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
     // The character's own flag answers it properly, and a replacement character defaults
     // to false so it is sent to the start point without anything having to reset it.
     const auto* pExistingCharacter = GServer->GetPlayerStore().FindCharacter(pComponent->DiscordId);
-    const bool isNewHere = (pExistingCharacter == nullptr) || !pExistingCharacter->SpawnedBefore;
+
+    // A character record is REQUIRED, not optional, and that is the fire-once guarantee.
+    //
+    // This used to also fire when there was no character record at all - and the flag that
+    // stops it repeating is written onto that record, so with no record there was nothing
+    // to write it to: the arrivals teleport fired again on the NEXT join, and the next,
+    // and the next. The comment ten lines up warns about exactly this failure ("would
+    // teleport everybody to the arrivals point on every single join") while the code below
+    // left one path open to it.
+    //
+    // Nothing is lost by requiring the record. Somebody with no character is about to go
+    // through the creator, which makes one with SpawnedBefore=false - so they still get
+    // the arrivals point, on the join after, once, with a record to remember it by.
+    const bool isNewHere = (pExistingCharacter != nullptr) && !pExistingCharacter->SpawnedBefore;
 
     bool placedAtStart = false;
 
@@ -528,12 +556,25 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
                      pComponent->Username, startPosition.x, startPosition.y, startPosition.z);
 
         // Recorded straight away, so this happens once per character rather than on every
-        // join. Written through with the rest of the character.
-        if (pExistingCharacter)
+        // join. Written through with the rest of the character. Unconditional now - the
+        // record is guaranteed by isNewHere above, and making the write conditional is
+        // what let the repeat happen.
+        auto updated = *pExistingCharacter;
+        updated.SpawnedBefore = true;
+        GServer->GetPlayerStore().SaveCharacter(pComponent->DiscordId, pComponent->Username, updated);
+
+        // Say it out loud, to the person it happened to.
+        //
+        // Being silently moved somewhere on arrival is indistinguishable from the mod
+        // being broken - zeldfep, 2026-09-04, landing in an enclosed arrivals point:
+        // "I'm in the damn box... don't just toss me in there." The placement is a
+        // feature; being unable to tell it apart from a bug is not. Whoever lands here
+        // now knows what moved them and that it is movable.
+        if (auto* pChat = GetWorld()->get_mut<ChatSystem>())
         {
-            auto updated = *pExistingCharacter;
-            updated.SpawnedBefore = true;
-            GServer->GetPlayerStore().SaveCharacter(pComponent->DiscordId, pComponent->Username, updated);
+            pChat->Tell(*pComponent,
+                        "You have arrived at the crew's arrivals point. An admin can move it "
+                        "with /setstart while standing somewhere better.");
         }
     }
 
@@ -668,6 +709,16 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
 
         spdlog::info("{} has no character yet - capturing the one they arrived as", pComponent->Username);
     }
+
+    // Anything texted to this character while they were away.
+    //
+    // Here rather than at connect because arrival is the first moment they can read
+    // anything, and because this is also where a character SWITCH lands - which is the
+    // other time the answer changes, since the inbox belongs to the character and not to
+    // the account. Somebody switching from their first character to their second must be
+    // handed the second one's messages and none of the first one's.
+    if (auto* pChat = GetWorld()->get_mut<ChatSystem>())
+        pChat->DeliverPendingMessages(*pComponent);
 
     // Hand back what this character owns.
     //
@@ -928,7 +979,79 @@ void Level::HandleMoveEntityRequest(PacketEvent<client::MoveEntityRequest>& aMes
     // edited. Interest management sends only every Nth update to distant players, and a
     // sequence that reset to zero on every packet would make "every 4th" mean "every one".
     if (const auto* pPrevious = target.get<MovementComponent>())
+    {
+        /*
+         * ORDERING. An older packet must never overwrite newer authoritative state.
+         *
+         * MoveEntityRequest is UNRELIABLE (client.proto marks it so), which is correct for
+         * movement - retransmitting a stale position is worse than losing it - but it means
+         * UDP reordering is expected rather than exceptional. Until now the server took
+         * whatever arrived last, so a packet overtaken in flight could rewind the server's
+         * idea of where somebody is.
+         *
+         * That is not only a visual problem. The server's position is what chat range,
+         * voice range, jail geofencing, trade distance and medical distance are all decided
+         * from, so a rewind is a wrong AUTHORIZATION answer, not just a wrong dot on a map.
+         *
+         * WHAT `tick` IS, established before writing this rather than assumed. It is
+         * wall-clock milliseconds since the Unix epoch (NetworkWorldSystem::GetTick, and
+         * InterpolationSystem.cpp:208 names the magnitude - ~1.787e12). That has three
+         * consequences worth stating, because each removes machinery this would otherwise
+         * have needed:
+         *
+         *   - it is globally monotonic, so there is no per-connection or per-character
+         *     ordering domain to maintain;
+         *   - it does NOT reset on spawn, respawn, character switch or reconnect, so none
+         *     of those lifecycle transitions need a baseline reset - a respawn simply
+         *     continues from the current wall clock;
+         *   - a uint64 of milliseconds does not wrap in any timeframe that matters, so a
+         *     plain comparison is correct and serial-number arithmetic would be inventing
+         *     a problem.
+         *
+         * A NEW ENTITY starts with Tick == 0 and is accepted unconditionally, which is what
+         * makes a fresh puppet - respawn, character switch, reconnect - work without any
+         * special case: the ordering domain belongs to the component, and a new component
+         * is a new domain.
+         *
+         * THE ONE REAL EDGE CASE is the client's wall clock moving backwards - an NTP
+         * correction, or somebody changing their system time. Strict rejection would freeze
+         * that player until real time caught up, which for a large jump is permanent. So a
+         * jump backwards LARGER than any plausible reordering is treated as a clock reset
+         * and accepted, re-baselining from there. That is safe rather than a hole: ownership
+         * and epoch are already validated above, so this only ever concerns an entity the
+         * sender already controls - and a client that wanted to put itself somewhere false
+         * can simply send a position, which no ordering rule would catch anyway. The check
+         * defends against the NETWORK reordering packets, not against a lying client.
+         */
+        constexpr uint64_t kClockResetMs = 30'000;
+
+        const auto incoming = aMessage.get_tick();
+
+        if (pPrevious->Tick != 0 && incoming <= pPrevious->Tick &&
+            (pPrevious->Tick - incoming) < kClockResetMs)
+        {
+            // Stale. Dropped here, before the component is written and before anything is
+            // marked pending - so it costs no state change, no replication and no walk of
+            // the player list. Not logged: reordering is expected traffic, and a line per
+            // stale packet would be the disk amplification this audit exists to remove.
+            return;
+        }
+
         component.Sequence = pPrevious->Sequence + 1;
+
+        /*
+         * Carried forward too, and they must be.
+         *
+         * ReplicatedSequence drives the wire value and the distance LOD; letting the
+         * wholesale replace reset it to zero would make `sequence % 4` true on every single
+         * update, so every distant player would get full-rate traffic - the interest
+         * management silently switched off. ReplicationPending has to survive for the same
+         * structural reason: a packet arriving between ticks must not clear the flag raised
+         * by the packet before it.
+         */
+        component.ReplicatedSequence = pPrevious->ReplicatedSequence;
+        component.ReplicationPending = pPrevious->ReplicationPending;
+    }
 
     // Dropped, not clamped. See Validation.h - a non-finite position does not crash
     // anything, it silently switches off every system that measures distance, and then
@@ -1736,7 +1859,21 @@ void Level::HandleCombatEventRequest(PacketEvent<client::CombatEventRequest>& aM
     const bool downed = after <= 0.f;
 
     if (downed)
-        pTargetHealth->LifeState = 1;
+    {
+        // Only on the TRANSITION into down. Shooting somebody who is already down must not
+        // restart their bleedout - that would make a body impossible to lose and, worse,
+        // would let an attacker hold a victim permanently un-revivable by hitting them
+        // occasionally.
+        if (pTargetHealth->LifeState != 1)
+        {
+            pTargetHealth->LifeState = 1;
+            pTargetHealth->DownedAt = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            pTargetHealth->Stabilized = false;
+            pTargetHealth->TreatedBy.clear();
+            pTargetHealth->TreatmentEndsAt = 0;
+        }
+    }
 
     // The combat trace. One line per validated event, with everything needed to compare
     // three machines afterwards.
@@ -1810,6 +1947,64 @@ void Level::HandleVoiceFrameRequest(PacketEvent<client::VoiceFrameRequest>& aMes
     if (aMessage.get_data().empty() || aMessage.get_data().size() > kMaxFrame)
         return;
 
+    /*
+     * INBOUND FLOOD GUARD. Placed here on purpose: after the two cheap rejections above
+     * (unknown connection, bad frame size) and before ANY of the work below.
+     *
+     * What it protects. Everything past this point is per-frame cost that scales with the
+     * server's population: a movement lookup, a search of the live call list for a phone
+     * partner, and then a walk of EVERY player with a distance check and a send for each
+     * one in range. A rejected frame must cost none of that, or the guard becomes the
+     * amplifier it exists to prevent.
+     *
+     * The arithmetic that sets the number. A legitimate client sends 20ms Opus frames, so
+     * about 50 a second. At 100 a second with 31 others in radius the worst case is 3,100
+     * relays a second from one speaker - and at the ~200 bytes a real Opus frame occupies
+     * (not the 1KB ceiling, which exists to bound the pathological case) that is roughly
+     * 620 KB/s of relay traffic. Uncapped, the same speaker at 1000 frames a second is
+     * 31,000 relays and megabytes per second, from one connection.
+     *
+     * Double the legitimate rate is the right ceiling: no real speaker can reach it even
+     * with jitter or a burst after a stall, and it bounds the attack at 2x normal rather
+     * than unbounded. This does NOT change voice cadence - a normal speaker never sees it.
+     *
+     * Logged at most once per window, never answered. A reply per rejected frame would be
+     * the same denial of service with the server volunteering to do the work, and a log
+     * line per frame would be disk amplification wearing a different hat.
+     */
+    constexpr int64_t kVoiceWindowMs = 1000;
+    constexpr uint32_t kVoiceBurst = 100;
+
+    {
+        const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::system_clock::now().time_since_epoch())
+                               .count();
+
+        auto* pRate = speaker.get_mut<PlayerComponent>();
+
+        if (nowMs - pRate->VoiceWindowStartMs >= kVoiceWindowMs)
+        {
+            pRate->VoiceWindowStartMs = nowMs;
+            pRate->VoiceInWindow = 0;
+            pRate->VoiceFloodWarned = false;
+        }
+
+        ++pRate->VoiceInWindow;
+
+        if (pRate->VoiceInWindow > kVoiceBurst)
+        {
+            if (!pRate->VoiceFloodWarned)
+            {
+                pRate->VoiceFloodWarned = true;
+
+                spdlog::warn("[voice] rate limited {} ({} frames in {}ms - a normal client sends ~50/s)",
+                             pSpeaker->Username, pRate->VoiceInWindow, kVoiceWindowMs);
+            }
+
+            return;   // no movement lookup, no partner search, no relay walk
+        }
+    }
+
     const auto* pSpeakerMovement = pSpeaker->Puppet.get<MovementComponent>();
     if (!pSpeakerMovement)
         return;
@@ -1835,14 +2030,53 @@ void Level::HandleVoiceFrameRequest(PacketEvent<client::VoiceFrameRequest>& aMes
     message.set_data(aMessage.get_data());
     message.set_sequence(aMessage.get_sequence());
 
+    /**
+     * Whoever this character is on the phone to, if anyone.
+     *
+     * This is what makes a call a call rather than an announcement: the person on the
+     * other end hears you from anywhere, and only they do. Resolved once per FRAME rather
+     * than once per listener - the loop below runs for everybody online, fifty times a
+     * second per speaker, and this is a search through the live call list.
+     *
+     * Empty for the overwhelmingly common case of nobody being on a call, which costs one
+     * walk of an empty list.
+     */
+    std::string partnerCharacterId;
+
+    if (const auto* pSpeakerCharacter = GServer->GetPlayerStore().FindCharacter(pSpeaker->DiscordId))
+        partnerCharacterId = GServer->GetCalls().ConnectedPartner(pSpeakerCharacter->CharacterId);
+
     GetWorld()->get_world().each(
-        [&message, speaker, speakerPosition, radiusSquared](flecs::entity player,
-                                                            const PlayerComponent& aPlayerComponent)
+        [&message, &partnerCharacterId, speaker, speakerPosition,
+         radiusSquared](flecs::entity player, const PlayerComponent& aPlayerComponent)
         {
             // Never echo somebody their own voice. Hearing yourself a ping later is the
             // single most disorienting thing a voice system can do.
             if (player == speaker)
                 return;
+
+            /**
+             * On the phone: heard wherever they are, and BEFORE the distance test.
+             *
+             * Checked against the listener's ACTIVE character, so somebody who has swapped
+             * to a different character does not keep receiving a call the character they
+             * left was in.
+             *
+             * Deliberately not merged into the proximity test as "distance OR call" - the
+             * early return also means a caller standing next to the person they rang is
+             * sent one frame rather than two, which would otherwise be audible.
+             */
+            if (!partnerCharacterId.empty())
+            {
+                const auto* pListener =
+                    GServer->GetPlayerStore().FindCharacter(aPlayerComponent.DiscordId);
+
+                if (pListener && pListener->CharacterId == partnerCharacterId)
+                {
+                    GServer->Send(aPlayerComponent.Connection, message);
+                    return;
+                }
+            }
 
             if (!aPlayerComponent.Puppet || !aPlayerComponent.Puppet.is_alive())
                 return;
@@ -1994,10 +2228,10 @@ void Level::HandleEnterVehicleRequest(PacketEvent<client::EnterVehicleRequest>& 
         // never loaded). Honoring it forks a split-brain duplicate: one player driving
         // the real entity, the other sitting in a private copy nobody else can see.
         // Refused the same way a taken seat is refused - told, then left alone.
-        if (aMessage.get_sit_id() != 0xb000b1d029d0cea0ULL) // seat_front_left
+        if (aMessage.get_sit_id() != kDriverSeat)
         {
-            spdlog::warn("Player {:x} tried to spawn a vehicle into seat {:x} - refused as a desync fork (connection {:x})",
-                         aMessage.get_id(), aMessage.get_sit_id(), aMessage.ConnectionId);
+            spdlog::warn("Player {:x} tried to spawn a vehicle into {} - refused as a desync fork (connection {:x})",
+                         aMessage.get_id(), VehicleSeatName(aMessage.get_sit_id()), aMessage.ConnectionId);
 
             if (auto* pChat = GetWorld()->get_mut<ChatSystem>())
                 pChat->Tell(*pPlayer, "Couldn't sync that car - give it a moment, or take the driver's seat.");
@@ -2034,6 +2268,34 @@ void Level::HandleEnterVehicleRequest(PacketEvent<client::EnterVehicleRequest>& 
     // Refused rather than silently reassigned. Being told the seat is taken is something a
     // player can act on; being moved somewhere they did not choose is not.
     const auto requestedSeat = aMessage.get_sit_id();
+
+    /**
+     * IS IT A SEAT? This is what let a fifth person into a four-seat car.
+     *
+     * Occupancy was already enforced - one person per seat, refused rather than reassigned
+     * - but nothing ever asked whether the id WAS a seat. Any 64-bit number a client
+     * invented looked like an empty seat, because no attachment matched it, so it was
+     * accepted and occupied. Four people already fitted; a fifth only had to name a
+     * position nobody else had claimed.
+     *
+     * The check has to be identity, not a count. The server cannot see game data and does
+     * not know how many seats a Mackinaw has, so counting would mean either refusing seats
+     * that exist or inventing ones that do not. Which seats a car HAS is decided by the
+     * game's own mount system when the client picks a door; which seats EXIST at all is
+     * this list, and that is a fact about the game rather than about any one vehicle.
+     */
+    if (!IsKnownSeat(requestedSeat))
+    {
+        spdlog::warn("Player {:x} asked for {} in vehicle {:x} - not a seat, refused (connection {:x})",
+                     aMessage.get_id(), VehicleSeatName(requestedSeat), vehicle.id(),
+                     aMessage.ConnectionId);
+
+        if (auto* pChat = GetWorld()->get_mut<ChatSystem>())
+            pChat->Tell(*pPlayer, "There is no room in that car.");
+
+        return;
+    }
+
     bool seatTaken = false;
 
     GetWorld()->each(
@@ -2048,12 +2310,14 @@ void Level::HandleEnterVehicleRequest(PacketEvent<client::EnterVehicleRequest>& 
 
     if (seatTaken)
     {
-        spdlog::info("Player {:x} tried to take an occupied seat in vehicle {:x}", aMessage.get_id(), vehicle.id());
+        spdlog::info("Player {:x} tried to take {}, already occupied, in vehicle {:x}",
+                     aMessage.get_id(), VehicleSeatName(requestedSeat), vehicle.id());
 
         // Told, then left alone. The client is already sitting there locally, so saying
         // nothing would leave them looking at a seat the server disagrees about.
         if (auto* pChat = GetWorld()->get_mut<ChatSystem>())
-            pChat->Tell(*pPlayer, "Someone is already in that seat - try another door.");
+            pChat->Tell(*pPlayer, fmt::format("Someone is already in {} - try another door.",
+                                              VehicleSeatDescription(requestedSeat)));
 
         return;
     }

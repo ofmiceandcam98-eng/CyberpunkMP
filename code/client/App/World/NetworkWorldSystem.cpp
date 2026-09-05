@@ -283,9 +283,20 @@ void NetworkWorldSystem::Update(uint64_t aTick)
         {
             const auto stats = m_voiceClient.GetStats();
 
-            spdlog::info("[Voice] mic {} / speakers {} - encoded {}, sent {}, received {}, decoded {}",
+            // The REASON, not just the symptom.
+            //
+            // This line said "mic NOT CAPTURING" three hundred times across two sessions
+            // and never once said why - the capture thread's failures are recorded on a
+            // string that nothing printed. Reading it here means the next log answers
+            // "which stage failed" AND "because of what", which is the whole difference
+            // between a diagnosis and another round trip.
+            const auto reason = m_voiceClient.GetLastError();
+
+            spdlog::info("[Voice] mic {} / speakers {} - encoded {}, sent {}, received {}, decoded {}{}",
                          stats.CaptureAlive ? "ok" : "NOT CAPTURING", stats.PlaybackAlive ? "ok" : "NOT PLAYING",
-                         stats.Encoded, m_voiceSequence, stats.Received, stats.Decoded);
+                         stats.Encoded, m_voiceSequence, stats.Received, stats.Decoded,
+                         (!stats.CaptureAlive && !reason.empty()) ? fmt::format(" - {}", reason)
+                                                                  : std::string{});
         }
 
         auto frames = m_voiceClient.TakeOutgoing();
@@ -374,7 +385,7 @@ void NetworkWorldSystem::Update(uint64_t aTick)
                 // From here the player standing in the world IS the server's character, so
                 // it is safe to save what they are carrying. Cleared again by any world
                 // detach - see OnBeforeWorldDetach.
-                m_characterLive = true;
+                EnterCharacterState(CharacterState::Live, "restore completed");
 
                 // The face BEFORE the belongings. Restoring the inventory first would dress
                 // the local save's V in this character's clothes for a frame, and the strip
@@ -611,12 +622,30 @@ void NetworkWorldSystem::ApplyWorldState()
 
 void NetworkWorldSystem::RequestJoin()
 {
+    // The second door. Connect() opens the socket; this arms the arrival that happens once
+    // the world loads, and arming it without a launcher session would leave a client
+    // expecting to join a server it is not allowed to reach.
+    if (Settings::IsDisabled())
+    {
+        spdlog::warn("[NetworkWorldSystem] join refused - not started through the launcher");
+        return;
+    }
+
     spdlog::info("[NetworkWorldSystem] join requested from the main menu");
     m_joinRequested = true;
 }
 
 void NetworkWorldSystem::MarkNewCharacter()
 {
+    // The third door, and the one Cam named explicitly: they should not "even create a
+    // character". A character is created by capturing an appearance and sending it, so
+    // refusing to arm that capture is where creation stops.
+    if (Settings::IsDisabled())
+    {
+        spdlog::warn("[Character] creation refused - not started through the launcher");
+        return;
+    }
+
     spdlog::info("[Character] NEW CHARACTER chosen - this appearance will replace the stored one");
     m_newCharacterPending = true;
 }
@@ -1171,6 +1200,10 @@ void NetworkWorldSystem::PollAppearanceChanges()
     {
         request.set_inventory(m_capturedInventory);
         request.set_money(m_capturedMoney);
+
+        // [MONEY] boundary 2 of 4: what actually leaves this client.
+        spdlog::info("[MONEY] 2 wire: sending {} eddies with {} stack(s)", m_capturedMoney,
+                     m_capturedInventory.size());
         request.set_proficiencies(m_capturedProficiencies);
         request.set_attributes(m_capturedAttributes);
         request.set_perks(m_capturedPerks);
@@ -1351,10 +1384,47 @@ void NetworkWorldSystem::ApplyStoredAppearance()
         return;
     }
 
-    // Taken, not copied. This runs once per spawn; a retry with the same bytes would be a
-    // second rebuild of the same body for no benefit.
-    const auto bytes = std::move(m_restoreAppearance);
-    m_restoreAppearance.clear();
+    // NOT READY is not the same as FAILED, and conflating them cost us the character.
+    //
+    // On a fresh connect the server sends the appearance while the player is still on the
+    // MAIN MENU - MpLoadMultiplayerWorld has not loaded the world yet. There is no live
+    // customization state to write into at that moment, and there cannot be. From Cam's
+    // log on 2026-09-01, in this exact order:
+    //
+    //   00:13:34.156  server sent 9206 bytes of our own stored appearance
+    //   00:13:35.164  Local appearance restore BEGIN - 9206 bytes
+    //   00:13:35.164  FAILED: GetState returned nothing
+    //   00:13:36.063  [OwnSave] loading 'AutoSave-12'      <- the world arrives AFTER
+    //
+    // The old code took the bytes with std::move BEFORE trying, so that doomed first
+    // attempt consumed the only copy. By the time a world existed there was nothing left
+    // to apply, OnBeforeWorldDetach cleared the (already empty) buffer, and the player
+    // ended up looking like whatever save happened to load. Not their character, and not
+    // the template either - a third person entirely, which is exactly what Cam reported.
+    //
+    // So: ask whether the engine can take an appearance at all BEFORE spending the bytes.
+    // If it cannot, leave everything untouched and let the settle loop come back once the
+    // world is up. Silent after the first line, because this is called repeatedly.
+    if (!Red::GetGameSystem<Red::game::ui::CharacterCustomizationSystem>() ||
+        !GetLiveCustomizationState(Red::GetGameSystem<Red::game::ui::CharacterCustomizationSystem>()))
+    {
+        if (!m_appearanceWaitLogged)
+        {
+            m_appearanceWaitLogged = true;
+            spdlog::info("[Character] appearance held - no live customization state yet (still at the menu, "
+                         "or the world has not attached). Keeping the {} bytes for when it is.",
+                         m_restoreAppearance.size());
+        }
+
+        return;
+    }
+
+    m_appearanceWaitLogged = false;
+
+    // Copied, not taken. The clear happens only once the apply has actually SUCCEEDED -
+    // see the Applied assignment at the end. A failure now leaves the bytes in place so
+    // the next attempt has something to work with.
+    const auto bytes = m_restoreAppearance;
 
     m_appearanceRestore = AppearanceRestore::Applying;
 
@@ -1496,6 +1566,10 @@ void NetworkWorldSystem::ApplyStoredAppearance()
 
     spdlog::info("[Character] commit COMPLETE - accepted by {}", committed);
 
+    // NOW the bytes are spent. Held until this point on purpose: every early return above
+    // is a reason to try again later, and the version that consumed them up front turned
+    // one badly-timed attempt into a permanently lost appearance.
+    m_restoreAppearance.clear();
 
     m_appearanceRestore = AppearanceRestore::Applied;
 
@@ -1580,6 +1654,10 @@ void NetworkWorldSystem::SaveCharacterAppearance(bool aAutomatic)
     {
         request.set_inventory(m_capturedInventory);
         request.set_money(m_capturedMoney);
+
+        // [MONEY] boundary 2 of 4: what actually leaves this client.
+        spdlog::info("[MONEY] 2 wire: sending {} eddies with {} stack(s)", m_capturedMoney,
+                     m_capturedInventory.size());
         request.set_proficiencies(m_capturedProficiencies);
         request.set_attributes(m_capturedAttributes);
         request.set_perks(m_capturedPerks);
@@ -1601,6 +1679,165 @@ bool NetworkWorldSystem::IsConnected() const
 {
     const auto& service = Core::Container::Get<NetworkService>();
     return service && service->IsConnected();
+}
+
+/**
+ * Takes the server's roster whole, slots and all.
+ *
+ * The old code read characters[0] and threw the rest away, which was correct while the server
+ * only ever sent one - and is exactly what a selector cannot work with.
+ *
+ * Called from both places the roster arrives: the authentication reply, which is the earlier
+ * and is what the main menu draws from before anyone asks for anything, and
+ * NotifyCharacterList, which is the answer to a select or a delete. One implementation, so
+ * the two cannot drift.
+ */
+void NetworkWorldSystem::AdoptRoster(const Vector<server::CharacterSummary>& acCharacters,
+                                     int32_t aSlots)
+{
+    // Only believe a sane allowance. Zero would draw no slots at all and hide every
+    // character the account has; a negative one is nonsense. An older server sends nothing,
+    // which arrives as zero, and one slot is the honest reading of that.
+    m_characterSlots = aSlots > 0 ? aSlots : 1;
+
+    m_roster.clear();
+    m_roster.reserve(acCharacters.size());
+
+    for (const auto& summary : acCharacters)
+    {
+        RosterEntry entry;
+        entry.Id = summary.get_id().c_str();
+        entry.Name = summary.get_name().c_str();
+        entry.Level = summary.get_level();
+        entry.Slot = summary.get_slot();
+        entry.SpawnedBefore = summary.get_spawned_before();
+        entry.Active = summary.get_is_active();
+
+        m_roster.push_back(std::move(entry));
+    }
+
+    // Sorted by slot, with a TOTAL order.
+    //
+    // Slot alone is not one: two rows reported for the same slot would swap places between
+    // redraws on arrival order alone, which reads on screen as rows moving by themselves.
+    // The id is the tie-break because it is the only field guaranteed unique.
+    std::sort(m_roster.begin(), m_roster.end(),
+              [](const RosterEntry& a, const RosterEntry& b)
+              {
+                  if (a.Slot != b.Slot)
+                      return a.Slot < b.Slot;
+                  return a.Id < b.Id;
+              });
+
+    spdlog::info("[Character] roster: {} character(s), {} slot(s)", m_roster.size(),
+                 m_characterSlots);
+}
+
+/**
+ * The roster, read out one scalar at a time.
+ *
+ * Every accessor bounds-checks and answers a harmless default rather than reaching past the
+ * end. redscript has no exceptions to catch and a bad index here would take the whole script
+ * VM with it - and the caller most likely to pass one is a selector drawing four rows against
+ * a roster that just shrank because somebody deleted a character.
+ */
+Red::CString NetworkWorldSystem::GetRosterId(uint32_t aIndex) const
+{
+    return aIndex < m_roster.size() ? Red::CString(m_roster[aIndex].Id.c_str()) : Red::CString("");
+}
+
+Red::CString NetworkWorldSystem::GetRosterName(uint32_t aIndex) const
+{
+    return aIndex < m_roster.size() ? Red::CString(m_roster[aIndex].Name.c_str()) : Red::CString("");
+}
+
+int32_t NetworkWorldSystem::GetRosterLevel(uint32_t aIndex) const
+{
+    return aIndex < m_roster.size() ? m_roster[aIndex].Level : 0;
+}
+
+int32_t NetworkWorldSystem::GetRosterSlot(uint32_t aIndex) const
+{
+    // -1 rather than 0 for a bad index. Zero is a REAL slot, and a selector that read it as
+    // one would offer to delete the character in slot 0 when asked about a row that is not
+    // there.
+    return aIndex < m_roster.size() ? m_roster[aIndex].Slot : -1;
+}
+
+bool NetworkWorldSystem::IsRosterActive(uint32_t aIndex) const
+{
+    return aIndex < m_roster.size() && m_roster[aIndex].Active;
+}
+
+bool NetworkWorldSystem::HasRosterSpawnedBefore(uint32_t aIndex) const
+{
+    return aIndex < m_roster.size() && m_roster[aIndex].SpawnedBefore;
+}
+
+/**
+ * "Play as the character in this slot."
+ *
+ * A REQUEST. It returns nothing because there is nothing to return yet: the server decides,
+ * and the answer arrives as a fresh roster or as a refusal carried on it. A caller that
+ * treats the absence of an error here as success is reading a sent packet as a verdict.
+ */
+void NetworkWorldSystem::SelectCharacterSlot(int32_t aSlot)
+{
+    const auto& service = Core::Container::Get<NetworkService>();
+    if (!service || !service->IsConnected())
+        return;
+
+    client::SelectCharacterRequest request;
+    request.set_slot(aSlot);
+    service->Send(request);
+
+    spdlog::info("[Character] asked the server to select slot {}", aSlot);
+}
+
+/**
+ * "Delete the character in this slot."
+ *
+ * Also a request, and deliberately not guarded here beyond the connection check: the server
+ * re-resolves the slot to a character and refuses an empty one, a slot out of range, or a
+ * deletion attempted while the player is standing in the world as that character. A check
+ * here would be a courtesy, not a control.
+ */
+void NetworkWorldSystem::DeleteCharacterSlot(int32_t aSlot)
+{
+    const auto& service = Core::Container::Get<NetworkService>();
+    if (!service || !service->IsConnected())
+        return;
+
+    client::DeleteCharacterRequest request;
+    request.set_slot(aSlot);
+    service->Send(request);
+
+    spdlog::info("[Character] asked the server to delete slot {}", aSlot);
+}
+
+void NetworkWorldSystem::EnterCharacterState(CharacterState aNext, const char* acpWhy)
+{
+    if (m_characterState == aNext)
+        return;
+
+    // Warn on the one transition that has already cost a character, so it is impossible to
+    // read a log of that session and miss the moment it went wrong.
+    const bool losingTheBody = m_characterState == CharacterState::Live &&
+                               aNext == CharacterState::Detached;
+
+    if (losingTheBody)
+    {
+        spdlog::warn("[Character] {} -> {} ({}) - the body in the world is no longer this "
+                     "character; saving is refused until a restore says otherwise",
+                     CharacterStateName(m_characterState), CharacterStateName(aNext), acpWhy);
+    }
+    else
+    {
+        spdlog::info("[Character] {} -> {} ({})", CharacterStateName(m_characterState),
+                     CharacterStateName(aNext), acpWhy);
+    }
+
+    m_characterState = aNext;
 }
 
 void NetworkWorldSystem::SetCharacterStatus(bool aHasCharacter, const char* acName, int32_t aLevel,
@@ -1714,15 +1951,33 @@ void NetworkWorldSystem::HandleCharacterList(const PacketEvent<server::NotifyCha
 
     const auto& characters = aMessage.get_characters();
 
+    // The roster arrives on TWO messages - the authentication reply and this one - so the
+    // adoption lives in one place rather than being written twice and drifting.
+    AdoptRoster(characters, m_characterSlots);
+
     if (characters.empty())
     {
         SetCharacterStatus(false, "", 0, false);
     }
     else
     {
-        const auto& first = characters[0];
-        SetCharacterStatus(true, first.get_name().c_str(), first.get_level(),
-                           first.get_spawned_before());
+        // The ACTIVE one drives the old single-character status, not whichever arrived
+        // first. With one character those are the same row; with four they are not, and
+        // every existing caller of HasCharacter/GetCharacterName means "the one I am
+        // playing".
+        const server::CharacterSummary* pActive = &characters[0];
+
+        for (const auto& summary : characters)
+        {
+            if (summary.get_is_active())
+            {
+                pActive = &summary;
+                break;
+            }
+        }
+
+        SetCharacterStatus(true, pActive->get_name().c_str(), pActive->get_level(),
+                           pActive->get_spawned_before());
     }
 
     if (!m_characterError.empty())
@@ -1839,7 +2094,7 @@ void NetworkWorldSystem::OnBeforeWorldDetach(RED4ext::world::RuntimeScene* aScen
 
     // So a detach revokes the claim. Saving is allowed again only when a restore completes
     // and makes it true once more.
-    m_characterLive = false;
+    EnterCharacterState(CharacterState::Detached, "world detach");
 
     // The appearance restore starts over with the next spawn. The body it applied is being
     // destroyed along with the rest of the world, so "already Applied" would be a lie the
@@ -2408,6 +2663,125 @@ void NetworkWorldSystem::HandleNotifyMoney(const PacketEvent<server::NotifyMoney
     Red::CallVirtual(Red::GetGameSystem<NetworkWorldSystem>(), "ApplyServerMoney");
 }
 
+/**
+ * Where a call is now, straight from the server.
+ *
+ * The ONLY writer of the call state. Every field is replaced together rather than merged,
+ * so the mirror cannot drift from the server one field at a time - which is exactly what
+ * happens when a client updates "the name" on one message and "the state" on another.
+ *
+ * A finished call is CLEARED rather than kept in its terminal state. A phone still holding
+ * a declined call would keep offering ANSWER for something nobody is ringing, and the
+ * player would press it and see nothing happen.
+ */
+void NetworkWorldSystem::HandleNotifyCall(const PacketEvent<server::NotifyCall>& aMessage)
+{
+    const auto state = aMessage.get_state();
+
+    // Mirrors IsCallOver in the server's CallStore.h. Duplicated as a comparison rather
+    // than shared, because the client must not gain an opinion about what a state MEANS -
+    // it only needs to know whether to keep showing the phone.
+    constexpr uint32_t kDialing = 0;
+    constexpr uint32_t kRinging = 1;
+    constexpr uint32_t kConnected = 2;
+
+    const bool live = state == kDialing || state == kRinging || state == kConnected;
+
+    if (!live)
+    {
+        spdlog::info("[Call] {} ended (state {})", aMessage.get_call_id().c_str(), state);
+
+        m_callState = kNoCall;
+        m_callId.clear();
+        m_callName.clear();
+        m_callNumber.clear();
+        m_callIncoming = false;
+    }
+    else
+    {
+        m_callState = state;
+        m_callId = aMessage.get_call_id().c_str();
+        m_callName = aMessage.get_display_name().c_str();
+        m_callNumber = aMessage.get_number().c_str();
+        m_callIncoming = aMessage.get_incoming();
+
+        spdlog::info("[Call] {} state {} with {} ({}), incoming {}", m_callId, state, m_callName,
+                     m_callNumber, m_callIncoming);
+    }
+
+    /**
+     * Handed to script, which owns the phone.
+     *
+     * The native half holds what came off the wire and the script half presents it - the
+     * same split as money, and the reason the terminal state is still announced rather
+     * than silently cleared: the phone has to be told to take the call DOWN, and "no call"
+     * arriving as an absence would leave it showing one forever.
+     */
+    Red::CallVirtual(Red::GetGameSystem<NetworkWorldSystem>(), "OnCallStateChanged");
+}
+
+bool NetworkWorldSystem::IsModEnabled() const
+{
+    // The SAME question Main.cpp and Core::Application::Update already ask, answered from
+    // the same place - not a second flag that could drift from it.
+    return !Settings::IsDisabled();
+}
+
+void NetworkWorldSystem::RequestCall(const Red::CString& acNumber)
+{
+    const auto& service = Core::Container::Get<NetworkService>();
+    if (!service || !service->IsConnected())
+        return;
+
+    client::CallRequest request;
+    request.set_number(acNumber.c_str());
+    service->Send(request);
+
+    spdlog::info("[Call] asked the server to ring {}", acNumber.c_str());
+}
+
+/**
+ * Answer, decline, hang up.
+ *
+ * All three send the call id the phone is CURRENTLY showing. The server checks it against
+ * the sender's own active call rather than looking one up by it, so a button pressed a
+ * moment too late acts on nothing instead of on the call that replaced the one the player
+ * was looking at.
+ *
+ * Nothing is applied locally. The phone changes when the server says it has, which is what
+ * stops a client that pressed ANSWER from showing "connected" against a call the server
+ * refused.
+ */
+void NetworkWorldSystem::SendCallControl(uint32_t aAction)
+{
+    const auto& service = Core::Container::Get<NetworkService>();
+    if (!service || !service->IsConnected())
+        return;
+
+    if (m_callId.empty())
+        return;
+
+    client::CallControlRequest request;
+    request.set_call_id(m_callId.c_str());
+    request.set_action(aAction);
+    service->Send(request);
+}
+
+void NetworkWorldSystem::AnswerCall()
+{
+    SendCallControl(0);
+}
+
+void NetworkWorldSystem::DeclineCall()
+{
+    SendCallControl(1);
+}
+
+void NetworkWorldSystem::HangUpCall()
+{
+    SendCallControl(2);
+}
+
 void NetworkWorldSystem::HandleNotifyPossessions(const PacketEvent<server::NotifyPossessions>& aMessage)
 {
     // The server changing what we own, rather than answering something we asked.
@@ -2475,6 +2849,7 @@ void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::
     spdlog::info("[SpawnResponse] id {:x} - setting remote player id", aMessage.get_id());
     SetRemotePlayerId(aMessage.get_id());
     spdlog::info("[SpawnResponse] remote player id set");
+    EnterCharacterState(CharacterState::Selected, "spawn response - a character is chosen");
 
     // Which doors the server says are open.
     //
@@ -2550,11 +2925,13 @@ void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::
             m_restorePending = true;
 
             spdlog::info("[SpawnResponse] NEW character - possessions discarded, restore will run empty");
+            EnterCharacterState(CharacterState::Restoring, "new character, empty restore armed");
         }
         else
         {
             m_restorePending = true;
             spdlog::info("[SpawnResponse] possessions buffered - restore armed");
+            EnterCharacterState(CharacterState::Restoring, "possessions buffered");
         }
     }
     else
@@ -3238,6 +3615,7 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleSpawnCharacterResponse>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleOpenCharacterCreator>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleNotifyMoney>(this);
+    pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleNotifyCall>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleNotifyPossessions>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleRequestCharacterName>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleWorldState>(this);
@@ -3271,6 +3649,25 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
 
 void NetworkWorldSystem::Connect()
 {
+    /**
+     * NOT THROUGH THE LAUNCHER, NOT CONNECTING. Cam's rule, 2026-09-03.
+     *
+     * Enforced HERE rather than only in the menu, because the menu is a suggestion and this
+     * is the door. Script can be edited by anyone who can open a text file - the entries
+     * are hidden without --online, but hiding a button is not the same as closing the path
+     * behind it, and the difference matters for a server whose characters are its whole
+     * point.
+     *
+     * The same check the rest of the client already makes (Settings::IsDisabled), so there
+     * is one answer to "is this a multiplayer session" rather than two that can disagree.
+     */
+    if (Settings::IsDisabled())
+    {
+        spdlog::warn("[Connect] refused - this game was not started through the Night City "
+                     "Online launcher");
+        return;
+    }
+
     auto address = fmt::format("{}:{}", Settings::Get().ip, Settings::Get().port);
 
     // Log the address we actually dial. The launch arguments must use the
@@ -3329,8 +3726,10 @@ void NetworkWorldSystem::Disconnect()
         //
         // Losing the last few minutes of a session is recoverable. Overwriting the stored
         // character is not.
-        spdlog::warn("[Inventory] NOT saving on disconnect - the world was reloaded since the "
-                     "restore, so what is loaded is not the server's character");
+        spdlog::warn("[Inventory] NOT saving on disconnect - state is {}, not Live. The body in "
+                     "the world is not this character, so saving it would overwrite the stored "
+                     "record with somebody else's.",
+                     CharacterStateName(m_characterState));
     }
 
     Core::Container::Get<NetworkService>()->Close();

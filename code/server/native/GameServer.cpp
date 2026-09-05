@@ -16,6 +16,8 @@
 #include "Scripting/RpcScriptInstance.h"
 
 #include "PlayerManager.h"
+#include <thread>
+#include <utility>
 
 
 using nlohmann::json;
@@ -54,6 +56,8 @@ GameServer::GameServer()
         m_players.Load(serverPath / "config" / "players.json");
         m_worldFacts.Load(serverPath / "config" / "worldfacts.json");
         m_vehicles.Load(serverPath / "config" / "vehicles.json");
+        m_messages.Load(serverPath / "config" / "messages.json");
+        m_calls.Load(serverPath / "config" / "calls.json");
 
         LoadServerManifest(serverPath / "config" / "server-manifest.json");
 
@@ -154,6 +158,21 @@ GameServer::GameServer()
 
 GameServer::~GameServer()
 {
+    /*
+     * Last write before the process goes.
+     *
+     * Both stores are debounced - positions on a thirty-second timer, messages on a
+     * two-second one - so at shutdown each may be holding changes that have not reached
+     * disk. Nothing else was flushing them: a clean stop silently discarded up to half a
+     * minute of positions and a couple of seconds of texts, and the only symptom would be
+     * somebody insisting they sent a message that is not there.
+     *
+     * Forced rather than FlushIfDue, because there is no later tick to rely on. Both are
+     * no-ops when nothing is dirty, so a stop with nothing outstanding costs nothing.
+     */
+    m_messages.Flush();
+    m_players.Flush();
+
     GServer = nullptr;
 }
 
@@ -181,9 +200,82 @@ void GameServer::OnUpdate()
     ReportPlayerConnections(now);
     ReverifyPlayers(now);
     SavePlayerPositions(now);
+    ReplicatePendingMovement(now);
+
     EnforceJail(now);
+    ExpireCalls(now);
+
+    // The debounced message write. Send() only marks the store dirty now, so this is what
+    // actually gets a text onto disk - at most once every couple of seconds no matter how
+    // fast anybody types. Before this, one message rewrote every conversation on the
+    // server, which is a full disk write bought with a single client packet.
+    m_messages.FlushIfDue();
+
+    // Drop request ids past their TTL. The ledger is capped on insert as well, so this is
+    // the slow-trickle half: without it a quiet server would accumulate entries for hours
+    // that no retry will ever ask about.
+    m_messages.Requests().Expire();
 
     m_pWorld->Update(std::chrono::duration_cast<std::chrono::duration<float>>(delta).count());
+}
+
+/**
+ * Send one movement update per moved entity per tick, instead of one per packet received.
+ *
+ * WHAT IT REPLACES. Movement replication is an observer on flecs::OnSet, and the handler
+ * sets the component once per accepted packet - so ONE movement packet ran a walk of every
+ * player on the server with a distance test and a send for each one in range. At 1000
+ * packets a second against 32 players that is ~32,000 relevance checks a second, from one
+ * connection, using entirely valid packets. The client's own send rate multiplied the
+ * server's fan-out.
+ *
+ * WHY NOT A RATE LIMIT. Movement is legitimately high-frequency and dropping packets
+ * produces rubber-banding - a fix more visible than the bug. This is STATE replication, not
+ * event replication: if five packets arrive between ticks only the fifth describes where
+ * anybody is, so the four before it were never going to be seen. Coalesce, do not reject.
+ *
+ * THE RATE IS NOT INVENTED. UpdateRate already exists in the config, defaults to 30, and is
+ * already sent to clients as the rate to transmit at - it was simply never used by the
+ * server for anything. Replicating at the same 30Hz means a compliant client sees exactly
+ * the update cadence it sees today; only bunched or flooded packets collapse.
+ *
+ * COST MODEL:
+ *      before   packets/sec x players            (unbounded in the client's send rate)
+ *      after    min(packets, UpdateRate) x players
+ *
+ * OFF BY DEFAULT. Changing replication cadence can introduce jitter in ways no unit test
+ * can see. The flag exists so this can be turned on for a two-client test and compared
+ * against current behaviour, rather than shipping as a silent difference.
+ */
+void GameServer::ReplicatePendingMovement(std::chrono::steady_clock::time_point aNow)
+{
+    if (!m_config.CoalesceMovement)
+        return;   // observer is still replicating per packet - nothing pending to drain
+
+    // Guard against a config of 0, which would divide by zero and, read as "no delay",
+    // would replicate every frame - the opposite of the point.
+    const auto rate = m_config.UpdateRate > 0 ? m_config.UpdateRate : 30;
+    const auto interval = std::chrono::milliseconds(1000 / rate);
+
+    if (aNow - m_lastMovementReplication < interval)
+        return;
+
+    m_lastMovementReplication = aNow;
+
+    /*
+     * Only entities with something new. ReplicateMovementComponent clears the flag itself,
+     * so an entity that has not moved since its last update is skipped entirely - a
+     * stationary server does no replication work at all, which is the same property the
+     * per-packet version had for free.
+     */
+    m_pWorld->get_world().each(
+        [](flecs::entity aEntity, MovementComponent& aMovement)
+        {
+            if (!aMovement.ReplicationPending)
+                return;
+
+            ReplicateMovementComponent(aEntity, aMovement);
+        });
 }
 
 void GameServer::SavePlayerPositions(std::chrono::steady_clock::time_point aNow)
@@ -244,6 +336,23 @@ bool GameServer::GetRespawnPoint(glm::vec3& aPosition, float& aYaw) const
 
 void GameServer::SetStartPoint(const glm::vec3& acPosition, float aYaw)
 {
+    // Caught where the mistake is MADE, not at every spawn afterwards.
+    //
+    // GetStartPoint refuses an origin point too, which is what stops an already-stored bad
+    // value hurting anybody. This stops it being stored in the first place, so whoever ran
+    // the command finds out immediately rather than the next new player finding out by
+    // falling through the world. See the long note in GetStartPoint.
+    constexpr float kOriginRadius = 25.f;
+
+    if (glm::length(acPosition) < kOriginRadius)
+    {
+        spdlog::error("[Start] refusing to store ({:.1f}, {:.1f}, {:.1f}) as the start point - "
+                      "that is the world origin, and every new character sent there falls "
+                      "through the map. Stand somewhere real and run it again.",
+                      acPosition.x, acPosition.y, acPosition.z);
+        return;
+    }
+
     m_startPosition = acPosition;
     m_startYaw = aYaw;
     m_hasStartPoint = true;
@@ -266,9 +375,66 @@ bool GameServer::GetStartPoint(glm::vec3& aPosition, float& aYaw) const
     if (!m_hasStartPoint)
         return false;
 
+    /**
+     * A start point at the world origin is not a place. Refuse it.
+     *
+     * Cam, 2026-09-04: "after creating a character i fell through the map, and now im stuck
+     * in the box". The test server's stored point was (-5.2, 20.9, 0.0) and every new
+     * character was being teleported faithfully into it - which in Night City is under the
+     * terrain, so they fell.
+     *
+     * Nobody sets a spawn within a few metres of (0,0,0) on purpose: it is where an unset,
+     * default-constructed or half-parsed value lands. Treating it as a real destination
+     * turns one bad config write into every new player falling through the world, and the
+     * symptom - "I fell through the map" - points at physics rather than at a number in a
+     * JSON file, which is why this cost an evening to find.
+     *
+     * Refusing means the caller falls back to the player's own remembered position, which
+     * is always somewhere they were actually standing.
+     *
+     * A REAL start point close to the origin would be refused too. That is the right trade:
+     * losing an unusual spawn location is a note in a log, and dropping every new character
+     * into the void is a session nobody can play.
+     */
+    constexpr float kOriginRadius = 25.f;
+
+    if (glm::length(m_startPosition) < kOriginRadius)
+    {
+        spdlog::error("[Start] refusing the stored start point ({:.1f}, {:.1f}, {:.1f}) - that is "
+                      "the world origin, not a location. New arrivals will use their own saved "
+                      "position instead. Fix it with /setstart while standing somewhere real.",
+                      m_startPosition.x, m_startPosition.y, m_startPosition.z);
+        return false;
+    }
+
     aPosition = m_startPosition;
     aYaw = m_startYaw;
     return true;
+}
+
+void GameServer::ExpireCalls(std::chrono::steady_clock::time_point aNow)
+{
+    // Once a second. A ring timeout measured in seconds does not need finer resolution,
+    // and this walks every live call - which is nearly always none.
+    if (std::chrono::duration_cast<std::chrono::milliseconds>(aNow - m_lastCallCheck).count() < 1000)
+        return;
+
+    m_lastCallCheck = aNow;
+
+    if (auto* pChat = GetWorld()->get_mut<ChatSystem>())
+    {
+        pChat->TickCalls();
+
+        // Trades expire and are distance-checked on the same beat. Both are "has this
+        // stopped being true since we last looked", both are cheap when nothing is
+        // happening, and a second timer for them would only be a second thing to forget.
+        pChat->TickTrades();
+
+        // Bleedout and finishing procedures. Same beat, same reason: both ask only whether
+        // a stored deadline has passed, so a slow tick delays an outcome without changing
+        // it - see Medical.h on why these are deadlines rather than countdowns.
+        pChat->TickMedical();
+    }
 }
 
 void GameServer::EnforceJail(std::chrono::steady_clock::time_point aNow)
@@ -523,6 +689,27 @@ void GameServer::OnDisconnection(ConnectionId aConnectionId, EDisconnectReason a
 
         if (auto* pPlayerComponent = player.get<PlayerComponent>())
         {
+            // A call does not survive its participant.
+            //
+            // Before anything else, because this needs the character still resolvable from
+            // the connection, and because the person on the other end should be told they
+            // are alone rather than left talking into a phone. Covers a crash exactly as
+            // it covers a clean quit - both arrive here as a dropped connection.
+            if (const auto* pCharacter = m_players.FindCharacter(pPlayerComponent->DiscordId))
+            {
+                if (auto* pChat = GetWorld()->get_mut<ChatSystem>())
+                {
+                    pChat->EndCallFor(pCharacter->CharacterId, CallState::Ended);
+
+                    // A trade does not survive its participant. Cancelled rather than
+                    // completed, and nothing moves - which is the correct outcome for
+                    // every state except COMMITTING, and that one refuses to be cancelled
+                    // precisely because it is already past the point of choice.
+                    pChat->EndTradeFor(pCharacter->CharacterId, TradeState::Cancelled,
+                                       "they disconnected");
+                }
+            }
+
             // Save BEFORE the puppet is removed - afterwards there is no position left
             // to read. This is the branch that matters most: a crashed game drops its
             // connection, so this runs for a crash exactly as it does for a clean quit,
@@ -934,8 +1121,12 @@ void GameServer::AdmitPlayer(const ConnectionId aConnectionId, const std::string
     settings.set_update_rate(m_config.UpdateRate);
     settings.set_world_id("night-city");
     settings.set_coordinate_version(1);
-    settings.set_cell_size(60000);
-    settings.set_interest_radius(3);
+    // From the grid itself, never a literal. These were hand-written as 60000 and 3 while
+    // Level bins by 6000 - so the client, which re-derives each load's cell from these
+    // numbers and drops anything that disagrees, rejected every character and vehicle load
+    // for a week. Nobody could see anybody. See the comment on Level::kCellSize.
+    settings.set_cell_size(static_cast<uint32_t>(Level::kCellSize));
+    settings.set_interest_radius(Level::kLoadRadius);
     response.set_settings(settings);
 
     // Tell them what character this ACCOUNT owns, before they can decide for themselves.
@@ -952,6 +1143,13 @@ void GameServer::AdmitPlayer(const ConnectionId aConnectionId, const std::string
         // One lookup, appended to a list. The store is keyed on Discord id so there can
         // only be one - but the shape is a list, so the day slots exist this loop grows
         // rather than every reader changing.
+        // The allowance goes out whether or not they already have a character.
+        //
+        // Set outside the branch deliberately: an account with NO character is exactly the
+        // one that needs to know how many it may make, and putting this inside the
+        // has-a-character branch would tell everybody except the person about to create one.
+        response.set_character_slots(PlayerStore::SlotsForLevel(aLevel));
+
         if (const auto* pCharacter = m_players.FindCharacter(acDiscordId))
         {
             server::CharacterSummary summary;

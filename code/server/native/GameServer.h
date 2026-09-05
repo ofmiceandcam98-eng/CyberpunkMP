@@ -5,10 +5,14 @@
 #include "Config.h"
 #include "BanList.h"
 #include "PlayerStore.h"
+#include "MessageStore.h"
+#include "CallStore.h"
+#include "TradeStore.h"
 #include "AuditLog.h"
 #include "Systems/WorldFacts.h"
 #include "Systems/VehicleStore.h"
 #include "Game/World.h"
+#include <utility>
 
 template <typename T>
 concept NetworkMessage = requires(T a, Buffer::Writer writer, Buffer::Reader reader) {
@@ -207,6 +211,7 @@ private:
 
     // Writes everyone's position to disk on a timer, so a server crash costs seconds
     // rather than a session. Disconnects save immediately and do not wait for this.
+    void ReplicatePendingMovement(std::chrono::steady_clock::time_point aNow);
     void SavePlayerPositions(std::chrono::steady_clock::time_point aNow);
 
     // Keeps jailed players in their cell, and lets them out when the time is up.
@@ -216,6 +221,10 @@ private:
     // know, every tick, is where everyone is, so the sentence is enforced by putting
     // anyone who wanders too far straight back.
     void EnforceJail(std::chrono::steady_clock::time_point aNow);
+
+    // Rings out calls nobody picked up. A ring with no timeout leaves both characters in a
+    // state nothing will ever clear, and the only escape is a reconnect.
+    void ExpireCalls(std::chrono::steady_clock::time_point aNow);
 
 public:
     // Where players reappear after dying, set with /setspawn. Persisted alongside the
@@ -248,6 +257,23 @@ public:
     // player would be upset to lose or delighted to forge, never anything at frame rate.
     AuditLog& GetAuditLog() noexcept { return m_audit; }
 
+    // Text messages between characters. Addressed by CharacterId and never by account, so
+    // a player's second character cannot read their first one's inbox - see MessageStore.h.
+    MessageStore& GetMessages() noexcept { return m_messages; }
+
+    // Replicate movement on the server tick instead of per received packet. Off by
+    // default - see Config::CoalesceMovement for why, and why it must not be turned on
+    // without two clients watching.
+    bool ShouldCoalesceMovement() const noexcept { return m_config.CoalesceMovement; }
+
+    // Player-to-player calls. Deliberately does NOT go through the game's PhoneSystem -
+    // see CallStore.h for why that is what keeps the Songbird block intact.
+    CallStore& GetCalls() noexcept { return m_calls; }
+
+    // Live trades. Holds the negotiation; PlayerStore::ApplyTrade does the moving, because
+    // two things that could both move money would be two authorities.
+    TradeStore& GetTrades() noexcept { return m_trades; }
+
 private:
 
     Path m_path;
@@ -263,6 +289,11 @@ private:
     WorldFactStore m_worldFacts;
     VehicleStore m_vehicles;
     AuditLog m_audit;
+    MessageStore m_messages;
+    CallStore m_calls;
+    TradeStore m_trades;
+    std::chrono::steady_clock::time_point m_lastCallCheck;
+    std::chrono::steady_clock::time_point m_lastMovementReplication{};
     std::chrono::steady_clock::time_point m_lastPlayerSave;
     std::chrono::steady_clock::time_point m_lastJailCheck;
 

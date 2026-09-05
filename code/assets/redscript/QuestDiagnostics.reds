@@ -94,6 +94,14 @@ public func MpQuestDebugDump(network: ref<NetworkWorldSystem>) -> Void {
     n"sts_ep1_tier_1",
     n"ow_combat_zone_mini_world_stories",
 
+    // The holocall interlock. 1 means every Phantom Liberty story call is held shut at
+    // the quest level - see MpSilenceStoryHolocalls in Quests.reds. This is the one that
+    // matters for a character whose save still has the prologue running, so read it here
+    // rather than assuming the write took.
+    n"holo_setup_active",
+    n"holo_setup_started",
+    n"holo_songbird_calls_v_start_activate",
+
     // ---- Prologue state, from the original investigation.
     n"q301_active",
     n"q301_done",

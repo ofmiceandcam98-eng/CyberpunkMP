@@ -60,7 +60,20 @@ private final func PushObjectiveQuestNotification(entry: wref<JournalEntry>) -> 
  */
 @wrapMethod(IncomingCallLogicController)
 public final func SetCallInfo(contactName: script_ref<String>, contactEntry: wref<JournalContact>, journalMgr: wref<JournalManager>, isRejectable: Bool) -> Void {
-  if MpQuestsSilenced() {
+  /*
+   * OUR OWN CALL GOES THROUGH. Everything else is still refused.
+   *
+   * MpPhoneCall.IsPresenting() is true only inside the blackboard write in Phone.reds, set
+   * by our network handler and by nothing else in the mod or the game. A story call has no
+   * way to turn it on, so this is not a heuristic about what a call LOOKS like - it is the
+   * difference between a call we are making and a call somebody else is.
+   *
+   * That distinction is why player calls were not built by relaxing the gate below on
+   * request.isPlayerTriggered. That field means "the player triggered this QUEST call" -
+   * ringing a fixer back from the journal - and gating on it would let a whole class of
+   * singleplayer story calls back in. See CallStore.h on the server for the full argument.
+   */
+  if MpQuestsSilenced() && !MpPhoneCall.Active() {
     return;
   }
 
@@ -100,6 +113,62 @@ private final func OnTriggerCall(request: ref<questTriggerCallRequest>) -> Void 
   }
 
   wrappedMethod(request);
+}
+
+/*
+ * Songbird, for characters whose save already has the prologue running.
+ *
+ * The clean start stops the story being CREATED, but it only governs character creation.
+ * Anyone who made a character before it shipped is carrying a save with q301 live inside
+ * it, and loading that save re-arms the hook however current their mod is. Cam, on a
+ * friend's report: "make sure it never re-arms Songbird when playing through the launcher".
+ *
+ * Suppressing the call cannot fix it - PhoneSystem.OnTriggerCall above already stops every
+ * call and the conversation still played, because the conversation is a scene the quest
+ * drives. So this stops the quest reaching the scene at all.
+ *
+ * ep1\quest\holocalls\songbird\songbird_holocall.questphase gates EVERY variant of the
+ * call - holo, audio, incoming, outgoing - behind a compound pause condition:
+ *
+ *     holo_<call>_activate  > 0
+ *     holo_setup_active     < 1      <- this one
+ *     holo_setup_started    < 1
+ *
+ * holo_setup_active appears in every one of those groups, so holding it at 1 is enough on
+ * its own. It is CDPR's own "a holocall is being set up, do not start another" interlock;
+ * we simply never let it clear. A pause condition is exactly the kind of thing a fact DOES
+ * control - unlike q301_failed and friends, which the graph WRITES and does not read, and
+ * which is why setting those changed nothing.
+ *
+ * The same flag gates all twenty-odd Phantom Liberty holocalls - Reed, Myers, Alex, Kurtz,
+ * the courier spot - so this is also the "no NPC calls" the server wants, at the quest
+ * level rather than as a UI suppression. Nothing in the shipped EP1 graphs clears it while
+ * it holds: every setter sits behind the gate this closes, and the cleanup phases
+ * (songbird_cleanup, holocall_cleanup_ep1) do not touch it.
+ *
+ * Set at CONNECT, which is earlier than the world facts the server sends - those arrive
+ * with RestorePossessions, after the world exists, and the hook can fire before then.
+ *
+ * NOT reverted on disconnect, deliberately. SetFact writes into the save, so a revert
+ * would only matter to somebody taking this character back to singleplayer - and leaving
+ * a story call armed on the way out is the worse of the two mistakes.
+ */
+public func MpSilenceStoryHolocalls(network: ref<NetworkWorldSystem>) -> Void {
+  let quests = GameInstance.GetQuestsSystem(GetGameInstance());
+
+  if !IsDefined(quests) {
+    network.ScriptLog("[Holocall] no quest system - story calls NOT silenced");
+    return;
+  }
+
+  quests.SetFact(n"holo_setup_active", 1);
+
+  // Read back rather than trusting the write - the whole point is that this one is load
+  // bearing, and a fact that silently did not take would look exactly like a fixed bug
+  // until somebody's phone rang.
+  let held = quests.GetFact(n"holo_setup_active");
+
+  network.ScriptLog(s"[Holocall] holo_setup_active = \(held) - Phantom Liberty holocalls held closed");
 }
 
 /**

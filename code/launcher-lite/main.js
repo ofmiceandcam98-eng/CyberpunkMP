@@ -1144,6 +1144,26 @@ function gameExecutable () {
 
 // Finds the installed mod folder. Named zzzCyberpunkMP by convention, but RED4ext
 // loads any subfolder, so look for the DLL rather than trusting the name.
+// Where the mod WILL live, the moment the game is found - created on the spot
+// (zeldfep, 2026-09-04: "launcher needs to make mods folder automatically on where it
+// finds the game"). findModDir below stays the "is it INSTALLED" answer (null until
+// CyberpunkMP.dll exists), so nothing that gates on installed-ness changes; this is the
+// destination answer, so Settings can show a real path with "installs here" instead of
+// sending someone browsing for a folder that does not exist yet. An empty plugin folder
+// is inert to RED4ext (it loads DLLs, not directories). A hand-picked modDir override
+// wins here too - the two answers must never disagree about WHERE.
+function modInstallDestination () {
+  const chosen = loadSettings().modDir
+  if (chosen && isSafeModDir(chosen)) return chosen
+
+  const gameDir = findGameDir()
+  if (!gameDir) return null
+
+  const destination = path.join(gameDir, 'red4ext', 'plugins', 'zzzCyberpunkMP')
+  try { mkdirSync(destination, { recursive: true }) } catch { /* read-only game dir - the path is still the answer */ }
+  return destination
+}
+
 function findModDir () {
   // A folder the player pointed at themselves wins over anything found automatically.
   //
@@ -3104,10 +3124,26 @@ async function launchGame () {
     args.push(`--micvolume=${mic}`)
     args.push(`--voicevolume=${chat}`)
 
-    if (voice.voiceInputDevice && voice.voiceInputDevice !== 'default') {
+    // BOTH Chromium sentinels, not just one.
+    //
+    // enumerateDevices() labels the system defaults with the ids 'default' AND
+    // 'communications'. This filtered only the first, so a player who picked the
+    // Communications entry - which is the sensible-looking choice for voice chat - had
+    // '--voicein=communications' passed through as if it were a Windows endpoint id.
+    // It resolves to nothing, and the mod's capture side had no fallback, so the
+    // microphone silently never opened while the speakers (saved as 'default', and so
+    // filtered here) worked fine. That is the "mic NOT CAPTURING / speakers ok" in every
+    // voice log we have.
+    //
+    // The mod now reads both sentinels correctly too, so this is belt and braces - but it
+    // is worth having on this side as well, because passing a value the other end has to
+    // special-case is how the next one of these starts.
+    const isDefaultDevice = (id) => !id || id === 'default' || id === 'communications'
+
+    if (!isDefaultDevice(voice.voiceInputDevice)) {
       args.push(`--voicein=${voice.voiceInputDevice}`)
     }
-    if (voice.voiceOutputDevice && voice.voiceOutputDevice !== 'default') {
+    if (!isDefaultDevice(voice.voiceOutputDevice)) {
       args.push(`--voiceout=${voice.voiceOutputDevice}`)
     }
   }
@@ -4934,6 +4970,8 @@ ipcMain.handle('launcher:uninstall', async () => {
 
   if (response !== 0) return { ok: false }
 
+  launcherLog('launcher uninstall: confirmed by the user - the full sweep begins')
+
   // The mod goes first, while the settings that locate it still exist.
   let note = ''
   try {
@@ -5131,6 +5169,9 @@ ipcMain.handle('paths:get', () => {
     gameDir,
     gameWritable,
     modDir,
+    // Where an install WILL land when modDir is null - so the folder panel shows a
+    // destination instead of "not installed" with a Browse button pointing nowhere.
+    modDestination: modDir || modInstallDestination(),
     hasDll: Boolean(modDir) && existsSync(path.join(modDir, 'CyberpunkMP.dll')),
     userData: app.getPath('userData'),
     appVersion: app.getVersion()
@@ -5145,15 +5186,23 @@ ipcMain.handle('paths:open', (_event, which) => {
 })
 
 ipcMain.handle('install:everything', async () => {
+  // Trail every step. On 2026-09-04 a mod that had launched fine on the 3rd was simply
+  // GONE, the user's Install everything did not bring it back, and the trail had
+  // NOTHING - neither the disappearance nor the attempt. An install that can fail
+  // invisibly costs a remote log-read session per incident; these lines end that.
+  launcherLog('install everything: pressed')
   try {
     const result = await installEverything((step) => {
+      launcherLog(`install everything: ${typeof step === 'string' ? step : JSON.stringify(step)}`)
       // Progress goes to the renderer as it happens - a silent two-minute install
       // looks identical to a hang.
       if (mainWindow) mainWindow.webContents.send('install-progress', step)
     })
+    launcherLog(`install everything: DONE - mod at ${result?.modDir}, ${result?.prerequisites} prerequisite(s), ${result?.modFiles ?? '?'} payload file(s)`)
     lastUpdateCheck = await checkForUpdates()
     return { ok: true, ...result }
   } catch (err) {
+    launcherLog(`install everything: FAILED - ${err.message}`)
     return { ok: false, error: err.message }
   }
 })
@@ -5167,9 +5216,15 @@ ipcMain.handle('update:verify', async () => {
 })
 
 ipcMain.handle('mod:uninstall', async () => {
+  // Same story as install: a mod folder that disappears with no trail line is a
+  // mystery someone has to solve remotely. Removal is a deliberate act - record it.
+  launcherLog('remove mod: pressed')
   try {
-    return { ok: true, ...(await uninstallMod()) }
+    const result = await uninstallMod()
+    launcherLog(`remove mod: ${JSON.stringify(result)}`)
+    return { ok: true, ...result }
   } catch (err) {
+    launcherLog(`remove mod: FAILED - ${err.message}`)
     return { ok: false, error: err.message }
   }
 })
@@ -5888,6 +5943,24 @@ function initAutoUpdater () {
   })
 
   autoUpdater.checkForUpdatesAndNotify().catch(() => {})
+
+  // The check used to run ONCE, at boot - and this launcher gets left open all night.
+  // A release could ship an hour into a session and the open launcher never learned of
+  // it: by the next manual restart the update had already applied silently, so the
+  // "Restart to update" banner never got its moment (zeldfep, 2026-09-04: "id like to
+  // know there's an update instead of clicking verify every time"). Re-ask every 20
+  // minutes, and immediately when the window regains focus after being away - the
+  // moment someone alt-tabs back is exactly when "a new version shipped" is worth
+  // knowing. Throttled so focus-flapping cannot hammer GitHub.
+  setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 20 * 60 * 1000)
+
+  let lastFocusCheck = 0
+  app.on('browser-window-focus', () => {
+    const now = Date.now()
+    if (now - lastFocusCheck < 5 * 60 * 1000) return
+    lastFocusCheck = now
+    autoUpdater.checkForUpdates().catch(() => {})
+  })
 }
 
 // Restart into the new version on demand. quitAndInstall closes the app and runs the

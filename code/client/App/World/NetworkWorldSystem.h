@@ -189,7 +189,91 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
 
     // Ask the server to delete this account's character. The confirmation happens on the
     // client, in front of the person losing it, before this is called.
+// ------------------------------------------------------------------------------
+    // The character roster, for the selector.
+    //
+    // Read out one scalar at a time, the same shape the restore inventory uses: scalars
+    // cross the native boundary comfortably and arrays of structs do not.
+    // Takes the server.s roster whole. Called from BOTH places it arrives - the
+    // authentication reply and NotifyCharacterList - so the two cannot drift.
+    void AdoptRoster(const Vector<server::CharacterSummary>& acCharacters, int32_t aSlots);
+
+    uint32_t GetRosterCount() const { return static_cast<uint32_t>(m_roster.size()); }
+    Red::CString GetRosterId(uint32_t aIndex) const;
+    Red::CString GetRosterName(uint32_t aIndex) const;
+    int32_t GetRosterLevel(uint32_t aIndex) const;
+    int32_t GetRosterSlot(uint32_t aIndex) const;
+    bool IsRosterActive(uint32_t aIndex) const;
+    bool HasRosterSpawnedBefore(uint32_t aIndex) const;
+
+    // How many characters this ACCOUNT may hold, as the SERVER decided it. Never computed
+    // here - an allowance the client works out is an allowance the client can raise.
+    int32_t GetCharacterSlots() const { return m_characterSlots; }
+
+    // Requests, not answers. Each says only that it was sent; the verdict arrives as a new
+    // roster or as a refusal on it.
+    void SelectCharacterSlot(int32_t aSlot);
+    void DeleteCharacterSlot(int32_t aSlot);
+
     void DeleteCharacter();
+
+    // ---------------------------------------------------------------------------
+    // Player-to-player calls, for the PHONE.
+    //
+    // Read-only state plus three requests. The client renders what the server says and
+    // decides nothing: it does not run the ring timeout, does not decide when a call
+    // connects, and cannot end one by forgetting about it. A client that misses a
+    // NotifyCall shows a stale phone, which the next notification repairs; a client that
+    // owned the state could disagree with the server about whether two people are talking,
+    // which nothing repairs.
+    //
+    // Scalar accessors for the same reason as the roster: redscript crosses the native
+    // boundary comfortably with scalars and badly with structs.
+
+    // CallState from the server's CallStore.h. 0 dialing, 1 ringing, 2 connected, and the
+    // terminal states above that - see IsCallOver there. kNoCall when there is none.
+    uint32_t GetCallState() const { return m_callState; }
+    bool HasCall() const { return m_callState != kNoCall; }
+
+    // Already resolved through THIS character's phone book, on the server. Two people can
+    // see different names for the same number, so this cannot be worked out here.
+    Red::CString GetCallName() const { return m_callName.c_str(); }
+    Red::CString GetCallNumber() const { return m_callNumber.c_str(); }
+
+    // True when this player is the one being called - decides ANSWER/DECLINE against
+    // CANCEL. A server fact, not something inferred from whether the client remembers
+    // dialling.
+    bool IsCallIncoming() const { return m_callIncoming; }
+
+    // Requests. Each says only that it was sent; the verdict arrives as a NotifyCall.
+    void RequestCall(const Red::CString& acNumber);
+    void AnswerCall();
+    void DeclineCall();
+    void HangUpCall();
+
+    // The three above, sharing one sender. Private in spirit - not exposed to script,
+    // because a raw action number is exactly the kind of thing that gets miscounted.
+    void SendCallControl(uint32_t aAction);
+
+    // Nothing is ringing. Not a CallState value - it is the absence of one, and folding it
+    // into the enum would make every server-side switch have to handle a state the server
+    // can never be in.
+    static constexpr uint32_t kNoCall = 0xFFFFFFFF;
+
+    /**
+     * Was the game started through the Night City Online launcher?
+     *
+     * True only when `--online` was passed, which is what the launcher does and what
+     * starting Cyberpunk normally does not - see Settings::Load.
+     *
+     * EXPOSED TO SCRIPT BECAUSE THE TWO HALVES WERE DISAGREEING. The C++ half already
+     * honoured this: Core::Application::Update returns early every frame when it is false,
+     * so nothing connects and nothing draws. The REDSCRIPT half had no way to ask, so it
+     * ran regardless - which meant a plain launch still got multiplayer entries on the main
+     * menu, offering to connect and to create characters against a client that could do
+     * neither.
+     */
+    bool IsModEnabled() const;
 
     // ---------------------------------------------------------------------------
     // Voice devices and capture.
@@ -424,6 +508,9 @@ protected:
 
     // The server correcting our balance - a purchase, a sale, an admin adjustment.
     void HandleNotifyMoney(const PacketEvent<server::NotifyMoney>& aMessage);
+
+    // Where a call is now. The only thing that writes the call state below.
+    void HandleNotifyCall(const PacketEvent<server::NotifyCall>& aMessage);
     void HandleNotifyPossessions(const PacketEvent<server::NotifyPossessions>& aMessage);
 
     // Set while a freshly created character is waiting to be sent to the server.
@@ -455,6 +542,42 @@ protected:
     // Empty means the server had nothing stored - a new character - and the body the creator
     // just made is kept. The body gender is not carried separately; it is inside the blob as
     // isBodyGenderMale, which is where the save path reads it from too.
+    // The account roster as the SERVER last described it - every character, with its slot.
+    // Held whole rather than collapsed to one, because a selector cannot draw four rows from
+    // a list the client already threw away.
+    struct RosterEntry
+    {
+        std::string Id;
+        std::string Name;
+        int32_t Level{0};
+        int32_t Slot{0};
+        bool SpawnedBefore{false};
+        bool Active{false};
+    };
+
+    std::vector<RosterEntry> m_roster;
+
+    // The allowance, as the server decided it. Defaults to 1 so a client that has not heard
+    // yet draws one slot rather than four it may not have.
+    int32_t m_characterSlots{1};
+
+    /**
+     * The call the phone is showing. Written ONLY by HandleNotifyCall.
+     *
+     * A mirror of server state, never a copy the client maintains. Every field here is
+     * replaced wholesale by the next notification, so there is no way for the two to drift
+     * apart field by field - which is what happens when a client updates "the name" on one
+     * message and "the state" on another.
+     *
+     * Cleared when a call reaches a terminal state, so a phone that was showing a finished
+     * call does not keep offering ANSWER for it.
+     */
+    uint32_t m_callState{kNoCall};
+    std::string m_callId;
+    std::string m_callName;
+    std::string m_callNumber;
+    bool m_callIncoming{false};
+
     Vector<uint8_t> m_restoreAppearance;
 
     // How far the local appearance restore has got, so it happens exactly once.
@@ -476,6 +599,11 @@ protected:
 
     AppearanceRestore m_appearanceRestore{AppearanceRestore::NotStarted};
 
+    // So "waiting for a world" is said once instead of every tick. ApplyStoredAppearance is
+    // called from the settle loop, and the wait is the normal case for the first second or
+    // two of every connect.
+    bool m_appearanceWaitLogged{false};
+
     // Which character the buffered appearance belongs to, as a revision token.
     //
     // The remote player id is reassigned on every spawn - one of Cam's sessions went from
@@ -495,20 +623,64 @@ protected:
     int64_t m_capturedMoney{0};
     bool m_hasCapturedPossessions{false};
 
-    // True while the player standing in the world IS the character the server restored.
-    //
-    // Set when a restore completes; cleared by ANY world detach. A detach means the engine
-    // is about to rebuild the world from the local save, and what walks out of that is the
-    // player's singleplayer V - not their server character - even though we are still
-    // connected and everything else still looks normal.
-    //
-    // This exists because that difference destroyed Cam's character on 27 August. He
-    // connected, was restored correctly, pressed join from the main menu (detach, reload),
-    // and seventy seconds later the disconnect save captured the singleplayer template and
-    // sent it to the server as him: 13 stacks and 20000 eddies replaced by 409 stacks and
-    // 872. m_restorePending did not catch it - that only covers the window before the FIRST
-    // restore lands, and this happened long after.
-    bool m_characterLive{false};
+    /**
+     * Where this session is between "a socket opened" and "the body standing there is this
+     * character".
+     *
+     * A CONNECTION IS NOT A CHARACTER, and treating those as one boolean is what destroyed
+     * Cam's character on 27 August. He connected, was restored correctly, pressed join from
+     * the main menu - which detaches the world and rebuilds it from his LOCAL SAVE - and
+     * seventy seconds later the disconnect save captured the singleplayer template and sent
+     * it as him: 13 stacks and 20000 eddies replaced by 409 stacks and 872.
+     *
+     * At that moment he had a live connection, a valid character record, AND a body in the
+     * world that was neither. That is a third state, and the code had two.
+     *
+     *   Connected   socket up, nothing chosen. The selector lives here.
+     *   Selected    a character is chosen; nothing has been applied to a body yet.
+     *   Restoring   possessions and appearance are being applied.
+     *   Live        the body in the world IS this character. The ONLY state where
+     *               writing to the stored record is legal.
+     *   Detached    the world was torn down. Whatever walks out of the reload is the
+     *               local save's V until a restore says otherwise.
+     *
+     * Detached is the state that did not exist before and cost a character. It is not
+     * "disconnected" - the connection is fine, the record is fine, and everything else looks
+     * normal. That is exactly why it needs a name.
+     *
+     * The old m_characterLive was Live-or-not, which could not distinguish "before the first
+     * restore" from "after a reload", and could not say WHY a save was refused.
+     */
+    enum class CharacterState : uint32_t
+    {
+        Connected,
+        Selected,
+        Restoring,
+        Live,
+        Detached,
+    };
+
+    CharacterState m_characterState{CharacterState::Connected};
+
+    // Every transition goes through here, so the log tells the story of a session rather
+    // than leaving it to be inferred from what happened next. Cam's lost character would
+    // have been one line: "Live -> Detached (world detach)", seventy seconds before the save.
+    void EnterCharacterState(CharacterState aNext, const char* acpWhy);
+
+    // For the log line, because "refused in state 3" is not a diagnosis.
+    static const char* CharacterStateName(CharacterState aState)
+    {
+        switch (aState)
+        {
+        case CharacterState::Connected: return "Connected";
+        case CharacterState::Selected:  return "Selected";
+        case CharacterState::Restoring: return "Restoring";
+        case CharacterState::Live:      return "Live";
+        case CharacterState::Detached:  return "Detached";
+        }
+
+        return "?";
+    }
 
     // Whether it is safe to tell the server what this player is carrying or wearing.
     //
@@ -542,7 +714,10 @@ protected:
         if (m_appearanceRestore == AppearanceRestore::Failed)
             return false;
 
-        return m_characterLive || m_newCharacterPending;
+        // Live is the only state in which the body standing in the world is this character.
+        // A deliberate creation is the one exception: pressing MULTIPLAYER - NEW CHARACTER is
+        // precisely the case where saving a body the server never gave us is the point.
+        return m_characterState == CharacterState::Live || m_newCharacterPending;
     }
 
     // Set only for a starter-kit grant - see HandleNotifyPossessions. Cleared once the
@@ -744,8 +919,28 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(GetCharacterName);
     RTTI_METHOD(GetCharacterLevel);
     RTTI_METHOD(HasCharacterSpawnedBefore);
+    RTTI_METHOD(GetRosterCount);
+    RTTI_METHOD(GetRosterId);
+    RTTI_METHOD(GetRosterName);
+    RTTI_METHOD(GetRosterLevel);
+    RTTI_METHOD(GetRosterSlot);
+    RTTI_METHOD(IsRosterActive);
+    RTTI_METHOD(HasRosterSpawnedBefore);
+    RTTI_METHOD(GetCharacterSlots);
+    RTTI_METHOD(SelectCharacterSlot);
+    RTTI_METHOD(DeleteCharacterSlot);
     RTTI_METHOD(EnterWorld);
     RTTI_METHOD(DeleteCharacter);
+    RTTI_METHOD(IsModEnabled);
+    RTTI_METHOD(GetCallState);
+    RTTI_METHOD(HasCall);
+    RTTI_METHOD(GetCallName);
+    RTTI_METHOD(GetCallNumber);
+    RTTI_METHOD(IsCallIncoming);
+    RTTI_METHOD(RequestCall);
+    RTTI_METHOD(AnswerCall);
+    RTTI_METHOD(DeclineCall);
+    RTTI_METHOD(HangUpCall);
     RTTI_METHOD(VoiceRefreshDevices);
     RTTI_METHOD(VoiceInputCount);
     RTTI_METHOD(VoiceOutputCount);

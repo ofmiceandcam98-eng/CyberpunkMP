@@ -589,24 +589,39 @@ void InterpolationSystem::HandleNotifyEntityMove(const PacketEvent<server::Notif
     else
         rotation = {0.f, 0.f, aMessage.get_rotation()};
 
-    // Movement for an id we have no puppet for.
+    // Movement for an id nothing is registered under.
     //
     // The sixth silent return of the evening, and the last one on this path that could
     // produce a frozen puppet while every log looks healthy: packets arrive at 30/s, the
     // link is perfect, and every single one is dropped here because the id in the movement
-    // message does not match the id the puppet was spawned under.
+    // message does not match the id anything was spawned under.
     //
-    // Logged once per unknown id rather than 30 times a second, with the ids listed, so a
-    // mismatch is legible rather than a wall.
+    // THE WARNING USED TO SAY "this is a frozen remote player" AND THAT WAS WRONG - it cost
+    // a real investigation. Server ids are a SINGLE FLAT NAMESPACE shared by every network
+    // object (GetEntityByServerId is literally flecs::entity(*this, aServerId), so the
+    // server id IS the entity id), and there is no kind tag to consult before the entity
+    // exists. On 2026-09-04 every id this fired for turned out to be a VEHICLE, each one
+    // followed moments later by "OnVehicleReady: mounting queued character ... into vehicle
+    // N" - movement simply arrived before the spawn did, and the puppet system was innocent.
+    // Diagnosing that as a frozen player sent someone into PuppetDriver and the appearance
+    // path for an ordering race in the vehicle path.
+    //
+    // So it now reports what it actually knows and names the two candidates, in the order
+    // they have actually occurred. Logged once per unknown id rather than 30 times a second,
+    // so a mismatch is legible rather than a wall.
     if (!entity)
     {
         static std::unordered_set<uint64_t> reportedUnknown;
 
         if (reportedUnknown.insert(aMessage.get_id()).second)
         {
-            spdlog::warn("[Interpolation] movement for id {} but no puppet is registered under it "
-                         "- this is a frozen remote player",
-                         aMessage.get_id());
+            spdlog::warn("[Interpolation] movement for id {} but nothing is registered under it - "
+                         "the object is not spawned (yet). Ids are one namespace for players AND "
+                         "vehicles, so this is NOT necessarily a player: look for a following "
+                         "'OnVehicleReady' for id {} (an ordering race, harmless and self-correcting) "
+                         "before suspecting a dropped character spawn (check for a '[Spawn]' line "
+                         "for the same id, which is the case that leaves somebody frozen).",
+                         aMessage.get_id(), aMessage.get_id());
         }
 
         return;

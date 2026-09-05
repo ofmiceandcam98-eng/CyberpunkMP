@@ -88,6 +88,13 @@ struct DiscordConfig
         if (acName == "owner")     return EPermissionLevel::kOwner;
         if (acName == "admin")     return EPermissionLevel::kAdmin;
         if (acName == "moderator") return EPermissionLevel::kModerator;
+        if (acName == "support")   return EPermissionLevel::kSupport;
+
+        // Both spellings, because roles.json is written by a person and "event staff" is
+        // what the Discord role is called while "eventstaff" is what somebody types.
+        if (acName == "eventstaff" || acName == "event staff")
+            return EPermissionLevel::kEventStaff;
+
         return EPermissionLevel::kPlayer;
     }
 
@@ -112,23 +119,47 @@ struct DiscordConfig
 
         if (acLowerName == "dev" || acLowerName == "devs" || acLowerName == "developer" ||
             acLowerName == "developers" || acLowerName == "admin" || acLowerName == "admins" ||
-            acLowerName == "administrator")
+            acLowerName == "administrator" ||
+            // Cam replaced the old moderator/admin roles on 2026-09-02. SENIOR MODERATOR is
+            // the top staff rank below dev and carries the full admin set - bans, /rename,
+            // world state.
+            acLowerName == "senior moderator" || acLowerName == "senior mod" ||
+            acLowerName == "seniormoderator" || acLowerName == "senior moderators")
             return EPermissionLevel::kAdmin;
 
-        // "support" sits here deliberately.
-        //
-        // Cam created a support role in Discord on 2026-08-28 and said the multi-character
-        // slots are for "support, admins and up". There is no kSupport level and adding one
-        // would renumber a ladder that permission checks already read as `>= kModerator`
-        // everywhere - so support IS the moderator rung, which was otherwise unused.
-        //
-        // Listed by name rather than left to roles.json because of the rule this whole
-        // function exists for: a role that does nothing until somebody finds its snowflake
-        // does nothing, in practice, forever. Cam made the role; it should just work.
+        /**
+         * EVENT STAFF. Everything a moderator has, plus the event tools.
+         *
+         * A rung of its own rather than the moderator rung, because Cam's rule is that
+         * event staff can spawn things and support cannot - and with both on kModerator
+         * there is no way to express that. See EPermissionLevel::kEventStaff.
+         *
+         * Matched before the moderator block below, since "event staff" also contains
+         * "staff" and the plain "staff" entry there would otherwise claim it first and
+         * quietly demote them.
+         */
+        if (acLowerName == "event staff" || acLowerName == "eventstaff" ||
+            acLowerName == "events" || acLowerName == "event team")
+            return EPermissionLevel::kEventStaff;
+
         if (acLowerName == "mod" || acLowerName == "mods" || acLowerName == "moderator" ||
-            acLowerName == "moderators" || acLowerName == "staff" ||
-            acLowerName == "support")
+            acLowerName == "moderators" || acLowerName == "staff")
             return EPermissionLevel::kModerator;
+
+        /**
+         * SUPPORT: extra character slots and nothing else. Cam's rule, 2026-09-02.
+         *
+         * It used to return kModerator, because no support level existed and the slot rule
+         * needed something to test - which handed ticket staff the entire moderator toolkit
+         * as a side effect of wanting to give them slots. kSupport sits BELOW moderator now,
+         * so every `>= kModerator` check excludes them without anyone having to remember to.
+         *
+         * Listed by name rather than left to roles.json for the reason this whole function
+         * exists: a role that does nothing until somebody finds its snowflake does nothing,
+         * in practice, forever.
+         */
+        if (acLowerName == "support" || acLowerName == "support team")
+            return EPermissionLevel::kSupport;
 
         return EPermissionLevel::kPlayer;
     }
@@ -201,6 +232,34 @@ struct Config : IConfig
     // A MoveEntityRequest is a few dozen bytes. Thirty of them a second, per player, is
     // nothing next to what the connection already carries.
     uint16_t UpdateRate{30};
+
+    /**
+     * Replicate movement on the server's own tick instead of once per received packet.
+     *
+     * THE PROBLEM. Movement replication is a flecs observer on OnSet, and the handler sets
+     * the component once per accepted packet - so ONE movement packet runs a walk of every
+     * player on the server with a distance test and a send for each one in range. At 1000
+     * packets a second against 32 players that is ~32,000 relevance checks a second, from
+     * one connection, using entirely valid packets.
+     *
+     * WHY NOT A RATE LIMIT. Movement is legitimately high-frequency and dropping packets
+     * produces rubber-banding - the fix would be more visible than the bug. This is state
+     * replication rather than event replication: if five packets arrive between ticks, only
+     * the fifth matters, so the answer is to coalesce rather than to reject.
+     *
+     * WHAT IT COSTS A HONEST CLIENT: nothing. UpdateRate already tells clients to send at
+     * 30Hz, and this replicates at the same 30Hz - so a compliant client sees the same
+     * update cadence it does today. Only bunched or flooded packets are collapsed, which is
+     * the case where the intermediate states were never going to be seen anyway.
+     *
+     * OFF BY DEFAULT, and that is deliberate rather than timid. Changing replication
+     * cadence is the kind of netcode change that introduces jitter or latency in ways no
+     * unit test can see - it needs two real clients watching each other move. The flag
+     * exists so the change can be turned on for that test and compared against the current
+     * behaviour, rather than shipping as a silent difference. Turn it on only with somebody
+     * watching.
+     */
+    bool CoalesceMovement{false};
     std::string Password{};
     FlecsConfig Flecs{};
     DiscordConfig Discord{};
@@ -220,5 +279,5 @@ struct Config : IConfig
     const FlecsConfig& GetFlecsConfig() const { return Flecs; }
     const DiscordConfig& GetDiscordConfig() const { return Discord; }
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(Config, Name, Description, IconUrl, MaxPlayer, Tags, TickRate, UpdateRate, Public, Port, Password, ApiKey, Flecs, Discord)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(Config, Name, Description, IconUrl, MaxPlayer, Tags, TickRate, UpdateRate, CoalesceMovement, Public, Port, Password, ApiKey, Flecs, Discord)
 };

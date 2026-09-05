@@ -60,6 +60,24 @@ public class MpInventory {
     let money = transaction.GetItemQuantity(player, MarketSystem.Money());
     let counted = 0;
 
+    // [MONEY] boundary 1 of 4: what the game says this player is holding, right now.
+    //
+    // The money-persistence bug has survived three rounds of reasoning from logs and it is
+    // not going to be solved by a fourth. Every capture across four sessions read exactly
+    // 20000 - which is both "money is pinned" and "he only ever had the starter kit", and
+    // nothing recorded so far can tell those apart.
+    //
+    // So each boundary now says what it saw, and the WHICH-PLAYER question is answered
+    // rather than assumed: if the entity being read is not the entity being played, then
+    // eddies picked up in the world land on one and the capture reads the other, and every
+    // figure downstream is honestly reported and about the wrong body. That would also
+    // explain why the number never moves rather than moving late.
+    //
+    // Trace the four together. If boundary 1 already reads 20000 after a pickup, the loss is
+    // upstream of the mod entirely and the entity id says whether we are even looking at the
+    // right player. If it reads 20084 and the stored figure is 20000, it is ours.
+    network.ScriptLog(s"[MONEY] 1 capture: GetItemQuantity=\(money) on entity \(EntityID.GetHash(player.GetEntityID()))");
+
     // Written with nested ifs rather than `continue`, which redscript does not support in
     // a for-loop - it fails with UNRESOLVED_REF, which reads like a missing symbol rather
     // than an unsupported keyword.
@@ -295,11 +313,61 @@ public class MpInventory {
     let held = transaction.GetItemQuantity(player, MarketSystem.Money());
     let owed = stored - held;
 
+    /*
+     * Has this character ever been in the world before?
+     *
+     * Read off the ROSTER, which already carries spawned_before for every character and
+     * marks the active one - so this needs no new native and no wire field. It is the
+     * server's own answer, captured at sign-in, before this spawn: false on the very first
+     * spawn of a character and true forever after.
+     */
+    let firstSpawn = true;
+    let rosterIndex = 0u;
+
+    while rosterIndex < network.GetRosterCount() {
+      if network.IsRosterActive(rosterIndex) {
+        firstSpawn = !network.HasRosterSpawnedBefore(rosterIndex);
+      }
+
+      rosterIndex += 1u;
+    }
+
+    // [MONEY] boundary 4 of 4: what the restore is about to overwrite, and with what.
+    network.ScriptLog(s"[MONEY] 4 restore: holding \(held), server says \(stored), adjusting by \(owed), firstSpawn \(firstSpawn)");
+
     if owed > 0 {
       transaction.GiveItem(player, MarketSystem.Money(), owed);
     } else {
+      /*
+       * MONEY IS ONLY EVER TAKEN AT CREATION. Cam's rule: what a player picks up must
+       * never vanish, and any strip must be one-shot at creation.
+       *
+       * This line was the one place in the mod that could DESTROY money rather than merely
+       * fail to record it. owed < 0 means the player is holding more than the server last
+       * heard - and after creation that is the NORMAL state of anyone who has earned
+       * anything, because the server's figure came from an earlier capture and everything
+       * since is more recent. Confiscating the difference is precisely the shape of "I
+       * found 84 eddies and they did not save": the money arrived, the capture had not run
+       * yet, and the next spawn took it straight back off them.
+       *
+       * At creation it IS correct, and it is the only thing that strips the shared world
+       * template's balance - MpSettleStarterLoadout deliberately never touches money,
+       * because the restore was already doing it. So the removal stays, gated to the one
+       * spawn where the template's contents are not the player's.
+       *
+       * NOTE this does not by itself make money persist. If the capture is reading a stale
+       * or wrong figure, it is still stale - the boundaries above are still the way to find
+       * that out. What it does is stop the bug being DESTRUCTIVE while that is settled: a
+       * balance that fails to save can be repaired from the ledger, and eddies taken off a
+       * player on every spawn cannot be noticed at all.
+       */
       if owed < 0 {
-        transaction.RemoveItem(player, MarketSystem.Money(), -owed);
+        if firstSpawn {
+          transaction.RemoveItem(player, MarketSystem.Money(), -owed);
+          network.ScriptLog(s"[MONEY] 4 restore: first spawn, stripped \(-owed) template eddies");
+        } else {
+          network.ScriptLog(s"[MONEY] 4 restore: KEPT \(-owed) eddies the server had not heard about yet");
+        }
       }
     }
 

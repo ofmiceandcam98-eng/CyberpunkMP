@@ -34,6 +34,11 @@ param(
     # Override the tag. Defaults to <current version>-worldstate-test.<next number>.
     [string]$Tag,
 
+    # Skip the Verify.ps1 gate. An escape hatch, not a habit - it exists so a genuine false
+    # positive cannot block a ship at midnight, and every use of it is a bug in Verify that
+    # should be fixed rather than routed around.
+    [switch]$SkipVerify,
+
     [switch]$WhatIf
 )
 
@@ -88,6 +93,26 @@ Step "Client mod"
 & (Join-Path $PSScriptRoot "CheckScripts.ps1") | Out-Null
 if ($LASTEXITCODE -ne 0) { Die "redscript does not compile - not publishing" }
 Ok "redscript compiles"
+
+# Then everything a compiler cannot see. Cam's rule, 2026-09-03: run this before shipping
+# anything.
+#
+# GATED RATHER THAN REMEMBERED, because remembering is what failed. /call shipped as dead
+# code - two dispatches, the older one matching first and returning - and it compiled
+# perfectly, was reported as working, and would have gone out. Verify catches that class:
+# duplicate dispatch, natives with no RTTI behind them (which fail at LOAD and take every
+# script down), unhandled requests, BOMs, and the unit tests.
+if ($SkipVerify) {
+    Warn "verification SKIPPED by -SkipVerify"
+} else {
+    & (Join-Path $PSScriptRoot "Verify.ps1") | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host ""
+        & (Join-Path $PSScriptRoot "Verify.ps1")   # re-run visibly, so the failure is readable
+        Die "verification failed - not publishing. Fix it, or pass -SkipVerify if you are certain"
+    }
+    Ok "verified"
+}
 
 if ($WhatIf) {
     Warn "would build and install Client"
@@ -174,8 +199,35 @@ the shipped one. Restore puts the current release back.
 $shortNum = if ($Tag -match 'test\.(\d+)') { $Matches[1] } else { '?' }
 $title = "test.$shortNum - $Name"
 
-& gh release create $Tag --repo $GhRepo --prerelease --title $title --notes $notes $payload $dll
-if ($LASTEXITCODE -ne 0) { Die "publishing failed" }
+# UPDATE an existing tag rather than failing on it.
+#
+# Iterating on one test build is the normal case, not the exception: a tester finds
+# something, it gets fixed, and the SAME build number should carry the fix so nobody has to
+# be told which of four rows to click. `gh release create` refuses an existing tag, and the
+# refusal came after a full verify-and-build - so every iteration ended in a dead script and
+# a hand-run `gh release upload --clobber`, three times in one evening before this was
+# written. The recovery was always identical, which is the sign it belonged in the tool.
+#
+# Explicitly NOT deleting and recreating the release: that would break the download URLs the
+# launcher may already be holding, and briefly leave the dev panel with no build at all.
+$exists = & gh release view $Tag --repo $GhRepo --json tagName 2>$null
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "  $Tag exists - updating it in place" -ForegroundColor DarkGray
 
-Ok "published $Tag"
+    & gh release upload $Tag --repo $GhRepo --clobber $payload $dll
+    if ($LASTEXITCODE -ne 0) { Die "uploading the new assets to $Tag failed" }
+
+    # The title carries what to LOOK for, so it has to move with the payload - a refreshed
+    # build under last iteration's description is how a tester tests the wrong thing.
+    & gh release edit $Tag --repo $GhRepo --title $title --notes $notes | Out-Null
+    if ($LASTEXITCODE -ne 0) { Die "updating the title and notes on $Tag failed" }
+
+    Ok "updated $Tag"
+}
+else {
+    & gh release create $Tag --repo $GhRepo --prerelease --title $title --notes $notes $payload $dll
+    if ($LASTEXITCODE -ne 0) { Die "publishing failed" }
+
+    Ok "published $Tag"
+}
 Write-Host "`nInstall it from Settings > DEV > Test builds." -ForegroundColor Green

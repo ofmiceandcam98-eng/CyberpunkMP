@@ -38,6 +38,40 @@ REMOTE=$(git rev-parse @{u})
 
 [ "$LOCAL" = "$REMOTE" ] && exit 0   # nothing new
 
+# The map convention (crew decree 2026-09-03): ANY change to docs/MAP.md is announced on
+# the coordination feed, so neither Claude stream works from a stale mental map. Each
+# stream posts when IT touches the file; this is the backstop for anything that lands by
+# push alone. Soft-skips without the key - announcing is a courtesy, deploying is the job.
+announce_map_change() {
+    local keyfile="$HOME/.nco-deploy-coord-key"
+    [ -f "$keyfile" ] || return 0
+    git diff --name-only "$1" "$2" | grep -q '^docs/MAP.md$' || return 0
+    local commits
+    commits=$(git log --oneline "$1".."$2" -- docs/MAP.md | head -5 | tr '\n' '; ')
+    curl -s -m 10 -X POST http://127.0.0.1:11780/v1/updates \
+        -H "Authorization: Bearer $(cat "$keyfile")" -H 'Content-Type: application/json' \
+        -d "{\"title\":\"the mental map changed - re-read docs/MAP.md before your next move\",\"body\":\"Map-touching commit(s) just landed: ${commits} Whoever reads this: pull and re-read the map before acting on cached knowledge of it.\",\"kind\":\"status\"}" \
+        >/dev/null 2>&1 || true
+    echo "$(date -Is) announced MAP.md change on the coordination feed" >> "$LOG"
+}
+
+# The third file to silently kill every deploy (2026-09-03): a hand-seeded copy of a
+# script that later landed in the repo (update-wolvenkit.sh). Fetch worked, pull
+# refused ("untracked working tree files would be overwritten"), and "pull failed"
+# scrolled unread for hours while every updated client was refused at the door. The
+# two-path checkout above cures only the coord-api flavour; this cures the CLASS:
+# any UNTRACKED file the incoming commits are about to CREATE gets shelved aside with
+# a loud log line. Untracked means the repo never owned it, so nothing of the repo's
+# is lost - and a hand-seeded copy of a soon-to-be-committed file is exactly what
+# this box keeps growing. Tracked local modifications are deliberately NOT touched:
+# those are real divergence and deserve a failed pull someone investigates.
+for f in $(git diff --name-only --diff-filter=A "$LOCAL" "$REMOTE"); do
+    if [ -e "$f" ] && ! git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+        mv "$f" "$f.deploy-shelved-$(date +%Y%m%d%H%M%S)" 2>/dev/null || continue
+        echo "$(date -Is) shelved untracked '$f' - it collided with an incoming file of the same name" >> "$LOG"
+    fi
+done
+
 # Never rebuild under a live session. A deploy is a full native compile on the same
 # 4-core box that is serving the tick loop, followed by a container restart that kicks
 # everyone - which players experienced as the game "getting worse" in windows that
@@ -60,12 +94,14 @@ fi
 # no-op deploy. A pull with no relevant changes is recorded and left running.
 if ! git diff --name-only "$LOCAL" "$REMOTE" | grep -qE '^(code/(server|common|protocol|assets|client)|docker|Dockerfile|xmake)'; then
     git pull --quiet || { echo "$(date -Is) pull failed" >> "$LOG"; exit 1; }
+    announce_map_change "$LOCAL" "$(git rev-parse @)"
     echo "$(date -Is) pulled $(git rev-parse --short @) - nothing the server uses changed, no restart" >> "$LOG"
     exit 0
 fi
 
 echo "$(date -Is) updating $LOCAL -> $REMOTE" >> "$LOG"
 git pull --quiet || { echo "$(date -Is) pull failed" >> "$LOG"; exit 1; }
+announce_map_change "$LOCAL" "$(git rev-parse @)"
 
 if docker compose up -d --build >> "$LOG" 2>&1; then
     echo "$(date -Is) deployed $(git rev-parse --short @)" >> "$LOG"

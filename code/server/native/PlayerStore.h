@@ -1,7 +1,19 @@
 #pragma once
 
+#include <limits>   // numeric_limits, for the trade overflow guards - MSVC supplies this
+                    // transitively, the GCC container the server builds in does not
+
+#include <mutex>    // Flush is serialised - see its note
+
+#include "AtomicWrite.h"
+#include "EconomyMigration.h"
+#include "EconomyMutator.h"    // trade routes its arithmetic through the one boundary
 #include "CharacterRecord.h"
 
+#include "PermissionLevel.h"
+#include <algorithm>
+#include <chrono>
+#include <utility>
 /**
  * Where each player was, kept across sessions.
  *
@@ -253,11 +265,26 @@ struct PlayerStore
         if (acCharacterId.empty())
             return nullptr;
 
+        // Normalise before comparing, because this is what a PERSON typed.
+        //
+        // Ids are stored grouped ("AEC-MJ6P") and read aloud without the hyphen. A correct
+        // id typed as "aecmj6p" is the same id and must find the same character; a
+        // mistyped one must find nothing rather than somebody else's. ParseCharacterId
+        // strips case, spaces and hyphens, verifies the check symbol, and hands back the
+        // stored form - so a typo fails HERE instead of resolving to a stranger.
+        //
+        // An unparseable id falls through to the raw comparison rather than refusing
+        // outright: legacy 16-hex ids parse fine, but anything else stored before this
+        // existed should still be findable by its exact text.
+        std::string reason;
+        const std::string normalised = ParseCharacterId(acCharacterId, &reason);
+        const std::string& wanted = normalised.empty() ? acCharacterId : normalised;
+
         for (const auto& record : m_records)
         {
             for (const auto& character : record.Characters)
             {
-                if (character.CharacterId != acCharacterId)
+                if (character.CharacterId != wanted)
                     continue;
 
                 if (apOwnerDiscordId)
@@ -309,17 +336,21 @@ struct PlayerStore
      * All of them act on the ACTIVE character, and all return false when there is nothing
      * to act on, so a caller can say what happened rather than reporting success blindly.
      */
-    bool AddContact(const std::string& acDiscordId, const std::string& acNumber)
+    bool AddContact(const std::string& acDiscordId, const std::string& acNumber,
+                    const std::string& acName = {})
     {
         auto* pCharacter = FindCharacterMutable(acDiscordId);
         if (!pCharacter || acNumber.empty())
             return false;
 
-        if (std::find(pCharacter->Contacts.begin(), pCharacter->Contacts.end(), acNumber) !=
-            pCharacter->Contacts.end())
+        if (FindContact(*pCharacter, acNumber))
             return false;   // already theirs - the caller says so rather than duplicating it
 
-        pCharacter->Contacts.push_back(acNumber);
+        Contact contact;
+        contact.Number = acNumber;
+        contact.Name = acName;
+
+        pCharacter->Contacts.push_back(std::move(contact));
         pCharacter->UpdatedAt = Now();
 
         m_dirty = true;
@@ -327,6 +358,45 @@ struct PlayerStore
         return true;
     }
 
+    /**
+     * Rename an entry the character already has.
+     *
+     * Separate from AddContact rather than folded into it as an upsert. "Add" and "rename"
+     * fail for different reasons and a player needs to be told which happened - an upsert
+     * that silently creates a contact when somebody meant to rename one is how you end up
+     * with a phone book full of numbers nobody recognises.
+     *
+     * An empty name CLEARS it, falling back to whoever holds the number. That is a real
+     * thing to want and there is no other way to express it.
+     */
+    bool SetContactName(const std::string& acDiscordId, const std::string& acNumber,
+                        const std::string& acName)
+    {
+        auto* pCharacter = FindCharacterMutable(acDiscordId);
+        if (!pCharacter)
+            return false;
+
+        auto* pContact = FindContactMutable(*pCharacter, acNumber);
+        if (!pContact)
+            return false;
+
+        pContact->Name = acName;
+        pCharacter->UpdatedAt = Now();
+
+        m_dirty = true;
+        Flush();
+        return true;
+    }
+
+    /**
+     * Forget a contact. Deliberately does NOT touch anything else.
+     *
+     * Message history, payments and call records all survive, because they are records of
+     * things that happened and deleting a phone book entry does not un-happen them. The
+     * thread simply shows the number where the name used to be. This is why messages live
+     * in their own store keyed on CharacterId rather than hanging off the contact list -
+     * the separation is what makes this the easy behaviour instead of the careful one.
+     */
     bool RemoveContact(const std::string& acDiscordId, const std::string& acNumber)
     {
         auto* pCharacter = FindCharacterMutable(acDiscordId);
@@ -336,7 +406,9 @@ struct PlayerStore
         const auto before = pCharacter->Contacts.size();
 
         pCharacter->Contacts.erase(
-            std::remove(pCharacter->Contacts.begin(), pCharacter->Contacts.end(), acNumber),
+            std::remove_if(pCharacter->Contacts.begin(), pCharacter->Contacts.end(),
+                           [&acNumber](const Contact& acContact)
+                           { return acContact.Number == acNumber; }),
             pCharacter->Contacts.end());
 
         if (pCharacter->Contacts.size() == before)
@@ -346,6 +418,97 @@ struct PlayerStore
         m_dirty = true;
         Flush();
         return true;
+    }
+
+    // ------------------------------------------------------------------ blocking ----
+
+    /**
+     * Does this character refuse messages from that number?
+     *
+     * Const and cheap, because it is checked on the path of every message rather than only
+     * when somebody asks. A block that is enforced at the command surface and not at the
+     * delivery surface is not a block - it is a rule the next caller gets to forget.
+     */
+    bool IsBlocked(const std::string& acDiscordId, const std::string& acNumber) const
+    {
+        const auto* pCharacter = FindCharacter(acDiscordId);
+        if (!pCharacter)
+            return false;
+
+        return std::find(pCharacter->Blocked.begin(), pCharacter->Blocked.end(), acNumber) !=
+               pCharacter->Blocked.end();
+    }
+
+    // The same question asked of a character directly, for paths that already have one and
+    // must not resolve an account a second time - a block is the ACTIVE character's, and
+    // re-resolving invites the wrong one to answer.
+    static bool IsBlockedBy(const CharacterRecord& acCharacter, const std::string& acNumber)
+    {
+        return std::find(acCharacter.Blocked.begin(), acCharacter.Blocked.end(), acNumber) !=
+               acCharacter.Blocked.end();
+    }
+
+    bool Block(const std::string& acDiscordId, const std::string& acNumber)
+    {
+        auto* pCharacter = FindCharacterMutable(acDiscordId);
+        if (!pCharacter || acNumber.empty())
+            return false;
+
+        if (std::find(pCharacter->Blocked.begin(), pCharacter->Blocked.end(), acNumber) !=
+            pCharacter->Blocked.end())
+            return false;
+
+        pCharacter->Blocked.push_back(acNumber);
+        pCharacter->UpdatedAt = Now();
+
+        m_dirty = true;
+        Flush();
+        return true;
+    }
+
+    bool Unblock(const std::string& acDiscordId, const std::string& acNumber)
+    {
+        auto* pCharacter = FindCharacterMutable(acDiscordId);
+        if (!pCharacter)
+            return false;
+
+        const auto before = pCharacter->Blocked.size();
+
+        pCharacter->Blocked.erase(
+            std::remove(pCharacter->Blocked.begin(), pCharacter->Blocked.end(), acNumber),
+            pCharacter->Blocked.end());
+
+        if (pCharacter->Blocked.size() == before)
+            return false;
+
+        pCharacter->UpdatedAt = Now();
+        m_dirty = true;
+        Flush();
+        return true;
+    }
+
+    // A character's saved name for a number, or nullptr when they have not saved one.
+    static const Contact* FindContact(const CharacterRecord& acCharacter,
+                                      const std::string& acNumber)
+    {
+        for (const auto& contact : acCharacter.Contacts)
+        {
+            if (contact.Number == acNumber)
+                return &contact;
+        }
+
+        return nullptr;
+    }
+
+    static Contact* FindContactMutable(CharacterRecord& aCharacter, const std::string& acNumber)
+    {
+        for (auto& contact : aCharacter.Contacts)
+        {
+            if (contact.Number == acNumber)
+                return &contact;
+        }
+
+        return nullptr;
     }
 
     bool AllowQuest(const std::string& acDiscordId, const std::string& acQuest)
@@ -473,6 +636,7 @@ struct PlayerStore
             // worked. Same shape as the CreatedAt line above, and the same reason.
             const auto number = existing.PhoneNumber;
             const auto contacts = existing.Contacts;
+            const auto blocked = existing.Blocked;
             const auto allowed = existing.AllowedQuests;
 
             existing = acCharacter;
@@ -483,6 +647,8 @@ struct PlayerStore
                 existing.PhoneNumber = number;
             if (!contacts.empty())
                 existing.Contacts = contacts;
+            if (!blocked.empty())
+                existing.Blocked = blocked;
             if (!allowed.empty())
                 existing.AllowedQuests = allowed;
 
@@ -515,6 +681,120 @@ struct PlayerStore
      * gone". Nothing reads the retired list yet; it exists so that answer can be written
      * later without a time machine.
      */
+    /**
+     * How many character slots an account has, from its role.
+     *
+     * One for a player, four for staff. Cam's rule: admins and above get four.
+     *
+     * A PERMISSION, so the server decides it and the client is told. A client that works out
+     * its own allowance is a client that can grant itself an allowance.
+     */
+    static int SlotsForLevel(EPermissionLevel aLevel)
+    {
+        // EVERY staff rank, support included. Cam's call, 2026-09-02: "all should get 4
+        // character slots", and support "just gets extra character slots, nothing else".
+        //
+        // kSupport is the LOWEST staff rung, so this is the widest staff test there is -
+        // and it is deliberately the only check support satisfies. Everything else on the
+        // server asks for `>= kModerator` or higher, which support sits below.
+        return aLevel >= EPermissionLevel::kSupport ? kStaffSlots : kPlayerSlots;
+    }
+
+    static constexpr int kPlayerSlots = 1;
+    static constexpr int kStaffSlots = 4;
+
+    /**
+     * The most rows one account may EVER write, across every character it has ever had.
+     *
+     * Separate from the slot count, and it exists because deletion is soft: a retired
+     * character keeps its row so its id is never reissued and the deletion can be undone.
+     * Which means create-and-delete-and-create writes a new row every single time, and
+     * without a ceiling one account can grow the file forever.
+     *
+     * Sixty is not a considered figure - it is "far more than anybody will legitimately use,
+     * and far fewer than a script can produce in an afternoon".
+     */
+    static constexpr int kLifetimeRowCeiling = 60;
+
+    /**
+     * Whether this account may create a character in this slot, and why not if not.
+     *
+     * Returns an empty string for yes, or a stable refusal code. Codes rather than sentences
+     * so the caller can branch, log and render them - "slot_taken" survives translation and a
+     * log grep in a way that "That slot already has a character on it" does not.
+     */
+    std::string MayCreateInSlot(const std::string& acDiscordId, int aSlot, EPermissionLevel aLevel) const
+    {
+        const int slots = SlotsForLevel(aLevel);
+
+        if (aSlot < 0 || aSlot >= slots)
+            return "slot_out_of_range";
+
+        const auto* pRecord = Find(acDiscordId);
+        if (!pRecord)
+            return {}; // no record yet: the first character of a new account
+
+        for (const auto& character : pRecord->Characters)
+        {
+            if (character.Slot == aSlot)
+                return "slot_taken";
+        }
+
+        // Live and retired both count. The ceiling is about rows written, not characters
+        // held - that is the whole reason it is separate from the slot count.
+        const size_t rows = pRecord->Characters.size() + pRecord->RetiredCharacters.size();
+
+        if (rows >= static_cast<size_t>(kLifetimeRowCeiling))
+            return "row_ceiling";
+
+        return {};
+    }
+
+    /**
+     * The live characters on an account, for the selector.
+     *
+     * Returns them as they are stored, INCLUDING their slot numbers, which are not
+     * contiguous: retiring the character in slot 1 of three leaves slots 0 and 2 occupied.
+     * The caller draws holes where the gaps are rather than renumbering, because a slot
+     * number that moves is a slot number somebody's UI is about to act on wrongly.
+     */
+    const std::vector<CharacterRecord>* GetCharacters(const std::string& acDiscordId) const
+    {
+        const auto* pRecord = Find(acDiscordId);
+        return pRecord ? &pRecord->Characters : nullptr;
+    }
+
+    /**
+     * Play as the character in this slot.
+     *
+     * Refuses rather than falling back to slot 0. "You asked for a character that is not
+     * there, so here is a different one" is how somebody ends up playing, and saving over,
+     * a character they did not choose.
+     */
+    std::string SelectSlot(const std::string& acDiscordId, int aSlot)
+    {
+        auto* pRecord = FindMutable(acDiscordId);
+        if (!pRecord)
+            return "no_account";
+
+        for (const auto& character : pRecord->Characters)
+        {
+            if (character.Slot != aSlot)
+                continue;
+
+            if (pRecord->ActiveSlot != aSlot)
+            {
+                pRecord->ActiveSlot = aSlot;
+                m_dirty = true;
+                Flush();
+            }
+
+            return {};
+        }
+
+        return "empty_slot";
+    }
+
     bool RetireCharacter(const std::string& acDiscordId, int aSlot = -1)
     {
         auto* pRecord = FindMutable(acDiscordId);
@@ -621,28 +901,502 @@ struct PlayerStore
         return nullptr;
     }
 
+    // ------------------------------------------------------------------- trading ----
+
+    /**
+     * One side of an exchange: what this character GIVES.
+     *
+     * Addressed by CharacterId, like everything else that belongs to a character rather
+     * than an account. A player's two characters are two traders.
+     */
+    struct TradeSide
+    {
+        std::string CharacterId;
+        int64_t Money{0};
+        std::vector<CharacterRecord::ItemStack> Items;
+    };
+
+    /**
+     * Move both sides at once, or move nothing.
+     *
+     * HERE, IN THE STORE, and not in a trade system beside it. This file is already the
+     * authority for money and possessions; a second thing that could also move them would
+     * be a second authority, and the two would disagree the first time either changed.
+     * The trade system decides WHETHER an exchange happens. This decides that it happens
+     * completely.
+     *
+     * ATOMICITY, and honestly what kind. Both records are copied, both copies are mutated,
+     * everything is validated against the copies, and only then are they written back -
+     * followed by ONE flush. So there is no ordering in which a partial exchange becomes
+     * visible to anything else on the server, and no window where one side has paid and
+     * the other has not.
+     *
+     * What this is NOT is durable-transactional. The backing store is a JSON file; if the
+     * process dies inside Flush the file can be truncated, and no amount of care here fixes
+     * that. The brief asks for a write-ahead journal, and that belongs with the move to a
+     * database rather than bolted onto a file - which is also where the replicable-instance
+     * rule takes it. The audit ledger records every completed trade in the meantime, which
+     * is what makes a bad outcome repairable rather than invisible.
+     *
+     * Returns false and changes NOTHING on any failure, with a stable reason.
+     */
+    bool ApplyTrade(const TradeSide& acLeft, const TradeSide& acRight, std::string* apReason = nullptr)
+    {
+        const auto fail = [apReason](const char* acpWhy)
+        {
+            if (apReason)
+                *apReason = acpWhy;
+            return false;
+        };
+
+        if (acLeft.CharacterId == acRight.CharacterId)
+            return fail("same_character");
+
+        auto* pLeftRecord = FindRecordByCharacterId(acLeft.CharacterId);
+        auto* pRightRecord = FindRecordByCharacterId(acRight.CharacterId);
+
+        if (!pLeftRecord || !pRightRecord)
+            return fail("no_character");
+
+        auto* pLeft = FindCharacterInRecord(*pLeftRecord, acLeft.CharacterId);
+        auto* pRight = FindCharacterInRecord(*pRightRecord, acRight.CharacterId);
+
+        if (!pLeft || !pRight)
+            return fail("no_character");
+
+        /*
+         * REVISION HEADROOM IS PART OF VALIDATION, checked before a single byte moves.
+         *
+         * Asked here rather than at the end because discovering that the second participant
+         * cannot take another revision AFTER the first has been mutated would mean unwinding
+         * a transaction that should never have started. A trade where either side is
+         * exhausted fails whole - both live records untouched.
+         *
+         * Unmigrated characters answer Success and stay at revision 0, so this changes
+         * nothing for the legacy population while migration is inactive.
+         */
+        if (Economy::CanAdvanceRevision(*pLeft) != Economy::Result::Success ||
+            Economy::CanAdvanceRevision(*pRight) != Economy::Result::Success)
+        {
+            return fail("revision_exhausted");
+        }
+
+        // Copies. Every mutation below happens on these, so a validation failure halfway
+        // through leaves the real records untouched rather than half-traded.
+        CharacterRecord left = *pLeft;
+        CharacterRecord right = *pRight;
+
+        if (!MoveAssets(left, right, acLeft, apReason))
+            return false;
+
+        if (!MoveAssets(right, left, acRight, apReason))
+            return false;
+
+        /*
+         * ONE revision each, for the whole trade.
+         *
+         * Not one per item, not one per direction, not one per Economy call - a trade of
+         * two thousand eddies and three items is ONE thing that happened to each
+         * participant. The primitives deliberately do not touch the revision so that this
+         * is the only place it can advance.
+         *
+         * On the candidates, after both directions have already succeeded, so a trade that
+         * fails advances nothing.
+         */
+        Economy::AdvanceRevision(left);
+        Economy::AdvanceRevision(right);
+
+        // Only now does anything real change.
+        *pLeft = left;
+        *pRight = right;
+
+        const auto now = Now();
+        pLeft->UpdatedAt = now;
+        pRight->UpdatedAt = now;
+
+        m_dirty = true;
+        Flush();
+
+        if (apReason)
+            apReason->clear();
+
+        return true;
+    }
+
+    /**
+     * What a character can actually spend, given what they have already promised.
+     *
+     * The brief's concurrency case: somebody with 10,000 who has offered 8,000 in a live
+     * trade must not also be able to send 8,000 by phone. Reserved money is not available
+     * money, and every path that spends has to ask the same question or the reservation is
+     * decorative.
+     *
+     * The reserved figure comes from the caller - the trade system owns live trades and
+     * this file does not know about them - so that this stays the single authority on what
+     * is OWNED without also becoming the authority on what is promised.
+     */
+    static int64_t AvailableMoney(const CharacterRecord& acCharacter, int64_t aReserved)
+    {
+        const auto available = acCharacter.Money - aReserved;
+        return available > 0 ? available : 0;
+    }
+
+    // How many of an item a character holds. Zero for one they do not.
+    static uint32_t HeldQuantity(const CharacterRecord& acCharacter, uint64_t aItemId)
+    {
+        for (const auto& stack : acCharacter.Inventory)
+        {
+            if (stack.Id == aItemId)
+                return stack.Quantity;
+        }
+
+        return 0;
+    }
+
     // Writes only when something actually changed, so calling this on a timer is cheap.
+    /**
+     * What the trust-once economy migration WOULD do. Changes nothing.
+     *
+     * Phase 5 stage 3. Reads the server's own persisted records - never a client's save,
+     * never a live inventory query, never anything the client can influence.
+     *
+     * NOT CALLED BY ANYTHING during normal operation. See EconomyMigration.h for why the
+     * mechanism exists before it is allowed to run.
+     */
+    EconomyMigration::Report InspectEconomyMigration() const
+    {
+        return EconomyMigration::Inspect(GatherCharacters(m_records));
+    }
+
+    /**
+     * Cross the boundary for every character, or for none of them.
+     *
+     * THE TRANSACTION, and its order is the whole point:
+     *
+     *     inspect the live records          - read only
+     *     refuse unless every one is clean  - all or nothing
+     *     COPY them                         - the live set is still untouched
+     *     migrate the copy
+     *     persist the copy atomically       - Stage 1's guarantee, same writer
+     *     only THEN swap the copy in
+     *
+     * The last two lines in that order are what stops RAM and disk disagreeing. Migrating
+     * the live records first and persisting afterwards would mean a failed write leaves the
+     * server believing everybody is migrated while the file says nobody is - and the next
+     * successful save would then write that false belief to disk permanently.
+     *
+     * Persistence goes through AtomicWrite, exactly as Flush does, under the same mutex.
+     * There is deliberately no second writer.
+     *
+     * `aNowSeconds` is injected rather than read here so tests are deterministic; callers
+     * pass server time.
+     */
+    bool CommitEconomyMigration(int64_t aNowSeconds, EconomyMigration::Report* apReport = nullptr,
+                                std::string* apError = nullptr)
+    {
+        const auto fail = [apError](const char* acpWhy)
+        {
+            if (apError)
+                *apError = acpWhy;
+            return false;
+        };
+
+        std::lock_guard<std::mutex> lock(m_writeMutex);
+
+        const auto report = EconomyMigration::Inspect(GatherCharacters(m_records));
+
+        if (apReport)
+            *apReport = report;
+
+        if (!report.CanCommit())
+            return fail("some records need attention - nothing was migrated");
+
+        if (report.Candidates == 0)
+            return true;   // everything already migrated; a no-op is a success
+
+        // The copy. Nothing live is touched until the write has succeeded.
+        std::vector<PlayerRecord> candidate = m_records;
+
+        size_t migrated = 0;
+
+        for (auto& record : candidate)
+        {
+            for (auto* pList : {&record.Characters, &record.RetiredCharacters})
+            {
+                for (auto& character : *pList)
+                {
+                    if (EconomyMigration::Apply(character, aNowSeconds))
+                        ++migrated;
+                }
+            }
+        }
+
+        std::string payload;
+
+        try
+        {
+            payload = nlohmann::json(candidate).dump(2);
+        }
+        catch (const std::exception& e)
+        {
+            spdlog::error("[MIGRATION] could not serialise the migrated records: {}. Nothing "
+                          "was changed, on disk or in memory.",
+                          e.what());
+            return fail("serialisation failed");
+        }
+
+        std::string reason;
+
+        if (!AtomicWrite::Replace(m_path, payload, &reason))
+        {
+            spdlog::error("[MIGRATION] could not persist: {}. The previous file is intact and "
+                          "NO character was marked migrated.",
+                          reason);
+            return fail("the write failed");
+        }
+
+        // Persisted. Only now does the server believe it.
+        m_records = std::move(candidate);
+        m_dirty = false;
+
+        spdlog::info("[MIGRATION] economy migration committed: {} character(s) migrated, {} "
+                     "already were. Their money and inventory are unchanged; the server now "
+                     "owns them.",
+                     migrated, report.AlreadyMigrated);
+
+        return true;
+    }
+
+    /**
+     * Persist every record, without ever leaving players.json truncated.
+     *
+     * This used to open the live file with an ofstream, which TRUNCATES it, and then stream
+     * a freshly serialised document into it. Between those two moments the authoritative
+     * copy of every character on the server did not exist - and a crash, a power cut, a full
+     * disk or a killed container in that window left an empty or half-written file with no
+     * backup to fall back on.
+     *
+     * See AtomicWrite for the replacement sequence and why its ORDER is the design.
+     *
+     * SERIALISED FIRST, INTO MEMORY. A json exception now happens before anything on disk
+     * has been touched, so a record that cannot be serialised costs a log line rather than
+     * the database.
+     *
+     * LOCKED. The three callers - the thirty-second tick, the disconnect path and the
+     * destructor - are all on the game thread today, but a shutdown racing a tick would
+     * interleave two serialisations into one file, and a file that is half one state and
+     * half another is corrupt in a way that reads as valid JSON. The mutex is uncontended
+     * on the normal path and removes the whole class.
+     *
+     * m_dirty is cleared ONLY on success. A failed write leaves the store dirty so the next
+     * tick tries again, rather than silently believing it has been saved.
+     */
     void Flush()
     {
         if (!m_dirty || m_path.empty())
             return;
 
+        std::lock_guard<std::mutex> lock(m_writeMutex);
+
+        // Re-checked under the lock: another caller may have written it while we waited.
+        if (!m_dirty)
+            return;
+
+        std::string payload;
+
         try
         {
-            std::filesystem::create_directories(m_path.parent_path());
-
-            std::ofstream file(m_path);
-            file << nlohmann::json(m_records).dump(2);
-
-            m_dirty = false;
+            payload = nlohmann::json(m_records).dump(2);
         }
         catch (const std::exception& e)
         {
-            spdlog::error("Could not write {}: {}", m_path.string(), e.what());
+            spdlog::error("Could not serialise {}: {}. The file on disk is UNCHANGED and still "
+                          "valid; nothing was written.",
+                          m_path.string(), e.what());
+            return;
         }
+
+        std::string reason;
+
+        if (!AtomicWrite::Replace(m_path, payload, &reason))
+        {
+            spdlog::error("Could not write {}: {}. The previous file is intact - it will be "
+                          "retried on the next save.",
+                          m_path.string(), reason);
+            return;
+        }
+
+        // Non-fatal detail from a successful write - a backup that could not be taken.
+        if (!reason.empty())
+            spdlog::warn("{}: {}", m_path.string(), reason);
+
+        m_dirty = false;
     }
 
 private:
+    PlayerRecord* FindRecordByCharacterId(const std::string& acCharacterId)
+    {
+        for (auto& record : m_records)
+        {
+            for (auto& character : record.Characters)
+            {
+                if (character.CharacterId == acCharacterId)
+                    return &record;
+            }
+        }
+
+        return nullptr;
+    }
+
+    static CharacterRecord* FindCharacterInRecord(PlayerRecord& aRecord,
+                                                  const std::string& acCharacterId)
+    {
+        for (auto& character : aRecord.Characters)
+        {
+            if (character.CharacterId == acCharacterId)
+                return &character;
+        }
+
+        return nullptr;
+    }
+
+    /**
+     * Take what one side offered off them and put it on the other. Conserving, always.
+     *
+     * The governing rule of the whole trade system: it never CREATES value, it only moves
+     * value that already exists. So every removal is checked against what is actually held,
+     * and every addition is exactly what was removed - no rounding, no clamping to zero
+     * that would silently vaporise the remainder, and no path where a quantity is added
+     * without having been taken.
+     *
+     * Operates on the caller's COPIES. Returning false mid-way leaves those copies
+     * inconsistent, which is exactly why ApplyTrade validates on copies and only assigns
+     * the real records once both directions have succeeded.
+     */
+    static bool MoveAssets(CharacterRecord& aFrom, CharacterRecord& aTo, const TradeSide& acOffer,
+                           std::string* apReason)
+    {
+        const auto fail = [apReason](const char* acpWhy)
+        {
+            if (apReason)
+                *apReason = acpWhy;
+            return false;
+        };
+
+        if (acOffer.Money < 0)
+            return fail("negative_money");   // "pay me" is theft with extra steps
+
+        if (aFrom.Money < acOffer.Money)
+            return fail("insufficient_funds");
+
+        // Items first, so a failure on the last stack does not leave money already moved
+        // in this copy - it costs nothing and keeps the failure shape uniform.
+        /*
+         * Through Economy::RemoveItem. Same rules, one implementation.
+         *
+         * RemoveItem erases an emptied stack as it goes, where this loop used to sweep them
+         * afterwards. The outcome is identical - a zero-quantity stack is not a holding
+         * either way - and doing it inside the primitive means every caller gets it rather
+         * than every caller having to remember the sweep.
+         *
+         * The distinct reasons are preserved because callers and tests read them: a zero
+         * quantity is a malformed offer, a missing or too-small stack is not.
+         */
+        for (const auto& offered : acOffer.Items)
+        {
+            const auto taken = Economy::RemoveItem(aFrom, offered.Id, offered.Quantity);
+
+            if (taken == Economy::Result::Success)
+                continue;
+
+            if (taken == Economy::Result::InvalidAmount)
+                return fail("zero_quantity");
+
+            if (taken == Economy::Result::InvalidItem)
+                return fail("insufficient_items");   // id 0 is not something anybody holds
+
+            return fail("insufficient_items");
+        }
+
+        /*
+         * OVERFLOW IS CHECKED ON THE WAY IN, not hoped away.
+         *
+         * The brief's section 17 lists integer overflow among the duplication exploits to
+         * defend against, and until now neither add was guarded. Quantity is uint32_t and
+         * Money is int64_t, so a large enough receiving side wraps: a stack of 4.29 billion
+         * plus ten becomes nine, and the difference is not moved anywhere - it is destroyed.
+         * The same arithmetic run the other way mints value out of nothing.
+         *
+         * WHY IT IS REACHABLE AT ALL, which is the part worth writing down. The offer itself
+         * is bounded - a sender cannot offer more than they hold, checked above. But what
+         * they HOLD arrives from SaveCharacterRequest, which is the client reporting its own
+         * inventory, so a hostile client can claim to be carrying four billion of something.
+         * Section 24 is explicit that every client is assumed malicious; that makes this a
+         * live path rather than a theoretical one.
+         *
+         * Refusing is right rather than clamping. A clamp silently changes the trade both
+         * players agreed to, and "you now have fewer than we said" is a support ticket
+         * nobody can reconstruct. ApplyTrade validates on copies, so a refusal here leaves
+         * both records exactly as they were.
+         */
+        /*
+         * Through Economy::AddItem rather than by hand - the merge-or-create and the uint32
+         * overflow guard now live in one place instead of being restated here.
+         *
+         * Semantics are unchanged: AddItem merges into the first matching stack or creates
+         * one, exactly as this loop did, and refuses a wrap rather than clamping. The
+         * duplicate-stack quirk (first match wins) is preserved deliberately - see the note
+         * on Economy::FindStack.
+         */
+        for (const auto& offered : acOffer.Items)
+        {
+            if (Economy::AddItem(aTo, offered.Id, offered.Quantity) != Economy::Result::Success)
+                return fail("quantity_overflow");
+        }
+
+        /*
+         * MONEY THROUGH Economy::Transfer, and this DOES change one thing - deliberately,
+         * and it is the reason this is worth a paragraph.
+         *
+         * The old code checked only for an int64 wrap. Transfer also refuses a result above
+         * kMaxPlausibleMoney, the same ceiling the save path and the migration use. So a
+         * trade that would push somebody past a billion eddies now fails where it used to
+         * succeed.
+         *
+         * That is a fix rather than a regression. Without it, trade could produce a balance
+         * that HandleSaveCharacterRequest then refuses on the next save - so the money would
+         * appear, then silently revert, and the player would report losing it with nothing
+         * in the log explaining why. One ceiling, enforced everywhere, is the only version
+         * of this that does not produce that.
+         *
+         * A zero-money trade is common - most trades are items only - so it is skipped
+         * rather than passed to Transfer, which correctly treats a zero amount as invalid.
+         */
+        if (acOffer.Money > 0)
+        {
+            const auto moved = Economy::Transfer(aFrom, aTo, acOffer.Money);
+
+            if (moved == Economy::Result::InsufficientFunds)
+                return fail("insufficient_funds");
+
+            if (moved != Economy::Result::Success)
+                return fail("money_overflow");
+        }
+
+        return true;
+    }
+
+    static CharacterRecord::ItemStack* FindStack(CharacterRecord& aCharacter, uint64_t aItemId)
+    {
+        for (auto& stack : aCharacter.Inventory)
+        {
+            if (stack.Id == aItemId)
+                return &stack;
+        }
+
+        return nullptr;
+    }
+
     /**
      * A number nobody else has.
      *
@@ -668,5 +1422,26 @@ private:
 
     std::vector<PlayerRecord> m_records;
     std::filesystem::path m_path;
+    // Every character on the account, live and retired, as const pointers for Inspect.
+    // Retired ones are included deliberately: a restored character must not come back with
+    // an unmigrated economy, which would be a second opening balance long after the line.
+    static std::vector<const CharacterRecord*> GatherCharacters(const std::vector<PlayerRecord>& acRecords)
+    {
+        std::vector<const CharacterRecord*> all;
+
+        for (const auto& record : acRecords)
+        {
+            for (const auto* pList : {&record.Characters, &record.RetiredCharacters})
+            {
+                for (const auto& character : *pList)
+                    all.push_back(&character);
+            }
+        }
+
+        return all;
+    }
+
+    // Serialises Flush. Uncontended on the normal path; see Flush.
+    mutable std::mutex m_writeMutex;
     bool m_dirty{false};
 };

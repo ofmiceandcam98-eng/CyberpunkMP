@@ -570,6 +570,7 @@
     max-height: 100%;
     display: flex; flex-direction: column;
     overflow: hidden;
+    position: relative; /* anchors the section rail */
     clip-path: polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 0 100%);
     /* Replays on every open: flipping the backdrop from display:none re-renders the
        element, which restarts the animation - the boot-up flicker needs no JS. */
@@ -632,13 +633,41 @@
   .modal-body > section.panel.pane-active { display: flex; }
   .role-hidden { display: none !important; }
 
-  /* The modal body is the only thing that scrolls, and only when it needs to. */
+  /* The modal body is the only thing that scrolls - and it scrolls with NO visible
+     scrollbar (zeldfep, 2026-09-04: "I dont want scroll bar"). The section rail on the
+     right is the navigation; the wheel and keyboard still work underneath. */
   .modal-body {
     padding: 1.25rem;
+    padding-right: 3.1rem; /* room for the section rail */
     overflow-y: auto;
     overscroll-behavior: contain;
     display: flex; flex-direction: column; gap: 1rem;
+    scrollbar-width: none;
   }
+  .modal-body::-webkit-scrollbar { display: none; }
+
+  /* The section rail: angular arrows + a position readout, in the same vocabulary as
+     the rest of the kit (mono type, accent red, clipped corners, bracket energy). */
+  .section-rail {
+    position: absolute; right: .55rem; top: 50%; transform: translateY(-50%);
+    display: flex; flex-direction: column; align-items: center; gap: .35rem;
+    z-index: 3;
+  }
+  .section-rail button {
+    width: 1.7rem; height: 1.7rem; cursor: pointer;
+    background: var(--surface); border: 1px solid var(--line);
+    color: var(--accent); font-size: .62rem; line-height: 1; padding: 0;
+    clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px));
+  }
+  .section-rail button:hover:not(:disabled) { border-color: var(--accent); background: var(--ground); }
+  .section-rail button:disabled { opacity: .28; cursor: default; }
+  .section-rail button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .section-rail .rail-pos {
+    font-family: var(--mono); font-size: .58rem; letter-spacing: .08em;
+    color: var(--ink-dim); writing-mode: vertical-rl; text-orientation: mixed;
+    padding: .15rem 0; user-select: none;
+  }
+  .section-rail[hidden] { display: none; }
   .modal-foot {
     display: flex; align-items: center; justify-content: space-between; gap: 1rem;
     padding: .9rem 1.25rem; border-top: 1px solid var(--line);
@@ -820,6 +849,11 @@
        here rather than cluttering the main screen. -->
   <div class="modal-backdrop" id="settingsModal" style="display:none">
     <div class="modal">
+      <div class="section-rail" id="sectionRail" hidden>
+        <button id="railUp" aria-label="Previous section">&#9650;</button>
+        <span class="rail-pos" id="railPos">1/1</span>
+        <button id="railDown" aria-label="Next section">&#9660;</button>
+      </div>
       <div class="modal-head">
         <h2>Settings</h2>
         <button class="modal-close" id="closeSettings" aria-label="Close">&times;</button>
@@ -2487,10 +2521,12 @@
     $('gameChecks').innerHTML =
       check(Boolean(paths.gameDir), paths.gameDir ? 'Cyberpunk2077.exe found' : 'Cyberpunk2077.exe not found')
 
-    $('modPathBox').textContent = paths.modDir || 'not installed'
+    $('modPathBox').textContent = paths.modDir || paths.modDestination || 'game not found yet'
     $('modChecks').innerHTML = paths.modDir
       ? check(true, 'Mod folder OK') + check(paths.hasDll, paths.hasDll ? 'CyberpunkMP.dll found' : 'CyberpunkMP.dll missing')
-      : check(false, 'Mod not installed - use Install below')
+      : paths.modDestination
+        ? check('warn', 'Not installed yet - Install everything puts the mod right here')
+        : check(false, 'Find the game first - the mod folder is derived from it')
 
     $('removeDataPath').textContent =
       'Deletes your saved sign-in and settings under ' + paths.userData + '. You will sign in again next time.'
@@ -2752,11 +2788,69 @@
       b.classList.toggle('active', b.dataset.tab === name))
     document.querySelectorAll('#settingsModal section.panel').forEach((sec) =>
       sec.classList.toggle('pane-active', sec.dataset.pane === name))
+
+    // Each tab starts at its top with a fresh rail reading.
+    const body = document.querySelector('#settingsModal .modal-body')
+    if (body) body.scrollTop = 0
+    if (typeof updateRail === 'function') updateRail()
   }
   $('settingsTabs').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-tab]')
     if (btn) selectSettingsTab(btn.dataset.tab)
   })
+
+  // The section rail: the scrollbar is hidden, so these arrows are how the modal says
+  // "there is more" and how you step through it - one .tool section per press, smooth,
+  // with a position readout. The wheel still scrolls; the rail follows along.
+  function railSections () {
+    const pane = document.querySelector('.modal-body > section.panel.pane-active')
+    if (!pane) return { pane: null, sections: [] }
+    const sections = [...pane.querySelectorAll('.tool')].filter((t) => t.offsetParent !== null)
+    return { pane, sections }
+  }
+
+  function updateRail () {
+    const body = document.querySelector('#settingsModal .modal-body')
+    const rail = $('sectionRail')
+    if (!body || !rail) return
+    const { sections } = railSections()
+    const overflows = body.scrollHeight > body.clientHeight + 8
+    if (sections.length < 2 || !overflows) { rail.hidden = true; return }
+    rail.hidden = false
+
+    // Current = the last section whose top has crossed the viewport top.
+    let current = 0
+    for (let i = 0; i < sections.length; i++) {
+      if (sections[i].offsetTop <= body.scrollTop + 12) current = i
+    }
+    $('railPos').textContent = (current + 1) + '/' + sections.length
+    $('railUp').disabled = current === 0 && body.scrollTop <= 4
+    $('railDown').disabled = current >= sections.length - 1 &&
+      body.scrollTop + body.clientHeight >= body.scrollHeight - 4
+  }
+
+  function railStep (dir) {
+    const body = document.querySelector('#settingsModal .modal-body')
+    const { sections } = railSections()
+    if (!body || sections.length === 0) return
+    let current = 0
+    for (let i = 0; i < sections.length; i++) {
+      if (sections[i].offsetTop <= body.scrollTop + 12) current = i
+    }
+    const next = Math.max(0, Math.min(sections.length - 1, current + dir))
+    body.scrollTo({ top: next === 0 ? 0 : sections[next].offsetTop - 8, behavior: 'smooth' })
+  }
+
+  $('railUp').addEventListener('click', () => railStep(-1))
+  $('railDown').addEventListener('click', () => railStep(1))
+  document.querySelector('#settingsModal .modal-body').addEventListener('scroll', updateRail, { passive: true })
+  // Content inside the panes changes after async loads (the checkup, mod lists) - keep
+  // the rail honest without wiring every producer: observe and debounce.
+  {
+    let t = 0
+    new MutationObserver(() => { clearTimeout(t); t = setTimeout(updateRail, 120) })
+      .observe(document.querySelector('#settingsModal .modal-body'), { childList: true, subtree: true })
+  }
 
   $('settingsModal').addEventListener('click', (e) => {
     if (e.target === $('settingsModal')) closeSettings()

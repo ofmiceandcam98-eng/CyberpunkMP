@@ -125,9 +125,68 @@ public native class NetworkWorldSystem extends IGameSystem {
     // of the person losing it, before this is called.
     public native func DeleteCharacter() -> Void;
 
+    // The account roster, read one scalar at a time - the same shape the restore inventory
+    // uses, because scalars cross the native boundary comfortably and arrays of structs do
+    // not. Every accessor bounds-checks and answers a harmless default.
+    public native func GetRosterCount() -> Uint32;
+    public native func GetRosterId(index: Uint32) -> String;
+    public native func GetRosterName(index: Uint32) -> String;
+    public native func GetRosterLevel(index: Uint32) -> Int32;
+
+    // -1 for a bad index, never 0: zero is a REAL slot, and a caller reading it as one
+    // would offer to delete the character in slot 0 when asked about a row that is not there.
+    public native func GetRosterSlot(index: Uint32) -> Int32;
+    public native func IsRosterActive(index: Uint32) -> Bool;
+    public native func HasRosterSpawnedBefore(index: Uint32) -> Bool;
+
+    // How many characters this ACCOUNT may hold, as the SERVER decided. Never computed here.
+    public native func GetCharacterSlots() -> Int32;
+
+    // Requests, not answers. Each says only that it was sent; the verdict arrives as a new
+    // roster, or as a refusal carried on it.
+    public native func SelectCharacterSlot(slot: Int32) -> Void;
+    public native func DeleteCharacterSlot(slot: Int32) -> Void;
+
     // Why the last request was refused, empty when nothing was. Shown on the panel rather
     // than swallowed - a button that appears to do nothing is the worst outcome here.
     public native func GetCharacterError() -> String;
+
+    // ---------------------------------------------------------------- calls ----
+    //
+    // Player-to-player calls, shown in the GAME'S OWN PHONE - see Phone.reds. The server
+    // owns every one of these; nothing here decides anything, it only reads what arrived.
+    //
+    // CallState from the server's CallStore.h: 1 ringing, 2 connected. Terminal states are
+    // never held - a finished call clears, so the phone cannot keep offering ANSWER for
+    // something nobody is ringing.
+    /**
+     * Was the game started through the Night City Online launcher?
+     *
+     * The `--online` flag, which the launcher passes and a normal Cyberpunk launch does
+     * not. FALSE means this is somebody's singleplayer game and the mod must be invisible:
+     * no menu entries, no connecting, no character creation.
+     *
+     * Asked of the C++ half rather than tracked here, because that half already gates on
+     * exactly this and two answers to one question is how they come to disagree.
+     */
+    public native func IsModEnabled() -> Bool;
+
+    public native func GetCallState() -> Uint32;
+    public native func HasCall() -> Bool;
+
+    // Already resolved through THIS character's phone book, on the server. Two people can
+    // save the same number under different names, so this cannot be worked out locally.
+    public native func GetCallName() -> String;
+    public native func GetCallNumber() -> String;
+
+    // True when we are the one being CALLED - decides ANSWER/DECLINE against CANCEL.
+    public native func IsCallIncoming() -> Bool;
+
+    // Requests. Each says only that it was sent; the verdict arrives as a new call state.
+    public native func RequestCall(number: String) -> Void;
+    public native func AnswerCall() -> Void;
+    public native func DeclineCall() -> Void;
+    public native func HangUpCall() -> Void;
 
     // Why the last CONNECTION was refused - the server's own sentence, plus the code
     // (EDenialCode in GameServer.h) and, on manifest denials, the version the server
@@ -264,6 +323,50 @@ public native class NetworkWorldSystem extends IGameSystem {
      *
      * Called from native when a NotifyMoney arrives.
      */
+    /**
+     * A player-to-player call changed. Called from native when a NotifyCall arrives.
+     *
+     * Presentation only. The server decided everything - who is calling, whether it is
+     * still ringing, when it ended - and this reads the answer and draws it. There is
+     * deliberately no local timeout, no local state machine and no way for this to end a
+     * call: a client that could would be able to disagree with the server about whether
+     * two people are talking, and nothing repairs that.
+     *
+     * A terminal state arrives as HasCall() == false, which is why the native side clears
+     * rather than holding the last state: the phone has to be TOLD to take a call down,
+     * and an absence would leave it showing one forever.
+     */
+    public func OnCallStateChanged() -> Void {
+        if !this.HasCall() {
+            MpPhoneCall.Dismiss();
+            return;
+        }
+
+        /*
+         * 2 is Connected in CallStore.h.
+         *
+         * This used to return without drawing anything, on the reasoning that a connected
+         * call is already on screen. That was true only while every call was presented in
+         * the same phase. Now that a RINGING call is presented as IncomingCall (see the
+         * long note in Phone.reds), a connected one has to be re-presented as StartCall or
+         * the phone goes on showing a call that is still ringing after it was answered -
+         * with the answer prompt still on screen for a call already in progress.
+         *
+         * Presented as not-rejectable, which is what moves it to StartCall and is also
+         * correct on its own terms: a call you are in is not one you can decline. That path
+         * plays no ringtone either, so re-entering it costs nothing if the server sends the
+         * connected state more than once.
+         */
+        if this.GetCallState() == 2u {
+            MpPhoneCall.Present(this.GetCallName(), false);
+            return;
+        }
+
+        // Rejectable only when the call is coming TO us. An outgoing call shows the same
+        // panel without offering to decline something we started.
+        MpPhoneCall.Present(this.GetCallName(), this.IsCallIncoming());
+    }
+
     public func ApplyServerMoney() -> Void {
         let player = GetPlayer(GetGameInstance());
         let transaction = GameInstance.GetTransactionSystem(GetGameInstance());
@@ -569,6 +672,18 @@ public native class NetworkWorldSystem extends IGameSystem {
         FTLog(s"[NetworkWorldSystem] teleporting to \(position.X), \(position.Y), \(position.Z)");
         GameInstance.GetTeleportationFacility(GetGameInstance()).Teleport(player, position, angles);
 
+        // Fall-through recovery.
+        //
+        // The teleportation facility prefetches streaming, but on a fresh spawn the world
+        // at the destination is not always collision-ready by the time the player lands -
+        // so they drop through the floor, and the game's own out-of-bounds recovery dumps
+        // them in a holding volume ("a box"). If nothing catches this it loops: fall,
+        // recover, fall. Both spawn AND respawn come through here, so guarding here guards
+        // both. Arm a watchdog: if the player is far from where the server just placed
+        // them a moment later, streaming has since caught up - put them back, a few times,
+        // then give up rather than loop forever.
+        this.ArmFallThroughGuard(position, yaw, 3);
+
         // Belt and braces. If the forced exit above did not take, the client would keep
         // reporting the car's position as the player's from the other side of the map -
         // and the symptom of that is not "still in a car", it is "this player is
@@ -577,6 +692,51 @@ public native class NetworkWorldSystem extends IGameSystem {
         if IsDefined(vehicles) && VehicleComponent.IsMountedToVehicle(GetGameInstance(), player) {
             FTLogWarning(s"[NetworkWorldSystem] still mounted after teleporting - clearing the vehicle link anyway");
             vehicles.OnVehicleExit();
+        }
+    }
+
+    // Schedules the fall-through check after a teleport. Separate method so both the
+    // initial arm (from DoTeleport) and each re-arm (from the check itself) go through
+    // one place. 1.5s is long enough for the facility's prefetch to finish streaming the
+    // destination and short enough that a real player has not walked anywhere yet.
+    public func ArmFallThroughGuard(destination: Vector4, yaw: Float, attemptsLeft: Int32) -> Void {
+        let guard = new MpFallThroughGuard();
+        guard.system = this;
+        guard.position = destination;
+        guard.yaw = yaw;
+        guard.attemptsLeft = attemptsLeft;
+        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(guard, 1.5, false);
+    }
+
+    // Did the last placement stick, or did the player fall through unstreamed collision?
+    public func CheckFallThrough(destination: Vector4, yaw: Float, attemptsLeft: Int32) -> Void {
+        let player = GetPlayer(GetGameInstance());
+        if !IsDefined(player) {
+            return;
+        }
+
+        let here = player.GetWorldPosition();
+        let dropped = destination.Z - here.Z;
+        let dx = here.X - destination.X;
+        let dy = here.Y - destination.Y;
+        let horizontal = dx * dx + dy * dy;
+
+        // Well below where they were placed (fell through) OR flung far from it (the
+        // game's out-of-bounds recovery moved them). Right after a server teleport, either
+        // one means the placement did not hold - a real player has not gone 20m down or
+        // 30m sideways in a second and a half.
+        if dropped > 20.0 || horizontal > 900.0 {
+            // ScriptLog, not FTLog: FTLog reaches the game's own log, which nothing
+            // collects, and a recovery nobody can see is a recovery nobody can diagnose
+            // (the same lesson as the launcher's install trail). ScriptLog lands in the
+            // mod log that ships to the server with the session.
+            if attemptsLeft > 0 {
+                this.ScriptLog(s"[Spawn] placement did not hold - \(dropped)m below, re-placing (\(attemptsLeft) attempt(s) left)");
+                this.DoTeleport(destination, yaw);
+                this.ArmFallThroughGuard(destination, yaw, attemptsLeft - 1);
+            } else {
+                this.ScriptLog("[Spawn] still not holding after 3 attempts - collision at the destination may never have streamed");
+            }
         }
     }
 
@@ -689,6 +849,21 @@ public class MpDelayedTeleportCallback extends DelayCallback {
     public func Call() -> Void {
         if IsDefined(this.system) {
             this.system.DoTeleport(this.position, this.yaw);
+        }
+    }
+}
+
+// Fires 1.5s after a placement to ask whether it held. Carries the destination and a
+// remaining-attempts count so the re-place cannot loop forever.
+public class MpFallThroughGuard extends DelayCallback {
+    public let system: wref<NetworkWorldSystem>;
+    public let position: Vector4;
+    public let yaw: Float;
+    public let attemptsLeft: Int32;
+
+    public func Call() -> Void {
+        if IsDefined(this.system) {
+            this.system.CheckFallThrough(this.position, this.yaw, this.attemptsLeft);
         }
     }
 }

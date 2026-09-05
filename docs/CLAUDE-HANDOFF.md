@@ -23,6 +23,14 @@ things) → the coordination feed (what the other stream just did).
 - **Two Claude streams work this repo** — zeldfep's (this one) and Cam's, from separate
   machines. Cam's runs inside the repo so `CLAUDE.md` auto-loads for it. A rule that
   lives only in one machine's memory binds nobody: promote it to `CLAUDE.md`.
+- **The working branch is `wip/world-state`, not `feat/world-state`** (since 2026-09-05).
+  Identical commits; the separate branch exists so Cam can work from a phone / cloud
+  session without a push to `feat/world-state` triggering the production deploy (see §4,
+  Deploy). Work on `wip/world-state` from every machine until the weekend migration is
+  done, then `git checkout feat/world-state && git merge --ff-only wip/world-state &&
+  git push fork feat/world-state` and resume pushing that. A cloud session started from
+  claude.ai/code should clone `ofmiceandcam98-eng/CyberpunkMP` and check out
+  `wip/world-state`.
 
 ## 2. Machines and addresses
 
@@ -52,11 +60,17 @@ Test-Path "<GameDir>\engine\tools\scc.exe"        # is the redscript COMPILER he
 NOT ship with the game - a stock Steam install of 2.31 does not contain it anywhere. It
 arrives with **redscript**, one of the prerequisites the Night City Online launcher installs,
 which puts it at `engine\tools\scc.exe` (the path `CheckScripts.ps1` looks at); the REDmod
-DLC is the other source, at `tools\redmod\bin\scc.exe`. Verified 2026-09-04 on a fresh box:
-game present and reporting 2.31, no `scc.exe` anywhere, no `engine\tools`, no `r6\scripts`,
-no `red4ext\plugins`. **So "the game is installed" does not mean you can compile redscript** -
-install the mod once through the launcher, which brings the prerequisites and creates the mod
-folder, and then both `CheckScripts.ps1` and `DevInstall.ps1` work.
+DLC is the other source, at `tools\redmod\bin\scc.exe`. **Both halves were observed on one
+box on 2026-09-04, hours apart, which is the whole argument for checking rather than
+assuming:** before the mod was installed — game present and reporting 2.31, no `scc.exe`
+anywhere, no `engine\tools`, no `r6\scripts`,
+no `red4ext\plugins`. After the launcher installed the mod: `engine\tools\scc.exe` present,
+`red4ext\` populated, and `CheckScripts.ps1` answering `OK - redscript compiles` against the
+real 2.31 scripts. **So "the game is installed" does not mean you can compile redscript, and
+"it could not compile an hour ago" does not mean it cannot now** — run the check, do not
+carry the answer forward. Installing the mod once through the launcher brings the
+prerequisites and creates the mod folder, and both `CheckScripts.ps1` and `DevInstall.ps1`
+work from that point on.
 Point the tooling at it once and everything below follows:
 ```
 copy tools\ship.local.example.ps1 tools\ship.local.ps1   # then set $GameDir
@@ -184,3 +198,21 @@ machine's memory still contains a dead feed address, which is exactly the failur
 - **Open, in the map:** whether a character's FIRST save captures the creator's choice
   (the wrong-gender question — a 60-second experiment settles it), per-connection
   interpolation delay for far players, and the two-human checklist that has never run.
+
+## 8. Update 2026-09-05
+
+- **Runtime multiplayer netcode is HARD-FROZEN** until Cam says the server swap is
+  complete — no production `.proto`, handlers, transport, RPC, replication, auth,
+  movement, vehicle, combat, voice, phone, selector, or economy networking. Applies to
+  both streams. Full text at the top of `docs/MAP.md` §1 (the "NETCODE IS FROZEN" block)
+  and in `docs/OUTGOING-SERVER-NETCODE-MAP.md`.
+- **`feat/world-state` is now classified an OUTGOING SERVER REFERENCE IMPLEMENTATION** —
+  not a deployment target for the new server, not the base for it, deliberately not
+  cleaned up. A full netcode rollback was proposed and rejected (numbers in
+  `OUTGOING-SERVER-NETCODE-MAP.md` §0). The new server is rebuilt from the three handoff
+  docs: `NEW-SERVER-NETCODE-PORTING-HANDOFF.md`, `OUTGOING-SERVER-NETCODE-MAP.md`,
+  `NEW-SERVER-AUTHORITY-HANDOFF.md`. Read the requirements first; do not start by copying
+  old code.
+- **Nothing is pushed to `feat/world-state` or `main`** and nothing ships before the
+  migration. The 27 commits of recent work now also live on `wip/world-state` (see §1) so
+  they are backed up and phone-reachable, but that is a mirror for working, not a deploy.

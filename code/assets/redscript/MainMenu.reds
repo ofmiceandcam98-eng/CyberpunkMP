@@ -41,6 +41,18 @@ public class MpSelectorPoll extends DelayCallback {
     public let controller: wref<SingleplayerMenuGameController>;
     public let attempts: Int32;
 
+    /**
+     * Whether landing the roster should go straight into the world.
+     *
+     * TWO CALLERS, TWO ANSWERS, and conflating them was a real bug. CONNECT wants the
+     * roster ON SCREEN so somebody can choose; PLAY wants the world. Both polls look
+     * identical - wait for the server to say who this account is - so both used this class,
+     * and this class always entered the world. Pressing CONNECT therefore loaded you
+     * straight in as whoever happened to be active, which is exactly the thing a character
+     * selection screen exists to prevent.
+     */
+    public let enterWhenKnown: Bool;
+
     public func Call() -> Void {
         let network = GameInstance.GetNetworkWorldSystem();
 
@@ -49,45 +61,67 @@ public class MpSelectorPoll extends DelayCallback {
         }
 
         if network.IsCharacterStatusKnown() {
-            // Panel first, so the answer is on screen before the world starts loading -
-            // otherwise the only feedback for a press is the load itself.
+            // Panel first either way, so the answer is on screen before anything else
+            // happens - otherwise the only feedback for a press is a load, or nothing.
             this.controller.MpUpdatePanel();
-            this.controller.MpEnterWithCharacter();
+
+            if this.enterWhenKnown {
+                this.controller.MpEnterWithCharacter();
+            } else {
+                // CONNECT: rebuild the menu so it now offers PLAY, SWITCH and DELETE
+                // against a roster that has actually arrived.
+                this.controller.MpRefreshMenu();
+            }
+
             return;
         }
 
         this.attempts += 1;
 
         if this.attempts >= 10 {
-            // FALL BACK, do not strand them.
-            //
-            // This is the failure the selector was switched off for: the main menu is the
-            // one screen where being wrong means nobody can play at all, and the original
-            // version simply logged and returned - leaving the player staring at a menu
-            // that had silently decided to do nothing, with no feedback and no way in.
-            //
-            // Two and a half seconds without an answer means the server is down, slow, or
-            // unreachable. None of those should cost someone their session, so this drops
-            // to exactly the behaviour that shipped before the selector: load the last save
-            // and let the server sort out appearance and position on arrival.
-            FTLogError(s"[CyberpunkMP] the server never said what character this account has - entering the old way");
+            FTLogError(s"[CyberpunkMP] the server never said what character this account has");
 
-            let network = GameInstance.GetNetworkWorldSystem();
-            if IsDefined(network) {
-                network.RequestJoin();
-
-                // Their own save here too. The fallback exists so a slow server costs a
-                // pause rather than a session - it should not also cost them their face by
-                // quietly dropping them into the template.
-                this.controller.MpLoadOwnCharacterSave();
+            if !this.enterWhenKnown {
+                /*
+                 * CONNECT that could not connect SAYS SO, and goes nowhere.
+                 *
+                 * The old fallback loaded the world anyway, which was right when the button
+                 * meant "play now" - a slow server cost a pause rather than a session. It is
+                 * wrong for CONNECT: dropping somebody into a singleplayer world they did not
+                 * ask for, because the multiplayer server is down, is worse than telling them
+                 * the server is down. There is nothing to do in that world.
+                 */
+                this.controller.MpConnectFailed();
+                return;
             }
 
+            /*
+             * NO SERVER CHARACTER, NO WORLD. Cam's rule, 2026-09-03: "make sure it uses
+             * ONLY the characters THEY made through this, nothing else, only their server
+             * owned characters."
+             *
+             * This used to load the last save and enter anyway. That was the right call
+             * when one button meant "play now" - a slow server cost a pause rather than a
+             * session - but it is the exact hole the rule closes: it puts somebody in the
+             * world as whoever their singleplayer save happens to contain, with a name and
+             * a face the server never issued, and the server then has a player it cannot
+             * identify.
+             *
+             * Removing it is safe now in a way it was not before, and the menu is why. PLAY
+             * is only DRAWN once IsCharacterStatusKnown() is true, so by the time anybody
+             * can press it the roster has already arrived and this poll returns on its
+             * first tick. Reaching this line means the connection died between the menu
+             * being built and the button being pressed - which is not a case for entering
+             * a singleplayer world, it is a case for saying so.
+             */
+            this.controller.MpConnectFailed();
             return;
         }
 
         let again = new MpSelectorPoll();
         again.controller = this.controller;
         again.attempts = this.attempts;
+        again.enterWhenKnown = this.enterWhenKnown;
 
         GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(again, 0.25, false);
     }
@@ -136,6 +170,48 @@ public class MpDeletePoll extends DelayCallback {
     }
 }
 
+/**
+ * Rebuild the menu now that the server has answered.
+ *
+ * CONNECT changes what the other entries should be - before it there is nothing to play as
+ * and nothing to switch between, after it there is - and the list is only built when the
+ * screen opens. Without this, connecting would fill the panel with a roster while the menu
+ * beside it still offered nothing but CONNECT.
+ *
+ * CALLS THE GAME'S OWN REBUILD, and the distinction is not academic - it is the difference
+ * between this working and reproducing the bug it was written for.
+ *
+ * PopulateMenuItemList does NOT clear the list. Read it in the shipped source
+ * (singleplayerMenu.script:843) and it is nothing but a run of AddMenuItem calls, so
+ * calling it a second time APPENDS a whole second menu - Continue, New Game, Load Game,
+ * Settings, Credits and every one of ours, twice. That is exactly the duplicate-entries
+ * symptom this change exists to fix, and I had written precisely that before checking.
+ *
+ * ShowActionsList is the engine's own answer (menuItemListGameController.script:79):
+ * Clear(), then PopulateMenuItemList(), then Refresh(). Using it rather than composing
+ * those three here means the rebuild stays correct if CDPR ever changes what a rebuild
+ * involves.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpRefreshMenu() -> Void {
+    this.ShowActionsList();
+}
+
+/**
+ * CONNECT could not reach the server. Say so on the panel and go nowhere.
+ *
+ * Deliberately NOT the old fallback of loading the world anyway. That was right while the
+ * button meant "play now" - a slow server cost a pause rather than a session. It is wrong
+ * for CONNECT: dropping somebody into a singleplayer world because the multiplayer server
+ * is down leaves them somewhere there is nothing to do, having asked for the opposite.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpConnectFailed() -> Void {
+    if IsDefined(this.m_mpDetail) {
+        this.m_mpDetail.SetText("Could not reach the server. Try again in a moment.");
+    }
+}
+
 @addMethod(SingleplayerMenuGameController)
 public func MpEnterWithCharacter() -> Void {
     let network = GameInstance.GetNetworkWorldSystem();
@@ -150,17 +226,18 @@ public func MpEnterWithCharacter() -> Void {
         // stand; what changed is that the server already knows who is arriving.
         network.RequestJoin();
 
-        // Their OWN character, not the world template.
+        // The world template, ALWAYS. Identity comes from the server, never from a save.
         //
-        // This used to be LoadLastCheckpoint(false), which loads save index 0 - whatever
-        // is newest. The launcher installs the template as MultiplayerStart, so whenever
-        // that file was the newest the player loaded as Phantom Veronica instead of
-        // themselves, and when one of their own autosaves was newer they loaded correctly.
-        // That coin-flip is why this looked like an appearance bug for a very long time.
+        // This was LoadLastCheckpoint(false) once - save index 0, whatever is newest - and
+        // then briefly "the newest save that is not the template", which sounded like an
+        // identity and was not: it loaded whichever character happened to have the newest
+        // file, including a probe run's throwaway Corpo. That coin flip is why this looked
+        // like an appearance bug for weeks.
         //
-        // See OwnSave.reds. The template is still loaded for somebody who has no save of
-        // their own, which is the case it actually exists for.
-        this.MpLoadOwnCharacterSave();
+        // See OwnSave.reds for the full reasoning, including why the planned fix - naming a
+        // save per character - was dropped: it needs the mod to write saves, and the save
+        // lock (343b912) forbids that on purpose.
+        this.MpLoadMultiplayerWorld();
         return;
     }
 
@@ -226,8 +303,15 @@ public func MpBuildPanel() -> Void {
     let panel = new inkVerticalPanel();
     panel.SetName(n"mp_character_panel");
     panel.SetAnchor(inkEAnchor.TopRight);
+
+    // Anchor point as well as anchor. SetAnchor alone puts the widget's own top-LEFT
+    // corner at the screen's top-right, so a fit-to-content panel grows off the edge and
+    // only its first characters stay visible - which is exactly what it did. (1,0) means
+    // "line up MY top-right with that corner", so it grows inwards instead.
+    panel.SetAnchorPoint(1.0, 0.0);
     panel.SetMargin(new inkMargin(0.0, 120.0, 90.0, 0.0));
     panel.SetFitToContent(true);
+    panel.SetHAlign(inkEHorizontalAlign.Right);
     panel.Reparent(root);
 
     let title = new inkText();
@@ -237,6 +321,8 @@ public func MpBuildPanel() -> Void {
     title.SetFontStyle(n"Medium");
     title.SetFontSize(28);
     title.SetLetterCase(textLetterCase.UpperCase);
+    title.SetHorizontalAlignment(textHorizontalAlignment.Right);
+    title.SetHAlign(inkEHorizontalAlign.Right);
 
     // The same yellow the game uses for prompts, so it reads as the game speaking.
     title.SetTintColor(new HDRColor(2.0, 1.75, 0.25, 1.0));
@@ -247,8 +333,12 @@ public func MpBuildPanel() -> Void {
     detail.SetText("signing in...");
     detail.SetFontFamily("base\\gameplay\\gui\\fonts\\raj\\raj.inkfontfamily");
     detail.SetFontStyle(n"Regular");
-    detail.SetFontSize(42);
+    // 42 was wide enough that a long character name reached most of the way across the
+    // screen on its own. The title above it is the label; this is the value.
+    detail.SetFontSize(32);
     detail.SetMargin(new inkMargin(0.0, 6.0, 0.0, 0.0));
+    detail.SetHorizontalAlignment(textHorizontalAlignment.Right);
+    detail.SetHAlign(inkEHorizontalAlign.Right);
     detail.Reparent(panel);
 
     this.m_mpPanel = panel;
@@ -281,65 +371,209 @@ public func MpUpdatePanel() -> Void {
         return;
     }
 
+    let slots = network.GetCharacterSlots();
+
     if !network.HasCharacter() {
-        this.m_mpTitle.SetText("NO CHARACTER");
-        this.m_mpDetail.SetText("Press MULTIPLAYER to make one");
+        this.m_mpTitle.SetText(slots > 1 ? s"\(slots) CHARACTER SLOTS" : "NO CHARACTER");
+        this.m_mpDetail.SetText("Press NEW CHARACTER to make one");
         return;
     }
 
-    this.m_mpTitle.SetText("YOUR CHARACTER");
-    this.m_mpDetail.SetText(s"\(network.GetCharacterName())  -  LEVEL \(network.GetCharacterLevel())");
+    /*
+     * "1/4" - used out of total. Cam's ask, 2026-09-03.
+     *
+     * Counted from the roster rather than from HasCharacter, because with four slots the
+     * question is not "do you have one" but "how many of your slots are spoken for" - and
+     * that is the number that tells somebody whether NEW CHARACTER will cost them the one
+     * they already have.
+     */
+    let used = 0;
+    let counted = 0u;
+
+    while counted < network.GetRosterCount() {
+        if network.GetRosterSlot(counted) >= 0 {
+            used += 1;
+        }
+
+        counted += 1u;
+    }
+
+    this.m_mpTitle.SetText(s"YOUR CHARACTERS   \(used)/\(slots)");
+
+    // One line per SLOT, not per character - the empty ones have to be visible, or there is
+    // no way to see that a slot is free without trying to use it.
+    //
+    // Drawn by walking slots and looking each one up in the roster, rather than by walking
+    // the roster: slots are not contiguous. Retiring the character in slot 1 of three leaves
+    // 0 and 2 occupied, and a list built from the roster alone would draw two rows and
+    // silently renumber them.
+    let lines = "";
+    let slot = 0;
+
+    while slot < slots {
+        let found = false;
+        let i = 0u;
+
+        while i < network.GetRosterCount() {
+            if network.GetRosterSlot(i) == slot {
+                let marker = network.IsRosterActive(i) ? "> " : "  ";
+                let name = network.GetRosterName(i);
+                let shown = NotEquals(name, "") ? name : "unnamed";
+                let state = network.HasRosterSpawnedBefore(i) ? s"LEVEL \(network.GetRosterLevel(i))" : "NEW";
+
+                lines += s"\(marker)\(slot + 1). \(shown)  -  \(state)\n";
+                found = true;
+            }
+
+            i += 1u;
+        }
+
+        if !found {
+            lines += s"  \(slot + 1). empty\n";
+        }
+
+        slot += 1;
+    }
+
+    /*
+     * Say what to press next. Cam's flow: pick a character or make one, THEN hit play.
+     *
+     * The panel is the only thing on this screen that knows which state the account is in,
+     * so it is the only thing that can name the right next step. A list of characters with
+     * no instruction leaves somebody looking at their own name wondering what it is for -
+     * which is exactly the report that prompted this.
+     */
+    lines += "\n";
+
+    if used == 0 {
+        lines += "NEW CHARACTER to make one.";
+    } else {
+        lines += "> is who you will play as.\n";
+
+        if slots > 1 && used > 1 {
+            lines += "SWITCH CHARACTER to change, then PLAY.";
+        } else {
+            lines += "PLAY to enter the world.";
+        }
+    }
+
+    this.m_mpDetail.SetText(lines);
 }
 
 @wrapMethod(SingleplayerMenuGameController)
 private func PopulateMenuItemList() -> Void {
-    wrappedMethod();
+    let network = GameInstance.GetNetworkWorldSystem();
 
-    // Two entries, and this time they genuinely differ.
-    //
-    // An earlier version had CONTINUE and LOAD GAME, which both loaded a save and differed only in
-    // whether you picked it - a choice that changed nothing once the server started owning
-    // appearance and position. That pair was rightly collapsed into one.
-    //
-    // These two are different actions. PLAY drops you into the world. NEW CHARACTER runs
-    // the game's own New Game flow, which is the ONLY place body gender can be chosen -
-    // ripperdocs change everything about how you look except that, and the customization
-    // system is native-only so it cannot be opened on demand. Going through New Game is
-    // therefore the only route to real character creation that exists.
-    this.AddMenuItem("MULTIPLAYER", n"OnMultiplayerContinue");
+    /*
+     * NOT LAUNCHED THROUGH NIGHT CITY ONLINE: the mod is not here.
+     *
+     * Cam's rule, 2026-09-03 - a plain Cyberpunk launch must not be able to connect, play,
+     * or create a character. The C++ half already honoured that (Core::Application::Update
+     * returns early every frame without --online), but redscript is compiled into the game
+     * and runs either way, so the menu was still offering to do all three against a client
+     * that could do none of them.
+     *
+     * wrappedMethod() and nothing else: the vanilla menu, exactly as CDPR built it, with no
+     * trace of the mod on it.
+     */
+    if !IsDefined(network) || !network.IsModEnabled() {
+        wrappedMethod();
+        return;
+    }
 
-    // The warning is IN THE LABEL.
-    //
-    // Making a character replaces the one the server holds, and that is hours of
-    // somebody's evening. "NEW CHARACTER" on its own reads as ADDING one, which is exactly
-    // the misreading that costs people their character - and by the time anything could
-    // warn them from in game, the replacement has already happened.
-    //
-    // A confirmation dialog would be better and needs an API this menu does not obviously
-    // have. A label that cannot be misread is available right now and cannot fail to show.
-    this.AddMenuItem("MULTIPLAYER - NEW CHARACTER (REPLACES YOURS)", n"OnMultiplayerNewCharacter");
+    /*
+     * LAUNCHED THROUGH THE LAUNCHER: this is a multiplayer client, so the singleplayer
+     * entries go.
+     *
+     * wrappedMethod() is deliberately NOT called. It is the only thing that adds Continue,
+     * New Game and Load Game (singleplayerMenu.script:843), and on this server those are
+     * three ways to end up playing somebody who is not your character - Continue and Load
+     * Game open a local save directly, and New Game starts a story nobody here is in.
+     *
+     * Settings and Credits are re-added below by hand, because they are the game's and
+     * removing them would be taking something away rather than replacing it. Their labels
+     * and events are copied from the same shipped source, so they behave identically.
+     *
+     * NEW CHARACTER still runs the game's own New Game FLOW - it dispatches OnNewGame
+     * directly - so removing the menu item costs nothing. The flow was never reached
+     * through that button.
+     */
 
-    // The trash can.
-    //
-    // A menu ITEM rather than a hand-built button: menu items are the game's own mechanism
-    // and are reliably clickable, focusable and controller-navigable, none of which a
-    // widget built at runtime gets for free. The glyph carries the meaning; the words are
-    // there because a glyph alone in a list of words reads as a rendering fault.
-    //
-    // Only offered while a character exists to delete. Drawing it against an empty account
-    // would be a button whose only possible outcome is a refusal.
-    // Off with the selector. Both the trash can and the panel only make sense once the
-    // menu has asked the server who this account is, and it no longer does - drawn now,
-    // they would say "signing in..." forever against a connection nobody opened.
-    //
-    // The handler for OnMultiplayerDeleteCharacter is still present and still compiles, so
-    // re-adding this line is all it takes to bring the entry back.
-    //
-    // if IsDefined(network) && network.IsCharacterStatusKnown() && network.HasCharacter() {
-    //     this.AddMenuItem("[ TRASH ]  DELETE CHARACTER", n"OnMultiplayerDeleteCharacter");
-    // }
-    // this.MpBuildPanel();
-    // this.MpUpdatePanel();
+    /*
+     * CONNECT FIRST, THEN CHOOSE, THEN PLAY. Cam's flow, 2026-09-03.
+     *
+     * The old single MULTIPLAYER entry did all three at once: opened the connection, waited
+     * for the roster, and loaded the world as whoever happened to be active. With one
+     * character that is indistinguishable from correct. With four it means the selection
+     * screen can never be reached, because the only entry that connects also leaves the menu.
+     *
+     * So the entry that connects STOPS at the roster, and playing is a second press against
+     * a screen showing who you are about to be.
+     *
+     * NEW CHARACTER carries its warning IN THE LABEL. Making one replaces the character the
+     * server holds - hours of somebody's evening - and "NEW CHARACTER" alone reads as ADDING
+     * one, which is the misreading that costs people their character. By the time anything
+     * in game could warn them, the replacement has happened. A confirmation dialog would be
+     * better and needs an API this menu does not obviously have; a label that cannot be
+     * misread works today and cannot fail to show.
+     *
+     * DELETE is a menu ITEM rather than a hand-built button, because menu items are the
+     * game's own mechanism and are reliably clickable, focusable and controller-navigable -
+     * none of which a widget built at runtime gets for free.
+     */
+    if IsDefined(network) {
+        if network.IsCharacterStatusKnown() {
+            // CONNECTED. The roster is here, so the menu is about WHO, not whether.
+            this.MpBuildPanel();
+            this.MpUpdatePanel();
+
+            // PLAY is first and is the thing they came for. It reads as an answer to the
+            // panel beside it - "this is who you are, press this to be them" - which is
+            // only true because getting here required the server to have answered.
+            this.AddMenuItem("PLAY", n"OnMultiplayerContinue");
+
+            // Switching only makes sense with somewhere to switch to. One slot means one
+            // character, and an entry that can only ever re-select what you already are is
+            // noise on the one screen everybody sees.
+            if network.GetCharacterSlots() > 1 {
+                this.AddMenuItem("SWITCH CHARACTER", n"OnMultiplayerSwitchCharacter");
+            }
+
+            this.AddMenuItem("NEW CHARACTER (REPLACES YOURS)", n"OnMultiplayerNewCharacter");
+
+            // The trash can.
+            //
+            // Only offered while a character exists to delete - drawing it against an empty
+            // account would be a button whose only possible outcome is a refusal.
+            if network.HasCharacter() {
+                this.AddMenuItem("[ TRASH ]  DELETE CHARACTER", n"OnMultiplayerDeleteCharacter");
+            }
+        } else {
+            // NOT CONNECTED YET. Exactly one multiplayer entry, so there is no question
+            // about which one starts things.
+            this.AddMenuItem("CONNECT", n"OnMultiplayerCharacters");
+
+            // Creation stays reachable without a connection, because it runs the game's own
+            // New Game flow and arms the join on the way through - somebody with no
+            // character can still make one while the server is being slow.
+            this.AddMenuItem("NEW CHARACTER (REPLACES YOURS)", n"OnMultiplayerNewCharacter");
+        }
+
+        /*
+         * Settings and Credits, put back by hand.
+         *
+         * wrappedMethod() is not called on this branch, and it is what normally adds these
+         * along with Continue / New Game / Load Game. Dropping the first three is the point;
+         * dropping these two would be taking away the game's own screens - and Settings in
+         * particular is how somebody fixes their resolution or their controls, which they
+         * need at least as much in multiplayer as out of it.
+         *
+         * Labels and events copied from the shipped source (singleplayer_menu.script:843),
+         * so they resolve and behave exactly as the vanilla entries do.
+         */
+        this.AddMenuItem(GetLocalizedText("UI-Labels-Settings"), n"OnSwitchToSettings");
+        this.AddMenuItem(GetLocalizedText("UI-Labels-Credits"), n"OnCreditsPicker");
+    }
 
     // PopulateMenuItemList refreshes at its end, before our item existed. Without
     // refreshing again the entry is in the data but never drawn, which looks exactly
@@ -393,6 +627,7 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
         let poll = new MpSelectorPoll();
         poll.controller = this;
         poll.attempts = 0;
+        poll.enterWhenKnown = true;
 
         GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(poll, 0.25, false);
         return true;
@@ -420,6 +655,91 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
     // first press arms and says so on the panel; the second sends it. Walking away from
     // the menu disarms, because the arm lives on the controller and the controller does
     // not survive leaving the screen.
+    // "Show me my characters." Opens the connection so the server can say who this account
+    // is, then polls until the roster lands and rebuilds the menu with the panel on it.
+    //
+    // A deliberate press rather than something the menu does by itself: connecting is not
+    // free, and most visits to this screen are somebody loading a singleplayer save.
+    if Equals(data.eventName, n"OnMultiplayerCharacters") {
+        let network = GameInstance.GetNetworkWorldSystem();
+
+        if !IsDefined(network) {
+            return true;
+        }
+
+        if !network.IsConnected() {
+            network.Connect();
+        }
+
+        let poll = new MpSelectorPoll();
+        poll.controller = this;
+        poll.attempts = 0;
+        poll.enterWhenKnown = false;
+
+        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(poll, 0.25, false);
+        return true;
+    }
+
+    // Step to the next slot that HAS a character in it.
+    //
+    // A cycle rather than a list, because the main menu's item list is the only reliably
+    // clickable, focusable, controller-navigable surface here, and four rows of characters
+    // on the front screen would bury MULTIPLAYER under them. The panel on the right shows
+    // every slot; this walks between them and marks the one in play with a caret.
+    //
+    // Cycling only over OCCUPIED slots is the point: stepping onto an empty one would answer
+    // "there is no character in that slot" from the server, which is a refusal the player
+    // did not ask for.
+    if Equals(data.eventName, n"OnMultiplayerSwitchCharacter") {
+        let network = GameInstance.GetNetworkWorldSystem();
+
+        if !IsDefined(network) || !network.IsConnected() {
+            FTLogError(s"[Selector] switch pressed with no connection");
+            return true;
+        }
+
+        let count = network.GetRosterCount();
+        if count <= 1u {
+            return true;
+        }
+
+        // Find where we are, then take the next one round. Not "active index + 1" against
+        // the slot number: the roster is sorted by slot and slots are not contiguous, so the
+        // successor of slot 0 may be slot 2.
+        let activeIndex = 0u;
+        let i = 0u;
+
+        while i < count {
+            if network.IsRosterActive(i) {
+                activeIndex = i;
+            }
+
+            i += 1u;
+        }
+
+        let nextIndex = (activeIndex + 1u) % count;
+        let nextSlot = network.GetRosterSlot(nextIndex);
+
+        if nextSlot >= 0 {
+            network.SelectCharacterSlot(nextSlot);
+
+            if IsDefined(this.m_mpDetail) {
+                this.m_mpDetail.SetText("switching...");
+            }
+
+            // The answer comes back as a fresh roster, so poll for it rather than assuming
+            // the switch took. SelectCharacterSlot only says the request was sent.
+            let poll = new MpSelectorPoll();
+            poll.controller = this;
+            poll.attempts = 0;
+            poll.enterWhenKnown = false;
+
+            GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(poll, 0.25, false);
+        }
+
+        return true;
+    }
+
     if Equals(data.eventName, n"OnMultiplayerDeleteCharacter") {
         let network = GameInstance.GetNetworkWorldSystem();
 

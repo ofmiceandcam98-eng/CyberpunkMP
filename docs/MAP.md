@@ -36,6 +36,22 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
 ## 1. THE LEDGER
 
 ### Standing decrees (law, not open items - violating one is a bug by definition)
+- **The server must be portable, and git is how it moves** (Cam, restated 2026-09-04
+  ahead of the weekend migration): *"server build should be able to be transferred and
+  build should be on git for quick deployment."* A deployment stands up by cloning the
+  repo and building — never by copying a built artifact off the old box, and never from
+  a step that lives only in somebody's shell history. Two consequences that bite:
+  - **Anything the build needs is IN THE REPO.** A hand-seeded file on one machine is a
+    deploy that cannot be reproduced — and worse, an untracked file the incoming commits
+    are about to create *refuses the pull outright*. That has killed deploys three times
+    (see the Deploy row). If you put a file on a box, commit it the same day.
+  - **git carries the CODE and the machinery, never the STATE or the SECRETS.** Those are
+    hand-carried, per `docs/MIGRATION.md` §2. The rule cuts both ways: a build step that
+    only works because of an untracked local file breaks portability just as badly as a
+    secret committed by accident.
+  Sits with, and is the operational half of, zeldfep's replicable-instances rule:
+  authoritative state must never live only in one process's memory or one box's disk.
+
 - **Boot policy** (2026-08-21): the game boots STRAIGHT TO THE MENU -
   `-skipStartScreen` + Fast Launch auto-install, both halves stay (main.js).
 
@@ -99,6 +115,189 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   `test/character-selector` on 21 Aug and was never merged. Cherry-picked. *Check for an
   existing fix on a side branch before writing a new one.*
 
+- **CRITICAL, OPEN, NOT FIXED — movement replication is per-packet and walks every player.**
+  `MovementComponent::Register` installs a flecs observer on `flecs::OnSet`, and
+  `HandleMoveEntityRequest` sets the component once per received packet. So one movement
+  packet runs `ReplicateMovementComponent`, which does `world().each(...)` over **every
+  player on the server** with a distance check and a send for each one in range. There is
+  no inbound rate limit and no coalescing.
+  - **Amplification:** 1 client packet → O(players) server work, at an unbounded inbound
+    rate. One attacker at 1000 packets/s against 32 players is ~32,000 relevance checks a
+    second, plus sends.
+  - **The existing LOD does not save it.** `ShouldSendTo` reduces by distance — full rate
+    ≤200m, `% 4` to 600m, `% 16` beyond — but the divisors are keyed on
+    `MovementComponent::Sequence`, which `Level.cpp:982` increments **per received packet**.
+    A flood therefore scales sends linearly too; the divisors cut the constant, not the
+    growth. And the walk itself is never reduced.
+  - **DO NOT "fix" this with a packet-rate rejection.** Movement is legitimately
+    high-frequency and dropping packets causes rubber-banding. The right shape is
+    coalescing: store the newest authoritative state on receipt (cheap), and replicate on
+    the server's own tick so five packets arriving between ticks cost one relevance pass,
+    not five.
+  - **COALESCING IS NOW IMPLEMENTED BEHIND `Config::CoalesceMovement`, DEFAULT OFF**
+    (2026-09-04). A packet stores the newest state and raises `ReplicationPending` (a flag,
+    never a queue — O(players), not O(packets)); `GameServer::ReplicatePendingMovement`
+    walks pending entities once per tick. **The rate was not invented**: `UpdateRate{30}`
+    already existed in config and was already sent to clients as their send rate — it was
+    simply never used server-side for anything. A compliant client therefore sees the same
+    cadence it does today; only bunched or flooded packets collapse.
+  - **The sequence split that made it safe.** `Sequence` (received, per packet) is now
+    separate from `ReplicatedSequence` (per replication). The wire and the LOD both use the
+    latter, so a flood can no longer outrun the `% 4` / `% 16` reduction, and the client's
+    staleness test still sees a strictly increasing number either way. **Both consumers were
+    mapped before changing it** — server LOD, and `InterpolationSystem.cpp:721` which drops
+    anything `<=` the last applied.
+  - **STILL OPEN. The flag stays OFF until a live two-client test.** Unit tests prove the
+    cost model (25 checks: 1000 pps drops from 31,000 relevance checks to ~930, a 33x
+    reduction, with the newest state surviving); they cannot prove the absence of jitter or
+    rubber-banding. A design plus green tests is not a fix.
+
+- ~~Movement accepts OUT-OF-ORDER packets~~ **FIXED 2026-09-04.** `MoveEntityRequest` is
+  `unreliable` (UDP, reordering expected) and the handler took whatever arrived last, so a
+  packet overtaken in flight could rewind the server's position — which is a wrong
+  AUTHORIZATION answer, not just a wrong dot: chat range, voice range, jail geofencing, and
+  the trade and medical distance checks all read it. Now rejected before the component is
+  written, before anything is marked pending, and before any walk.
+  - **`tick` is wall-clock milliseconds since the epoch** (`NetworkWorldSystem::GetTick`;
+    `InterpolationSystem.cpp:208` names the magnitude). Established before writing the fix,
+    and it removed most of the machinery the fix would otherwise have needed: it is globally
+    monotonic, it does **not** reset on spawn/respawn/character switch/reconnect, and a
+    uint64 of milliseconds does not wrap in any timeframe that matters — so no per-session
+    ordering domain, no lifecycle baseline reset, and no serial-number arithmetic.
+  - **A new ordering domain is a new component**, not a counter reset: a fresh puppet has
+    `Tick == 0` and accepts anything, which is what makes respawn and character switch work
+    with no special case.
+  - **The one real edge case is the client's wall clock moving backwards** (NTP, or someone
+    changing their system time). Strict rejection would freeze that player until real time
+    caught up — permanently, for a large jump. A backward step larger than 30s is treated as
+    a clock reset and re-baselined. Safe rather than a hole: ownership and epoch are already
+    validated, so it only concerns an entity the sender controls, and a client that wants to
+    be somewhere false just sends a position — the check defends against the NETWORK
+    reordering packets, not against a lying client.
+  - Also fixed in passing: `ReplicatedSequence` and `ReplicationPending` were not being
+    carried across the wholesale component replace, so the LOD would have reset to 0 on
+    every packet and `% 4` would have been true every time — interest management silently
+    off. Caught by writing the ordering check next to it.
+
+- **VOICE HAD NO RATE CAP** (fixed 2026-09-04). Frame size was capped at 1KB and the radius
+  was already server-decided from an intent, but nothing bounded frame RATE — so the same
+  per-population relay walk ran as fast as a client cared to send. Now 100/s inbound
+  (a real client sends ~50), checked after the cheap size rejection and **before** the
+  movement lookup, the call-partner search and the relay walk, so a refused frame costs
+  none of them. Logged once per window, never answered.
+  - Worst case now bounded: 100 frames × 31 recipients ≈ 3,100 relays/s per speaker, about
+    620 KB/s at real Opus frame size (~200 bytes); the 1KB ceiling caps the pathological
+    case near 3.1 MB/s. Both numbers are asserted in `voice_test` so they cannot drift.
+
+### Server-authority audit, 2026-09-04 (Cam stream)
+
+- **CRITICAL, KNOWN, ACCEPTED — the client is authoritative over its own money and
+  inventory.** `HandleSaveCharacterRequest` does `character.Money = aMessage.get_money()`
+  and rebuilds `character.Inventory` from the client's list. A modified client can declare
+  any balance or any items. **This is not an oversight**: the code says so ("Possessions,
+  taken from the client and kept by the server") and the standing decision is recorded in
+  place — *"Recorded, not refused… refusing here, before there is a ledger showing how
+  often it happens or a server-side balance to fall back to, would take money off players
+  whose client is simply ahead of the server. Measure first."* Instrumentation is already
+  in (`[MONEY]` boundaries, `audit.RecordMoney`). **Do not refuse plausible values without
+  that ledger.**
+  - **Fixed the impossible half (2026-09-04):** a negative balance, or one above 1e9, is
+    now refused and the STORED balance kept. Negative would make `AvailableMoney` negative
+    forever, permanently blocking trade and pay; above-1e9 is the trivial exploit needing no
+    race at all. Deliberately far above any real player — refusing what *cannot* happen, not
+    policing what might.
+  - Everything else in trade (reservations, overflow, availability) is sound and is
+    downstream of this: it protects the transfer, not the declaration.
+
+- **CORRECTION — my earlier "epoch validated on movement only" finding was WRONG**, and the
+  conclusion it implied was wrong too. `AuthorityComponent::Epoch` is **not a session epoch**.
+  Its own header says what it is: "which grant of SIMULATION RIGHTS over this entity is
+  current… Only entities that can change hands carry this - vehicles today. Player puppets
+  never transfer, so they never need it, and the epoch check simply does not apply to them."
+  It is a vehicle-handoff ordering counter. **There is no session epoch anywhere, including
+  movement** — so "other handlers are missing the check movement has" was not a real gap.
+  - **Stale-session mutation is prevented structurally instead, in three layers**, and
+    together they are complete:
+    1. **An old CONNECTION cannot reach a new session.** The transport is
+       GameNetworkingSockets — connection-oriented, per-connection encrypted sessions — and
+       `PlayerManager::Remove` erases the connection→player mapping on disconnect. All 16
+       mutating handlers resolve via `GetByConnectionId` and bail when absent.
+    2. **An old CHARACTER cannot mutate a new one.** `HandleSelectCharacterRequest` refuses
+       a switch while the player still has a live puppet — *"the autosave would then write
+       the new character's state over the old one's record"*. Every gameplay mutation needs
+       a puppet, so the window does not exist.
+    3. **Within one connection nothing arrives out of order**, because only FOUR messages
+       are unreliable — `MoveEntityRequest`/`NotifyEntityMove` and
+       `VoiceFrameRequest`/`NotifyVoiceFrame`. Everything that mutates persistent state is
+       `kReliable` and ordered. Movement has its own ordering check; voice mutates nothing.
+  - **`Verify.ps1` now guards leg 3** ("unreliable messages"), because it is the one a future
+    commit could break silently — marking a new mutation unreliable for latency would reopen
+    the whole class and nothing else would notice. The check found the two server→client
+    halves I had not enumerated, which is the check earning its place on its first run.
+  - **NOT adding epoch fields to other handlers.** With no stale path to close, that would be
+    the speculative protocol change the audit brief explicitly forbids.
+
+- **Audited and SOUND, no change needed:** vehicle ownership (`VehicleStore` owns
+  `OwnerId`, `Create`, `Transfer`); weapon ammo (`MagazineAmmo`/`ReserveAmmo` server-side);
+  quickhack cooldown (`MinIntervalMs`); combat refusing a downed attacker; revive checking
+  both `LifeState` **and** server-side distance (`kTreatmentDistance`); trade distance,
+  reservations and atomic commit.
+
+- **NOT APPLICABLE — there is no world-object system.** No doors, gates, containers,
+  elevators or interactables are synchronised at all, so §12/§13 of the audit brief have
+  nothing to audit rather than something unaudited. Worth knowing before anyone builds one.
+
+- **IDEMPOTENCY: `RequestLedger`, and phone sends now use it** (2026-09-04). A client that
+  does not hear back retries, and "the server never got it" is indistinguishable from "it
+  got it and the reply was lost" — so a retry can arrive for work already done. Harmless for
+  a movement packet; a duplicate for anything that CREATES something.
+  - `MessageStore::Send` takes an optional request id. Seen before → returns the ORIGINAL
+    message id without writing a second message. Recorded on **success only**, so a refusal
+    ("no eddies", "blocked") does not become a permanent verdict outliving its reason.
+  - **Empty id means no idempotency and is never a key.** Treating it as one would make
+    every idless send collide — the second text anybody sent would return the first one's id
+    and never be written. The only phone path today (`/text` over the reliable chat channel)
+    has no id to offer, so behaviour is unchanged; this is infrastructure ahead of the RPC.
+  - **Bounded three ways** because a cache keyed on client-supplied strings is a
+    memory-exhaustion surface: a TTL (5 min), a per-owner cap (64) and a global cap (4096),
+    all enforced on insert, oldest-first. **Per-owner is enforced before global on purpose** —
+    otherwise one flooder evicts everyone else's entries and *their* retries duplicate.
+  - **Keyed on the authenticated owner**, so one player cannot replay another's id.
+  - **Not cleared on disconnect**, deliberately: "dropped before hearing the answer,
+    reconnected, asked again" is precisely the retry it exists to catch. Entries expire on
+    time instead, which does not care why the connection went away.
+
+- **CHAT HAD NO RATE LIMIT AT ALL.** Quickhacks have per-hack cooldowns and movement
+  rejects floods, but the one path a client could drive as fast as it liked was the one
+  that copies text to **every player in range** *and* appends it to the log on disk. Both
+  briefs ask for this (phone §27, trade §30). Now a sliding window per player, checked
+  before anything is parsed, logged or relayed, warning **once per window** so the refusal
+  cannot itself be spammed.
+  - **The test set the number, not the other way round.** First draft was 10 per 5s;
+    `ratelimit_test` failed on "a line every 400ms", which is fast typing rather than a
+    bot. Raised to 20 per 5s rather than weakening the test — a real flood is thousands a
+    second, so anything in this range stops it identically, which means the limit should be
+    chosen to never catch a real player. If anyone tightens it, that test is what says
+    whether a human would notice.
+  - Not exempted for staff: one limit, no privilege hole.
+
+- **THE LINUX BUILD IS NOW PARTLY GATED, and 34 latent breakages were already there.**
+  Verify used to end by admitting "there is no GCC on this machine, so server portability
+  is only ever proven by a deploy". `tools/CheckIncludes.ps1` closes the one class of
+  GCC-only failure that has actually cost us a day — a `std::` symbol used without the
+  header that declares it, which MSVC forgives transitively and libstdc++ does not.
+  - **It found 34 across 24 files on its first run** (`<cstdio>`, `<utility>`, `<algorithm>`,
+    `<mutex>`, `<atomic>`, `<functional>`, `<thread>`…). All added; MSVC build still clean.
+    Every one of those was a live risk to the weekend migration, because a container build
+    that fails does NOT roll back — the deploy keeps the previous image, so on **new**
+    hardware nothing would have come up at all.
+  - Wired into `Verify.ps1`, so it gates every ship. **Self-tested both ways**: a planted
+    missing `<cstring>` fails the gate with the file and symbol named; restoring it passes.
+  - The script was UNTRACKED until now, which is exactly the hazard the portability decree
+    describes — an untracked file that incoming commits later create refuses the pull. Now
+    committed.
+  - Still a lint, not a compiler. A clean run is not a promise GCC is happy.
+
 - **A SYMLINKED PLUGIN DLL SILENTLY KILLS THE WHOLE MOD.** Cam's game came up with a
   completely stock main menu, nothing crashed, and it looked like every menu change had
   been reverted. It had not: RED4ext loaded the plugin, the plugin resolved its OWN path
@@ -118,6 +317,94 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
     installed DLL is not a reparse point.
   - **First diagnostic for "the mod did nothing": `red4ext/logs/red4ext-*.log`.** A plugin
     that fails during `Load` says so there and nowhere else.
+
+### FOR ZELDFEP — NETCODE IS FROZEN, THE BRANCH IS NOW A REFERENCE (2026-09-05)
+
+**Read this before touching anything on `feat/world-state`.** Nothing here changes the live
+servers — nothing is pushed — but it changes what this branch IS.
+
+**1. Hard freeze on runtime multiplayer networking**, until Cam says the server swap is complete.
+No production `.proto`, handlers, transport, RPC, replication, auth, movement, vehicle, combat,
+voice, phone, selector, or economy networking. This matches what you asked for before the swap;
+it is now written down and it applies to both streams.
+
+**2. `feat/world-state` is now classified OUTGOING SERVER REFERENCE IMPLEMENTATION.** Not a
+deployment target, not the base for the new server, and deliberately NOT cleaned up. A full
+netcode rollback was proposed, audited, and **rejected** — the numbers are in
+`docs/OUTGOING-SERVER-NETCODE-MAP.md` §0, but briefly: the branch is +20,760 lines, the "netcode"
+files are +6,046, and the actual transport is ~1,500-2,500. The rest is persistence, permissions,
+admin tooling and economy work that must survive. `HandleSaveCharacterRequest` is one function
+that is simultaneously a packet handler AND the money guard, the starter kit, the Stage 5
+observation and the audit log. Splitting it is a rewrite, not a revert.
+
+**3. The branch protocol already differs from published `fork/main`** — and has since long before
+this work:
+
+```
+fork/main:        client 0x88b2f6b5cbefc91c   server 0xb2f2bf7363a7f337
+feat/world-state: client 0xc67c52a1b6c5f096   server 0xa14513f4653e80f
+```
+
+134 lines from `9af9e8d` (character slots), `1d5aec2` (phone calls), `8156ebb` (`/call` fix).
+Deliberately NOT reverted. **Do not assume branch protocol == published protocol.**
+
+**4. Three handoff documents are the authority for rebuilding on the new server:**
+
+| Document | What |
+|---|---|
+| `docs/NEW-SERVER-NETCODE-PORTING-HANDOFF.md` | all ten phases; rebuild without reading old code |
+| `docs/OUTGOING-SERVER-NETCODE-MAP.md` | where the old netcode is; every mixed file split keep/don't-port |
+| `docs/NEW-SERVER-AUTHORITY-HANDOFF.md` | economy authority + proven Cyberpunk facts |
+
+**Read the requirements first. Do not start by copying old code.**
+
+**5. Findings that affect your half:**
+- **Money is NOT server-authoritative** — 17 vanilla paths bypass `Economy::`. Vendors move eddies
+  client-side (`vendor.script:1180`, proven from the game's own source). Money is an inventory
+  item.
+- **No vanilla inventory operation is observed at all** — zero hooks on `TransactionSystem`,
+  vendors, crafting, loot, stash.
+- **The item model cannot represent a real item** — `(TweakDBID, quantity)` in,
+  `GiveItemByTDBID` out. A restore hands back a BASE item, losing mods/tier/upgrades. **This is a
+  live data-loss path today**, independent of any authority work.
+- **The cell grid culls nothing** — relevance is effectively broadcast.
+- **netpack does not range-validate enums** — an undeclared value round-trips intact. Two
+  generator defects found and fixed (`b6fc19c`); production protos byte-identical after.
+
+**6. Still unresolved, and not solved by being documented:** movement coalescing (flag OFF, never
+2-client tested — that test needs you), the remote-vehicle-mount crash, cell-grid relevance, money
+authority, item fidelity, and the character session lock.
+
+**7. Selector and full inventory authority are PARKED** until the new server has auth, identity,
+CharacterID, persistence, session lock and authoritative load/spawn.
+
+Phase 5 stages 1-5 stand as architecture and were **not** the reason for the swap.
+
+### Phase 5 (economy authority) — stages 1–5 built, NOTHING BEHAVES DIFFERENTLY YET
+
+Full detail in `docs/PHASE5-ECONOMY-AUTHORITY.md`; this row is the ledger pointer. All of it
+is **local and unpushed** — per Cam, nothing ships before the server swap.
+
+- **The one client-authoritative door is still open, deliberately.** `character.Money =
+  aMessage.get_money()` is untouched. Closing it is Stage 7, and Stage 7 is a flag day.
+- **What is built is the machinery, not the cutover:** atomic persistence for all six stores
+  (Stage 1), the `EconomyRevision`/`MigratedAt` fields (2), a trust-once migration that
+  **nothing calls** (3), `EconomyMutator.h` as the single boundary every server-side money and
+  inventory change now routes through (4/4B), and transaction-scoped revisions plus stale
+  classification (5).
+- **Migration is INERT. No character anywhere is migrated**, so revisions sit at 0 and the
+  Stage 5 observation never fires. This is the intended state — the machinery gets to be
+  proven while being wrong about it is still free.
+- **Two things need a live server and are therefore blocked on the migration:** activating the
+  trust-once migration (irreversible — review the `[MONEY]` audit trail first), and any wire
+  change. The client-observed revision needs a field on `SaveCharacterRequest`, and netpack
+  derives the protocol id from the `.proto` **text**, so that is a flag day like 6 and 7.
+- **The regression that must keep passing for the rest of Phase 5** (`trade_real_test`):
+  *ordinary play never migrates anybody.* If runtime could produce a migrated record the
+  migration gate would mean nothing.
+- **For the other stream:** if you add a server-side money or inventory mutation, route it
+  through `Economy::` and advance the revision **once per transaction, at the boundary** — not
+  inside the primitives. The primitives deliberately never touch it.
 
 ### Landed 2026-09-04 (zeldfep stream) — the launcher is open source
 - **THE RED SMARTSCREEN SCREEN IS UNSIGNED CODE, NOT MALWARE — and the obvious fix does not
@@ -160,6 +447,27 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   organisation validation wants three years of verifiable history, so a new entity means a
   commercial CA at roughly 200-500/yr plus a hardware token. Publisher name will be
   **OfficialCutProductions**; nothing is signed until that identity exists, on purpose.
+
+- **DECISION 2026-09-04: the phone ClientRpc pair is APPROVED, and it is NOT a flag day —
+  verified against the code, not accepted on argument.** Cam's stream asked before building
+  contacts + text delivery into the vanilla phone, because it is new traffic in a migration
+  week. Answer: build it. The three legs were checked: (1) `kIdentifier` derives from the
+  `.proto` text ALONE (`netpack/main.cpp:368-369` — `kProtocolString = HashProtocol(...)`,
+  `kIdentifier = FNV1a64` of it), and an RPC pair is a REGISTRATION rather than proto text, so
+  the identifier does not move and the door checks at `GameServer.cpp:819/831` refuse nobody;
+  (2) ids are negotiated PER CONNECTION — `GameServer.cpp:1096-1102` serializes the full
+  `(id, klass, function)` mapping and sends it BEFORE `AuthenticationResponse`; (3) an old
+  client fails safe — `GetRpcHandler` returns null for a function it lacks and `Call()`
+  refuses rather than misdispatching.
+  **TWO CONDITIONS, and the first is the whole point of the ask: LAND IT, DO NOT DEPLOY IT
+  UNTIL THE MIGRATION IS VERIFIED.** `feat/world-state` is what the NAS cron deploys; a server
+  rebuild landing mid-migration is how a clean move becomes an evening. If it must sit on the
+  branch before then, the cron gets PAUSED deliberately rather than both streams assuming the
+  other did it. **Second: the contacts snapshot must tolerate arriving before its
+  definitions** — definitions land at auth, the injection point is the spawn path, and spawn
+  is also where a character SWITCH lands; an unresolved id makes the first snapshot vanish
+  silently, which will read as "contacts are empty for the first character you pick" and get
+  misdiagnosed as a `MessageStore` bug.
 
 ### Needs a live session (built, never validated with humans)
 - **Pause menu unpause is BEST-EFFORT, 2026-09-04.** The menu opens again (an inline
@@ -519,8 +827,11 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   exists BEFORE spending the bytes, keep them when it does not, clear only after a commit is
   accepted. Cheap live check: `appearance held - no live customization state yet` once, then
   a real BEGIN after the world attaches. Fault A — `OwnSave` picking a save by file order
-  instead of identity — is STILL OPEN and the big one; its fix is ChatGPT's Phase 1 items 1-4
-  and the correct next piece of work.
+  instead of identity — is FIXED 2026-09-04 by always loading the template and letting the
+  server own identity; see the "I am not the character I made" entry for why the named-save
+  plan was dropped. **COMPILE-CHECKED 2026-09-04 against the real 2.31 install on this box.**
+  Still unproven live: whether always starting from the template leaves a player visibly
+  Veronica when the appearance restore does not land — that is one join away from an answer.
 
 - **"Nobody could see anybody" — never the puppet system. FIXED `ec2858d`, awaiting a live
   run.** `NetworkWorldSystem::Spawn` was never called ONCE in twenty-one session logs — no
@@ -587,7 +898,52 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   "summon my second Quadra" has no native expression. The server must decide which instance
   a model-summon resolves to - nearest stored, last driven, or explicit via /garage.
 
+### The cell grid does not actually cull anything (measured 2026-09-04)
+- **`kCellSize = 6000` is larger than Night City, so the spatial partition is inert as a
+  RELEVANCE filter — everyone is always in everyone's radius.** Measured against the live
+  server's own stored state (`config/players.json`, `vehicles.json`, `startpoint.json`,
+  `respawn.json` — 11 real positions): `x` spans **-1759.7 .. 672.8**, `y` spans
+  **-1956.5 .. -1261.0**, `z` spans **27.9 .. 69.7**. At `kCellSize = 6000` every one of
+  those falls into **two cells — (-1,-1) and (0,-1)**. `kLoadRadius = 3` then covers a 7×7
+  block, 42,000 units on a side, against a world whose observed extent is ~2,400 × 700.
+- **Consequence, and it is a design input rather than a bug report:** every player receives
+  every other player's and every vehicle's updates regardless of distance, so bandwidth
+  scales with the square of the player count and has no falloff to lean on. The
+  per-connection interpolation-delay work and any future relevance filtering are therefore
+  worth MORE than they look, not less — there is currently nothing else reducing what a far
+  player costs.
+- **It also explains why the cell-size bug was catastrophic rather than merely inefficient.**
+  The grid gates LOADING, so a wrong cell dropped loads entirely ("nobody could see
+  anybody", six days) while never delivering the culling the size was chosen for. The
+  `std::floor` fix and the single-source constants remain correct and necessary; what is
+  wrong is the SIZE, and nothing today depends on that size being large.
+- **Honest limit on the measurement:** 11 stored positions from one server, not a survey of
+  the map. It is last-known player positions, parked vehicles and spawn points, so it does
+  not prove the whole city fits in two cells — but Night City is roughly 5 km across and the
+  cell is 6,000 units, so the whole world is a handful of cells either way. Anyone wanting
+  certainty can widen the sample from `logs/clients/` movement traces.
+- **NOT CHANGED. Do not "fix" this by shrinking `kCellSize` casually** — it is a wire
+  contract the client re-derives (`GameServer` advertises it, the client checks its own
+  answer against the server's and DROPS mismatched loads), so a change is a flag-day-shaped
+  event even though the identifier does not move. Decide the number deliberately, change it
+  on both sides in one commit, and expect the drop-loads path to be the thing that bites.
+
 ### Known bugs, diagnosed, unfixed
+- ~~`RpcService::Call` derefs null on a default-constructed slot~~ **LANDED 2026-09-04 (Cam
+  stream), all three parts, and the read turned up a worse one than was reported.** zeldfep's
+  inference was right: the guard `if (rpc.Id.Klass != 0 && !pContext)` lets through the one
+  shape it needed to catch, because an unwritten slot has `Klass == 0` AND a null handler.
+  Now an unconditional `if (!pContext)`.
+  **The worse bug underneath it:** `HandleRpcDefinitions` sized the table by
+  `client_definitions.size()` — a COUNT — and wrote to it by `rpc.get_id()` — an ID. Those
+  agree only while ids are dense from zero, so any id ≥ count was an out-of-bounds WRITE, not
+  a null read. Heap corruption in a handler driven by whatever the server sends. Now sized by
+  highest id + 1. Same root as the reported bug (count-vs-id), strictly worse consequence.
+  Refusals also log once per id per connection now (cleared when definitions arrive), so a
+  snapshot pushed to an older client cannot spam a line per push per player.
+  **This was the blocker on the phone RPC** — the operation that could leave a gap is adding
+  registrations, which is what the phone pair does. That path is now safe to grow.
+
 - **THE OBSERVER CRASH: cause found 2026-09-04, and it was REPETITION, not memory.**
   zeldfep died (exit `0x80000003`) with his log ending mid-apply, one line after
   `Scheduling change`. The session held **15 remote appearance applies in 16 minutes,
@@ -610,11 +966,22 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   character he made. His stored blob also flip-flops 10232 -> 6484 -> 10232 bytes, i.e.
   different appearances competing, not one being resent. The server's sync is INNOCENT
   and working (it logged 6 real changes, not 15, and its unchanged-guard holds); it is
-  faithfully broadcasting a bad capture. Fix belongs at capture: `OwnSave` must pick the
-  save by IDENTITY, not file order. Proposed guard, needs a wire field so it is a
-  flag-day: the client reports the gender of the state it captured and the server refuses
-  a capture that contradicts the character record's `IsMale` - that would have caught
-  this in the first second instead of after a night of crashes.
+  faithfully broadcasting a bad capture. **HALF-ADDRESSED 2026-09-04 and the other half got
+  MORE URGENT, deliberately - read this before concluding the fix made things worse.**
+  `OwnSave` no longer picks a save at all: the template loads every time and identity comes
+  from the server (see fault A). That removes the *random* wrong character - a probe's
+  leftover Corpo can no longer win a file-order race. **It does NOT remove the template's own
+  identity, and it makes every machine start from it.** The body at load is now Phantom
+  Veronica for EVERYBODY until the server's appearance restore lands over the top, where
+  before a player with their own save might have started closer to themselves by luck.
+  That trade is intentional: one known starting state that the restore must beat is a bug
+  with one cause, where two competing sources is a coin flip nobody can reproduce. **The
+  consequence is that the appearance restore is now the single thing standing between a
+  player and being Veronica, so its priority goes UP, not down.**
+  Still worth building, and unchanged by any of this: the client reports the gender of the
+  state it captured and the server refuses a capture contradicting the character record's
+  `IsMale`. Needs a wire field, so it is a flag-day - batch it with the slots work. It would
+  have caught this in the first second instead of after a night of crashes.
 
 - **THE crash: SOLVED 2026-08-26/27 (`0da3c9b`, `559828f`, `0fa2bb9`) - never entity
   readiness; a genuine data race, two threads inside flecs' `flecs_stack_restore_cursor`
@@ -834,14 +1201,33 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
 - **"I am not the character I made" — root cause found 2026-09-02: TWO independent faults
   stacking, one still open.** Cam's report: *"the character we created would not be the
   character we play as, it is also not phantom veronica"* — a third person entirely.
-  - **(A) STILL OPEN — the big one: `OwnSave` has no idea which save is the character.** It
-    loads "the newest save that is not `MultiplayerStart`", which is not an identity, it is
-    an accident of file order. On 2026-09-01 it loaded `AutoSave-12` — a throwaway female
-    Corpo from a probe run two days earlier. ANY newer save wins: another test character, a
-    singleplayer session, anything. The fix needs a save NAMED for the character
-    (`ManualSave(saveName: String)` exists on `inkISystemRequestsHandler`, so the mod can
-    name its own saves) and a load that matches that name rather than a position in a list.
-    That is ChatGPT's Phase 1 items 1-4 and it is the correct next piece of work.
+  - **(A) FIXED 2026-09-04 by REMOVING THE CHOICE — not by the plan of record, and the
+    reason matters. COMPILE-CHECKED 2026-09-04 (`CheckScripts.ps1`, real 2.31 install).** `OwnSave` loaded "the newest save that
+    is not `MultiplayerStart`", which is not an identity, it is an accident of file order; on
+    2026-09-01 it took `AutoSave-12`, a throwaway female Corpo from a probe two days earlier,
+    and ANY newer save would have won — another test character, a singleplayer session,
+    anything.
+    **The planned fix was DROPPED deliberately.** It was "name a save per character
+    (`ManualSave(saveName)`) and load by matching the name", and it needs the mod to WRITE
+    saves. `343b912` closed that door hours earlier on purpose: `SaveLocksManager` is held for
+    the whole launcher session because a local save is a second copy of a server-owned
+    character, and *save with the money, spend it, load, spend it again* is the exploit that
+    follows. Naming saves per character would have punched a hole in a rule Cam asked for
+    personally, to solve a problem with a cheaper answer.
+    **What landed instead: the template is loaded ALWAYS, matched BY NAME.** Identity comes
+    from the server, which was always the design — `HasCharacter()`, `GetCharacterName()` and
+    the appearance restore all run before the load does. No file order, no newest-save race,
+    nothing to name. `MpLoadOwnCharacterSave` is renamed `MpLoadMultiplayerWorld` because the
+    old name now describes the opposite of what it does.
+    **Honest costs, both recorded rather than discovered later:** a returning player's own
+    singleplayer world progress no longer enters a session (nothing consulted it — the server
+    owns position, possessions, money and world facts — and it could not have advanced anyway
+    with saving locked), and **the template's Phantom Veronica identity bleed is NOT fixed
+    here** — `MpStarterSettlement` and the appearance restore are the two fixes in flight for
+    that. What changed is that the bleed now comes from ONE known source on every machine
+    instead of whichever save a player happened to have: a bug you can reproduce rather than a
+    coin flip. Fallback if the template is missing from the list logs LOUDLY and takes the
+    newest save, because a player still needs a world.
   - **(B) FIXED**: the stacked second fault — a failed appearance restore destroying its own
     input — see the appearance-restore entry.
 
@@ -1134,3 +1520,42 @@ portability stays unverifiable locally.
   environment identity once live.
 - **Server**: status API `ManifestVersion`/`Release` (empty = migration).
 
+
+## 5. THE GAME INSTALL AS A TOOL (surveyed 2026-09-04, zeldfep's box)
+
+What a machine with the real game can answer that a build-only box cannot, and what is
+STILL missing here. Recorded because "does this box have the game" turned out to be the
+wrong question — the useful one is "which of these does it have".
+
+| Capability | Needs | Status on this box |
+|---|---|---|
+| Compile redscript (`CheckScripts.ps1`) | `engine\tools\scc.exe`, from the **redscript prerequisite** | **YES** — `OK - redscript compiles` |
+| Live-install a build (`DevInstall.ps1`) | `red4ext\plugins\zzzCyberpunkMP` | **YES** |
+| Read VANILLA SCRIPT SOURCES | **REDmod DLC** → `<game>\tools\redmod\scripts` | **NO — not installed** |
+| Read map/world geometry, `.ent`, `gameHitShapeBVH` | WolvenKit (CLI buildable from source) | **NO — not installed** |
+| Verify prerequisite versions against the pins | the install itself | **YES** |
+
+- **REDmod is the notable gap and it is free on Steam.** Every file+line citation the map
+  leans on — the vehicle-damage audit (`vehicleComponent.script:79/:4543/:6304`,
+  `vehicles.script:1123`, `attackData.script:219`), the phone corrections
+  (`phoneSystem.script:9`, `newHudPhoneGameController.script:512`,
+  `messengerUtils.script:89`), `singleplayerMenu.script:1012`, `saveLocksManager.script:29`
+  — comes from those sources. **They cannot be verified or extended on this box.** Anyone
+  about to do that class of work (read the game's own source rather than guess) should
+  install REDmod first; it is the difference between "answered from the sources" and
+  "answered from a runtime dump", which is the distinction that has decided several of the
+  entries above.
+- **Prerequisite versions match their pins EXACTLY**, verified against
+  `publish/manifest-source.json`: RED4ext **1.29.1**, Codeware **1.18.0**, ArchiveXL
+  **1.26.0**, TweakXL **1.11.1**. Also present: `input_loader`, `zzzCyberpunkMP`.
+- **The game has not been RUN since the mod was installed** — `red4ext\logs` is empty. So
+  the install is unproven, and the first launch is the test. First diagnostic if the mod
+  appears to do nothing is that log, per the symlinked-plugin entry.
+- **A live reproduction of ledger fault A is sitting on this machine**, which is worth
+  keeping rather than tidying away. 23 save folders: `MultiplayerStart`, `ManualSave-0/1`,
+  and twenty AutoSaves — **including `AutoSave-12`, the exact save that produced the wrong
+  character on 2026-09-01**. Every one carries a timestamp inside the same two seconds
+  (07:28:41–43, restored as a batch), so under the OLD "newest save that is not the
+  template" rule which character you became was decided by sub-second tie-breaking. The two
+  newest are `AutoSave-13` and `AutoSave-12`. That is the coin flip made visible, and it is
+  why the fix removes the choice rather than sharpening it.

@@ -229,8 +229,43 @@ message UpdateAppearanceRequest {
 //
 // The confirmation belongs on the client, in front of the person losing the character. By
 // the time this message exists they have already answered it.
+// "Delete the character in this slot."
+//
+// The slot is named because a person clicked a row, not because the slot is the identity.
+// The server resolves the slot to a character and re-checks everything about it - a client
+// that names slot 9, or a slot holding somebody else's character, gets a refusal rather
+// than a deletion.
+//
+// Deletion is SOFT: the row moves to RetiredCharacters, so the slot is freed, the character
+// id is never reissued, and the deletion can be undone by hand. That is also why an account
+// has a lifetime row ceiling separate from its slot count - create-and-delete writes a new
+// row every time.
 message DeleteCharacterRequest {
+    int32 slot = 1;
 }
+
+// "Play as the character in this slot."
+//
+// Answers nothing on its own. The real answer is the spawn that follows, or a refusal on
+// the character list - the same shape every other character request has, because a request
+// that returned a verdict would have to block, and the client has nothing to block on.
+message SelectCharacterRequest {
+    int32 slot = 1;
+}
+
+// CreateCharacterRequest USED TO BE HERE, and it was never wired to anything.
+//
+// It was added with the slot work on the assumption that creating a character in a chosen
+// slot would need its own message. It does not: creation happens through
+// SaveCharacterRequest, which carries the appearance the creator produced, and the server
+// places it. Nothing ever sent this and nothing ever handled it.
+//
+// Removed rather than left, because a declared message with no handler is a trap - the next
+// person to wire a client to it gets silence and a debugging session. Free to remove
+// because it has never shipped: the protocol was already changing this release.
+//
+// Field number 19 in the oneof below is deliberately NOT reused. Numbers are cheap and a
+// recycled one is how two builds come to disagree about what a message means.
 
 // "I want to run this quickhack on this person."
 //
@@ -448,6 +483,37 @@ message VoiceFrameRequest {
     uint32 range = 3;
 }
 
+/**
+ * "Ring this number."
+ *
+ * Carries no caller. Who is calling comes from the CONNECTION, exactly as it does for
+ * voice and for every combat message here - so "ring them as somebody else" cannot be
+ * spelled, rather than being spelled and refused.
+ */
+message CallRequest {
+    string number = 1;
+}
+
+/**
+ * Answer, decline, or hang up.
+ *
+ * One message rather than three: the three share a shape, a validation skeleton and a
+ * failure mode, and each separate message costs another presence bitfield to keep in step.
+ *
+ * The call_id is checked against the sender's OWN active call rather than used to look one
+ * up. That difference matters: a call id used as a lookup key is a way to hang up somebody
+ * else's call, while a call id checked against your own is only a way to notice that the
+ * call you were looking at has already been replaced by another one.
+ */
+message CallControlRequest {
+    string call_id = 1;
+
+    // 0 answer, 1 decline, 2 hang up. Anything else is refused rather than defaulted -
+    // a mystery action that quietly becomes "hang up" would drop calls for no visible
+    // reason on any client that got the numbering wrong.
+    uint32 action = 2;
+}
+
 message Protocol {
     oneof content {
         AuthenticationRequest authentication_request = 1;
@@ -467,5 +533,9 @@ message Protocol {
         StatusEffectRequest status_effect_request = 15;
         QuickhackUploadRequest quickhack_upload_request = 16;
         QuickhackRequest quickhack_request = 17;
+        SelectCharacterRequest select_character_request = 18;
+        // 19 was CreateCharacterRequest - removed, never used. Not reused.
+        CallRequest call_request = 20;
+        CallControlRequest call_control_request = 21;
     }
 }

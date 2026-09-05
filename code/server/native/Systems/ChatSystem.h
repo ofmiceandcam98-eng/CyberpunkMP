@@ -2,6 +2,8 @@
 
 #include "Components/PlayerComponent.h"
 #include "CharacterRecord.h"
+#include "CallStore.h"
+#include "TradeStore.h"
 
 // How far a line of chat carries, in metres.
 //
@@ -101,6 +103,96 @@ struct ChatSystem
     // Only the client owning a journal can change it, so /quest skip relays rather than acts.
     void SendQuestSkip(flecs::entity aSubject, const std::string& acQuest);
 
+    /**
+     * Hands over everything texted to this player's ACTIVE character while they were away.
+     *
+     * Public because the spawn path calls it - arrival is when somebody is in a position
+     * to read anything, and it is also the moment a character switch has finished, which
+     * is the other time the answer changes. Resolving the character here rather than at
+     * the call site is deliberate: the caller knows about a connection, and which of that
+     * account's characters is listening is exactly the question that must not be guessed.
+     */
+    void DeliverPendingMessages(const PlayerComponent& acPlayer);
+
+    // ------------------------------------------------------------------- calls ----
+    //
+    // Player-to-player calls only. Nothing here goes near the game's PhoneSystem, which is
+    // what keeps the Songbird block intact - see CallStore.h for the full argument.
+
+    /**
+     * The connected player whose ACTIVE character is this one, or an empty entity.
+     *
+     * "Active" is the whole point. Somebody logged in as their other character is, for
+     * every purpose here, offline: their phone is a different phone, and ringing it would
+     * be ringing a person who is not holding it.
+     */
+    flecs::entity FindByActiveCharacter(const std::string& acCharacterId) const;
+
+    /**
+     * End whatever call this character is in, and tell the other side.
+     *
+     * Public because three callers outside this file need it and all three are cases where
+     * a call must not survive: a disconnect, a crash, and a CHARACTER SWITCH. The last is
+     * the one worth naming - a call belongs to the character that made it, so it must end
+     * rather than follow the player to their next character.
+     */
+    void EndCallFor(const std::string& acCharacterId, CallState aState);
+
+    // Rings out calls nobody answered. Driven from the server tick.
+    void TickCalls();
+
+    // ------------------------------------------------------------------ trades ----
+
+    // Both sides of a live trade, shown to BOTH people. A private view of a shared deal is
+    // how somebody confirms something they never saw.
+    void ShowTrade(const TradeSession& acSession);
+
+    /**
+     * End this character's trade and tell the other side why.
+     *
+     * Public because disconnect, death and a character switch all need it. Never ends one
+     * that is COMMITTING - see TradeStore::EndFor for why that is not a cancellable state.
+     */
+    void EndTradeFor(const std::string& acCharacterId, TradeState aState,
+                     const std::string& acWhy);
+
+    // Expiry and the continuous distance check. Driven from the server tick.
+    void TickTrades();
+
+    // ----------------------------------------------------------------- medical ----
+
+    /**
+     * Bleedout, and finishing procedures. Driven from the server tick.
+     *
+     * The ONE place a downed player becomes dead, and the one place a treatment completes.
+     * Both are deadlines rather than countdowns - see Medical.h - so this only ever asks
+     * whether a stored timestamp has passed, and a slow or skipped tick delays an outcome
+     * without changing it.
+     */
+    void TickMedical();
+
+    // Tells both sides where a call now is. One place, so a state change cannot be
+    // announced to one participant and not the other.
+    void AnnounceCall(const CallSession& acSession, CallState aState);
+
+    /**
+     * Ring a number, and answer/decline/hang up.
+     *
+     * THE ONE IMPLEMENTATION. The phone app and the chat fallback both land here, so
+     * there is no second copy of the rules for one of them to drift away from - which is
+     * the failure the brief's "do not duplicate call logic" is about, and the reason the
+     * chat commands were reduced to callers rather than left as a parallel path.
+     *
+     * Validation lives here rather than at either surface for the same reason: a rule
+     * enforced where the player typed it is a rule the other surface gets to break.
+     */
+    void BeginCall(const PlayerComponent& acPlayer, const std::string& acNumber);
+
+    // 0 answer, 1 decline, 2 hang up. An empty call id means "whatever I am in", which is
+    // what the chat fallback has - the phone always sends the id it is displaying.
+    void ControlCall(const PlayerComponent& acPlayer, const std::string& acCallId,
+                     uint32_t aAction);
+
     std::vector<PendingSale> m_pendingSales;
 
     // Only players whose puppet is within aRange of acOrigin.
@@ -125,6 +217,15 @@ protected:
 
     // The selector's trash can. Retires rather than destroys - see PlayerStore.
     void HandleDeleteCharacterRequest(const PacketEvent<client::DeleteCharacterRequest>& aMessage);
+
+    // The phone app dialling and pressing buttons. Both relay to BeginCall/ControlCall,
+    // which the chat fallback also uses.
+    void HandleCallRequest(const PacketEvent<client::CallRequest>& aMessage);
+    void HandleCallControlRequest(const PacketEvent<client::CallControlRequest>& aMessage);
+
+    // "Play as the character in this slot." Answers nothing directly - the real answer is
+    // the spawn that follows, or a refusal carried on the character list.
+    void HandleSelectCharacterRequest(const PacketEvent<client::SelectCharacterRequest>& aMessage);
 
     // Send this connection its current character list. The selector redraws from this
     // rather than assuming what a delete did.
