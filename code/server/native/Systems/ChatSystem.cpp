@@ -5633,6 +5633,69 @@ void ChatSystem::HandleChatMessageRequest(const PacketEvent<client::ChatMessageR
     }
     auto* pPlayer = entity.get<PlayerComponent>();
 
+    /*
+     * FLOOD CONTROL, before anything is parsed, logged or relayed.
+     *
+     * Asked for by both briefs - the phone's section 27 ("prevent spam without making
+     * normal RP communication annoying") and the trade brief's section 30 - and chat had
+     * none. Quickhacks have per-hack cooldowns and movement rejects floods; this was the
+     * one path a client could drive as fast as it liked, and it is the path that copies
+     * text to every player in range AND appends it to the log on disk.
+     *
+     * Checked FIRST, so a flooding client costs the server a comparison rather than a
+     * broadcast and a disk write. Everything below this - truncation, control-character
+     * stripping, command dispatch - is work a flood should never reach.
+     *
+     * A SLIDING WINDOW rather than a minimum gap between messages. A fixed delay punishes
+     * somebody firing off several short lines in a scene, which is the thing a roleplay
+     * server exists for, while still permitting a sustained stream at exactly the limit.
+     *
+     * TUNED DELIBERATELY LOOSE. A real flood sends thousands a second, so anything in this
+     * range stops it equally - which means the number should be chosen to never catch a
+     * real player rather than to be tight. Both briefs say the same thing: "prevent spam
+     * WITHOUT making normal RP communication annoying". The first draft was 10 per 5s and
+     * the test caught it refusing a line every 400ms, which is fast but not inhuman. Twenty
+     * is four a second sustained - past anyone typing - and still bounds the server to four
+     * broadcasts and four log writes per player per second, which is the actual cost.
+     *
+     * NOT exempted for staff. A single limit has no privilege hole to find, and no
+     * moderator types faster than this either.
+     */
+    constexpr int64_t kChatWindowMs = 5000;
+    constexpr uint32_t kChatBurst = 20;
+
+    const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::system_clock::now().time_since_epoch())
+                           .count();
+
+    auto* pRate = entity.get_mut<PlayerComponent>();
+
+    if (nowMs - pRate->ChatWindowStartMs >= kChatWindowMs)
+    {
+        pRate->ChatWindowStartMs = nowMs;
+        pRate->ChatInWindow = 0;
+        pRate->ChatFloodWarned = false;
+    }
+
+    ++pRate->ChatInWindow;
+
+    if (pRate->ChatInWindow > kChatBurst)
+    {
+        // Told once per window. Replying to every message of a flood is the same denial of
+        // service with the server volunteering to do the work.
+        if (!pRate->ChatFloodWarned)
+        {
+            pRate->ChatFloodWarned = true;
+
+            Tell(*pPlayer, "You are sending messages too quickly - slow down.");
+
+            spdlog::warn("[chat] rate limited {} ({} in {}ms)", pPlayer->Username, pRate->ChatInWindow,
+                         kChatWindowMs);
+        }
+
+        return;
+    }
+
     // Length is checked before the message is logged, let alone broadcast.
     //
     // Chat is relayed verbatim to everyone in range and written to the log. With no cap, a

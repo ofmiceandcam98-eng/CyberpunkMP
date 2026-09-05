@@ -115,6 +115,20 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   `test/character-selector` on 21 Aug and was never merged. Cherry-picked. *Check for an
   existing fix on a side branch before writing a new one.*
 
+- **CHAT HAD NO RATE LIMIT AT ALL.** Quickhacks have per-hack cooldowns and movement
+  rejects floods, but the one path a client could drive as fast as it liked was the one
+  that copies text to **every player in range** *and* appends it to the log on disk. Both
+  briefs ask for this (phone §27, trade §30). Now a sliding window per player, checked
+  before anything is parsed, logged or relayed, warning **once per window** so the refusal
+  cannot itself be spammed.
+  - **The test set the number, not the other way round.** First draft was 10 per 5s;
+    `ratelimit_test` failed on "a line every 400ms", which is fast typing rather than a
+    bot. Raised to 20 per 5s rather than weakening the test — a real flood is thousands a
+    second, so anything in this range stops it identically, which means the limit should be
+    chosen to never catch a real player. If anyone tightens it, that test is what says
+    whether a human would notice.
+  - Not exempted for staff: one limit, no privilege hole.
+
 - **THE LINUX BUILD IS NOW PARTLY GATED, and 34 latent breakages were already there.**
   Verify used to end by admitting "there is no GCC on this machine, so server portability
   is only ever proven by a deploy". `tools/CheckIncludes.ps1` closes the one class of
