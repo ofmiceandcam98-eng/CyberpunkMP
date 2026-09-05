@@ -209,12 +209,33 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   - Everything else in trade (reservations, overflow, availability) is sound and is
     downstream of this: it protects the transfer, not the declaration.
 
-- **HIGH — epoch is validated on MOVEMENT ONLY.** `Level.cpp:953` is the single
-  `get_epoch()` comparison. Combat, weapon, quickhack, status-effect, vehicle and appearance
-  handlers validate ownership but not session epoch, so a packet from a previous session
-  could in principle mutate the current one. Not fixed: several of those paths may not carry
-  an epoch at all, and adding checks blind risks silently dropping legitimate traffic.
-  Needs a per-handler pass with a live test.
+- **CORRECTION — my earlier "epoch validated on movement only" finding was WRONG**, and the
+  conclusion it implied was wrong too. `AuthorityComponent::Epoch` is **not a session epoch**.
+  Its own header says what it is: "which grant of SIMULATION RIGHTS over this entity is
+  current… Only entities that can change hands carry this - vehicles today. Player puppets
+  never transfer, so they never need it, and the epoch check simply does not apply to them."
+  It is a vehicle-handoff ordering counter. **There is no session epoch anywhere, including
+  movement** — so "other handlers are missing the check movement has" was not a real gap.
+  - **Stale-session mutation is prevented structurally instead, in three layers**, and
+    together they are complete:
+    1. **An old CONNECTION cannot reach a new session.** The transport is
+       GameNetworkingSockets — connection-oriented, per-connection encrypted sessions — and
+       `PlayerManager::Remove` erases the connection→player mapping on disconnect. All 16
+       mutating handlers resolve via `GetByConnectionId` and bail when absent.
+    2. **An old CHARACTER cannot mutate a new one.** `HandleSelectCharacterRequest` refuses
+       a switch while the player still has a live puppet — *"the autosave would then write
+       the new character's state over the old one's record"*. Every gameplay mutation needs
+       a puppet, so the window does not exist.
+    3. **Within one connection nothing arrives out of order**, because only FOUR messages
+       are unreliable — `MoveEntityRequest`/`NotifyEntityMove` and
+       `VoiceFrameRequest`/`NotifyVoiceFrame`. Everything that mutates persistent state is
+       `kReliable` and ordered. Movement has its own ordering check; voice mutates nothing.
+  - **`Verify.ps1` now guards leg 3** ("unreliable messages"), because it is the one a future
+    commit could break silently — marking a new mutation unreliable for latency would reopen
+    the whole class and nothing else would notice. The check found the two server→client
+    halves I had not enumerated, which is the check earning its place on its first run.
+  - **NOT adding epoch fields to other handlers.** With no stale path to close, that would be
+    the speculative protocol change the audit brief explicitly forbids.
 
 - **Audited and SOUND, no change needed:** vehicle ownership (`VehicleStore` owns
   `OwnerId`, `Create`, `Transfer`); weapon ammo (`MagazineAmmo`/`ReserveAmmo` server-side);

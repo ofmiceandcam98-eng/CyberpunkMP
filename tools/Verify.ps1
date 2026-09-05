@@ -254,6 +254,65 @@ foreach ($u in $unhandled) {
 if (-not $unhandled) { Pass "$($requests.Count) client requests, all handled" }
 
 # ---------------------------------------------------------------------------
+# Only movement and voice may be unreliable.
+#
+# This guards a PROOF, not a style rule. The 2026-09-04 session/epoch audit concluded there
+# is no stale-session mutation path, and the argument has three legs:
+#
+#   1. an old CONNECTION cannot reach a new session - GameNetworkingSockets is
+#      connection-oriented and the connection->player mapping is erased on disconnect;
+#   2. an old CHARACTER cannot mutate a new one - a character switch is refused while the
+#      player still has a puppet in the world;
+#   3. within one connection, nothing can arrive out of order - because every message that
+#      mutates persistent state travels RELIABLE and ORDERED.
+#
+# Leg 3 is the one a future commit can break silently. Marking some new mutation unreliable
+# for latency reasons would reopen the whole class - an older packet overtaking a newer one
+# and rewriting state - and nothing else in the build would notice.
+#
+# Movement is unreliable by design (retransmitting a stale position is worse than losing it)
+# and has its own ordering check. Voice is unreliable and mutates nothing persistent.
+Head "unreliable messages"
+# Both directions of the same two systems, and nothing else.
+#
+#   MoveEntityRequest / NotifyEntityMove - position. Unreliable on purpose: a retransmitted
+#       stale position is worse than a lost one, since a newer sample is always moments
+#       behind. Both ends have an explicit ordering check - the server compares `tick`
+#       (Level::HandleMoveEntityRequest), the client drops anything <= the last sequence it
+#       applied (InterpolationSystem.cpp:721).
+#   VoiceFrameRequest / NotifyVoiceFrame - audio frames. Mutate no persistent state at all;
+#       ordering is the client jitter buffer's problem and it carries its own sequence.
+$allowedUnreliable = @("MoveEntityRequest", "VoiceFrameRequest", "NotifyEntityMove", "NotifyVoiceFrame")
+$unreliableFound = @()
+
+foreach ($p in @("client", "server")) {
+    $protoPath = "code\protocol\$p.proto"
+    $protoLines = Get-Content $protoPath
+    $currentMessage = ""
+
+    for ($i = 0; $i -lt $protoLines.Count; $i++) {
+        if ($protoLines[$i] -match '^\s*message\s+(\w+)') { $currentMessage = $Matches[1] }
+        if ($protoLines[$i] -match '^\s*bool\s+unreliable\s*=') {
+            $unreliableFound += [pscustomobject]@{ Proto = $p; Name = $currentMessage; Line = $i + 1 }
+        }
+    }
+}
+
+$unexpected = @($unreliableFound | Where-Object { $allowedUnreliable -notcontains $_.Name })
+
+if ($unexpected.Count -eq 0) {
+    Pass "$($unreliableFound.Count) unreliable message(s), all expected"
+}
+else {
+    foreach ($u in $unexpected) {
+        Fail -Summary "$($u.Name) is marked unreliable" `
+             -What "an unreliable message can be REORDERED, so an older one can overtake a newer and rewrite state it should not. The session audit's conclusion that no stale-packet path exists depends on every state-mutating message being reliable and ordered - this reopens that class, and nothing else in the build would notice" `
+             -Where "code\protocol\$($u.Proto).proto`:$($u.Line)" `
+             -Fix "if this message does NOT mutate persistent state, add it to `$allowedUnreliable in this script with a note saying why. If it DOES, either make it reliable or give it an explicit ordering check like MoveEntityRequest's tick comparison in Level::HandleMoveEntityRequest"
+    }
+}
+
+# ---------------------------------------------------------------------------
 Head "server wiring"
 $gsPath = "code\server\native\GameServer.cpp"
 $gs = Get-Content $gsPath -Raw
