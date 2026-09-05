@@ -17,6 +17,7 @@
 #include "Components/AppearanceComponent.h"
 #include "Components/AttachmentComponent.h"   // who is sitting where, for /vehseats
 #include "Components/HealthComponent.h"       // the medical state lives on it
+#include "EconomyMutator.h"          // the one place money and inventory change
 #include "Medical.h"                          // bleedout, treatment times, life states
 #include "VehicleSeats.h"                     // and what to call the seat they are in
 #include "CharacterRecord.h"
@@ -1744,8 +1745,26 @@ void ChatSystem::CompleteSale(const PendingSale& acSale, const PlayerComponent& 
     CharacterRecord buyer = *pBuyerCharacter;
     CharacterRecord seller = *pSellerCharacter;
 
-    buyer.Money -= acSale.Price;
-    seller.Money += acSale.Price;
+    /*
+     * Through the economy mutator, for the same reason /pay is.
+     *
+     * The seller's credit was unguarded: a seller near the ceiling wrapped, or ended on a
+     * balance the save path already refuses. Transfer checks the seller's headroom BEFORE
+     * the buyer is charged, so the failure is "no sale" rather than "charged, and the money
+     * went nowhere".
+     */
+    if (const auto moved = Economy::Transfer(buyer, seller, acSale.Price);
+        moved != Economy::Result::Success)
+    {
+        vehicles.Unlock(acSale.VehicleId, acSale.Token);
+
+        spdlog::warn("[MONEY] refused a vehicle sale of {}: {}", acSale.Price,
+                     Economy::Describe(moved));
+
+        Tell(acBuyer, fmt::format("That sale could not complete - {}. You have not been charged.",
+                                  Economy::Describe(moved)));
+        return;
+    }
 
     store.SaveCharacter(acSale.BuyerId, acBuyer.Username, buyer);
     store.SaveCharacter(acSale.SellerId, seller.Name, seller);
@@ -3612,8 +3631,29 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         const int64_t senderBefore = sender.Money;
         const int64_t recipientBefore = recipient.Money;
 
-        sender.Money -= amount;
-        recipient.Money += amount;
+        /*
+         * Through the economy mutator rather than by hand.
+         *
+         * The arithmetic here was `sender.Money -= amount; recipient.Money += amount;`, and
+         * the second half was unguarded: a recipient near the int64 ceiling wrapped, and a
+         * transfer that pushed anybody past the plausible-balance ceiling produced a balance
+         * the SAVE path already refuses to accept - legal here, impossible there.
+         *
+         * Transfer checks the recipient's headroom BEFORE the payer is touched, because
+         * money that leaves one side and cannot arrive at the other has been destroyed and
+         * no error code gives it back.
+         */
+        const auto moved = Economy::Transfer(sender, recipient, amount);
+
+        if (moved != Economy::Result::Success)
+        {
+            spdlog::warn("[MONEY] refused a transfer of {} from {}: {}", amount,
+                         acSender.Username, Economy::Describe(moved));
+
+            Tell(acSender, fmt::format("That transfer could not be made - {}.",
+                                       Economy::Describe(moved)));
+            return true;
+        }
 
         store.SaveCharacter(acSender.DiscordId, acSender.Username, sender);
         store.SaveCharacter(recipientId, pRecipient->Name, recipient);
