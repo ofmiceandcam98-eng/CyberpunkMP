@@ -561,11 +561,12 @@ be built from nothing, not integrated.
 `Restore` uses `GiveItemByTDBID`. No mods, quality, upgrades, crafted rolls or iconic state. A
 restore hands back a **base item** — already a live data-loss path today, independent of Phase 5.
 
-**Restore can add but never take away.** `owed = want - have; if owed > 0` — the difference is
-applied only when positive. The single exception is the one-shot starter-kit cleanup. So
-**"server possessions win" has no mechanism today**: ignoring the client's declaration makes the
-server's record authoritative in storage, but nothing can reconcile the client's game downwards.
-That is a client-capability gap, not a protocol gap.
+~~**Restore can add but never take away.**~~ **RETRACTED — this was wrong.** There is a removal
+pass at `Inventory.reds:374` (*"Take back what the server does NOT say you own"*), gated on
+`IsCharacterStatusKnown()`, reconciling quantity in both directions. I drew the conclusion from
+reading two-thirds of the function. Bidirectional reconciliation is substantially already built;
+what is missing is that it runs only at restore rather than continuously, and cannot reconcile
+instance state because Finding 1 means there is none.
 
 ### 12.3 What it means for Stage 8
 
@@ -573,16 +574,25 @@ That is a client-capability gap, not a protocol gap.
 snapshot stops being believed and it is the only channel any of them has. This would not be an
 edge case — it would be every non-server-mediated item in the game.
 
-**Recommendation, needing explicit review: split money from inventory.**
+**Recommendation, needing explicit review: split money from inventory** — but see the correction
+below before reading the reasoning as it was first written.
 
-- **Money** — a scalar, already mutated only through `Economy::`, already fully server-modelled
-  in all four Class A paths, and where duplication actually pays. Authoritative for migrated
-  characters costs nothing new.
-- **Inventory** — 16+ unobserved sources, no removal mechanism, no instance state. Authoritative
-  without observation would delete legitimate possessions.
-
-Splitting delivers the security that matters — nobody can declare a balance — without betting
-players' belongings on 16 hooks landing correctly first time.
+> **CORRECTED 2026-09-05 by the Stage 6B money audit
+> (`docs/PHASE5-STAGE6B-MONEY-AUDIT.md`).** This section originally justified the split by
+> claiming money was "already mutated only through `Economy::`" and therefore free to make
+> authoritative. **That was wrong.** Money is an inventory item (`MarketSystem.Money()`) moved
+> through the same unobserved `TransactionSystem`; vendor buy and sell change it
+> (`vendor.script:1180`), along with 16 other vanilla paths. **Money-only authority is not safe
+> today either.**
+>
+> The split remains right for a different reason: money's unobserved sources are **bounded and
+> enumerable** (10 game scripts, ~17 paths) where inventory's are effectively unbounded; money is
+> a scalar with no instance-state problem; and its enforcement path — `ApplyServerMoney` — is
+> already live, unconditional, and bidirectional. **Money is the tractable half, not the free
+> one.** It needs vendor observation before Stage 8 can run.
+>
+> The same audit also **retracted Finding 2** below: inventory reconciliation *is* bidirectional
+> (`Inventory.reds:374`), and I had drawn a conclusion from reading two-thirds of a function.
 
 ---
 

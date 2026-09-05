@@ -86,28 +86,40 @@ Whether it bites often today depends on how often a restore actually re-grants r
 finding the item already held; that needs a live session to measure, which this audit could not
 do.
 
-### Finding 2 — restore can add, but it cannot take away
+### Finding 2 — ~~restore can add, but it cannot take away~~ **CORRECTED 2026-09-05: WRONG**
+
+**This finding was wrong and is retracted.** It is left here rather than deleted because it was
+reported to review and acted on, and because the way it was wrong is worth not repeating.
+
+What I wrote: that restore only applies a positive difference (`Inventory.reds:293-297`), so the
+server could never reconcile a client downwards, and *"server possessions win" has no mechanism
+today*.
+
+**What is actually there.** I read lines 230-300 and drew a conclusion about a function that
+runs to line 535. The removal pass is at `:374`, headed *"Take back what the server does NOT say
+you own … This is what makes the restore AUTHORITATIVE instead of additive, and it is the half
+that was missing."*
 
 ```reds
-let owed = want - have;
-if owed > 0 {
-    transaction.GiveItemByTDBID(player, tdbid, owed);
-}
+let owned  = MpInventory.ServerWants(network, TDBID.ToNumber(heldTdbid));
+let excess = transaction.GetItemQuantity(player, heldId) - owned;
+if excess > 0 { /* collected, then RemoveItem after the loop */ }
 ```
 
-`Inventory.reds:293-297`. The difference is only ever applied when **positive**. If the client
-holds more than the server's record says, nothing happens.
+Gated on `IsCharacterStatusKnown()` — the server having answered — not on first spawn. Excluded:
+money (settled separately as a balance), a currently-empty `protectedIds` list, and body slots
+(`RightArm`, `LeftArm`, `BaseFists`, after the strip took Cam's arms).
 
-The single exception is `MpSettleStarterLoadout` (`:1016`), documented as *"The one cleanup …
-never called from anywhere else, and never twice"* — a deliberate one-shot at character
-creation.
+**So bidirectional reconciliation is substantially already built**, on quantity, in both
+directions, at restore time. What is genuinely missing is narrower than I claimed: it runs only
+at restore rather than continuously, and it cannot reconcile *instance state*, because Finding 1
+means there is none to reconcile.
 
-**Consequence for Stage 8: "server possessions win" has no mechanism today.** Ignoring the
-client's declaration for a migrated character (the revised Stage 7 model) makes the server's
-record authoritative in *storage*, but the client's game would still be holding whatever it was
-holding, and nothing in the restore path can reconcile that downwards. Enforcement needs a
-removal path that does not currently exist, and building one is not a protocol question — it is
-a client-side capability question.
+**Finding 1 is unaffected and stands.**
+
+See `docs/PHASE5-STAGE6B-MONEY-AUDIT.md` §3 for the same correction alongside the money
+enforcement path, which turns out to be stronger still: `ApplyServerMoney` sets the balance in
+both directions, unconditionally, on every `NotifyMoney`.
 
 ---
 
@@ -205,18 +217,21 @@ Three ways forward. They are not exclusive, and the choice is Cam's:
 | **2. Accept** | Keep believing the client's *inventory* for migrated characters; make only **money** authoritative | Small. Money is where the exploit value is, and it is already server-mediated in all four Class A paths |
 | **3. Disable** | Turn off vanilla acquisition | Unacceptable — it is the game |
 
-**Recommendation: option 2, and split the cutover.** Money and inventory do not have the same
-threat profile or the same cost:
+**Original recommendation: option 2, split the cutover** — on the grounds that money was
+"already mutated only through `Economy::`" and so could be made authoritative for free.
 
-- **Money** is a single scalar, already mutated only through `Economy::`, already fully
-  server-modelled in all four Class A paths, and is where duplication actually pays. Making it
-  authoritative for migrated characters costs nothing new.
-- **Inventory** has 16+ unobserved sources, no removal mechanism (Finding 2), and no instance
-  state (Finding 1). Making it authoritative without first building observation would delete
-  players' legitimate possessions.
-
-Splitting them means Stage 8 can deliver the security that matters — nobody can declare a
-balance — without betting players' belongings on 16 hooks landing correctly on the first try.
+> **CORRECTED 2026-09-05. That justification was wrong.** Money is an inventory item
+> (`MarketSystem.Money()`), read and written through the same unobserved `TransactionSystem`.
+> Vendor buy and sell move it — proven from the game's own source,
+> `vendor.script:1180` — along with sixteen other vanilla paths.
+> **Money is not server-authoritative today either.** See
+> `docs/PHASE5-STAGE6B-MONEY-AUDIT.md`.
+>
+> **Splitting money from inventory is still the right architecture**, but for a different and
+> smaller reason: money's unobserved sources are *bounded and enumerable* (10 game scripts,
+> ~17 paths) where inventory's are effectively unbounded, money is a scalar with no instance-state
+> problem, and its enforcement path (`ApplyServerMoney`) is already live and unconditional in both
+> directions. Money is the tractable half — not the free one.
 
 **This is a recommendation, not a decision, and it changes Phase 5's shape enough that it needs
 explicit review before anything is built.**
