@@ -1,5 +1,8 @@
 #pragma once
 
+#include <limits>   // numeric_limits, for the trade overflow guards - MSVC supplies this
+                    // transitively, the GCC container the server builds in does not
+
 #include "CharacterRecord.h"
 
 #include "PermissionLevel.h"
@@ -1110,13 +1113,48 @@ private:
                                              { return acStack.Quantity == 0; }),
                               aFrom.Inventory.end());
 
+        /*
+         * OVERFLOW IS CHECKED ON THE WAY IN, not hoped away.
+         *
+         * The brief's section 17 lists integer overflow among the duplication exploits to
+         * defend against, and until now neither add was guarded. Quantity is uint32_t and
+         * Money is int64_t, so a large enough receiving side wraps: a stack of 4.29 billion
+         * plus ten becomes nine, and the difference is not moved anywhere - it is destroyed.
+         * The same arithmetic run the other way mints value out of nothing.
+         *
+         * WHY IT IS REACHABLE AT ALL, which is the part worth writing down. The offer itself
+         * is bounded - a sender cannot offer more than they hold, checked above. But what
+         * they HOLD arrives from SaveCharacterRequest, which is the client reporting its own
+         * inventory, so a hostile client can claim to be carrying four billion of something.
+         * Section 24 is explicit that every client is assumed malicious; that makes this a
+         * live path rather than a theoretical one.
+         *
+         * Refusing is right rather than clamping. A clamp silently changes the trade both
+         * players agreed to, and "you now have fewer than we said" is a support ticket
+         * nobody can reconstruct. ApplyTrade validates on copies, so a refusal here leaves
+         * both records exactly as they were.
+         */
         for (const auto& offered : acOffer.Items)
         {
             if (auto* pStack = FindStack(aTo, offered.Id))
+            {
+                constexpr auto kMaxQuantity = std::numeric_limits<uint32_t>::max();
+
+                if (pStack->Quantity > kMaxQuantity - offered.Quantity)
+                    return fail("quantity_overflow");
+
                 pStack->Quantity += offered.Quantity;
+            }
             else
+            {
                 aTo.Inventory.push_back({offered.Id, offered.Quantity});
+            }
         }
+
+        // Same reasoning for money. acOffer.Money is already known non-negative and no
+        // greater than aFrom.Money, so this is the only remaining direction that can wrap.
+        if (acOffer.Money > 0 && aTo.Money > std::numeric_limits<int64_t>::max() - acOffer.Money)
+            return fail("money_overflow");
 
         aFrom.Money -= acOffer.Money;
         aTo.Money += acOffer.Money;
