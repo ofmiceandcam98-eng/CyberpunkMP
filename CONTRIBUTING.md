@@ -261,9 +261,15 @@ redistributing them legitimate, so do not drop it when changing the install pack
 
 ## The server in Docker
 
-The NAS deployments build exactly this way; it is also the only GCC/Linux check the
-project has (MSVC supplies headers transitively that libstdc++ does not — a local-MSVC
+The NAS deployments build exactly this way, and it is still the only check of the SERVER
+BUILD under GCC (MSVC supplies headers transitively that libstdc++ does not — a local-MSVC
 pass proves nothing about the container build).
+
+It is no longer the only GCC exposure the project has, though. On a machine with no MSVC,
+`tools/Verify.ps1` compiles and runs the unit tests with `g++` instead, which is how a
+Claude Code on the web session runs the gate at all. That covers `tools/tests` and the
+headers they include; it says nothing about the other thousands of lines the container
+build compiles, so this section is still the proof.
 
 1. `git submodule update --init`
 2. `docker build . -t cyberpunkmp`

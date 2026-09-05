@@ -359,61 +359,120 @@ if (-not $SkipTests) {
         }
     }
 
-    if (-not (Test-Path $vcvars)) {
-        Write-Host "  !!    no MSVC found - tests SKIPPED, static checks above still ran" -ForegroundColor Yellow
+    $out = Join-Path ([System.IO.Path]::GetTempPath()) "nco-tests"
+    New-Item -ItemType Directory -Force $out | Out-Null
+    $src = Join-Path $Repo "code/server/native"
+
+    <#
+        TWO TOOLCHAINS, because two kinds of machine run this now.
+
+        MSVC on the Windows workstations, and GCC in a Linux container - a Claude Code on
+        the web session checks this repo out on Ubuntu, where there is no MSVC and never
+        will be. Before this branch existed the suite printed "tests SKIPPED" there, so a
+        cloud session got the static checks and nothing else: 491 assertions quietly not
+        run, on exactly the side CONTRIBUTING already calls the project's thinnest
+        coverage.
+
+        It is cheap only because of how the tests are written: every file in tools\tests is
+        one self-contained translation unit, so "compile it" is a single command either way
+        and only the flags and the header locations differ. Keep them that way.
+    #>
+    $exeExt = if ($IsWindows -eq $false) { "" } else { ".exe" }
+
+    $gpp = $null
+    $toolchain = $null
+    if (Test-Path $vcvars) { $toolchain = "msvc" }
+    else {
+        $gpp = (Get-Command g++ -ErrorAction SilentlyContinue).Source
+        if ($gpp) { $toolchain = "gcc" }
+    }
+
+    if (-not $toolchain) {
+        Write-Host "  !!    no C++ compiler found (no MSVC, no g++) - tests SKIPPED, static checks above still ran" -ForegroundColor Yellow
     }
     else {
-        $out = Join-Path $env:TEMP "nco-tests"
-        New-Item -ItemType Directory -Force $out | Out-Null
-        $src = Join-Path $Repo "code\server\native"
-        $json = (Get-ChildItem "$env:USERPROFILE\AppData\Local\.xmake\packages\n\nlohmann_json" -Recurse -Filter "json.hpp" -ErrorAction SilentlyContinue |
-                 Select-Object -First 1).Directory.Parent.FullName
+        $gccLibs = @()
 
-        <#
-            glm and spdlog, so a test can compile the REAL PlayerStore.
+        if ($toolchain -eq "msvc") {
+            $json = (Get-ChildItem "$env:USERPROFILE\AppData\Local\.xmake\packages\n\nlohmann_json" -Recurse -Filter "json.hpp" -ErrorAction SilentlyContinue |
+                     Select-Object -First 1).Directory.Parent.FullName
 
-            Without these, PlayerStore.h cannot be included by a test at all - it uses
-            glm::vec3 and spdlog - which is why trade_test restates its algorithm instead of
-            testing it. That was an acceptable compromise for arithmetic; it is NOT
-            acceptable for the economy migration, where the thing that needs proving is the
-            TRANSACTION (persist, then swap) rather than the arithmetic, and a miniature
-            model of a store proves nothing about the real one.
+            <#
+                glm and spdlog, so a test can compile the REAL PlayerStore.
 
-            Both are header-only packages already on disk for the normal build, so this adds
-            no dependency - it only lets the test harness see what the server already sees.
-            Missing packages degrade to no include path and the affected test fails loudly
-            rather than being silently skipped.
-        #>
-        $packageInclude = {
-            param($letter, $name)
-            (Get-ChildItem "$env:USERPROFILE\AppData\Local\.xmake\packages\$letter\$name" -Recurse -Directory -Filter "include" -ErrorAction SilentlyContinue |
-             Select-Object -First 1).FullName
+                Without these, PlayerStore.h cannot be included by a test at all - it uses
+                glm::vec3 and spdlog - which is why trade_test restates its algorithm instead of
+                testing it. That was an acceptable compromise for arithmetic; it is NOT
+                acceptable for the economy migration, where the thing that needs proving is the
+                TRANSACTION (persist, then swap) rather than the arithmetic, and a miniature
+                model of a store proves nothing about the real one.
+
+                Both are header-only packages already on disk for the normal build, so this adds
+                no dependency - it only lets the test harness see what the server already sees.
+                Missing packages degrade to no include path and the affected test fails loudly
+                rather than being silently skipped.
+            #>
+            $packageInclude = {
+                param($letter, $name)
+                (Get-ChildItem "$env:USERPROFILE\AppData\Local\.xmake\packages\$letter\$name" -Recurse -Directory -Filter "include" -ErrorAction SilentlyContinue |
+                 Select-Object -First 1).FullName
+            }
+
+            $glm = & $packageInclude "g" "glm"
+            $spdlog = & $packageInclude "s" "spdlog"
+
+            $compileFix = "cl /std:c++17 /EHsc /I code\server\native tools\tests\<test>.cpp"
+        }
+        else {
+            <#
+                The three headers the tests need - nlohmann_json, glm and spdlog - are the
+                distribution's own packages here (nlohmann-json3-dev, libglm-dev,
+                libspdlog-dev). They sit on the default include path, so there is no xmake
+                package directory to go hunting through and nothing to add.
+
+                -lfmt, and only when libfmt is actually installed: Debian and Ubuntu build
+                libspdlog against the system fmt (SPDLOG_FMT_EXTERNAL), so the two tests
+                that include spdlog reference fmt symbols that are NOT header-only and die
+                at link time under a wall of undefined references. Passing -lfmt blind
+                instead would turn a missing package into "cannot find -lfmt", which reads
+                as a broken test rather than a machine that needs one apt install.
+            #>
+            $ld = ""
+            try { $ld = (& ldconfig -p 2>$null) -join "`n" } catch { }
+            if ($ld -match "libfmt\.so") { $gccLibs += "-lfmt" }
+
+            $compileFix = "g++ -std=c++17 -I code/server/native tools/tests/<test>.cpp -o /tmp/t $($gccLibs -join ' ')   -- headers come from: apt install nlohmann-json3-dev libglm-dev libspdlog-dev"
         }
 
-        $glm = & $packageInclude "g" "glm"
-        $spdlog = & $packageInclude "s" "spdlog"
-
         foreach ($t in (Get-ChildItem (Join-Path $PSScriptRoot "tests") -Filter *.cpp)) {
-            $exe = Join-Path $out "$($t.BaseName).exe"
-            $inc = ""
-            if ($json)   { $inc += " /I `"$json`"" }
-            if ($glm)    { $inc += " /I `"$glm`"" }
-            if ($spdlog) { $inc += " /I `"$spdlog`"" }
-            # NOTE the doubled backslash before the closing quote. cmd treats \" as an
-            # escaped quote, so /Fo:"$out\" swallows the rest of the line and cl reports
-            # "D8003: missing source filename" - which reads as the test being at fault.
-            # /utf-8 because spdlog's bundled fmt static_asserts on it - "Unicode support
-            # requires compiling with /utf-8". The real build already sets it; without it
-            # here, any test that includes spdlog fails to compile for a reason that has
-            # nothing to do with the test.
-            $r = cmd /c "`"$vcvars`" >nul 2>&1 && cl /nologo /std:c++17 /utf-8 /EHsc $inc /I `"$src`" /Fe:`"$exe`" /Fo:`"$out\\`" `"$($t.FullName)`" 2>&1"
+            $exe = Join-Path $out "$($t.BaseName)$exeExt"
+
+            if ($toolchain -eq "msvc") {
+                $inc = ""
+                if ($json)   { $inc += " /I `"$json`"" }
+                if ($glm)    { $inc += " /I `"$glm`"" }
+                if ($spdlog) { $inc += " /I `"$spdlog`"" }
+                # NOTE the doubled backslash before the closing quote. cmd treats \" as an
+                # escaped quote, so /Fo:"$out\" swallows the rest of the line and cl reports
+                # "D8003: missing source filename" - which reads as the test being at fault.
+                # /utf-8 because spdlog's bundled fmt static_asserts on it - "Unicode support
+                # requires compiling with /utf-8". The real build already sets it; without it
+                # here, any test that includes spdlog fails to compile for a reason that has
+                # nothing to do with the test.
+                $r = cmd /c "`"$vcvars`" >nul 2>&1 && cl /nologo /std:c++17 /utf-8 /EHsc $inc /I `"$src`" /Fe:`"$exe`" /Fo:`"$out\\`" `"$($t.FullName)`" 2>&1"
+            }
+            else {
+                # Libraries after the source, or the linker has already discarded them by
+                # the time it sees the references.
+                $r = & $gpp -std=c++17 "-I$src" $t.FullName -o $exe @gccLibs 2>&1
+            }
 
             if ($LASTEXITCODE -ne 0) {
                 $err = ($r | Where-Object { $_ -match 'error' } | Select-Object -First 3) -join ' | '
                 Fail -Summary "$($t.BaseName) does not compile" `
                      -What "the test cannot run, so whatever rule it protects is currently unguarded - this usually means the header it tests changed shape under it" `
                      -Where "tools\tests\$($t.Name)  --  $err" `
-                     -Fix "compile it by hand to see the whole error: cl /std:c++17 /EHsc /I code\server\native tools\tests\$($t.Name)"
+                     -Fix "compile it by hand to see the whole error: $compileFix"
                 continue
             }
 

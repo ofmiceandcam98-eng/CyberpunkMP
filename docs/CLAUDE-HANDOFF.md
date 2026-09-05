@@ -30,7 +30,10 @@ things) → the coordination feed (what the other stream just did).
   done, then `git checkout feat/world-state && git merge --ff-only wip/world-state &&
   git push fork feat/world-state` and resume pushing that. A cloud session started from
   claude.ai/code should clone `ofmiceandcam98-eng/CyberpunkMP` and check out
-  `wip/world-state`.
+  `wip/world-state`. A SessionStart hook there (`.claude/hooks/session-start.sh`) installs
+  pwsh and the three test headers so `tools/Verify.ps1` runs in the container — it only
+  fires on the branch the session STARTS from, so a session started off `main` gets none of
+  it until that branch carries the hook too.
 
 ## 2. Machines and addresses
 

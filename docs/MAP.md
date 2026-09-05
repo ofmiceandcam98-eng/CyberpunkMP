@@ -89,6 +89,32 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   checks pass, including the four that matter: support fails `>= moderator`, `>= event
   staff` and `>= admin`, and still gets four slots.
 
+### Landed 2026-09-05 (Cam stream, cloud session) — the gate runs on Linux now
+
+- **`Verify.ps1` compiles and runs the unit tests under GCC when there is no MSVC.** It used
+  to print "no MSVC found - tests SKIPPED" and carry on, so a Claude Code on the web session
+  got the 116 static checks and **none of the 491 assertions** — on precisely the side
+  CONTRIBUTING already calls this project's thinnest coverage. The MSVC path is untouched;
+  the new branch only picks a different compiler when `vcvars64.bat` is not there.
+- **It works because every file in `tools/tests` is one self-contained translation unit.**
+  Keep them that way — the whole Linux branch is one `g++` line, and it stops being one the
+  moment a test needs linking against the server.
+- **`-lfmt` is not optional and not always right.** Debian and Ubuntu build `libspdlog`
+  against the system fmt (`SPDLOG_FMT_EXTERNAL`), so the two tests that include spdlog fail
+  at LINK time without it. The check adds it only when `ldconfig` actually lists libfmt —
+  passing it blind turns a missing package into "cannot find -lfmt", which reads as a broken
+  test rather than a machine that needs one `apt install`.
+- **A SessionStart hook now provisions all of that**: `.claude/hooks/session-start.sh`, wired
+  in `.claude/settings.json`, remote-only (`CLAUDE_CODE_REMOTE`). It installs pwsh 7.4.6 (no
+  tool in `tools/` runs without it) and `nlohmann-json3-dev libglm-dev libspdlog-dev`, then
+  says whether the gate can run rather than leaving the session to assume it. Cold ~28s,
+  warm ~0.2s. **It only takes effect once it is on the branch a session starts from.**
+- **What a cloud session still cannot do, unchanged:** compile redscript (scc.exe arrives
+  with the game), build the server (that is `docker build .`, and the hook deliberately does
+  not pull xmake/dotnet for it), or reach the coordination feed — the feed lives on the
+  tailnet and LAN, and a cloud container has a route to neither.
+
+
 ### Landed 2026-09-04 (Cam stream) — the "advertised but never built" class
 - **`/kill` never downed anyone, and the reason was a missing inch.** Server tracked
   `LifeState`, sent `NotifyCombatState.life_state`, the DLL stored `m_downed` and exposed
