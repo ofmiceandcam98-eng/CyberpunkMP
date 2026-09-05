@@ -1,7 +1,14 @@
 # Phase 5 — server-authoritative money and inventory
 
-**Status: DESIGN ONLY. Nothing here is implemented.** Written 2026-09-04 (Cam stream) as the
-map to review before anything touches the live economy.
+**Status: stages 1–5 BUILT and tested. 6, 7, 8 not started.** Written 2026-09-04 (Cam stream)
+as the map to review before anything touches the live economy; the stage table near the bottom
+carries what has actually landed since.
+
+**Nothing built so far changes behaviour for any live character.** Migration is inert — no
+record on any server is migrated — so revisions stay at zero, the stale check reports nothing,
+and the client is still the authority on money and inventory exactly as it was. That is by
+design: everything up to here is the machinery Stage 7 needs, put in place and proven while it
+is still safe to be wrong about it. Nothing is pushed (server migration pending).
 
 Every claim below was read out of the code, not assumed. Where something is inferred rather
 than verified, it says so.
@@ -276,19 +283,57 @@ server migration is verified**, per the standing constraint.
 
 Ordered so each stage is independently shippable and none can destroy data:
 
-| Stage | What | Risk |
-|---|---|---|
-| **1** | **Atomic persistence** — temp file + rename, keep one backup | **None. Do this now** |
-| 2 | Add `EconomyRevision` + `MigratedAt`, written but not yet enforced | None — additive fields |
-| 3 | Migration on load: trust-once, stamp `MigratedAt` | Low — read path only |
-| 4 | Server increments `EconomyRevision` on every existing authoritative mutation | Low |
-| 5 | Refuse saves carrying a stale revision; log, do not enforce, for one build | Low — measure first |
-| 6 | New economy request + `RequestLedger` integration | **Flag day** |
-| 7 | Remove `money`/`inventory` from the save | **Flag day**, after 6 is proven |
-| 8 | Exploit testing with two clients | Requires live test |
+| Stage | What | Risk | State |
+|---|---|---|---|
+| **1** | **Atomic persistence** — temp file + rename, keep one backup | **None. Do this now** | **DONE** — `AtomicWrite.h`, all six stores |
+| 2 | Add `EconomyRevision` + `MigratedAt`, written but not yet enforced | None — additive fields | **DONE** — `CharacterRecord.h` |
+| 3 | Migration on load: trust-once, stamp `MigratedAt` | Low — read path only | **DONE, INERT** — `EconomyMigration.h`; inspect/commit exist, nothing calls commit |
+| 4 | Server increments `EconomyRevision` on every existing authoritative mutation | Low | **DONE** — `EconomyMutator.h` is the boundary; 4B routed every call site through it |
+| 5 | Refuse saves carrying a stale revision; log, do not enforce, for one build | Low — measure first | **DONE, PARTIAL** — see below |
+| 6 | New economy request + `RequestLedger` integration | **Flag day** | not started |
+| 7 | Remove `money`/`inventory` from the save | **Flag day**, after 6 is proven | not started |
+| 8 | Exploit testing with two clients | Requires live test | not started |
 
 Stage 5 deliberately mirrors the decision already recorded in `HandleSaveCharacterRequest`
 ("Recorded, not refused… measure first"). That instinct was right, and this design keeps it.
+
+### What Stage 5 actually landed, and the one part it could not
+
+The rule for the stage was **revision the transaction, not the primitive**. `Debit`, `Credit`,
+`AddItem` and `RemoveItem` deliberately do not touch `EconomyRevision`; each *transaction
+boundary* validates headroom for every participant first, mutates candidates, then advances
+each participant exactly once:
+
+| Boundary | Advances |
+|---|---|
+| `PlayerStore::ApplyTrade` | once per side, however many items and eddies moved |
+| `/pay` | once per side |
+| starter kit | once, for money and every item together |
+| vehicle sale | once per side; the refund path advances a **second** time, because the debit was persisted before the transfer was attempted — two authoritative states really existed |
+
+**The part that could not be done: the client-observed revision is a flag day.** Comparing a
+client's claimed revision needs a field on `SaveCharacterRequest`, and the generator here is
+netpack — `kIdentifier = FNV1a64(kProtocolString)`, so *any* change to the `.proto` text
+changes the protocol id and every client must update in lockstep. Barred until after the server
+migration. So Stage 5 shipped the half that does not touch the wire:
+
+- `Economy::ClassifyClientRevision` → `Match` / `Stale` / `Future` / `Legacy`, with the trap
+  written into the header: **`Match` says the version agrees, never that the values are honest.**
+  Treating it as permission would recreate client authority wearing a version number.
+- an observation in `HandleSaveCharacterRequest` for a client saving possessions against a
+  **migrated** character — exactly the case Stage 7 will refuse. Silent today by construction
+  (nothing is migrated); the moment migration is activated it reports how often Stage 7 would
+  refuse, and for whom, which is the number needed to decide whether Stage 7 is safe to enable.
+
+Overflow policy is implemented, not just designed: at `UINT64_MAX` the revision **refuses and
+sticks** rather than wrapping. A wrapped revision is worse than a stuck one — every stale client
+view would suddenly compare as current, inverting the check from protecting the server to
+endorsing whatever a client last believed.
+
+The regression that has to keep passing for the rest of Phase 5 is in `trade_real_test`:
+**ordinary play never migrates anybody.** If runtime could produce a migrated record, the
+migration gate would mean nothing and Stage 7 would start refusing clients for characters
+nobody chose to cut over.
 
 ---
 

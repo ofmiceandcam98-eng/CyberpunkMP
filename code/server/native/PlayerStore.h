@@ -964,6 +964,23 @@ struct PlayerStore
         if (!pLeft || !pRight)
             return fail("no_character");
 
+        /*
+         * REVISION HEADROOM IS PART OF VALIDATION, checked before a single byte moves.
+         *
+         * Asked here rather than at the end because discovering that the second participant
+         * cannot take another revision AFTER the first has been mutated would mean unwinding
+         * a transaction that should never have started. A trade where either side is
+         * exhausted fails whole - both live records untouched.
+         *
+         * Unmigrated characters answer Success and stay at revision 0, so this changes
+         * nothing for the legacy population while migration is inactive.
+         */
+        if (Economy::CanAdvanceRevision(*pLeft) != Economy::Result::Success ||
+            Economy::CanAdvanceRevision(*pRight) != Economy::Result::Success)
+        {
+            return fail("revision_exhausted");
+        }
+
         // Copies. Every mutation below happens on these, so a validation failure halfway
         // through leaves the real records untouched rather than half-traded.
         CharacterRecord left = *pLeft;
@@ -974,6 +991,20 @@ struct PlayerStore
 
         if (!MoveAssets(right, left, acRight, apReason))
             return false;
+
+        /*
+         * ONE revision each, for the whole trade.
+         *
+         * Not one per item, not one per direction, not one per Economy call - a trade of
+         * two thousand eddies and three items is ONE thing that happened to each
+         * participant. The primitives deliberately do not touch the revision so that this
+         * is the only place it can advance.
+         *
+         * On the candidates, after both directions have already succeeded, so a trade that
+         * fails advances nothing.
+         */
+        Economy::AdvanceRevision(left);
+        Economy::AdvanceRevision(right);
 
         // Only now does anything real change.
         *pLeft = left;

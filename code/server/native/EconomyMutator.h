@@ -53,8 +53,8 @@ enum class Result
     InsufficientQuantity,
     Overflow,              // the result would exceed what the type or the ceiling allows
 
-    // Reserved for when EconomyRevision starts incrementing. Not produced yet - see the
-    // overflow policy note at the bottom of this file.
+    // A migrated record already at UINT64_MAX. Produced by CanAdvanceRevision and
+    // AdvanceRevision; refusing is deliberate - see the overflow policy at the bottom.
     RevisionExhausted,
 };
 
@@ -256,8 +256,128 @@ inline Result RemoveItem(CharacterRecord& aRecord, uint64_t aItemId, uint32_t aQ
     return Result::Success;
 }
 
+// ---------------------------------------------------------------------------------------
+// Revision - Phase 5 stage 5
+//
+// THE ONE RULE: revision the TRANSACTION, not the primitive.
+//
+// Nothing above this line touches EconomyRevision, and that is deliberate rather than an
+// omission. Debit, Credit, AddItem and RemoveItem are components - a starter kit is four
+// AddItems and a Credit, a trade is a Transfer and several item moves - so a revision inside
+// them would advance a character four or five times for one thing that happened. A version
+// number that counts function calls instead of state changes is not a version number.
+//
+// The transaction boundary owns it: validate headroom for every participant, mutate the
+// candidates, advance each affected participant exactly once, then commit.
+// ---------------------------------------------------------------------------------------
+
+/**
+ * Is this record's revision meaningful?
+ *
+ * Only a MIGRATED record has an authoritative economy, so only a migrated record has a
+ * revision worth advancing. The Stage 3 invariant is the definition, and there is
+ * deliberately no third state: an unmigrated record is (0, 0) and stays that way through
+ * every trade, payment, sale and save until migration itself moves it to revision 1.
+ */
+inline bool IsMigrated(const CharacterRecord& acRecord)
+{
+    return acRecord.MigratedAt > 0 && acRecord.EconomyRevision >= 1;
+}
+
+/**
+ * Could this record take another revision? Ask BEFORE mutating anything.
+ *
+ * This exists separately from AdvanceRevision because revision capacity is part of
+ * TRANSACTION VALIDATION, not part of committing. In a two-party trade, discovering that the
+ * second participant cannot advance after the first has already been mutated would mean
+ * unwinding a transaction that should never have started.
+ *
+ * An unmigrated record answers Success: there is nothing to advance, and refusing its
+ * transactions would break every legacy character on the server while migration is still
+ * inactive.
+ */
+inline Result CanAdvanceRevision(const CharacterRecord& acRecord)
+{
+    if (!IsMigrated(acRecord))
+        return Result::Success;
+
+    if (acRecord.EconomyRevision == std::numeric_limits<uint64_t>::max())
+        return Result::RevisionExhausted;
+
+    return Result::Success;
+}
+
+/**
+ * Advance exactly once, for one committed logical transaction.
+ *
+ * Call ONLY from a transaction boundary, and only on state that is about to be committed -
+ * never on a candidate that might still be discarded, and never during validation.
+ *
+ * An unmigrated record is left at 0 and reports success: the transaction really did happen,
+ * it simply has no authoritative revision to advance yet.
+ *
+ * At UINT64_MAX it REFUSES rather than wrapping. A wrapped revision is worse than a stuck
+ * one - every stale client view would suddenly compare as current, and the staleness check
+ * would invert from protecting the server to endorsing whatever a client last believed. So
+ * the impossible case fails loudly instead of silently becoming wrong.
+ */
+inline Result AdvanceRevision(CharacterRecord& aRecord)
+{
+    if (!IsMigrated(aRecord))
+        return Result::Success;
+
+    if (aRecord.EconomyRevision == std::numeric_limits<uint64_t>::max())
+        return Result::RevisionExhausted;
+
+    ++aRecord.EconomyRevision;
+    return Result::Success;
+}
+
+/**
+ * What a client's claimed revision means about its view of the world.
+ *
+ * OBSERVATION ONLY. Stage 5 measures; Stage 7 enforces.
+ *
+ * AND EQUALITY PROVES NOTHING ABOUT VALUES. This is the part that is easy to get wrong: a
+ * client at the same revision as the server can still send a fabricated balance. Matching
+ * revisions mean only "the base version you claim to be working from is not obviously
+ * stale" - never "therefore the money you reported is real". Treating Match as permission
+ * would recreate client authority wearing a version number.
+ */
+enum class RevisionView
+{
+    Match,    // same version - says nothing about whether the values are honest
+    Stale,    // the client is behind; whatever it computed was based on old state
+    Future,   // the client claims a version that has never existed - impossible, or a lie
+    Legacy,   // the record is unmigrated, so there is no revision to compare against
+};
+
+inline RevisionView ClassifyClientRevision(const CharacterRecord& acRecord, uint64_t aClientRevision)
+{
+    if (!IsMigrated(acRecord))
+        return RevisionView::Legacy;
+
+    if (aClientRevision == acRecord.EconomyRevision)
+        return RevisionView::Match;
+
+    return aClientRevision < acRecord.EconomyRevision ? RevisionView::Stale : RevisionView::Future;
+}
+
+inline const char* Describe(RevisionView aView)
+{
+    switch (aView)
+    {
+    case RevisionView::Match:  return "current";
+    case RevisionView::Stale:  return "stale";
+    case RevisionView::Future: return "impossible (ahead of the server)";
+    case RevisionView::Legacy: return "legacy (unmigrated)";
+    }
+
+    return "?";
+}
+
 /*
- * FUTURE: EconomyRevision overflow policy, designed now and deliberately not implemented.
+ * The overflow policy, now IMPLEMENTED above rather than only designed.
  *
  * When revisions begin incrementing, UINT64_MAX must never wrap to 0. A wrapped revision is
  * worse than a stuck one: every stale client view would suddenly compare as current, and the

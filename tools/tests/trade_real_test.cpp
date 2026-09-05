@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -291,6 +292,195 @@ int main()
         Check(pA && pA->Money == 750, "DISK: the payer's balance persisted");
         Check(pB && pB->Money == 1250, "DISK: the recipient's did too");
         Check(pB && Economy::Held(*pB, kPistol) == 1, "DISK: and so did the item");
+    }
+
+    // ================================================================== STAGE 5 ====
+    //
+    // Revision behaviour through the REAL ApplyTrade. The unit tests prove the rule in
+    // isolation; these prove the shipped transaction boundary actually follows it.
+
+    { // THE MANDATORY REGRESSION: normal runtime does not migrate anybody.
+        //
+        // This is the one that has to keep passing for the whole of Phase 5. Migration is a
+        // deliberate, inspected, one-time act - if ordinary play can produce a migrated
+        // record then the migration gate means nothing, and Stage 7 would start refusing
+        // clients for characters nobody ever chose to cut over.
+        Seed(path, 20000, 5000);
+        PlayerStore store;
+        store.Load(path);
+
+        PlayerStore::TradeSide left;
+        left.CharacterId = "CHAR-A";
+        left.Money = 5000;
+        left.Items.push_back({kPistol, 1});
+
+        PlayerStore::TradeSide right;
+        right.CharacterId = "CHAR-B";
+        right.Money = 1000;
+
+        std::string why;
+        Check(store.ApplyTrade(left, right, &why), "a trade between legacy characters succeeds");
+
+        const auto* pA = CharacterOf(store, "111");
+        const auto* pB = CharacterOf(store, "222");
+
+        Check(pA && pA->EconomyRevision == 0 && pA->MigratedAt == 0,
+              "AND THE PAYER IS STILL UNMIGRATED - runtime never migrates");
+        Check(pB && pB->EconomyRevision == 0 && pB->MigratedAt == 0,
+              "and so is the recipient");
+        Check(pA && !Economy::IsMigrated(*pA) && pB && !Economy::IsMigrated(*pB),
+              "neither counts as migrated by the same test the server uses");
+
+        // And it survives the disk round trip - a field that only looks right in memory is
+        // exactly the failure this would otherwise hide.
+        store.Flush();
+        PlayerStore reloaded;
+        reloaded.Load(path);
+
+        const auto* pReloaded = CharacterOf(reloaded, "111");
+        Check(pReloaded && pReloaded->EconomyRevision == 0,
+              "DISK: still unmigrated after the trade was persisted");
+    }
+
+    { // a migrated pair advances exactly ONCE each for one trade
+        Seed(path, 20000, 5000);
+        PlayerStore store;
+        store.Load(path);
+
+        // Migrate both by hand - the migration path itself is covered by
+        // playerstore_migration_test; what is under test here is the trade boundary.
+        for (const char* discord : {"111", "222"})
+        {
+            auto* pRecord = const_cast<PlayerRecord*>(store.Find(discord));
+            if (pRecord && !pRecord->Characters.empty())
+            {
+                pRecord->Characters[0].EconomyRevision = 1;
+                pRecord->Characters[0].MigratedAt = 1'700'000'000;
+            }
+        }
+
+        PlayerStore::TradeSide left;
+        left.CharacterId = "CHAR-A";
+        left.Money = 500;
+        left.Items.push_back({kPistol, 1});
+        left.Items.push_back({kAmmo, 250});      // several moves, still ONE transaction
+
+        PlayerStore::TradeSide right;
+        right.CharacterId = "CHAR-B";
+        right.Money = 100;
+
+        std::string why;
+        Check(store.ApplyTrade(left, right, &why), "a trade between migrated characters succeeds");
+
+        const auto* pA = CharacterOf(store, "111");
+        const auto* pB = CharacterOf(store, "222");
+
+        Check(pA && pA->EconomyRevision == 2,
+              "the payer advanced exactly once, despite money AND two item moves");
+        Check(pB && pB->EconomyRevision == 2, "and so did the recipient");
+    }
+
+    { // a REFUSED trade advances nothing - the revision counts changes, not attempts
+        Seed(path, 100, 5000);
+        PlayerStore store;
+        store.Load(path);
+
+        for (const char* discord : {"111", "222"})
+        {
+            auto* pRecord = const_cast<PlayerRecord*>(store.Find(discord));
+            if (pRecord && !pRecord->Characters.empty())
+            {
+                pRecord->Characters[0].EconomyRevision = 5;
+                pRecord->Characters[0].MigratedAt = 1'700'000'000;
+            }
+        }
+
+        PlayerStore::TradeSide left;
+        left.CharacterId = "CHAR-A";
+        left.Money = 99999;                       // cannot afford it
+
+        PlayerStore::TradeSide right;
+        right.CharacterId = "CHAR-B";
+
+        std::string why;
+        Check(!store.ApplyTrade(left, right, &why), "an unaffordable trade is still refused");
+
+        const auto* pA = CharacterOf(store, "111");
+        const auto* pB = CharacterOf(store, "222");
+
+        Check(pA && pA->EconomyRevision == 5, "and the payer's revision did NOT move");
+        Check(pB && pB->EconomyRevision == 5, "nor the recipient's");
+    }
+
+    { // an exhausted participant is refused BEFORE anything moves
+        Seed(path, 20000, 5000);
+        PlayerStore store;
+        store.Load(path);
+
+        {
+            auto* pRecord = const_cast<PlayerRecord*>(store.Find("222"));
+            if (pRecord && !pRecord->Characters.empty())
+            {
+                pRecord->Characters[0].EconomyRevision = std::numeric_limits<uint64_t>::max();
+                pRecord->Characters[0].MigratedAt = 1'700'000'000;
+            }
+        }
+
+        PlayerStore::TradeSide left;
+        left.CharacterId = "CHAR-A";
+        left.Money = 1000;
+
+        PlayerStore::TradeSide right;
+        right.CharacterId = "CHAR-B";
+
+        std::string why;
+        Check(!store.ApplyTrade(left, right, &why),
+              "a trade with an exhausted participant is refused");
+        Check(why == "revision_exhausted", "with the expected reason");
+
+        const auto* pA = CharacterOf(store, "111");
+        const auto* pB = CharacterOf(store, "222");
+
+        Check(pA && pA->Money == 20000 && pB && pB->Money == 5000,
+              "AND NO MONEY MOVED - headroom is validated before mutation, not after");
+        Check(pB && pB->EconomyRevision == std::numeric_limits<uint64_t>::max(),
+              "the exhausted revision is stuck, not wrapped to zero");
+    }
+
+    { // a legacy character can still trade with a migrated one during the cutover
+        //
+        // Mixed pairs are unavoidable while migration is being rolled out, and refusing them
+        // would mean a half-migrated server where some players simply cannot trade.
+        Seed(path, 20000, 5000);
+        PlayerStore store;
+        store.Load(path);
+
+        {
+            auto* pRecord = const_cast<PlayerRecord*>(store.Find("111"));
+            if (pRecord && !pRecord->Characters.empty())
+            {
+                pRecord->Characters[0].EconomyRevision = 3;
+                pRecord->Characters[0].MigratedAt = 1'700'000'000;
+            }
+        }
+
+        PlayerStore::TradeSide left;
+        left.CharacterId = "CHAR-A";
+        left.Money = 1000;
+
+        PlayerStore::TradeSide right;
+        right.CharacterId = "CHAR-B";
+
+        std::string why;
+        Check(store.ApplyTrade(left, right, &why),
+              "a migrated character can trade with a legacy one");
+
+        const auto* pA = CharacterOf(store, "111");
+        const auto* pB = CharacterOf(store, "222");
+
+        Check(pA && pA->EconomyRevision == 4, "the migrated side advances");
+        Check(pB && pB->EconomyRevision == 0, "and the legacy side stays at zero");
+        Check(pA && pA->Money == 19000 && pB && pB->Money == 6000, "the money still moved");
     }
 
     std::filesystem::remove_all(dir, ec);

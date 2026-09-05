@@ -318,6 +318,32 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   - **First diagnostic for "the mod did nothing": `red4ext/logs/red4ext-*.log`.** A plugin
     that fails during `Load` says so there and nowhere else.
 
+### Phase 5 (economy authority) — stages 1–5 built, NOTHING BEHAVES DIFFERENTLY YET
+
+Full detail in `docs/PHASE5-ECONOMY-AUTHORITY.md`; this row is the ledger pointer. All of it
+is **local and unpushed** — per Cam, nothing ships before the server swap.
+
+- **The one client-authoritative door is still open, deliberately.** `character.Money =
+  aMessage.get_money()` is untouched. Closing it is Stage 7, and Stage 7 is a flag day.
+- **What is built is the machinery, not the cutover:** atomic persistence for all six stores
+  (Stage 1), the `EconomyRevision`/`MigratedAt` fields (2), a trust-once migration that
+  **nothing calls** (3), `EconomyMutator.h` as the single boundary every server-side money and
+  inventory change now routes through (4/4B), and transaction-scoped revisions plus stale
+  classification (5).
+- **Migration is INERT. No character anywhere is migrated**, so revisions sit at 0 and the
+  Stage 5 observation never fires. This is the intended state — the machinery gets to be
+  proven while being wrong about it is still free.
+- **Two things need a live server and are therefore blocked on the migration:** activating the
+  trust-once migration (irreversible — review the `[MONEY]` audit trail first), and any wire
+  change. The client-observed revision needs a field on `SaveCharacterRequest`, and netpack
+  derives the protocol id from the `.proto` **text**, so that is a flag day like 6 and 7.
+- **The regression that must keep passing for the rest of Phase 5** (`trade_real_test`):
+  *ordinary play never migrates anybody.* If runtime could produce a migrated record the
+  migration gate would mean nothing.
+- **For the other stream:** if you add a server-side money or inventory mutation, route it
+  through `Economy::` and advance the revision **once per transaction, at the boundary** — not
+  inside the primitives. The primitives deliberately never touch it.
+
 ### Landed 2026-09-04 (zeldfep stream) — the launcher is open source
 - **THE RED SMARTSCREEN SCREEN IS UNSIGNED CODE, NOT MALWARE — and the obvious fix does not
   work any more.** Players get "Windows protected your PC" on install. No antivirus is

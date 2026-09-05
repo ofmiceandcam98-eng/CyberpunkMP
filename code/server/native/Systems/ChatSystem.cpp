@@ -499,6 +499,37 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
             character.Inventory.push_back({stack.get_id(), stack.get_quantity()});
         }
 
+        /*
+         * STAGE 5 OBSERVATION: a client declaring possessions for a MIGRATED character.
+         *
+         * This is exactly the case Stage 7 will refuse, so it is measured first - the
+         * standing instinct in this file is "record, do not refuse, measure first", and it
+         * applies to the cutover as much as it applied to the balance.
+         *
+         * SILENT TODAY BY CONSTRUCTION. Migration is inactive, so no character is migrated,
+         * so this never fires and costs nothing. The moment migration is activated it starts
+         * reporting precisely how often clients would be refused, and for whom - which is
+         * the number needed to decide whether Stage 7 is safe to turn on.
+         *
+         * The client's own revision cannot be compared yet: SaveCharacterRequest carries no
+         * revision field, and adding one changes the proto text and therefore the protocol
+         * identifier - a flag day, which is barred until the server migration. The
+         * classification logic (Economy::ClassifyClientRevision) exists and is tested,
+         * waiting for that field.
+         */
+        if (pExisting && Economy::IsMigrated(*pExisting))
+        {
+            spdlog::warn("[ECONOMY] {} sent a possessions save for MIGRATED character {} "
+                         "(server revision {}). Stage 7 will refuse this; recorded, not "
+                         "refused.",
+                         pPlayer->Username, pExisting->CharacterId, pExisting->EconomyRevision);
+
+            GServer->GetAuditLog().Record("economy.legacy_save", pPlayer->DiscordId,
+                                          pExisting->CharacterId,
+                                          {{"revision", pExisting->EconomyRevision},
+                                           {"claimed_money", aMessage.get_money()}});
+        }
+
         // The balance the SERVER last had for this character, before the client's claim
         // replaces it. Absent for a first capture, where there is nothing to disagree with.
         const int64_t storedMoney = pExisting ? pExisting->Money : 0;
@@ -769,6 +800,11 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
             }
             else
             {
+                // ONE revision for the whole kit - money and every item together are a
+                // single thing that happened, not five. Advanced on the candidate after all
+                // of it succeeded, so a refused kit advances nothing.
+                Economy::AdvanceRevision(granted);
+
                 character = granted;
                 character.Lifepath = StarterKit::ToString(lifepath);
                 character.StarterKitGranted = true;
@@ -1809,6 +1845,18 @@ void ChatSystem::CompleteSale(const PendingSale& acSale, const PlayerComponent& 
      * the buyer is charged, so the failure is "no sale" rather than "charged, and the money
      * went nowhere".
      */
+    if (Economy::CanAdvanceRevision(buyer) != Economy::Result::Success ||
+        Economy::CanAdvanceRevision(seller) != Economy::Result::Success)
+    {
+        vehicles.Unlock(acSale.VehicleId, acSale.Token);
+
+        spdlog::error("[MONEY] refused a vehicle sale - a participant's economy revision is "
+                      "exhausted. Nobody was charged.");
+
+        Tell(acBuyer, "That sale could not complete. You have not been charged.");
+        return;
+    }
+
     if (const auto moved = Economy::Transfer(buyer, seller, acSale.Price);
         moved != Economy::Result::Success)
     {
@@ -1821,6 +1869,20 @@ void ChatSystem::CompleteSale(const PendingSale& acSale, const PlayerComponent& 
                                   Economy::Describe(moved)));
         return;
     }
+
+    /*
+     * One each for the purchase.
+     *
+     * The refund path below advances them AGAIN rather than rolling back to the previous
+     * number, and that is deliberate. The debit is persisted before the vehicle transfer is
+     * attempted, so by the time a refund happens two authoritative states have really
+     * existed and both were visible - the player saw the money leave and come back. A
+     * revision counts committed changes to authoritative state, not net outcomes, so
+     * pretending the first one did not happen would make the number describe something
+     * other than what the server did.
+     */
+    Economy::AdvanceRevision(buyer);
+    Economy::AdvanceRevision(seller);
 
     store.SaveCharacter(acSale.BuyerId, acBuyer.Username, buyer);
     store.SaveCharacter(acSale.SellerId, seller.Name, seller);
@@ -1836,7 +1898,17 @@ void ChatSystem::CompleteSale(const PendingSale& acSale, const PlayerComponent& 
         // moment to find that out.
         const auto refunded = Economy::Transfer(seller, buyer, acSale.Price);
 
-        if (refunded != Economy::Result::Success)
+        if (refunded == Economy::Result::Success)
+        {
+            // A second committed change, so a second revision each - see the note above.
+            //
+            // Inside the success branch on purpose: a refund that did NOT happen changed no
+            // authoritative state, and advancing for it would make the revision count
+            // attempts rather than changes.
+            Economy::AdvanceRevision(buyer);
+            Economy::AdvanceRevision(seller);
+        }
+        else
         {
             // Should be unreachable: the money moved this way a moment ago, so the room
             // exists. Logged at error rather than assumed away, because if it ever does
@@ -3713,6 +3785,17 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
          * money that leaves one side and cannot arrive at the other has been destroyed and
          * no error code gives it back.
          */
+        // Revision headroom for BOTH before either moves - see the note in ApplyTrade.
+        if (Economy::CanAdvanceRevision(sender) != Economy::Result::Success ||
+            Economy::CanAdvanceRevision(recipient) != Economy::Result::Success)
+        {
+            spdlog::error("[MONEY] refused a transfer - a participant's economy revision is "
+                          "exhausted. Nothing was moved.");
+
+            Tell(acSender, "That transfer could not be made.");
+            return true;
+        }
+
         const auto moved = Economy::Transfer(sender, recipient, amount);
 
         if (moved != Economy::Result::Success)
@@ -3724,6 +3807,11 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
                                        Economy::Describe(moved)));
             return true;
         }
+
+        // One each, for the one thing that happened. After the transfer succeeded, on the
+        // copies, before either is saved.
+        Economy::AdvanceRevision(sender);
+        Economy::AdvanceRevision(recipient);
 
         store.SaveCharacter(acSender.DiscordId, acSender.Username, sender);
         store.SaveCharacter(recipientId, pRecipient->Name, recipient);
