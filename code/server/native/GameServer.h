@@ -211,6 +211,7 @@ private:
 
     // Writes everyone's position to disk on a timer, so a server crash costs seconds
     // rather than a session. Disconnects save immediately and do not wait for this.
+    void ReplicatePendingMovement(std::chrono::steady_clock::time_point aNow);
     void SavePlayerPositions(std::chrono::steady_clock::time_point aNow);
 
     // Keeps jailed players in their cell, and lets them out when the time is up.
@@ -260,6 +261,11 @@ public:
     // a player's second character cannot read their first one's inbox - see MessageStore.h.
     MessageStore& GetMessages() noexcept { return m_messages; }
 
+    // Replicate movement on the server tick instead of per received packet. Off by
+    // default - see Config::CoalesceMovement for why, and why it must not be turned on
+    // without two clients watching.
+    bool ShouldCoalesceMovement() const noexcept { return m_config.CoalesceMovement; }
+
     // Player-to-player calls. Deliberately does NOT go through the game's PhoneSystem -
     // see CallStore.h for why that is what keeps the Songbird block intact.
     CallStore& GetCalls() noexcept { return m_calls; }
@@ -287,6 +293,7 @@ private:
     CallStore m_calls;
     TradeStore m_trades;
     std::chrono::steady_clock::time_point m_lastCallCheck;
+    std::chrono::steady_clock::time_point m_lastMovementReplication{};
     std::chrono::steady_clock::time_point m_lastPlayerSave;
     std::chrono::steady_clock::time_point m_lastJailCheck;
 

@@ -232,6 +232,34 @@ struct Config : IConfig
     // A MoveEntityRequest is a few dozen bytes. Thirty of them a second, per player, is
     // nothing next to what the connection already carries.
     uint16_t UpdateRate{30};
+
+    /**
+     * Replicate movement on the server's own tick instead of once per received packet.
+     *
+     * THE PROBLEM. Movement replication is a flecs observer on OnSet, and the handler sets
+     * the component once per accepted packet - so ONE movement packet runs a walk of every
+     * player on the server with a distance test and a send for each one in range. At 1000
+     * packets a second against 32 players that is ~32,000 relevance checks a second, from
+     * one connection, using entirely valid packets.
+     *
+     * WHY NOT A RATE LIMIT. Movement is legitimately high-frequency and dropping packets
+     * produces rubber-banding - the fix would be more visible than the bug. This is state
+     * replication rather than event replication: if five packets arrive between ticks, only
+     * the fifth matters, so the answer is to coalesce rather than to reject.
+     *
+     * WHAT IT COSTS A HONEST CLIENT: nothing. UpdateRate already tells clients to send at
+     * 30Hz, and this replicates at the same 30Hz - so a compliant client sees the same
+     * update cadence it does today. Only bunched or flooded packets are collapsed, which is
+     * the case where the intermediate states were never going to be seen anyway.
+     *
+     * OFF BY DEFAULT, and that is deliberate rather than timid. Changing replication
+     * cadence is the kind of netcode change that introduces jitter or latency in ways no
+     * unit test can see - it needs two real clients watching each other move. The flag
+     * exists so the change can be turned on for that test and compared against the current
+     * behaviour, rather than shipping as a silent difference. Turn it on only with somebody
+     * watching.
+     */
+    bool CoalesceMovement{false};
     std::string Password{};
     FlecsConfig Flecs{};
     DiscordConfig Discord{};
@@ -251,5 +279,5 @@ struct Config : IConfig
     const FlecsConfig& GetFlecsConfig() const { return Flecs; }
     const DiscordConfig& GetDiscordConfig() const { return Discord; }
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(Config, Name, Description, IconUrl, MaxPlayer, Tags, TickRate, UpdateRate, Public, Port, Password, ApiKey, Flecs, Discord)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(Config, Name, Description, IconUrl, MaxPlayer, Tags, TickRate, UpdateRate, CoalesceMovement, Public, Port, Password, ApiKey, Flecs, Discord)
 };

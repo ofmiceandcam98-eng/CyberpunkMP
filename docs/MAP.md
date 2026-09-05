@@ -134,9 +134,36 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
     coalescing: store the newest authoritative state on receipt (cheap), and replicate on
     the server's own tick so five packets arriving between ticks cost one relevance pass,
     not five.
-  - **REQUIRES A LIVE TWO-CLIENT TEST** before it lands — this is the one change in this
-    area that can silently introduce jitter or latency. Left for zeldfep. Design is in the
-    audit; the vulnerability stays open until tested, not when a design exists.
+  - **COALESCING IS NOW IMPLEMENTED BEHIND `Config::CoalesceMovement`, DEFAULT OFF**
+    (2026-09-04). A packet stores the newest state and raises `ReplicationPending` (a flag,
+    never a queue — O(players), not O(packets)); `GameServer::ReplicatePendingMovement`
+    walks pending entities once per tick. **The rate was not invented**: `UpdateRate{30}`
+    already existed in config and was already sent to clients as their send rate — it was
+    simply never used server-side for anything. A compliant client therefore sees the same
+    cadence it does today; only bunched or flooded packets collapse.
+  - **The sequence split that made it safe.** `Sequence` (received, per packet) is now
+    separate from `ReplicatedSequence` (per replication). The wire and the LOD both use the
+    latter, so a flood can no longer outrun the `% 4` / `% 16` reduction, and the client's
+    staleness test still sees a strictly increasing number either way. **Both consumers were
+    mapped before changing it** — server LOD, and `InterpolationSystem.cpp:721` which drops
+    anything `<=` the last applied.
+  - **STILL OPEN. The flag stays OFF until a live two-client test.** Unit tests prove the
+    cost model (25 checks: 1000 pps drops from 31,000 relevance checks to ~930, a 33x
+    reduction, with the newest state surviving); they cannot prove the absence of jitter or
+    rubber-banding. A design plus green tests is not a fix.
+
+- **Movement accepts OUT-OF-ORDER packets — server position can go backwards. OPEN, not
+  fixed.** `MoveEntityRequest` is `unreliable` (UDP, reordering is expected) and
+  `HandleMoveEntityRequest` never compares `tick` against the stored one — it writes
+  whatever arrives last. The CLIENT rejects stale states
+  (`InterpolationSystem.cpp:721`), so viewers are protected, but the SERVER's authoritative
+  position is not — and that position feeds chat range, jail enforcement, and the trade and
+  medical distance checks. Coalescing makes it marginally worse, since the late packet is
+  the one that gets replicated.
+  - Deliberately not fixed in the same pass: an ingress ordering check needs `tick` to be
+    reset on respawn, character switch and reconnect, or a legitimate client is silently
+    frozen forever. That is a second netcode change and belongs in its own patch with its
+    own test.
 
 - **VOICE HAD NO RATE CAP** (fixed 2026-09-04). Frame size was capped at 1KB and the radius
   was already server-decided from an intent, but nothing bounded frame RATE — so the same
