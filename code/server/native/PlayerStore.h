@@ -6,6 +6,7 @@
 #include <mutex>    // Flush is serialised - see its note
 
 #include "AtomicWrite.h"
+#include "EconomyMigration.h"
 #include "CharacterRecord.h"
 
 #include "PermissionLevel.h"
@@ -1022,6 +1023,119 @@ struct PlayerStore
 
     // Writes only when something actually changed, so calling this on a timer is cheap.
     /**
+     * What the trust-once economy migration WOULD do. Changes nothing.
+     *
+     * Phase 5 stage 3. Reads the server's own persisted records - never a client's save,
+     * never a live inventory query, never anything the client can influence.
+     *
+     * NOT CALLED BY ANYTHING during normal operation. See EconomyMigration.h for why the
+     * mechanism exists before it is allowed to run.
+     */
+    EconomyMigration::Report InspectEconomyMigration() const
+    {
+        return EconomyMigration::Inspect(GatherCharacters(m_records));
+    }
+
+    /**
+     * Cross the boundary for every character, or for none of them.
+     *
+     * THE TRANSACTION, and its order is the whole point:
+     *
+     *     inspect the live records          - read only
+     *     refuse unless every one is clean  - all or nothing
+     *     COPY them                         - the live set is still untouched
+     *     migrate the copy
+     *     persist the copy atomically       - Stage 1's guarantee, same writer
+     *     only THEN swap the copy in
+     *
+     * The last two lines in that order are what stops RAM and disk disagreeing. Migrating
+     * the live records first and persisting afterwards would mean a failed write leaves the
+     * server believing everybody is migrated while the file says nobody is - and the next
+     * successful save would then write that false belief to disk permanently.
+     *
+     * Persistence goes through AtomicWrite, exactly as Flush does, under the same mutex.
+     * There is deliberately no second writer.
+     *
+     * `aNowSeconds` is injected rather than read here so tests are deterministic; callers
+     * pass server time.
+     */
+    bool CommitEconomyMigration(int64_t aNowSeconds, EconomyMigration::Report* apReport = nullptr,
+                                std::string* apError = nullptr)
+    {
+        const auto fail = [apError](const char* acpWhy)
+        {
+            if (apError)
+                *apError = acpWhy;
+            return false;
+        };
+
+        std::lock_guard<std::mutex> lock(m_writeMutex);
+
+        const auto report = EconomyMigration::Inspect(GatherCharacters(m_records));
+
+        if (apReport)
+            *apReport = report;
+
+        if (!report.CanCommit())
+            return fail("some records need attention - nothing was migrated");
+
+        if (report.Candidates == 0)
+            return true;   // everything already migrated; a no-op is a success
+
+        // The copy. Nothing live is touched until the write has succeeded.
+        std::vector<PlayerRecord> candidate = m_records;
+
+        size_t migrated = 0;
+
+        for (auto& record : candidate)
+        {
+            for (auto* pList : {&record.Characters, &record.RetiredCharacters})
+            {
+                for (auto& character : *pList)
+                {
+                    if (EconomyMigration::Apply(character, aNowSeconds))
+                        ++migrated;
+                }
+            }
+        }
+
+        std::string payload;
+
+        try
+        {
+            payload = nlohmann::json(candidate).dump(2);
+        }
+        catch (const std::exception& e)
+        {
+            spdlog::error("[MIGRATION] could not serialise the migrated records: {}. Nothing "
+                          "was changed, on disk or in memory.",
+                          e.what());
+            return fail("serialisation failed");
+        }
+
+        std::string reason;
+
+        if (!AtomicWrite::Replace(m_path, payload, &reason))
+        {
+            spdlog::error("[MIGRATION] could not persist: {}. The previous file is intact and "
+                          "NO character was marked migrated.",
+                          reason);
+            return fail("the write failed");
+        }
+
+        // Persisted. Only now does the server believe it.
+        m_records = std::move(candidate);
+        m_dirty = false;
+
+        spdlog::info("[MIGRATION] economy migration committed: {} character(s) migrated, {} "
+                     "already were. Their money and inventory are unchanged; the server now "
+                     "owns them.",
+                     migrated, report.AlreadyMigrated);
+
+        return true;
+    }
+
+    /**
      * Persist every record, without ever leaving players.json truncated.
      *
      * This used to open the live file with an ofstream, which TRUNCATES it, and then stream
@@ -1250,6 +1364,25 @@ private:
 
     std::vector<PlayerRecord> m_records;
     std::filesystem::path m_path;
+    // Every character on the account, live and retired, as const pointers for Inspect.
+    // Retired ones are included deliberately: a restored character must not come back with
+    // an unmigrated economy, which would be a second opening balance long after the line.
+    static std::vector<const CharacterRecord*> GatherCharacters(const std::vector<PlayerRecord>& acRecords)
+    {
+        std::vector<const CharacterRecord*> all;
+
+        for (const auto& record : acRecords)
+        {
+            for (const auto* pList : {&record.Characters, &record.RetiredCharacters})
+            {
+                for (const auto& character : *pList)
+                    all.push_back(&character);
+            }
+        }
+
+        return all;
+    }
+
     // Serialises Flush. Uncontended on the normal path; see Flush.
     mutable std::mutex m_writeMutex;
     bool m_dirty{false};
