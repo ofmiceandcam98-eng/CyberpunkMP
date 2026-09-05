@@ -408,6 +408,23 @@ as a reference for §5.1, not as a patch to apply.
 | `PHASE5-STAGE6-SWAP-PLAN.md` | protocol/flag-day analysis, netpack findings |
 | `PHASE5-STAGE6A-INVENTORY-AUDIT.md` | inventory source audit |
 | `PHASE5-STAGE6B-MONEY-AUDIT.md` | money source audit |
+| `PHASE5-STAGE6C-REACHABILITY-AND-SPECS.md` | reward reachability, `RespecIntent`, vehicle-shop disable, protocol inventory |
+
+### Amendments from Stage 6C
+
+- **§5.2 row 16 ("quest/script reward") is superseded.** Reward money is overwhelmingly
+  **device-driven**: 12 of 14 `GiveReward` callers are world devices or NPCs. It splits into
+  *world device scrap/hack rewards* (**REACHABLE**, `NEEDS WORLD SYNC`) and *quest-graph rewards*
+  (**UNKNOWN**, blocker).
+- **NCO's quest suppression does not stop quest rewards.** `Quests.reds` says so itself — the
+  engine still runs; only presentation is silenced. Nothing may assume otherwise.
+- **§5.2 note 1 is now proven**: the respec cost is a closed-form function of two TweakDB
+  constants and the character's spent points, and NCO already persists those inputs.
+- **One open TweakDB question would shrink the matrix**: do `ExtractParts*` reward records
+  contain currency, or only crafting components? Unanswered; see 6C §A.5.
+- **Protocol divergence recorded**: `feat/world-state` already differs from published
+  `fork/main` (character slots, phone calls, `/call` fix) from older commits. Treat both as
+  historical input, never as the target protocol.
 
 ---
 
