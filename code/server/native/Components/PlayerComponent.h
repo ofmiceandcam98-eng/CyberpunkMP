@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PermissionLevel.h"
+#include <string>
 
 struct PlayerComponent
 {

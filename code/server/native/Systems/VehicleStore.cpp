@@ -1,5 +1,6 @@
 #include "VehicleStore.h"
 #include "CharacterRecord.h"   // GenerateCharacterId - the same id shape, for the same reasons
+#include <algorithm>
 
 void VehicleStore::Load(const std::filesystem::path& acPath) noexcept
 {

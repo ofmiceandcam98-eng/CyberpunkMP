@@ -1,4 +1,6 @@
 #pragma once
+#include <string>
+#include <vector>
 
 /**
  * Persistent bans, keyed on Discord id.

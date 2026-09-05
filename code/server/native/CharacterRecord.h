@@ -5,6 +5,7 @@
 #include <random>
 #include <cstring>
 #include <cctype>
+#include <cstdio>
 
 /**
  * A multiplayer character, owned by the server.

@@ -46,6 +46,7 @@
 
 #include "CharacterRecord.h"
 #include "PlayerStore.h"
+#include <utility>
 
 /**
  * How close two people must be, in metres.

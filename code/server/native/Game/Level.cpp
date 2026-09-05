@@ -24,6 +24,8 @@
 
 #include <chrono>
 #include <cmath>                  // std::floor, for ToCell - see Level::kCellSize
+#include <unordered_map>
+#include <utility>
 
 // Aliases for the contract in Level.h. Declared there because the client is told these
 // numbers and checks our arithmetic against them - see the comment on Level::kCellSize.

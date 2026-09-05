@@ -16,6 +16,8 @@
 #include "Scripting/RpcScriptInstance.h"
 
 #include "PlayerManager.h"
+#include <thread>
+#include <utility>
 
 
 using nlohmann::json;

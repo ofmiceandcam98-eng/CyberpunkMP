@@ -12,6 +12,7 @@
 #include "Systems/WorldFacts.h"
 #include "Systems/VehicleStore.h"
 #include "Game/World.h"
+#include <utility>
 
 template <typename T>
 concept NetworkMessage = requires(T a, Buffer::Writer writer, Buffer::Reader reader) {

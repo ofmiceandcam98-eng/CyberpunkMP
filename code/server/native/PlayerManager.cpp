@@ -2,6 +2,7 @@
 #include "Game/World.h"
 
 #include "Components/PlayerComponent.h"
+#include <utility>
 
 PlayerManager::PlayerManager(gsl::not_null<World*> apWorld)
     : m_pWorld(apWorld)

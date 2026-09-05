@@ -6,6 +6,9 @@
 #include "CharacterRecord.h"
 
 #include "PermissionLevel.h"
+#include <algorithm>
+#include <chrono>
+#include <utility>
 /**
  * Where each player was, kept across sessions.
  *

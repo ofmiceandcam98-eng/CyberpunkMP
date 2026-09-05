@@ -83,6 +83,44 @@ if ($bom) {
 } else { Pass "no BOM in any source file" }
 
 # ---------------------------------------------------------------------------
+# The Linux build, checked on a machine with no Linux compiler on it.
+#
+# This closes the gap this script used to admit to at the bottom: "there is no GCC on this
+# machine, so server portability is only ever proven by a deploy". The server runs GCC in a
+# container on the NAS and that is the build that serves players; MSVC supplies far more of
+# the standard library transitively, so code that compiles perfectly here can fail there.
+#
+# It is not theoretical. On 2026-09-02 four files missing <cstdio> and one missing <map>
+# took production down for three hours without anybody noticing, because the deploy script
+# keeps the container on its PREVIOUS image when a build fails - so the old protocol went on
+# answering, every updated client was refused at connect, and the only visible symptom was a
+# menu button that appeared to do nothing.
+#
+# A lint, not a compiler: a clean run is not a promise that GCC is happy. It catches the one
+# class of error that has actually cost us a day, on the machine where the mistake is made.
+Head "portability (GCC headers)"
+$includeOut = & (Join-Path $PSScriptRoot "CheckIncludes.ps1") 2>&1
+$includeOk = $LASTEXITCODE -eq 0
+Set-Location $Repo   # CheckIncludes.ps1 sets its own location
+
+if ($includeOk) {
+    # Its own summary line has already gone to the console - CheckIncludes.ps1 reports with
+    # Write-Host, which bypasses the pipeline, so $includeOut cannot carry it here.
+    Pass "every std:: symbol has the header that declares it"
+}
+else {
+    # No counts here on purpose. CheckIncludes.ps1 reports with Write-Host, which bypasses
+    # the pipeline, so $includeOut is empty and any number derived from it would be 0 - a
+    # summary reading "0 symbols used without their header" next to a failure is worse than
+    # no number at all, because it makes the gate look broken and teaches people to skip it.
+    # The child has already printed the exact file/symbol list immediately above.
+    Fail -Summary "std:: symbols used without the header that declares them" `
+         -What "these compile on MSVC and FAIL under GCC, which is the build that actually serves players. A failed container build does not roll back - the deploy keeps the PREVIOUS image running, so the old protocol goes on answering and every updated client is refused at connect. The last time this happened it cost three hours and the only symptom was a menu button appearing to do nothing" `
+         -Where "listed directly above this block, one line per file with the exact symbol" `
+         -Fix "add each #include named above. Adding one cannot change behaviour - it can only fix portability - so this is always safe. Re-run .\tools\CheckIncludes.ps1 to confirm"
+}
+
+# ---------------------------------------------------------------------------
 Head "redscript natives vs C++ RTTI"
 $reds = "code\assets\redscript\World\NetworkWorldSystem.reds"
 $hdr  = "code\client\App\World\NetworkWorldSystem.h"
@@ -315,7 +353,9 @@ if ($problems) {
 }
 
 Write-Host "VERIFIED - nothing above needs a human." -ForegroundColor Green
-Write-Host "Still not covered: anything needing the game running or two players, and the" -ForegroundColor DarkGray
-Write-Host "Linux build - there is no GCC on this machine, so server portability is only" -ForegroundColor DarkGray
-Write-Host "ever proven by a deploy." -ForegroundColor DarkGray
+Write-Host "Still not covered: anything needing the game running or two players." -ForegroundColor DarkGray
+Write-Host "The Linux build is now PARTLY covered - the portability check catches std::" -ForegroundColor DarkGray
+Write-Host "symbols used without their header, which is the one class of GCC-only failure" -ForegroundColor DarkGray
+Write-Host "that has actually cost us a day. It is a lint, not a compiler: a clean run is" -ForegroundColor DarkGray
+Write-Host "not a promise that GCC is happy, and a real deploy is still the only proof." -ForegroundColor DarkGray
 exit 0

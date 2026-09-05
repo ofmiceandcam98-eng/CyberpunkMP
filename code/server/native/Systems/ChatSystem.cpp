@@ -27,6 +27,8 @@
 #include "Systems/NpcSystem.h"
 
 #include "PlayerManager.h"
+#include <functional>
+#include <stdexcept>
 
 /**
  * A dummy that walks, so remote movement can be tested by one person.

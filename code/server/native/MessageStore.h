@@ -66,6 +66,8 @@
 #include <random>
 
 #include <nlohmann/json.hpp>
+#include <cstddef>
+#include <utility>
 
 /**
  * How many messages a single conversation keeps.

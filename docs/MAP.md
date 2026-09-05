@@ -115,6 +115,23 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   `test/character-selector` on 21 Aug and was never merged. Cherry-picked. *Check for an
   existing fix on a side branch before writing a new one.*
 
+- **THE LINUX BUILD IS NOW PARTLY GATED, and 34 latent breakages were already there.**
+  Verify used to end by admitting "there is no GCC on this machine, so server portability
+  is only ever proven by a deploy". `tools/CheckIncludes.ps1` closes the one class of
+  GCC-only failure that has actually cost us a day — a `std::` symbol used without the
+  header that declares it, which MSVC forgives transitively and libstdc++ does not.
+  - **It found 34 across 24 files on its first run** (`<cstdio>`, `<utility>`, `<algorithm>`,
+    `<mutex>`, `<atomic>`, `<functional>`, `<thread>`…). All added; MSVC build still clean.
+    Every one of those was a live risk to the weekend migration, because a container build
+    that fails does NOT roll back — the deploy keeps the previous image, so on **new**
+    hardware nothing would have come up at all.
+  - Wired into `Verify.ps1`, so it gates every ship. **Self-tested both ways**: a planted
+    missing `<cstring>` fails the gate with the file and symbol named; restoring it passes.
+  - The script was UNTRACKED until now, which is exactly the hazard the portability decree
+    describes — an untracked file that incoming commits later create refuses the pull. Now
+    committed.
+  - Still a lint, not a compiler. A clean run is not a promise GCC is happy.
+
 - **A SYMLINKED PLUGIN DLL SILENTLY KILLS THE WHOLE MOD.** Cam's game came up with a
   completely stock main menu, nothing crashed, and it looked like every menu change had
   been reverted. It had not: RED4ext loaded the plugin, the plugin resolved its OWN path
