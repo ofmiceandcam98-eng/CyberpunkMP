@@ -979,7 +979,79 @@ void Level::HandleMoveEntityRequest(PacketEvent<client::MoveEntityRequest>& aMes
     // edited. Interest management sends only every Nth update to distant players, and a
     // sequence that reset to zero on every packet would make "every 4th" mean "every one".
     if (const auto* pPrevious = target.get<MovementComponent>())
+    {
+        /*
+         * ORDERING. An older packet must never overwrite newer authoritative state.
+         *
+         * MoveEntityRequest is UNRELIABLE (client.proto marks it so), which is correct for
+         * movement - retransmitting a stale position is worse than losing it - but it means
+         * UDP reordering is expected rather than exceptional. Until now the server took
+         * whatever arrived last, so a packet overtaken in flight could rewind the server's
+         * idea of where somebody is.
+         *
+         * That is not only a visual problem. The server's position is what chat range,
+         * voice range, jail geofencing, trade distance and medical distance are all decided
+         * from, so a rewind is a wrong AUTHORIZATION answer, not just a wrong dot on a map.
+         *
+         * WHAT `tick` IS, established before writing this rather than assumed. It is
+         * wall-clock milliseconds since the Unix epoch (NetworkWorldSystem::GetTick, and
+         * InterpolationSystem.cpp:208 names the magnitude - ~1.787e12). That has three
+         * consequences worth stating, because each removes machinery this would otherwise
+         * have needed:
+         *
+         *   - it is globally monotonic, so there is no per-connection or per-character
+         *     ordering domain to maintain;
+         *   - it does NOT reset on spawn, respawn, character switch or reconnect, so none
+         *     of those lifecycle transitions need a baseline reset - a respawn simply
+         *     continues from the current wall clock;
+         *   - a uint64 of milliseconds does not wrap in any timeframe that matters, so a
+         *     plain comparison is correct and serial-number arithmetic would be inventing
+         *     a problem.
+         *
+         * A NEW ENTITY starts with Tick == 0 and is accepted unconditionally, which is what
+         * makes a fresh puppet - respawn, character switch, reconnect - work without any
+         * special case: the ordering domain belongs to the component, and a new component
+         * is a new domain.
+         *
+         * THE ONE REAL EDGE CASE is the client's wall clock moving backwards - an NTP
+         * correction, or somebody changing their system time. Strict rejection would freeze
+         * that player until real time caught up, which for a large jump is permanent. So a
+         * jump backwards LARGER than any plausible reordering is treated as a clock reset
+         * and accepted, re-baselining from there. That is safe rather than a hole: ownership
+         * and epoch are already validated above, so this only ever concerns an entity the
+         * sender already controls - and a client that wanted to put itself somewhere false
+         * can simply send a position, which no ordering rule would catch anyway. The check
+         * defends against the NETWORK reordering packets, not against a lying client.
+         */
+        constexpr uint64_t kClockResetMs = 30'000;
+
+        const auto incoming = aMessage.get_tick();
+
+        if (pPrevious->Tick != 0 && incoming <= pPrevious->Tick &&
+            (pPrevious->Tick - incoming) < kClockResetMs)
+        {
+            // Stale. Dropped here, before the component is written and before anything is
+            // marked pending - so it costs no state change, no replication and no walk of
+            // the player list. Not logged: reordering is expected traffic, and a line per
+            // stale packet would be the disk amplification this audit exists to remove.
+            return;
+        }
+
         component.Sequence = pPrevious->Sequence + 1;
+
+        /*
+         * Carried forward too, and they must be.
+         *
+         * ReplicatedSequence drives the wire value and the distance LOD; letting the
+         * wholesale replace reset it to zero would make `sequence % 4` true on every single
+         * update, so every distant player would get full-rate traffic - the interest
+         * management silently switched off. ReplicationPending has to survive for the same
+         * structural reason: a packet arriving between ticks must not clear the flag raised
+         * by the packet before it.
+         */
+        component.ReplicatedSequence = pPrevious->ReplicatedSequence;
+        component.ReplicationPending = pPrevious->ReplicationPending;
+    }
 
     // Dropped, not clamped. See Validation.h - a non-finite position does not crash
     // anything, it silently switches off every system that measures distance, and then

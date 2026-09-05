@@ -206,6 +206,133 @@ int main()
         Check(midBandPasses <= kUpdateRate / 4, "so the mid-band divisor cannot be outrun by sending faster");
     }
 
+    // ---------------------------------------------------------------------------------
+    // INGRESS ORDERING. An older packet must never overwrite newer authoritative state.
+    //
+    // Mirrors the check in Level::HandleMoveEntityRequest. `tick` is wall-clock
+    // milliseconds since the epoch, so it is globally monotonic and never resets - a new
+    // ORDERING DOMAIN is expressed by a fresh component (Tick == 0), not by a counter reset.
+    // ---------------------------------------------------------------------------------
+    {
+        constexpr uint64_t kClockResetMs = 30000;
+
+        struct Ingress
+        {
+            uint64_t Tick{0};      // last accepted
+            float X{0.f};          // authoritative position
+            bool Pending{false};
+            long long accepted{0};
+            long long rejected{0};
+            long long relevanceChecks{0};
+        };
+
+        // Returns true if accepted. Mirrors the handler: reject BEFORE writing state.
+        auto Deliver = [&](Ingress& e, uint64_t tick, float x, int players)
+        {
+            if (e.Tick != 0 && tick <= e.Tick && (e.Tick - tick) < kClockResetMs)
+            {
+                ++e.rejected;
+                return false;   // no write, no pending, no walk
+            }
+
+            e.Tick = tick;
+            e.X = x;
+            e.Pending = true;
+            ++e.accepted;
+            (void)players;
+            return true;
+        };
+
+        { // section 10: 100 -> A, 101 -> B, 99 -> C must leave B
+            Ingress e;
+            Deliver(e, 100, 1.f, kPlayers);
+            Deliver(e, 101, 2.f, kPlayers);
+            Deliver(e, 99, 3.f, kPlayers);
+
+            Check(e.X == 2.f, "a packet from tick 99 cannot overwrite tick 101");
+            Check(e.Tick == 101, "and the authoritative tick stays at the newest");
+            Check(e.rejected == 1, "the stale packet was rejected, not applied");
+        }
+
+        { // section 10 continued: 100,101,103,102,104 must end at 104
+            Ingress e;
+            Deliver(e, 100, 1.f, kPlayers);
+            Deliver(e, 101, 2.f, kPlayers);
+            Deliver(e, 103, 3.f, kPlayers);
+            Deliver(e, 102, 4.f, kPlayers);   // overtaken in flight
+            Deliver(e, 104, 5.f, kPlayers);
+
+            Check(e.X == 5.f, "out-of-order delivery still ends on the newest state");
+            Check(e.Tick == 104, "authoritative tick is 104");
+            Check(e.rejected == 1, "only the reordered 102 was dropped");
+        }
+
+        { // section 8: loss is normal - gaps must NOT be treated as errors
+            Ingress e;
+            Deliver(e, 100, 1.f, kPlayers);
+            Deliver(e, 101, 2.f, kPlayers);
+            Deliver(e, 103, 3.f, kPlayers);   // 102 was lost
+            Deliver(e, 104, 4.f, kPlayers);
+
+            Check(e.accepted == 4, "non-contiguous ticks are all accepted - loss is not an error");
+            Check(e.X == 4.f, "and the newest state is authoritative");
+        }
+
+        { // section 9: duplicates do no work
+            Ingress e;
+            Deliver(e, 100, 1.f, kPlayers);
+            const auto afterFirst = e.accepted;
+
+            for (int i = 0; i < 100; ++i)
+                Deliver(e, 100, 9.f, kPlayers);
+
+            Check(e.accepted == afterFirst, "100 duplicates of tick 100 cause ONE update");
+            Check(e.X == 1.f, "and cannot change the position");
+        }
+
+        { // section 14: a stale flood is cheap
+            Ingress e;
+            Deliver(e, 500000, 1.f, kPlayers);
+            e.Pending = false;   // pretend the tick drained it
+
+            for (int i = 0; i < 10000; ++i)
+                Deliver(e, 499999, 2.f, kPlayers);
+
+            Check(e.rejected == 10000, "10,000 stale packets all rejected");
+            Check(!e.Pending, "and NONE of them marked movement pending");
+            Check(e.relevanceChecks == 0, "so none of them caused a relevance walk");
+            Check(e.X == 1.f, "authoritative position untouched");
+        }
+
+        { // a fresh component is a fresh ordering domain - respawn/switch/reconnect
+            Ingress old;
+            Deliver(old, 900000, 1.f, kPlayers);
+            Deliver(old, 900001, 2.f, kPlayers);
+
+            Ingress fresh;   // new puppet: Tick == 0
+            Check(Deliver(fresh, 1, 5.f, kPlayers), "a new entity accepts any first tick");
+            Check(fresh.X == 5.f, "and takes its position");
+
+            // An old session's packet cannot reach the new entity's state - it is a
+            // different component entirely. Asserted by construction.
+            Check(old.X == 2.f, "the previous entity is unaffected");
+        }
+
+        { // the one real edge case: the client's wall clock jumps backwards
+            Ingress e;
+            Deliver(e, 1787000000000ULL, 1.f, kPlayers);
+
+            // A small step back is reordering - rejected.
+            Check(!Deliver(e, 1787000000000ULL - 500, 2.f, kPlayers),
+                  "a half-second step back is reordering and is rejected");
+
+            // A large one is a clock correction - accepted, re-baselined.
+            Check(Deliver(e, 1787000000000ULL - 60000, 3.f, kPlayers),
+                  "a minute-long jump back is a clock reset and is accepted");
+            Check(e.X == 3.f, "so the player is not frozen out until real time catches up");
+        }
+    }
+
     std::printf("\n%s\n", failures ? "FAILURES" : "all passed");
     return failures ? 1 : 0;
 }

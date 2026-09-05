@@ -152,18 +152,32 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
     reduction, with the newest state surviving); they cannot prove the absence of jitter or
     rubber-banding. A design plus green tests is not a fix.
 
-- **Movement accepts OUT-OF-ORDER packets — server position can go backwards. OPEN, not
-  fixed.** `MoveEntityRequest` is `unreliable` (UDP, reordering is expected) and
-  `HandleMoveEntityRequest` never compares `tick` against the stored one — it writes
-  whatever arrives last. The CLIENT rejects stale states
-  (`InterpolationSystem.cpp:721`), so viewers are protected, but the SERVER's authoritative
-  position is not — and that position feeds chat range, jail enforcement, and the trade and
-  medical distance checks. Coalescing makes it marginally worse, since the late packet is
-  the one that gets replicated.
-  - Deliberately not fixed in the same pass: an ingress ordering check needs `tick` to be
-    reset on respawn, character switch and reconnect, or a legitimate client is silently
-    frozen forever. That is a second netcode change and belongs in its own patch with its
-    own test.
+- ~~Movement accepts OUT-OF-ORDER packets~~ **FIXED 2026-09-04.** `MoveEntityRequest` is
+  `unreliable` (UDP, reordering expected) and the handler took whatever arrived last, so a
+  packet overtaken in flight could rewind the server's position — which is a wrong
+  AUTHORIZATION answer, not just a wrong dot: chat range, voice range, jail geofencing, and
+  the trade and medical distance checks all read it. Now rejected before the component is
+  written, before anything is marked pending, and before any walk.
+  - **`tick` is wall-clock milliseconds since the epoch** (`NetworkWorldSystem::GetTick`;
+    `InterpolationSystem.cpp:208` names the magnitude). Established before writing the fix,
+    and it removed most of the machinery the fix would otherwise have needed: it is globally
+    monotonic, it does **not** reset on spawn/respawn/character switch/reconnect, and a
+    uint64 of milliseconds does not wrap in any timeframe that matters — so no per-session
+    ordering domain, no lifecycle baseline reset, and no serial-number arithmetic.
+  - **A new ordering domain is a new component**, not a counter reset: a fresh puppet has
+    `Tick == 0` and accepts anything, which is what makes respawn and character switch work
+    with no special case.
+  - **The one real edge case is the client's wall clock moving backwards** (NTP, or someone
+    changing their system time). Strict rejection would freeze that player until real time
+    caught up — permanently, for a large jump. A backward step larger than 30s is treated as
+    a clock reset and re-baselined. Safe rather than a hole: ownership and epoch are already
+    validated, so it only concerns an entity the sender controls, and a client that wants to
+    be somewhere false just sends a position — the check defends against the NETWORK
+    reordering packets, not against a lying client.
+  - Also fixed in passing: `ReplicatedSequence` and `ReplicationPending` were not being
+    carried across the wholesale component replace, so the LOD would have reset to 0 on
+    every packet and `% 4` would have been true every time — interest management silently
+    off. Caught by writing the ordering check next to it.
 
 - **VOICE HAD NO RATE CAP** (fixed 2026-09-04). Frame size was capped at 1KB and the radius
   was already server-decided from an intent, but nothing bounded frame RATE — so the same
