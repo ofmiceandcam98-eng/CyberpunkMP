@@ -272,8 +272,10 @@ public:
                                             static_cast<std::ptrdiff_t>(excess));
         }
 
+        // Marked, not written. The write is debounced - see FlushIfDue. Flushing here meant
+        // one text re-serialised every conversation on the server and rewrote the whole
+        // file, which is a full disk write bought with a single client packet.
         m_dirty = true;
-        Flush();
 
         if (apReason)
             apReason->clear();
@@ -365,8 +367,10 @@ public:
 
         if (changed)
         {
+            // Debounced like Send. Losing this flag to a crash is the safe direction: an
+            // undelivered message is simply delivered again next time, which is why it is
+            // set only after every line has reached the connection.
             m_dirty = true;
-            Flush();
         }
     }
 
@@ -458,6 +462,51 @@ public:
         return Undelivered(acCharacterId).size();
     }
 
+    /**
+     * Write if enough time has passed. Called from the server tick.
+     *
+     * WHY THIS EXISTS - disk write amplification.
+     *
+     * Send() and the delivery marker used to call Flush() directly, which meant ONE text
+     * message re-serialised EVERY conversation on the server to pretty-printed JSON and
+     * rewrote the whole file. One client packet, one full write of the entire message
+     * history - and the cost grows with that history, so it is cheapest on the day you test
+     * it and worst on the day it matters.
+     *
+     * Debounced instead, the same way PlayerStore's positions are: mutations only mark the
+     * store dirty, and the write happens on a timer. Under a flood the disk sees one write
+     * per interval instead of one per message, and normal texting is unaffected because
+     * nobody types faster than the interval anyway.
+     *
+     * TWO SECONDS, not the thirty PlayerStore uses. A lost position is re-derived from where
+     * the player actually is a moment later; a lost message is gone and the sender believes
+     * it was sent. Two seconds bounds the damage to something no one would notice while
+     * still cutting the flood case by orders of magnitude.
+     *
+     * Losing the DELIVERED flag on a crash is the safe direction and always was: an
+     * undelivered message is simply delivered again next time, which is why the marker is
+     * set only after every line has reached the connection.
+     */
+    void FlushIfDue()
+    {
+        if (!m_dirty)
+            return;
+
+        constexpr int64_t kFlushIntervalSeconds = 2;
+
+        const auto now = Now();
+
+        if (now - m_lastFlushAt < kFlushIntervalSeconds)
+            return;
+
+        m_lastFlushAt = now;
+        Flush();
+    }
+
+    /**
+     * Write now, regardless of the timer. For disconnect and shutdown, where there is no
+     * later tick to rely on.
+     */
     void Flush()
     {
         if (!m_dirty || m_path.empty() || !m_readable)
@@ -539,6 +588,8 @@ private:
 
     std::vector<Conversation> m_conversations;
     std::filesystem::path m_path;
+    // When the debounced write last happened - see FlushIfDue.
+    int64_t m_lastFlushAt{0};
     bool m_dirty{false};
 
     // Cleared by a failed load, and never set again for the life of the process.

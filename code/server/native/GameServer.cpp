@@ -158,6 +158,21 @@ GameServer::GameServer()
 
 GameServer::~GameServer()
 {
+    /*
+     * Last write before the process goes.
+     *
+     * Both stores are debounced - positions on a thirty-second timer, messages on a
+     * two-second one - so at shutdown each may be holding changes that have not reached
+     * disk. Nothing else was flushing them: a clean stop silently discarded up to half a
+     * minute of positions and a couple of seconds of texts, and the only symptom would be
+     * somebody insisting they sent a message that is not there.
+     *
+     * Forced rather than FlushIfDue, because there is no later tick to rely on. Both are
+     * no-ops when nothing is dirty, so a stop with nothing outstanding costs nothing.
+     */
+    m_messages.Flush();
+    m_players.Flush();
+
     GServer = nullptr;
 }
 
@@ -187,6 +202,12 @@ void GameServer::OnUpdate()
     SavePlayerPositions(now);
     EnforceJail(now);
     ExpireCalls(now);
+
+    // The debounced message write. Send() only marks the store dirty now, so this is what
+    // actually gets a text onto disk - at most once every couple of seconds no matter how
+    // fast anybody types. Before this, one message rewrote every conversation on the
+    // server, which is a full disk write bought with a single client packet.
+    m_messages.FlushIfDue();
 
     m_pWorld->Update(std::chrono::duration_cast<std::chrono::duration<float>>(delta).count());
 }
