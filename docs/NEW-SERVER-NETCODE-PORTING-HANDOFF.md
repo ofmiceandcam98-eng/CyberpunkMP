@@ -337,6 +337,59 @@ effectively broadcast. Fix in the new relevance design rather than porting the g
 
 ---
 
+## Cross-cutting: REGRESSION REQUIREMENTS
+
+**These are not history. They are acceptance criteria for the replacement server.** Each was a
+real incident on the outgoing one; each must have a test before the corresponding system is
+considered done.
+
+| # | Regression | The rule |
+|---|---|---|
+| **1** | **Vehicle seat transition** | Switching seats must never make the server briefly believe the vehicle is empty and destroy or release it. A seat swap is exit+enter within a millisecond; the exit must name the vehicle and seat so a stale one is recognised and dropped. |
+| **2** | **Inventory restore duplication** | Reconciliation operates on `difference = desired − current`. **Never add the authoritative total on top of the current quantity.** The 124-stack doubling must not recur. |
+| **3** | **Body slot protection** | Reconciliation must not strip game-critical equipment slots — `RightArm`, `LeftArm`, `BaseFists` and anything else the body needs. A player lost their arms to this. |
+| **4** | **Starter-kit autosave race** | A legitimate server grant must never be overwritten by an older client snapshot. Granted 15:01:27, erased by the autosave at 15:02:57. |
+| **5** | **Character identity** | Never use a save index, array position, or slot number as permanent identity. **CharacterID only.** |
+| **6** | **Phone call state** | Call-state handling must never leave a player in an invisible or phantom call. |
+| **7** | **Codegen / branch contamination** | Generated protocol must correspond exactly to the source protocol of the current build. **Do not rely on source mtime.** A build from checkout A must never link serializers generated from checkout B. |
+
+---
+
+## Cross-cutting: UNRESOLVED — do not mark solved
+
+**Documenting a requirement does not solve it.** Every item here is still open, and none may be
+treated as closed because it appears in this document.
+
+| Blocker | State |
+|---|---|
+| **Movement coalescing** | built on the outgoing server, **flag OFF**, **never live-tested with two clients** |
+| **Remote vehicle mount crash** | unresolved; dominates current crash reports; distinct from the older join crash |
+| **Cell-grid relevance** | **currently culls nothing** (measured 2026-09-04) |
+| **Money authority** | vanilla money sources remain **unobserved** — 17 paths bypass the mutation boundary |
+| **Inventory authority** | **item-instance fidelity unresolved**; the model cannot represent a real item |
+| **Character session lock** | one CharacterID = one active gameplay session — **still required, never built** |
+
+---
+
+## Cross-cutting: redscript is game integration, not transport
+
+Most of `code/assets/redscript/` talks to **the game**, not the network. A transport change is
+not by itself a reason to rewrite it.
+
+**When the new server arrives, audit redscript separately in three categories:**
+
+```
+DIRECTLY REUSABLE      NEEDS NEW BRIDGE      OBSOLETE
+```
+
+Preserve the hard-won knowledge in particular around: inventory capture/restore/reconcile ·
+money reconciliation (`ApplyServerMoney`) · the vanilla phone · character and game-state hooks ·
+quest suppression · vehicle mounting · Cyberpunk systems access.
+
+Most of this cost days to establish and is written down nowhere else.
+
+---
+
 ## Cross-cutting: live-test requirements
 
 None of these can be covered by `tools/Verify.ps1`; all need a running game, most need two

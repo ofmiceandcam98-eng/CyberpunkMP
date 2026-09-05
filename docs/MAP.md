@@ -318,6 +318,68 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   - **First diagnostic for "the mod did nothing": `red4ext/logs/red4ext-*.log`.** A plugin
     that fails during `Load` says so there and nowhere else.
 
+### FOR ZELDFEP — NETCODE IS FROZEN, THE BRANCH IS NOW A REFERENCE (2026-09-05)
+
+**Read this before touching anything on `feat/world-state`.** Nothing here changes the live
+servers — nothing is pushed — but it changes what this branch IS.
+
+**1. Hard freeze on runtime multiplayer networking**, until Cam says the server swap is complete.
+No production `.proto`, handlers, transport, RPC, replication, auth, movement, vehicle, combat,
+voice, phone, selector, or economy networking. This matches what you asked for before the swap;
+it is now written down and it applies to both streams.
+
+**2. `feat/world-state` is now classified OUTGOING SERVER REFERENCE IMPLEMENTATION.** Not a
+deployment target, not the base for the new server, and deliberately NOT cleaned up. A full
+netcode rollback was proposed, audited, and **rejected** — the numbers are in
+`docs/OUTGOING-SERVER-NETCODE-MAP.md` §0, but briefly: the branch is +20,760 lines, the "netcode"
+files are +6,046, and the actual transport is ~1,500-2,500. The rest is persistence, permissions,
+admin tooling and economy work that must survive. `HandleSaveCharacterRequest` is one function
+that is simultaneously a packet handler AND the money guard, the starter kit, the Stage 5
+observation and the audit log. Splitting it is a rewrite, not a revert.
+
+**3. The branch protocol already differs from published `fork/main`** — and has since long before
+this work:
+
+```
+fork/main:        client 0x88b2f6b5cbefc91c   server 0xb2f2bf7363a7f337
+feat/world-state: client 0xc67c52a1b6c5f096   server 0xa14513f4653e80f
+```
+
+134 lines from `9af9e8d` (character slots), `1d5aec2` (phone calls), `8156ebb` (`/call` fix).
+Deliberately NOT reverted. **Do not assume branch protocol == published protocol.**
+
+**4. Three handoff documents are the authority for rebuilding on the new server:**
+
+| Document | What |
+|---|---|
+| `docs/NEW-SERVER-NETCODE-PORTING-HANDOFF.md` | all ten phases; rebuild without reading old code |
+| `docs/OUTGOING-SERVER-NETCODE-MAP.md` | where the old netcode is; every mixed file split keep/don't-port |
+| `docs/NEW-SERVER-AUTHORITY-HANDOFF.md` | economy authority + proven Cyberpunk facts |
+
+**Read the requirements first. Do not start by copying old code.**
+
+**5. Findings that affect your half:**
+- **Money is NOT server-authoritative** — 17 vanilla paths bypass `Economy::`. Vendors move eddies
+  client-side (`vendor.script:1180`, proven from the game's own source). Money is an inventory
+  item.
+- **No vanilla inventory operation is observed at all** — zero hooks on `TransactionSystem`,
+  vendors, crafting, loot, stash.
+- **The item model cannot represent a real item** — `(TweakDBID, quantity)` in,
+  `GiveItemByTDBID` out. A restore hands back a BASE item, losing mods/tier/upgrades. **This is a
+  live data-loss path today**, independent of any authority work.
+- **The cell grid culls nothing** — relevance is effectively broadcast.
+- **netpack does not range-validate enums** — an undeclared value round-trips intact. Two
+  generator defects found and fixed (`b6fc19c`); production protos byte-identical after.
+
+**6. Still unresolved, and not solved by being documented:** movement coalescing (flag OFF, never
+2-client tested — that test needs you), the remote-vehicle-mount crash, cell-grid relevance, money
+authority, item fidelity, and the character session lock.
+
+**7. Selector and full inventory authority are PARKED** until the new server has auth, identity,
+CharacterID, persistence, session lock and authoritative load/spawn.
+
+Phase 5 stages 1-5 stand as architecture and were **not** the reason for the swap.
+
 ### Phase 5 (economy authority) — stages 1–5 built, NOTHING BEHAVES DIFFERENTLY YET
 
 Full detail in `docs/PHASE5-ECONOMY-AUTHORITY.md`; this row is the ledger pointer. All of it
