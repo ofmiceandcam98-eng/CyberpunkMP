@@ -69,6 +69,7 @@
 #include <cstddef>
 #include <utility>
 
+#include "AtomicWrite.h"
 #include "RequestLedger.h"   // idempotent sends - a retry must not create a second message
 
 /**
@@ -544,10 +545,17 @@ public:
 
         try
         {
-            std::filesystem::create_directories(m_path.parent_path());
+            std::string reason;
 
-            std::ofstream file(m_path);
-            file << nlohmann::json(m_conversations).dump(2);
+            // Atomic. The live file is never truncated and a failure leaves the previous
+            // contents complete - see AtomicWrite. m_dirty stays set on failure, so the
+            // next tick retries rather than believing it has saved.
+            if (!AtomicWrite::Replace(m_path, nlohmann::json(m_conversations).dump(2), &reason))
+            {
+                spdlog::error("Could not write {}: {}. The previous file is intact.",
+                              m_path.string(), reason);
+                return;
+            }
 
             m_dirty = false;
         }

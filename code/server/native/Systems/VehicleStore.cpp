@@ -1,4 +1,5 @@
 #include "VehicleStore.h"
+#include "AtomicWrite.h"
 #include "CharacterRecord.h"   // GenerateCharacterId - the same id shape, for the same reasons
 #include <algorithm>
 
@@ -58,10 +59,15 @@ void VehicleStore::Save() const noexcept
 
     try
     {
-        std::filesystem::create_directories(m_path.parent_path());
+        // Atomic - see AtomicWrite. This is economy state: a truncated file loses every
+        // vehicle anybody owns, and there is no way to reconstruct who owned what.
+        std::string reason;
 
-        std::ofstream file(m_path);
-        file << nlohmann::json(m_vehicles).dump(2);
+        if (!AtomicWrite::Replace(m_path, nlohmann::json(m_vehicles).dump(2), &reason))
+        {
+            spdlog::error("Could not write {}: {}. The previous file is intact.",
+                          m_path.string(), reason);
+        }
     }
     catch (const std::exception& e)
     {

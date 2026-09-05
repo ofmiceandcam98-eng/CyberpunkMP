@@ -3,6 +3,9 @@
 #include <limits>   // numeric_limits, for the trade overflow guards - MSVC supplies this
                     // transitively, the GCC container the server builds in does not
 
+#include <mutex>    // Flush is serialised - see its note
+
+#include "AtomicWrite.h"
 #include "CharacterRecord.h"
 
 #include "PermissionLevel.h"
@@ -1018,24 +1021,70 @@ struct PlayerStore
     }
 
     // Writes only when something actually changed, so calling this on a timer is cheap.
+    /**
+     * Persist every record, without ever leaving players.json truncated.
+     *
+     * This used to open the live file with an ofstream, which TRUNCATES it, and then stream
+     * a freshly serialised document into it. Between those two moments the authoritative
+     * copy of every character on the server did not exist - and a crash, a power cut, a full
+     * disk or a killed container in that window left an empty or half-written file with no
+     * backup to fall back on.
+     *
+     * See AtomicWrite for the replacement sequence and why its ORDER is the design.
+     *
+     * SERIALISED FIRST, INTO MEMORY. A json exception now happens before anything on disk
+     * has been touched, so a record that cannot be serialised costs a log line rather than
+     * the database.
+     *
+     * LOCKED. The three callers - the thirty-second tick, the disconnect path and the
+     * destructor - are all on the game thread today, but a shutdown racing a tick would
+     * interleave two serialisations into one file, and a file that is half one state and
+     * half another is corrupt in a way that reads as valid JSON. The mutex is uncontended
+     * on the normal path and removes the whole class.
+     *
+     * m_dirty is cleared ONLY on success. A failed write leaves the store dirty so the next
+     * tick tries again, rather than silently believing it has been saved.
+     */
     void Flush()
     {
         if (!m_dirty || m_path.empty())
             return;
 
+        std::lock_guard<std::mutex> lock(m_writeMutex);
+
+        // Re-checked under the lock: another caller may have written it while we waited.
+        if (!m_dirty)
+            return;
+
+        std::string payload;
+
         try
         {
-            std::filesystem::create_directories(m_path.parent_path());
-
-            std::ofstream file(m_path);
-            file << nlohmann::json(m_records).dump(2);
-
-            m_dirty = false;
+            payload = nlohmann::json(m_records).dump(2);
         }
         catch (const std::exception& e)
         {
-            spdlog::error("Could not write {}: {}", m_path.string(), e.what());
+            spdlog::error("Could not serialise {}: {}. The file on disk is UNCHANGED and still "
+                          "valid; nothing was written.",
+                          m_path.string(), e.what());
+            return;
         }
+
+        std::string reason;
+
+        if (!AtomicWrite::Replace(m_path, payload, &reason))
+        {
+            spdlog::error("Could not write {}: {}. The previous file is intact - it will be "
+                          "retried on the next save.",
+                          m_path.string(), reason);
+            return;
+        }
+
+        // Non-fatal detail from a successful write - a backup that could not be taken.
+        if (!reason.empty())
+            spdlog::warn("{}: {}", m_path.string(), reason);
+
+        m_dirty = false;
     }
 
 private:
@@ -1201,5 +1250,7 @@ private:
 
     std::vector<PlayerRecord> m_records;
     std::filesystem::path m_path;
+    // Serialises Flush. Uncontended on the normal path; see Flush.
+    mutable std::mutex m_writeMutex;
     bool m_dirty{false};
 };
