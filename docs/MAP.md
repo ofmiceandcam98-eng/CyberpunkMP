@@ -115,6 +115,39 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   `test/character-selector` on 21 Aug and was never merged. Cherry-picked. *Check for an
   existing fix on a side branch before writing a new one.*
 
+- **CRITICAL, OPEN, NOT FIXED — movement replication is per-packet and walks every player.**
+  `MovementComponent::Register` installs a flecs observer on `flecs::OnSet`, and
+  `HandleMoveEntityRequest` sets the component once per received packet. So one movement
+  packet runs `ReplicateMovementComponent`, which does `world().each(...)` over **every
+  player on the server** with a distance check and a send for each one in range. There is
+  no inbound rate limit and no coalescing.
+  - **Amplification:** 1 client packet → O(players) server work, at an unbounded inbound
+    rate. One attacker at 1000 packets/s against 32 players is ~32,000 relevance checks a
+    second, plus sends.
+  - **The existing LOD does not save it.** `ShouldSendTo` reduces by distance — full rate
+    ≤200m, `% 4` to 600m, `% 16` beyond — but the divisors are keyed on
+    `MovementComponent::Sequence`, which `Level.cpp:982` increments **per received packet**.
+    A flood therefore scales sends linearly too; the divisors cut the constant, not the
+    growth. And the walk itself is never reduced.
+  - **DO NOT "fix" this with a packet-rate rejection.** Movement is legitimately
+    high-frequency and dropping packets causes rubber-banding. The right shape is
+    coalescing: store the newest authoritative state on receipt (cheap), and replicate on
+    the server's own tick so five packets arriving between ticks cost one relevance pass,
+    not five.
+  - **REQUIRES A LIVE TWO-CLIENT TEST** before it lands — this is the one change in this
+    area that can silently introduce jitter or latency. Left for zeldfep. Design is in the
+    audit; the vulnerability stays open until tested, not when a design exists.
+
+- **VOICE HAD NO RATE CAP** (fixed 2026-09-04). Frame size was capped at 1KB and the radius
+  was already server-decided from an intent, but nothing bounded frame RATE — so the same
+  per-population relay walk ran as fast as a client cared to send. Now 100/s inbound
+  (a real client sends ~50), checked after the cheap size rejection and **before** the
+  movement lookup, the call-partner search and the relay walk, so a refused frame costs
+  none of them. Logged once per window, never answered.
+  - Worst case now bounded: 100 frames × 31 recipients ≈ 3,100 relays/s per speaker, about
+    620 KB/s at real Opus frame size (~200 bytes); the 1KB ceiling caps the pathological
+    case near 3.1 MB/s. Both numbers are asserted in `voice_test` so they cannot drift.
+
 - **CHAT HAD NO RATE LIMIT AT ALL.** Quickhacks have per-hack cooldowns and movement
   rejects floods, but the one path a client could drive as fast as it liked was the one
   that copies text to **every player in range** *and* appends it to the log on disk. Both

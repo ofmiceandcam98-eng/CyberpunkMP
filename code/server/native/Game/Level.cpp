@@ -1875,6 +1875,64 @@ void Level::HandleVoiceFrameRequest(PacketEvent<client::VoiceFrameRequest>& aMes
     if (aMessage.get_data().empty() || aMessage.get_data().size() > kMaxFrame)
         return;
 
+    /*
+     * INBOUND FLOOD GUARD. Placed here on purpose: after the two cheap rejections above
+     * (unknown connection, bad frame size) and before ANY of the work below.
+     *
+     * What it protects. Everything past this point is per-frame cost that scales with the
+     * server's population: a movement lookup, a search of the live call list for a phone
+     * partner, and then a walk of EVERY player with a distance check and a send for each
+     * one in range. A rejected frame must cost none of that, or the guard becomes the
+     * amplifier it exists to prevent.
+     *
+     * The arithmetic that sets the number. A legitimate client sends 20ms Opus frames, so
+     * about 50 a second. At 100 a second with 31 others in radius the worst case is 3,100
+     * relays a second from one speaker - and at the ~200 bytes a real Opus frame occupies
+     * (not the 1KB ceiling, which exists to bound the pathological case) that is roughly
+     * 620 KB/s of relay traffic. Uncapped, the same speaker at 1000 frames a second is
+     * 31,000 relays and megabytes per second, from one connection.
+     *
+     * Double the legitimate rate is the right ceiling: no real speaker can reach it even
+     * with jitter or a burst after a stall, and it bounds the attack at 2x normal rather
+     * than unbounded. This does NOT change voice cadence - a normal speaker never sees it.
+     *
+     * Logged at most once per window, never answered. A reply per rejected frame would be
+     * the same denial of service with the server volunteering to do the work, and a log
+     * line per frame would be disk amplification wearing a different hat.
+     */
+    constexpr int64_t kVoiceWindowMs = 1000;
+    constexpr uint32_t kVoiceBurst = 100;
+
+    {
+        const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::system_clock::now().time_since_epoch())
+                               .count();
+
+        auto* pRate = speaker.get_mut<PlayerComponent>();
+
+        if (nowMs - pRate->VoiceWindowStartMs >= kVoiceWindowMs)
+        {
+            pRate->VoiceWindowStartMs = nowMs;
+            pRate->VoiceInWindow = 0;
+            pRate->VoiceFloodWarned = false;
+        }
+
+        ++pRate->VoiceInWindow;
+
+        if (pRate->VoiceInWindow > kVoiceBurst)
+        {
+            if (!pRate->VoiceFloodWarned)
+            {
+                pRate->VoiceFloodWarned = true;
+
+                spdlog::warn("[voice] rate limited {} ({} frames in {}ms - a normal client sends ~50/s)",
+                             pSpeaker->Username, pRate->VoiceInWindow, kVoiceWindowMs);
+            }
+
+            return;   // no movement lookup, no partner search, no relay walk
+        }
+    }
+
     const auto* pSpeakerMovement = pSpeaker->Puppet.get<MovementComponent>();
     if (!pSpeakerMovement)
         return;

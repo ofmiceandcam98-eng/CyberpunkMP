@@ -56,6 +56,23 @@ struct PlayerComponent
     // service with the server doing the work.
     bool ChatFloodWarned{false};
 
+    /**
+     * The same, for voice frames - and a separate budget, deliberately.
+     *
+     * Voice and chat are nothing like each other in rate. A legitimate client produces
+     * about fifty frames a second (20ms Opus), where a person types a handful of lines a
+     * minute, so one shared limit would either throttle speech or leave chat wide open.
+     * Endpoint-specific limits, sized to the legitimate rate of each.
+     *
+     * The ceiling is 100/s - double what the client actually sends, so no real speaker can
+     * reach it, while bounding what one connection can make the server relay. This is
+     * purely an INBOUND flood guard: it does not change the voice cadence, and a normal
+     * speaker never touches it.
+     */
+    int64_t VoiceWindowStartMs{0};
+    uint32_t VoiceInWindow{0};
+    bool VoiceFloodWarned{false};
+
     const char* GetUsername() const;
 
     const char* GetDiscordId() const { return DiscordId.c_str(); }
