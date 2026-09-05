@@ -708,15 +708,70 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
         {
             const int64_t moneyBefore = character.Money;
 
-            character.Inventory.clear();
-            character.Inventory.reserve(kit.size());
+            /*
+             * Built on a CANDIDATE, granted only if all of it succeeds.
+             *
+             * The old sequence wrote straight into `character`: clear the inventory, push
+             * every item, set the money, then set StarterKitGranted = true. Nothing there
+             * could fail loudly, but nothing stopped a partial grant either - a malformed
+             * kit entry (id 0, quantity 0) would be skipped by the primitives while the
+             * flag still went true, and the character would be permanently marked as having
+             * received a kit they only got part of. StarterKitGranted is a one-way gate, so
+             * that is not recoverable by retrying.
+             *
+             * Now: fill a copy, and only adopt it if every item and the money landed. On
+             * failure the character keeps what it had and the flag stays FALSE, so the grant
+             * can be attempted again once the kit definition is fixed.
+             *
+             * Through Economy for the same reason everything else is: one place that knows
+             * what a valid item and a valid balance are.
+             */
+            CharacterRecord granted = character;
+            granted.Inventory.clear();
+
+            bool kitApplied = true;
+            std::string kitFailure;
 
             for (const auto& item : kit)
-                character.Inventory.push_back({item.Id, item.Quantity});
+            {
+                const auto added = Economy::AddItem(granted, item.Id, item.Quantity);
 
-            character.Money = StarterKit::kStartingMoney;
-            character.Lifepath = StarterKit::ToString(lifepath);
-            character.StarterKitGranted = true;
+                if (added != Economy::Result::Success)
+                {
+                    kitApplied = false;
+                    kitFailure = fmt::format("item {:#x} x{}: {}", item.Id, item.Quantity,
+                                             Economy::Describe(added));
+                    break;
+                }
+            }
+
+            if (kitApplied)
+            {
+                // From zero rather than added to whatever was there - a starter kit sets the
+                // opening balance, it does not top somebody up.
+                granted.Money = 0;
+
+                const auto paid = Economy::Credit(granted, StarterKit::kStartingMoney);
+
+                if (paid != Economy::Result::Success)
+                {
+                    kitApplied = false;
+                    kitFailure = fmt::format("starting money: {}", Economy::Describe(paid));
+                }
+            }
+
+            if (!kitApplied)
+            {
+                spdlog::error("[StarterKit] {} - kit NOT granted ({}). The character keeps "
+                              "what it had and StarterKitGranted stays false, so this can be "
+                              "retried once the kit is fixed.",
+                              pPlayer->Username, kitFailure);
+            }
+            else
+            {
+                character = granted;
+                character.Lifepath = StarterKit::ToString(lifepath);
+                character.StarterKitGranted = true;
 
             spdlog::info("[StarterKit] {} - character '{}', lifepath {}, {} eddies",
                          pPlayer->Username, character.Name, character.Lifepath,
@@ -766,6 +821,7 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
             auto& audit = GServer->GetAuditLog();
             audit.RecordMoney(pPlayer->DiscordId, pPlayer->DiscordId, "starterkit.grant",
                               moneyBefore, character.Money);
+            }   // kitApplied
         }
     }
 
@@ -1774,8 +1830,22 @@ void ChatSystem::CompleteSale(const PendingSale& acSale, const PlayerComponent& 
         // Put the money back. A transfer that fails here is a bug rather than a refusal -
         // the lock is ours and ownership was checked - but leaving somebody charged for a
         // car they did not receive is not something to risk on that reasoning.
-        buyer.Money += acSale.Price;
-        seller.Money -= acSale.Price;
+        // The refund goes back through the same boundary, in the other direction. Hand-
+        // written it was the one arithmetic left that could put a balance somewhere the
+        // save path would refuse - and a refund that cannot land is the worst possible
+        // moment to find that out.
+        const auto refunded = Economy::Transfer(seller, buyer, acSale.Price);
+
+        if (refunded != Economy::Result::Success)
+        {
+            // Should be unreachable: the money moved this way a moment ago, so the room
+            // exists. Logged at error rather than assumed away, because if it ever does
+            // happen somebody has been charged for a car they did not get.
+            spdlog::error("[MONEY] vehicle {} refund FAILED ({}) - buyer {} may be charged "
+                          "for a car they did not receive",
+                          acSale.VehicleId, Economy::Describe(refunded), acSale.BuyerId);
+        }
+
         store.SaveCharacter(acSale.BuyerId, acBuyer.Username, buyer);
         store.SaveCharacter(acSale.SellerId, seller.Name, seller);
 

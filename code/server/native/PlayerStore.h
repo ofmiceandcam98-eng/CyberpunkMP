@@ -7,6 +7,7 @@
 
 #include "AtomicWrite.h"
 #include "EconomyMigration.h"
+#include "EconomyMutator.h"    // trade routes its arithmetic through the one boundary
 #include "CharacterRecord.h"
 
 #include "PermissionLevel.h"
@@ -1259,25 +1260,32 @@ private:
 
         // Items first, so a failure on the last stack does not leave money already moved
         // in this copy - it costs nothing and keeps the failure shape uniform.
+        /*
+         * Through Economy::RemoveItem. Same rules, one implementation.
+         *
+         * RemoveItem erases an emptied stack as it goes, where this loop used to sweep them
+         * afterwards. The outcome is identical - a zero-quantity stack is not a holding
+         * either way - and doing it inside the primitive means every caller gets it rather
+         * than every caller having to remember the sweep.
+         *
+         * The distinct reasons are preserved because callers and tests read them: a zero
+         * quantity is a malformed offer, a missing or too-small stack is not.
+         */
         for (const auto& offered : acOffer.Items)
         {
-            if (offered.Quantity == 0)
+            const auto taken = Economy::RemoveItem(aFrom, offered.Id, offered.Quantity);
+
+            if (taken == Economy::Result::Success)
+                continue;
+
+            if (taken == Economy::Result::InvalidAmount)
                 return fail("zero_quantity");
 
-            auto* pStack = FindStack(aFrom, offered.Id);
+            if (taken == Economy::Result::InvalidItem)
+                return fail("insufficient_items");   // id 0 is not something anybody holds
 
-            if (!pStack || pStack->Quantity < offered.Quantity)
-                return fail("insufficient_items");
-
-            pStack->Quantity -= offered.Quantity;
+            return fail("insufficient_items");
         }
-
-        // Erase what is now empty. A zero-quantity stack is not a holding, and leaving one
-        // behind makes "do they have any" answer yes forever.
-        aFrom.Inventory.erase(std::remove_if(aFrom.Inventory.begin(), aFrom.Inventory.end(),
-                                             [](const CharacterRecord::ItemStack& acStack)
-                                             { return acStack.Quantity == 0; }),
-                              aFrom.Inventory.end());
 
         /*
          * OVERFLOW IS CHECKED ON THE WAY IN, not hoped away.
@@ -1300,30 +1308,49 @@ private:
          * nobody can reconstruct. ApplyTrade validates on copies, so a refusal here leaves
          * both records exactly as they were.
          */
+        /*
+         * Through Economy::AddItem rather than by hand - the merge-or-create and the uint32
+         * overflow guard now live in one place instead of being restated here.
+         *
+         * Semantics are unchanged: AddItem merges into the first matching stack or creates
+         * one, exactly as this loop did, and refuses a wrap rather than clamping. The
+         * duplicate-stack quirk (first match wins) is preserved deliberately - see the note
+         * on Economy::FindStack.
+         */
         for (const auto& offered : acOffer.Items)
         {
-            if (auto* pStack = FindStack(aTo, offered.Id))
-            {
-                constexpr auto kMaxQuantity = std::numeric_limits<uint32_t>::max();
-
-                if (pStack->Quantity > kMaxQuantity - offered.Quantity)
-                    return fail("quantity_overflow");
-
-                pStack->Quantity += offered.Quantity;
-            }
-            else
-            {
-                aTo.Inventory.push_back({offered.Id, offered.Quantity});
-            }
+            if (Economy::AddItem(aTo, offered.Id, offered.Quantity) != Economy::Result::Success)
+                return fail("quantity_overflow");
         }
 
-        // Same reasoning for money. acOffer.Money is already known non-negative and no
-        // greater than aFrom.Money, so this is the only remaining direction that can wrap.
-        if (acOffer.Money > 0 && aTo.Money > std::numeric_limits<int64_t>::max() - acOffer.Money)
-            return fail("money_overflow");
+        /*
+         * MONEY THROUGH Economy::Transfer, and this DOES change one thing - deliberately,
+         * and it is the reason this is worth a paragraph.
+         *
+         * The old code checked only for an int64 wrap. Transfer also refuses a result above
+         * kMaxPlausibleMoney, the same ceiling the save path and the migration use. So a
+         * trade that would push somebody past a billion eddies now fails where it used to
+         * succeed.
+         *
+         * That is a fix rather than a regression. Without it, trade could produce a balance
+         * that HandleSaveCharacterRequest then refuses on the next save - so the money would
+         * appear, then silently revert, and the player would report losing it with nothing
+         * in the log explaining why. One ceiling, enforced everywhere, is the only version
+         * of this that does not produce that.
+         *
+         * A zero-money trade is common - most trades are items only - so it is skipped
+         * rather than passed to Transfer, which correctly treats a zero amount as invalid.
+         */
+        if (acOffer.Money > 0)
+        {
+            const auto moved = Economy::Transfer(aFrom, aTo, acOffer.Money);
 
-        aFrom.Money -= acOffer.Money;
-        aTo.Money += acOffer.Money;
+            if (moved == Economy::Result::InsufficientFunds)
+                return fail("insufficient_funds");
+
+            if (moved != Economy::Result::Success)
+                return fail("money_overflow");
+        }
 
         return true;
     }
