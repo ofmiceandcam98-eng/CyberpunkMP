@@ -2,12 +2,21 @@
 
 **Status: DESIGN ONLY for the protocol. No production `.proto` has been touched.**
 
-Revised 2026-09-05 (Cam stream) to incorporate the Stage 6 design review. The review's
-decisions are treated as binding; where this revision goes further than the review asked, it
-says so and gives the evidence.
+Revised 2026-09-05 (Cam stream), twice: first for the Stage 6 design review, then again for the
+pre-Stage-6 review. Review decisions are treated as binding; where this goes further than was
+asked, it says so and gives the evidence.
 
-**One thing in here is no longer design: the netpack enum prerequisite (§1) was approved as a
-prerequisite, and it is now built, fixed, and verified.** Two defects, not one. Details below.
+**Two things in here are no longer design:**
+
+- the **netpack enum prerequisite** (§1) — built, fixed, verified. Two defects, not one.
+- the **Stage 6A inventory audit** (§12) — done, and it changed the plan. Class B is empty;
+  every vanilla inventory source is unobserved. Full report:
+  `docs/PHASE5-STAGE6A-INVENTORY-AUDIT.md`.
+
+**The authority model changed as a result.** Stage 7 no longer deletes wire fields — it becomes
+dormant migration-gated enforcement (§12A), and Stage 8 becomes the atomic
+migration+authority boundary (§12B). The old "measure staleness in production first" plan is
+recorded as impossible and why (§12A.1).
 
 **The objective is ONE CONTROLLED ECONOMY CUTOVER**, not a protocol rewrite. §17 lists what was
 considered and excluded.
@@ -522,41 +531,152 @@ will notice.
 
 ---
 
-## 12. HARD GATE — the Stage 7 vanilla inventory-source audit
+## 12. The Stage 6A inventory audit — DONE, and it changes the plan
 
-**Stage 7 must not remove `SaveCharacterRequest.inventory` until this audit is complete.**
+**Full report: `docs/PHASE5-STAGE6A-INVENTORY-AUDIT.md`.** Summary and consequences here.
 
-The premise to be tested is one this very document asserted in an earlier revision: that the
-economy's whole surface is starter kit → `/pay` → trade → vehicle sale. **That is the
-SERVER-CODED surface. It is not proof that those are the only ways a Cyberpunk character can
-gain or lose persistent items**, and the two are not the same claim.
+### 12.1 The result
 
-The failure mode is precise and severe: remove client inventory declarations while legitimate
-vanilla inventory changes still depend on them, and we would "fix duplication" by making
-players' real possessions disappear after reconnect.
+**There are zero hooks on any inventory-mutating vanilla system.** Not on `TransactionSystem`,
+`EquipmentSystem`, or any vendor, crafting, loot, stash or container system. Every vanilla way
+of gaining or losing an item is unobserved and reaches the server through exactly one channel:
+the `SaveCharacterRequest` snapshot (90-second autosave plus five event triggers).
 
-Every source must be investigated explicitly:
+**And nothing is disabled** — no vendor, shop, crafting, loot or stash system is blocked.
+
+| Class | Count | |
+|---|---|---|
+| **A** — already server authoritative | 4 | starter kit, trade, `/pay`, vehicle sale |
+| **B** — client event the server can validate today | **0** | — |
+| **C** — client event the server cannot validate | 16+ | loot, vendors, crafting, cyberware, ammo, … |
+| **D** — not reachable | **0** | nothing is disabled |
+
+**Class B being empty is the result that matters.** A source can only be Class B if the server
+observes it, and none are observed. Vendor purchase is the natural candidate and would have to
+be built from nothing, not integrated.
+
+### 12.2 Two findings that were not on the brief
+
+**The server's item model has no instance state.** `Capture` stores `(TweakDBID, quantity)`;
+`Restore` uses `GiveItemByTDBID`. No mods, quality, upgrades, crafted rolls or iconic state. A
+restore hands back a **base item** — already a live data-loss path today, independent of Phase 5.
+
+**Restore can add but never take away.** `owed = want - have; if owed > 0` — the difference is
+applied only when positive. The single exception is the one-shot starter-kit cleanup. So
+**"server possessions win" has no mechanism today**: ignoring the client's declaration makes the
+server's record authoritative in storage, but nothing can reconcile the client's game downwards.
+That is a client-capability gap, not a protocol gap.
+
+### 12.3 What it means for Stage 8
+
+**Every Class C source blocks Stage 8 in its current form**, because after migration the
+snapshot stops being believed and it is the only channel any of them has. This would not be an
+edge case — it would be every non-server-mediated item in the game.
+
+**Recommendation, needing explicit review: split money from inventory.**
+
+- **Money** — a scalar, already mutated only through `Economy::`, already fully server-modelled
+  in all four Class A paths, and where duplication actually pays. Authoritative for migrated
+  characters costs nothing new.
+- **Inventory** — 16+ unobserved sources, no removal mechanism, no instance state. Authoritative
+  without observation would delete legitimate possessions.
+
+Splitting delivers the security that matters — nobody can declare a balance — without betting
+players' belongings on 16 hooks landing correctly first time.
+
+---
+
+## 12A. Revised Stage 7 — dormant, migration-gated enforcement
+
+Recorded now, **not implemented**.
+
+Stage 7 does **not** remove `SaveCharacterRequest.inventory` or `.money` from the wire. Security
+comes from the server refusing to *use* those declarations for a migrated record, not from
+deleting the field:
 
 ```
-world loot                NPC/vendor purchases      NPC/vendor sales
-drops                     pickups                   containers / stashes
-crafting                  dismantling               consumables
-clothing / equipment       weapon acquisition        quest or script grants
-any other vanilla inventory API
+if character is UNMIGRATED:
+    preserve legacy SaveCharacterRequest possessions behaviour
+
+if character is MIGRATED:
+    never accept client Money (and Inventory, subject to §12.3) as authority
+    retain the server's record
+    classify the client-observed revision
+    resync authoritative state where necessary
 ```
 
-For each, determine:
+Keeping the fields avoids an unnecessary second flag day, preserves rollback flexibility before
+migration, makes the authority change a **server semantic gate**, and allows controlled
+comparison during cutover. Obsolete fields can be removed in a later protocol cleanup if
+desired. **Field deletion is not the security boundary.**
 
-| Question |
-|---|
-| Does the server already model it? |
-| Can the server validate it? |
-| Must it be disabled? |
-| Must an authoritative intent path be built **before** Stage 7? |
+Because migration is inactive throughout Stage 7 implementation, **deploying Stage 7 changes no
+live character's behaviour.** It is built and tested with the gate closed.
 
-**§2 raises the priority of this audit above its position in the stage order.** It is the only
-thing that can say what new protocol surface Stage 6 actually needs — and it is read-only
-investigation, so it blocks nothing and can start immediately.
+### 12A.1 Why the old "measure in production first" plan cannot work
+
+The earlier design assumed Stage 6 telemetry would tell us how often migrated clients are stale.
+It cannot: Stage 5 guarantees ordinary gameplay never moves a record off `(MigratedAt = 0,
+EconomyRevision = 0)`, and migration stays inactive until cutover — so **there are no migrated
+live characters to measure.**
+
+And the fix is not to migrate early and keep accepting declarations to gather data: that would
+make `MigratedAt` lie about when server authority began. The observation code stays (it costs
+nothing and reports the moment migration activates), but nothing in the cutover plan may depend
+on production stale-revision measurements that cannot exist yet.
+
+---
+
+## 12B. Revised Stage 8 — the atomic migration/authority boundary
+
+Migration and authority are **two halves of one boundary**. There must be no window where
+`MigratedAt > 0` while client possessions are still authoritative.
+
+1. full backup
+2. duplicate-stack inspection (§11)
+3. migration preflight
+4. canonicalization candidate generation
+5. validation
+6. migration commit
+7. `MigratedAt` stamped
+8. `EconomyRevision` established
+9. **Stage 7's migrated-record enforcement becomes active automatically** — no separate deploy
+10. two-client exploit testing
+11. persistence / reconnect testing
+12. rollback / recovery decision
+
+Step 9 is the point: because Stage 7 is already deployed and gated on migration state, the
+authority boundary moves at the instant the record does.
+
+---
+
+## 12C. Permanent rule — client-controlled enums
+
+From the §1.4 finding, recorded as a standing handler rule:
+
+> **Every client-controlled enum must be handled with an explicit known-value switch and a
+> refusing default.** Never assume netpack or protobuf has range-validated it — proven: an
+> undeclared value round-trips intact.
+
+**`value < COUNT` is not an acceptable check.** The generated `_COUNT` sentinel is
+generator-only and is *not* part of `kProtocolString`, so it is not a protocol contract.
+Validate exact allowed members.
+
+---
+
+## 12D. Superseded — the original Stage 7 audit gate
+
+This section required the inventory-source audit before Stage 7 could remove
+`SaveCharacterRequest.inventory`. **Both halves are now superseded:**
+
+- the audit is **done** — §12, and `docs/PHASE5-STAGE6A-INVENTORY-AUDIT.md`;
+- Stage 7 **no longer removes the field at all** — §12A. Security is the server refusing to
+  *use* the declaration for a migrated record, not deleting it from the wire.
+
+Kept as a heading so the earlier reasoning is traceable rather than vanished. The premise it
+existed to test — that the economy's whole surface is starter kit → `/pay` → trade → vehicle
+sale — was the SERVER-CODED surface, and the audit confirmed that is not the whole inventory
+surface. That distinction was the right thing to have doubted.
 
 ---
 
@@ -738,14 +858,23 @@ commits**, HEAD at the Stage 5 commit, with `EconomyMutator.h` and `revision_tes
 
 ## 18. Open questions
 
-1. **Sequencing (§2.1)** — run the §12 audit *before* finalising the Stage 6 surface? My
-   recommendation is yes: it is read-only, it blocks nothing, and it is the only thing that can
-   say what the new surface must be.
-2. **Launcher behaviour (§13.3)** — six questions for zeldfep. No swap date until answered.
-3. **Stage 3 amendment (§11.2)** — confirm the byte-for-byte inventory invariant is amended
+1. **THE BIG ONE — split money from inventory? (§12.3)** The audit found 16+ unobserved
+   inventory sources, no removal mechanism, and no item instance state. Making inventory
+   authoritative without first building observation would delete legitimate possessions; making
+   **money** authoritative costs nothing new and is where duplication actually pays.
+   **Recommendation: split them.** This changes Phase 5's shape and needs an explicit decision
+   before anything is built.
+2. **The removal gap (§12.2)** — "server possessions win" has no mechanism today; restore can
+   only add. Even money-only enforcement should confirm the client resyncs *downwards*
+   correctly, since `NotifyMoney` sets a balance rather than granting a difference.
+3. **Item instance state (§12.2)** — the model is `(id, quantity)`, so a restore returns a base
+   item. This is a live data-loss path *today*, independent of Phase 5. Worth its own decision:
+   accept, or investigate whether the game exposes enough to capture it.
+4. **Launcher behaviour (§13.3)** — six questions for zeldfep. No swap date until answered.
+5. **Stage 3 amendment (§11.2)** — confirm the byte-for-byte inventory invariant is amended
    explicitly at the migration cutover, with `playerstore_migration_test` updated in the same
    change.
-4. **Bundle cadence (§16)** — one-off, or a step in the deploy runbook? Recommend the runbook.
+6. **Bundle cadence (§16)** — one-off, or a step in the deploy runbook? Recommend the runbook.
 
 ---
 
