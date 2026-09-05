@@ -189,6 +189,26 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
     620 KB/s at real Opus frame size (~200 bytes); the 1KB ceiling caps the pathological
     case near 3.1 MB/s. Both numbers are asserted in `voice_test` so they cannot drift.
 
+- **IDEMPOTENCY: `RequestLedger`, and phone sends now use it** (2026-09-04). A client that
+  does not hear back retries, and "the server never got it" is indistinguishable from "it
+  got it and the reply was lost" — so a retry can arrive for work already done. Harmless for
+  a movement packet; a duplicate for anything that CREATES something.
+  - `MessageStore::Send` takes an optional request id. Seen before → returns the ORIGINAL
+    message id without writing a second message. Recorded on **success only**, so a refusal
+    ("no eddies", "blocked") does not become a permanent verdict outliving its reason.
+  - **Empty id means no idempotency and is never a key.** Treating it as one would make
+    every idless send collide — the second text anybody sent would return the first one's id
+    and never be written. The only phone path today (`/text` over the reliable chat channel)
+    has no id to offer, so behaviour is unchanged; this is infrastructure ahead of the RPC.
+  - **Bounded three ways** because a cache keyed on client-supplied strings is a
+    memory-exhaustion surface: a TTL (5 min), a per-owner cap (64) and a global cap (4096),
+    all enforced on insert, oldest-first. **Per-owner is enforced before global on purpose** —
+    otherwise one flooder evicts everyone else's entries and *their* retries duplicate.
+  - **Keyed on the authenticated owner**, so one player cannot replay another's id.
+  - **Not cleared on disconnect**, deliberately: "dropped before hearing the answer,
+    reconnected, asked again" is precisely the retry it exists to catch. Entries expire on
+    time instead, which does not care why the connection went away.
+
 - **CHAT HAD NO RATE LIMIT AT ALL.** Quickhacks have per-hack cooldowns and movement
   rejects floods, but the one path a client could drive as fast as it liked was the one
   that copies text to **every player in range** *and* appends it to the log on disk. Both

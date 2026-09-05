@@ -211,6 +211,11 @@ void GameServer::OnUpdate()
     // server, which is a full disk write bought with a single client packet.
     m_messages.FlushIfDue();
 
+    // Drop request ids past their TTL. The ledger is capped on insert as well, so this is
+    // the slow-trickle half: without it a quiet server would accumulate entries for hours
+    // that no retry will ever ask about.
+    m_messages.Requests().Expire();
+
     m_pWorld->Update(std::chrono::duration_cast<std::chrono::duration<float>>(delta).count());
 }
 

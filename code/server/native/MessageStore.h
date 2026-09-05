@@ -69,6 +69,8 @@
 #include <cstddef>
 #include <utility>
 
+#include "RequestLedger.h"   // idempotent sends - a retry must not create a second message
+
 /**
  * How many messages a single conversation keeps.
  *
@@ -218,10 +220,25 @@ public:
      * than one caller - a chat command today, a phone app later - and a rule enforced at
      * one surface is a rule the other one gets to break.
      */
+    /**
+     * `acRequestId` makes sending idempotent - a retry returns the original message id
+     * instead of creating a second message.
+     *
+     * OPTIONAL, and empty means "this caller has no id", which behaves exactly as before.
+     * That matters: the only phone path today is the /text command over the reliable chat
+     * channel, which has no request id to offer, and treating an empty id as a key would
+     * make every idless send collide with every other one - the second text anybody sent
+     * would silently return the first one's id and never be written.
+     *
+     * The id is supplied by the CLIENT, and that is safe because the ledger is keyed on the
+     * authenticated sender as well: one player cannot replay another player's id, and the
+     * worst a client can do with its own is decline to have its own retries deduplicated.
+     */
     std::string Send(const std::string& acFromCharacterId,
                      const std::string& acToCharacterId,
                      const std::string& acBody,
-                     std::string* apReason = nullptr)
+                     std::string* apReason = nullptr,
+                     const std::string& acRequestId = {})
     {
         const auto fail = [apReason](const char* acpWhy) -> std::string
         {
@@ -229,6 +246,11 @@ public:
                 *apReason = acpWhy;
             return {};
         };
+
+        // Answered before anything is validated, parsed or written. A retry must be cheap
+        // as well as safe - re-running the work and then discarding it would be neither.
+        if (const auto* pAlready = m_requests.Find(acFromCharacterId, acRequestId))
+            return *pAlready;
 
         if (!m_readable)
             return fail("store_unreadable");
@@ -280,8 +302,16 @@ public:
         if (apReason)
             apReason->clear();
 
+        // Recorded only on SUCCESS. A refused send must stay refused on retry - remembering
+        // a failure would turn "you had no eddies" or "that number is blocked" into a
+        // permanent verdict that outlives the reason for it.
+        m_requests.Record(acFromCharacterId, acRequestId, message.MessageId);
+
         return message.MessageId;
     }
+
+    // Expiry runs from the server tick, not on lookup - see RequestLedger.
+    RequestLedger& Requests() { return m_requests; }
 
     /**
      * Everything owed to this character, oldest first.
@@ -588,6 +618,9 @@ private:
 
     std::vector<Conversation> m_conversations;
     std::filesystem::path m_path;
+    // Idempotency for sends. Bounded and expiring - see RequestLedger.
+    RequestLedger m_requests;
+
     // When the debounced write last happened - see FlushIfDue.
     int64_t m_lastFlushAt{0};
     bool m_dirty{false};
