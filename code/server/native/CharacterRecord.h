@@ -393,6 +393,53 @@ struct CharacterRecord
     int64_t CreatedAt{0};
     int64_t UpdatedAt{0};
 
+    /**
+     * How many times the SERVER has authoritatively changed this character's money or
+     * inventory. Phase 5, stage 2 - metadata only for now, and deliberately so.
+     *
+     * WHAT IT IS FOR, once the later stages use it. Two questions need answering and they
+     * are not the same question:
+     *
+     *   RequestLedger asks "have I already performed this exact request?" - retry safety.
+     *   This asks "is the client's view of this character's economy current?" - staleness.
+     *
+     * A retry is the same request arriving twice. A stale save is a DIFFERENT request built
+     * on an out-of-date picture, and no amount of request deduplication catches it. That is
+     * why both exist.
+     *
+     * WHAT IT IS NOT. Not the network session epoch, not AuthorityComponent::Epoch (which
+     * names a grant of simulation rights over a vehicle), not the movement sequence, not a
+     * save-file or protocol version. Those are four different clocks and conflating any two
+     * of them is how a fix for one silently breaks another. It gets its own field for that
+     * reason rather than borrowing one that happens to be handy.
+     *
+     * UNSIGNED, because it only ever counts upward and a negative revision has no meaning.
+     *
+     * NOT INCREMENTED YET, by anything. Stage 2 is the data model only; wiring it into the
+     * mutation sites is a later, separately reviewed stage. Every existing character will
+     * load and stay at 0, which is correct - the server has not yet authoritatively changed
+     * anybody's economy.
+     */
+    uint64_t EconomyRevision{0};
+
+    /**
+     * When this character's possessions stopped being client-declared. Unix seconds, the
+     * same convention as CreatedAt, LastSeen and JailedUntil.
+     *
+     * 0 means the record has NOT crossed the authority boundary - its money and inventory
+     * are whatever a client last reported. Non-zero means the server has taken ownership.
+     *
+     * It exists because the migration must run exactly once per character and must be
+     * auditable afterwards. Without a mark there is no way to tell a migrated record from
+     * an unmigrated one, and "run the migration again" would mean re-trusting a client
+     * declaration the server had already replaced.
+     *
+     * SET BY THE SERVER ONLY, and NOT SET BY ANYTHING YET. Stage 2 adds the field; the
+     * trust-once migration that stamps it is a later stage with its own review. A character
+     * loading today does not become migrated by being loaded.
+     */
+    int64_t MigratedAt{0};
+
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(CharacterRecord, Slot, Name, Appearance, IsMale,
                                                 Level, AttributePoints, PerkPoints, Initialised,
                                                 NameChosen, SpawnedBefore, CharacterId,
@@ -400,7 +447,14 @@ struct CharacterRecord
                                                 Inventory, Money, Proficiencies,
                                                 Attributes, Perks, Vehicles,
                                                 PhoneNumber, Contacts, Blocked, AllowedQuests,
-                                                CreatedAt, UpdatedAt)
+                                                CreatedAt, UpdatedAt,
+                                                // Phase 5 stage 2. The _WITH_DEFAULT macro is
+                                                // what makes adding these safe: a record
+                                                // written before they existed simply loads
+                                                // them as 0 rather than throwing, which is
+                                                // exactly the "existing records must remain
+                                                // loadable" requirement.
+                                                EconomyRevision, MigratedAt)
 };
 
 /**
