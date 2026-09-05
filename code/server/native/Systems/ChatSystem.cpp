@@ -502,7 +502,54 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
         // replaces it. Absent for a first capture, where there is nothing to disagree with.
         const int64_t storedMoney = pExisting ? pExisting->Money : 0;
 
-        character.Money = aMessage.get_money();
+        /*
+         * IMPOSSIBLE values are refused. PLAUSIBLE ones are still trusted - deliberately.
+         *
+         * The note below is the standing decision and it stands: the client's figure is
+         * accepted and recorded rather than refused, because there is no server-side balance
+         * to fall back to yet, and refusing a client that is merely AHEAD of the server would
+         * take money off innocent players. Measure first. That is phase 5's job, not this
+         * commit's.
+         *
+         * But "ahead of the server" describes a delta of a few thousand eddies. It does not
+         * describe a negative balance, and it does not describe a number larger than the
+         * game can produce. Those are not a client racing the server; they are a client that
+         * is wrong or lying, and writing them costs something either way:
+         *
+         *   - a NEGATIVE balance makes AvailableMoney negative, so every "can you afford
+         *     this" test fails forever and the character is permanently unable to trade or
+         *     pay. It is also a value no legitimate path produces - spending is already
+         *     floored at zero everywhere it happens.
+         *   - an ABSURD balance is the trivial form of the exploit this whole file worries
+         *     about, and it is the one shape that needs no timing and no race to pull off.
+         *
+         * The ceiling is deliberately far above any real player rather than tuned to be
+         * tight. The point is to refuse what cannot happen, not to police what might - a
+         * limit somebody could reach by playing would be exactly the "taking money off
+         * players" failure the standing decision warns against.
+         *
+         * Refusing means KEEPING THE STORED BALANCE, not zeroing it. A bad claim must not be
+         * able to destroy a character's money either.
+         */
+        constexpr int64_t kMaxPlausibleMoney = 1'000'000'000;
+
+        const int64_t claimed = aMessage.get_money();
+
+        if (claimed < 0 || claimed > kMaxPlausibleMoney)
+        {
+            character.Money = storedMoney;
+
+            spdlog::error("[MONEY] REFUSED an impossible balance from {}: claimed {}, keeping {}. "
+                          "Negative or above {} cannot be produced by play.",
+                          pPlayer->Username, claimed, storedMoney, kMaxPlausibleMoney);
+
+            GServer->GetAuditLog().Record("money.refused", pPlayer->DiscordId, pPlayer->DiscordId,
+                                          {{"claimed", claimed}, {"kept", storedMoney}});
+        }
+        else
+        {
+            character.Money = claimed;
+        }
 
         // [MONEY] boundary 3 of 4: what the server received, against what it already had.
         //

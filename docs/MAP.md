@@ -189,6 +189,43 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
     620 KB/s at real Opus frame size (~200 bytes); the 1KB ceiling caps the pathological
     case near 3.1 MB/s. Both numbers are asserted in `voice_test` so they cannot drift.
 
+### Server-authority audit, 2026-09-04 (Cam stream)
+
+- **CRITICAL, KNOWN, ACCEPTED — the client is authoritative over its own money and
+  inventory.** `HandleSaveCharacterRequest` does `character.Money = aMessage.get_money()`
+  and rebuilds `character.Inventory` from the client's list. A modified client can declare
+  any balance or any items. **This is not an oversight**: the code says so ("Possessions,
+  taken from the client and kept by the server") and the standing decision is recorded in
+  place — *"Recorded, not refused… refusing here, before there is a ledger showing how
+  often it happens or a server-side balance to fall back to, would take money off players
+  whose client is simply ahead of the server. Measure first."* Instrumentation is already
+  in (`[MONEY]` boundaries, `audit.RecordMoney`). **Do not refuse plausible values without
+  that ledger.**
+  - **Fixed the impossible half (2026-09-04):** a negative balance, or one above 1e9, is
+    now refused and the STORED balance kept. Negative would make `AvailableMoney` negative
+    forever, permanently blocking trade and pay; above-1e9 is the trivial exploit needing no
+    race at all. Deliberately far above any real player — refusing what *cannot* happen, not
+    policing what might.
+  - Everything else in trade (reservations, overflow, availability) is sound and is
+    downstream of this: it protects the transfer, not the declaration.
+
+- **HIGH — epoch is validated on MOVEMENT ONLY.** `Level.cpp:953` is the single
+  `get_epoch()` comparison. Combat, weapon, quickhack, status-effect, vehicle and appearance
+  handlers validate ownership but not session epoch, so a packet from a previous session
+  could in principle mutate the current one. Not fixed: several of those paths may not carry
+  an epoch at all, and adding checks blind risks silently dropping legitimate traffic.
+  Needs a per-handler pass with a live test.
+
+- **Audited and SOUND, no change needed:** vehicle ownership (`VehicleStore` owns
+  `OwnerId`, `Create`, `Transfer`); weapon ammo (`MagazineAmmo`/`ReserveAmmo` server-side);
+  quickhack cooldown (`MinIntervalMs`); combat refusing a downed attacker; revive checking
+  both `LifeState` **and** server-side distance (`kTreatmentDistance`); trade distance,
+  reservations and atomic commit.
+
+- **NOT APPLICABLE — there is no world-object system.** No doors, gates, containers,
+  elevators or interactables are synchronised at all, so §12/§13 of the audit brief have
+  nothing to audit rather than something unaudited. Worth knowing before anyone builds one.
+
 - **IDEMPOTENCY: `RequestLedger`, and phone sends now use it** (2026-09-04). A client that
   does not hear back retries, and "the server never got it" is indistinguishable from "it
   got it and the reply was lost" — so a retry can arrive for work already done. Harmless for
