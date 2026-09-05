@@ -369,13 +369,44 @@ if (-not $SkipTests) {
         $json = (Get-ChildItem "$env:USERPROFILE\AppData\Local\.xmake\packages\n\nlohmann_json" -Recurse -Filter "json.hpp" -ErrorAction SilentlyContinue |
                  Select-Object -First 1).Directory.Parent.FullName
 
+        <#
+            glm and spdlog, so a test can compile the REAL PlayerStore.
+
+            Without these, PlayerStore.h cannot be included by a test at all - it uses
+            glm::vec3 and spdlog - which is why trade_test restates its algorithm instead of
+            testing it. That was an acceptable compromise for arithmetic; it is NOT
+            acceptable for the economy migration, where the thing that needs proving is the
+            TRANSACTION (persist, then swap) rather than the arithmetic, and a miniature
+            model of a store proves nothing about the real one.
+
+            Both are header-only packages already on disk for the normal build, so this adds
+            no dependency - it only lets the test harness see what the server already sees.
+            Missing packages degrade to no include path and the affected test fails loudly
+            rather than being silently skipped.
+        #>
+        $packageInclude = {
+            param($letter, $name)
+            (Get-ChildItem "$env:USERPROFILE\AppData\Local\.xmake\packages\$letter\$name" -Recurse -Directory -Filter "include" -ErrorAction SilentlyContinue |
+             Select-Object -First 1).FullName
+        }
+
+        $glm = & $packageInclude "g" "glm"
+        $spdlog = & $packageInclude "s" "spdlog"
+
         foreach ($t in (Get-ChildItem (Join-Path $PSScriptRoot "tests") -Filter *.cpp)) {
             $exe = Join-Path $out "$($t.BaseName).exe"
-            $inc = if ($json) { "/I `"$json`"" } else { "" }
+            $inc = ""
+            if ($json)   { $inc += " /I `"$json`"" }
+            if ($glm)    { $inc += " /I `"$glm`"" }
+            if ($spdlog) { $inc += " /I `"$spdlog`"" }
             # NOTE the doubled backslash before the closing quote. cmd treats \" as an
             # escaped quote, so /Fo:"$out\" swallows the rest of the line and cl reports
             # "D8003: missing source filename" - which reads as the test being at fault.
-            $r = cmd /c "`"$vcvars`" >nul 2>&1 && cl /nologo /std:c++17 /EHsc $inc /I `"$src`" /Fe:`"$exe`" /Fo:`"$out\\`" `"$($t.FullName)`" 2>&1"
+            # /utf-8 because spdlog's bundled fmt static_asserts on it - "Unicode support
+            # requires compiling with /utf-8". The real build already sets it; without it
+            # here, any test that includes spdlog fails to compile for a reason that has
+            # nothing to do with the test.
+            $r = cmd /c "`"$vcvars`" >nul 2>&1 && cl /nologo /std:c++17 /utf-8 /EHsc $inc /I `"$src`" /Fe:`"$exe`" /Fo:`"$out\\`" `"$($t.FullName)`" 2>&1"
 
             if ($LASTEXITCODE -ne 0) {
                 $err = ($r | Where-Object { $_ -match 'error' } | Select-Object -First 3) -join ' | '
