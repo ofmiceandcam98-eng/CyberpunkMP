@@ -1045,6 +1045,34 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   A stream's memory directory is a CACHE of what those already say; carry it if convenient,
   never as a source of truth.
 
+### Tailnet ACLs: the invite is public ON PURPOSE, and ACLs are what make that safe (2026-09-06)
+- **The invite in `publish/server.json` cannot be gated, and that is structural.** The game
+  server is reachable only over the tailnet, so a player who has not joined yet cannot reach
+  ANY gate we could put in front of the invite — including the coord API, which is itself on
+  the tailnet. Serving it behind a role check would lock out exactly the people it is for.
+  *(This entry exists because that fix was proposed, half-shipped in `2a648bf`, and reverted
+  in `d4b2172` once the reasoning was checked. Do not re-propose it.)*
+- **So secrecy is not the control. Scope is.** BEFORE: the tailnet ran the Tailscale default,
+  `{"src":["*"],"dst":["*"],"ip":["*"]}` — anyone who found the invite could reach the NAS,
+  both game servers on every port, and every member's personal machine.
+- **AFTER (applied, validated, and previewed):** owner and admins keep everything; everyone
+  else reaches `nco-live` + `nco-test` on **11778 and 11780 only**. Confirmed with the API's
+  own preview for a plain member — four destinations, nothing else. 11780 is included because
+  the launcher lets dev-role users fetch their key from it, and that endpoint is bearer-key
+  gated on its own.
+- **Hosts are named, not raw IPs, in the policy** (`nco-live`, `nco-test`) so a re-registered
+  sidecar is a one-line edit rather than a hunt.
+- **Rollback is off-tailnet**: `api.tailscale.com` and the admin console are public, so a bad
+  policy can always be reverted even if it locks the tailnet. That is why this was safe to
+  apply directly.
+- **STILL OPEN — the permanent fix for public distribution.** Rotation is the only thing
+  limiting a leaked invite today, and it is manual. The durable answer is a PUBLIC endpoint
+  (not on the tailnet) that checks the Discord token the launcher already holds before handing
+  out an invite — the launcher's Discord sign-in happens *before* the tailnet is needed, which
+  is what makes it the one gate that can work. Needs somewhere public to host it, which this
+  project does not currently have. Until then: keep the invite single-seat and rotate it when
+  consumed; the launcher picks up the new one on its next start with no ship.
+
 ### Operational debts
 - **"Built and pushed" is NOT "deployed" - three surfaces, each of which bit once on
   2026-08-28.** Every time, a correct fix looked broken because the thing under test was not
