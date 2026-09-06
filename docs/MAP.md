@@ -1065,6 +1065,30 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
 - **Rollback is off-tailnet**: `api.tailscale.com` and the admin console are public, so a bad
   policy can always be reverted even if it locks the tailnet. That is why this was safe to
   apply directly.
+- **HOW PLAYERS ACTUALLY REACH THE SERVER: a multi-use DEVICE SHARE, not tailnet membership.
+  This was undocumented and it nearly cost every player their access during the migration.**
+  - The server node is shared with a multi-use invite (`POST /api/v2/device/<id>/device-invites`,
+    body is an ARRAY - an object returns `cannot unmarshal object into Go value of type
+    []controlapi.deviceInviteRequest`). People accept it and become **shared users of another
+    tailnet**, NOT members of this one. On 2026-09-06 the old live node carried 10 invites, 8
+    accepted: kozziofficial, coreyh2197, **ofmiceandcam98-eng (Cam)**, Phonix96, darwin.809,
+    rimtek.ds, mrplasticface, minecraftian876. The old test node carried 4.
+  - **ACCEPTANCES DO NOT TRANSFER.** They are bound to a device id, so new hardware means new
+    nodes means everyone re-accepts. New multi-use shares were created on both new nodes.
+  - **THE TRAP, and it is the reason this entry exists:** shared users are `autogroup:shared`,
+    NOT `autogroup:member`. The first ACL draft granted only `autogroup:admin` +
+    `autogroup:member`, which would have cut off all eight - including Cam, whose assistant
+    stream reaches the coord API this way. The previous policy was the Tailscale default
+    `{"src":["*"]}`, which covered them invisibly. Caught before anyone reconnected.
+  - **Tailscale's ACL preview CANNOT verify this.** `acl/preview?type=user` returns no matches
+    for a shared-in user even under a policy that grants them, because they are not in this
+    tailnet's user list. So the autogroup cannot be proven correct from the API. The applied
+    policy therefore ALSO names all eight logins explicitly - belt and braces, so a wrong guess
+    about the autogroup cannot lock anyone out. **Remove the explicit names only after somebody
+    has actually connected and proved `autogroup:shared` works.**
+  - Naming note: the new nodes are `nco-server-1` and `nco-test-server-1` in MagicDNS, because
+    the retired nodes still hold `nco-server` and `nco-test-server`. Deleting the old devices
+    frees the names.
 - **DECIDED 2026-09-06 (zeldfep), NOT BUILT: "Join the server's network" must be gated on
   DISCORD ROLE.** The invite button lives in the launcher's TOOLS panel and today opens for
   anyone who clicks — `ipcMain.handle('tailscale:invite')` has no check of any kind. It should
