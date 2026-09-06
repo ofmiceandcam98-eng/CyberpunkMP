@@ -1467,7 +1467,28 @@ together — three separate releases for one evening's work is how release notes
   runtime from `releases/latest/download`, so address and invite changes land with no release.
   `index.html`, `main.js` and `preload.mjs` are baked into the launcher and do not.
 
-### Post-migration leftovers (2026-09-06) — none blocking, all easy to forget
+### Post-migration leftovers (2026-09-06)
+- **OLD BUILD ARCHIVED, and the old box is not to be touched. `/mnt/vol/projects/_OLD-BUILD-nas-2026-09-06/`
+  on the new server** (zeldfep's call: "archive this on new server as (old build), just reference
+  it if needed but other than that dont touch it").
+  - `CyberpunkMP-live.tar.gz` (git `171b04b`) and `CyberpunkMP-test.tar.gz` (git `2bef193`) -
+    WHOLE deployment directories, not a curated subset: repo, build output, `config/`,
+    `coord-data/`, `logs/`, `.env`, and the test box's untracked `docker-compose.override.yml`.
+    Taken after both were stopped, so nothing was mid-write. 100 MB total.
+  - **Whole rather than curated because 155 MB on a 1.1 TB disk is cheaper than the argument** -
+    the one file somebody wants later is always the one that got left out.
+  - **It contains secrets** (`.env` with `TS_AUTHKEY` and the admin password, and
+    `config/discord-bot-token`), so the directory is `0700` and every file `0600`. Never copy it
+    anywhere less locked down and never into the repo.
+  - **It is a photograph, not a backup.** The live state was carried onto the new box during the
+    cutover and md5-verified. If the archive and the running deployment ever disagree, the
+    running one is right.
+  - **The old TrueNAS box is RETIRED, NOT WIPED**, and its crontab is disarmed - commented out
+    with a do-not-re-arm marker, because it was still pulling `feat/world-state` every ten
+    minutes and one server-relevant push would have restarted the old live server against stale
+    state while the new one was serving. **Delete nothing there until the new box has served a
+    real session with several players; one person connecting once is not that.**
+ — none blocking, all easy to forget
 - **The ACL names eight shared users explicitly as well as `autogroup:shared`.** Belt and
   braces, because Tailscale's preview cannot verify the autogroup for shared-in users. **Remove
   the names only once somebody has actually connected and proved the autogroup works** — see
