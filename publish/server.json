@@ -23,5 +23,28 @@
     "a key everyone has."
   ],
   "coordHost": "100.109.52.23",
-  "coordPort": 11780
+  "coordPort": 11780,
+  "_tailscaleComment": [
+    "Invite to the server's network. EVERY player needs this once, not just dev roles - the",
+    "server is reachable only over the tailnet, so someone who has not joined cannot reach",
+    "anything at all, including the coord API.",
+    "",
+    "THAT IS WHY IT IS PUBLISHED HERE, and it is a deliberate trade rather than an oversight.",
+    "Serving it from behind a role check is impossible for the case that matters: a player",
+    "who has not joined the tailnet yet cannot reach a gate that lives on the tailnet. The",
+    "launcher's Discord sign-in happens before that point, so a PUBLIC endpoint that checks",
+    "the Discord token is the only gated route that could ever work - see MIGRATION.md.",
+    "",
+    "The honest consequence: this file is served from releases/latest/download with no",
+    "authentication, so this invite is effectively public and anyone who finds it can join",
+    "the tailnet. Secrecy is not the control here. The control that actually works is",
+    "TAILSCALE ACLs: tag the nodes that join this way and restrict them to the game port,",
+    "so a leaked invite buys reaching the server rather than reaching everything. As of",
+    "2026-09-06 the tailnet has NO tags on any device, so a joiner currently gets full",
+    "tailnet access - that is the thing worth fixing, not this field.",
+    "",
+    "Rotate the invite when it is consumed; the launcher picks up the new one on its next",
+    "start, with no ship."
+  ],
+  "tailscaleInvite": "https://login.tailscale.com/uinv/iwLsPe7xN111eC16SYzEd11"
 }
