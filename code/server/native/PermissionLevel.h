@@ -1,4 +1,5 @@
 #pragma once
+#include <string>
 
 /**
  * What a player is allowed to do, derived from their Discord roles at connect time.

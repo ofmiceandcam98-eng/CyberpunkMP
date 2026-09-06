@@ -17,6 +17,7 @@
 #include "Components/AppearanceComponent.h"
 #include "Components/AttachmentComponent.h"   // who is sitting where, for /vehseats
 #include "Components/HealthComponent.h"       // the medical state lives on it
+#include "EconomyMutator.h"          // the one place money and inventory change
 #include "Medical.h"                          // bleedout, treatment times, life states
 #include "VehicleSeats.h"                     // and what to call the seat they are in
 #include "CharacterRecord.h"
@@ -27,6 +28,8 @@
 #include "Systems/NpcSystem.h"
 
 #include "PlayerManager.h"
+#include <functional>
+#include <stdexcept>
 
 /**
  * A dummy that walks, so remote movement can be tested by one person.
@@ -496,11 +499,89 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
             character.Inventory.push_back({stack.get_id(), stack.get_quantity()});
         }
 
+        /*
+         * STAGE 5 OBSERVATION: a client declaring possessions for a MIGRATED character.
+         *
+         * This is exactly the case Stage 7 will refuse, so it is measured first - the
+         * standing instinct in this file is "record, do not refuse, measure first", and it
+         * applies to the cutover as much as it applied to the balance.
+         *
+         * SILENT TODAY BY CONSTRUCTION. Migration is inactive, so no character is migrated,
+         * so this never fires and costs nothing. The moment migration is activated it starts
+         * reporting precisely how often clients would be refused, and for whom - which is
+         * the number needed to decide whether Stage 7 is safe to turn on.
+         *
+         * The client's own revision cannot be compared yet: SaveCharacterRequest carries no
+         * revision field, and adding one changes the proto text and therefore the protocol
+         * identifier - a flag day, which is barred until the server migration. The
+         * classification logic (Economy::ClassifyClientRevision) exists and is tested,
+         * waiting for that field.
+         */
+        if (pExisting && Economy::IsMigrated(*pExisting))
+        {
+            spdlog::warn("[ECONOMY] {} sent a possessions save for MIGRATED character {} "
+                         "(server revision {}). Stage 7 will refuse this; recorded, not "
+                         "refused.",
+                         pPlayer->Username, pExisting->CharacterId, pExisting->EconomyRevision);
+
+            GServer->GetAuditLog().Record("economy.legacy_save", pPlayer->DiscordId,
+                                          pExisting->CharacterId,
+                                          {{"revision", pExisting->EconomyRevision},
+                                           {"claimed_money", aMessage.get_money()}});
+        }
+
         // The balance the SERVER last had for this character, before the client's claim
         // replaces it. Absent for a first capture, where there is nothing to disagree with.
         const int64_t storedMoney = pExisting ? pExisting->Money : 0;
 
-        character.Money = aMessage.get_money();
+        /*
+         * IMPOSSIBLE values are refused. PLAUSIBLE ones are still trusted - deliberately.
+         *
+         * The note below is the standing decision and it stands: the client's figure is
+         * accepted and recorded rather than refused, because there is no server-side balance
+         * to fall back to yet, and refusing a client that is merely AHEAD of the server would
+         * take money off innocent players. Measure first. That is phase 5's job, not this
+         * commit's.
+         *
+         * But "ahead of the server" describes a delta of a few thousand eddies. It does not
+         * describe a negative balance, and it does not describe a number larger than the
+         * game can produce. Those are not a client racing the server; they are a client that
+         * is wrong or lying, and writing them costs something either way:
+         *
+         *   - a NEGATIVE balance makes AvailableMoney negative, so every "can you afford
+         *     this" test fails forever and the character is permanently unable to trade or
+         *     pay. It is also a value no legitimate path produces - spending is already
+         *     floored at zero everywhere it happens.
+         *   - an ABSURD balance is the trivial form of the exploit this whole file worries
+         *     about, and it is the one shape that needs no timing and no race to pull off.
+         *
+         * The ceiling is deliberately far above any real player rather than tuned to be
+         * tight. The point is to refuse what cannot happen, not to police what might - a
+         * limit somebody could reach by playing would be exactly the "taking money off
+         * players" failure the standing decision warns against.
+         *
+         * Refusing means KEEPING THE STORED BALANCE, not zeroing it. A bad claim must not be
+         * able to destroy a character's money either.
+         */
+        constexpr int64_t kMaxPlausibleMoney = 1'000'000'000;
+
+        const int64_t claimed = aMessage.get_money();
+
+        if (claimed < 0 || claimed > kMaxPlausibleMoney)
+        {
+            character.Money = storedMoney;
+
+            spdlog::error("[MONEY] REFUSED an impossible balance from {}: claimed {}, keeping {}. "
+                          "Negative or above {} cannot be produced by play.",
+                          pPlayer->Username, claimed, storedMoney, kMaxPlausibleMoney);
+
+            GServer->GetAuditLog().Record("money.refused", pPlayer->DiscordId, pPlayer->DiscordId,
+                                          {{"claimed", claimed}, {"kept", storedMoney}});
+        }
+        else
+        {
+            character.Money = claimed;
+        }
 
         // [MONEY] boundary 3 of 4: what the server received, against what it already had.
         //
@@ -658,15 +739,75 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
         {
             const int64_t moneyBefore = character.Money;
 
-            character.Inventory.clear();
-            character.Inventory.reserve(kit.size());
+            /*
+             * Built on a CANDIDATE, granted only if all of it succeeds.
+             *
+             * The old sequence wrote straight into `character`: clear the inventory, push
+             * every item, set the money, then set StarterKitGranted = true. Nothing there
+             * could fail loudly, but nothing stopped a partial grant either - a malformed
+             * kit entry (id 0, quantity 0) would be skipped by the primitives while the
+             * flag still went true, and the character would be permanently marked as having
+             * received a kit they only got part of. StarterKitGranted is a one-way gate, so
+             * that is not recoverable by retrying.
+             *
+             * Now: fill a copy, and only adopt it if every item and the money landed. On
+             * failure the character keeps what it had and the flag stays FALSE, so the grant
+             * can be attempted again once the kit definition is fixed.
+             *
+             * Through Economy for the same reason everything else is: one place that knows
+             * what a valid item and a valid balance are.
+             */
+            CharacterRecord granted = character;
+            granted.Inventory.clear();
+
+            bool kitApplied = true;
+            std::string kitFailure;
 
             for (const auto& item : kit)
-                character.Inventory.push_back({item.Id, item.Quantity});
+            {
+                const auto added = Economy::AddItem(granted, item.Id, item.Quantity);
 
-            character.Money = StarterKit::kStartingMoney;
-            character.Lifepath = StarterKit::ToString(lifepath);
-            character.StarterKitGranted = true;
+                if (added != Economy::Result::Success)
+                {
+                    kitApplied = false;
+                    kitFailure = fmt::format("item {:#x} x{}: {}", item.Id, item.Quantity,
+                                             Economy::Describe(added));
+                    break;
+                }
+            }
+
+            if (kitApplied)
+            {
+                // From zero rather than added to whatever was there - a starter kit sets the
+                // opening balance, it does not top somebody up.
+                granted.Money = 0;
+
+                const auto paid = Economy::Credit(granted, StarterKit::kStartingMoney);
+
+                if (paid != Economy::Result::Success)
+                {
+                    kitApplied = false;
+                    kitFailure = fmt::format("starting money: {}", Economy::Describe(paid));
+                }
+            }
+
+            if (!kitApplied)
+            {
+                spdlog::error("[StarterKit] {} - kit NOT granted ({}). The character keeps "
+                              "what it had and StarterKitGranted stays false, so this can be "
+                              "retried once the kit is fixed.",
+                              pPlayer->Username, kitFailure);
+            }
+            else
+            {
+                // ONE revision for the whole kit - money and every item together are a
+                // single thing that happened, not five. Advanced on the candidate after all
+                // of it succeeded, so a refused kit advances nothing.
+                Economy::AdvanceRevision(granted);
+
+                character = granted;
+                character.Lifepath = StarterKit::ToString(lifepath);
+                character.StarterKitGranted = true;
 
             spdlog::info("[StarterKit] {} - character '{}', lifepath {}, {} eddies",
                          pPlayer->Username, character.Name, character.Lifepath,
@@ -716,6 +857,7 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
             auto& audit = GServer->GetAuditLog();
             audit.RecordMoney(pPlayer->DiscordId, pPlayer->DiscordId, "starterkit.grant",
                               moneyBefore, character.Money);
+            }   // kitApplied
         }
     }
 
@@ -1695,8 +1837,52 @@ void ChatSystem::CompleteSale(const PendingSale& acSale, const PlayerComponent& 
     CharacterRecord buyer = *pBuyerCharacter;
     CharacterRecord seller = *pSellerCharacter;
 
-    buyer.Money -= acSale.Price;
-    seller.Money += acSale.Price;
+    /*
+     * Through the economy mutator, for the same reason /pay is.
+     *
+     * The seller's credit was unguarded: a seller near the ceiling wrapped, or ended on a
+     * balance the save path already refuses. Transfer checks the seller's headroom BEFORE
+     * the buyer is charged, so the failure is "no sale" rather than "charged, and the money
+     * went nowhere".
+     */
+    if (Economy::CanAdvanceRevision(buyer) != Economy::Result::Success ||
+        Economy::CanAdvanceRevision(seller) != Economy::Result::Success)
+    {
+        vehicles.Unlock(acSale.VehicleId, acSale.Token);
+
+        spdlog::error("[MONEY] refused a vehicle sale - a participant's economy revision is "
+                      "exhausted. Nobody was charged.");
+
+        Tell(acBuyer, "That sale could not complete. You have not been charged.");
+        return;
+    }
+
+    if (const auto moved = Economy::Transfer(buyer, seller, acSale.Price);
+        moved != Economy::Result::Success)
+    {
+        vehicles.Unlock(acSale.VehicleId, acSale.Token);
+
+        spdlog::warn("[MONEY] refused a vehicle sale of {}: {}", acSale.Price,
+                     Economy::Describe(moved));
+
+        Tell(acBuyer, fmt::format("That sale could not complete - {}. You have not been charged.",
+                                  Economy::Describe(moved)));
+        return;
+    }
+
+    /*
+     * One each for the purchase.
+     *
+     * The refund path below advances them AGAIN rather than rolling back to the previous
+     * number, and that is deliberate. The debit is persisted before the vehicle transfer is
+     * attempted, so by the time a refund happens two authoritative states have really
+     * existed and both were visible - the player saw the money leave and come back. A
+     * revision counts committed changes to authoritative state, not net outcomes, so
+     * pretending the first one did not happen would make the number describe something
+     * other than what the server did.
+     */
+    Economy::AdvanceRevision(buyer);
+    Economy::AdvanceRevision(seller);
 
     store.SaveCharacter(acSale.BuyerId, acBuyer.Username, buyer);
     store.SaveCharacter(acSale.SellerId, seller.Name, seller);
@@ -1706,8 +1892,32 @@ void ChatSystem::CompleteSale(const PendingSale& acSale, const PlayerComponent& 
         // Put the money back. A transfer that fails here is a bug rather than a refusal -
         // the lock is ours and ownership was checked - but leaving somebody charged for a
         // car they did not receive is not something to risk on that reasoning.
-        buyer.Money += acSale.Price;
-        seller.Money -= acSale.Price;
+        // The refund goes back through the same boundary, in the other direction. Hand-
+        // written it was the one arithmetic left that could put a balance somewhere the
+        // save path would refuse - and a refund that cannot land is the worst possible
+        // moment to find that out.
+        const auto refunded = Economy::Transfer(seller, buyer, acSale.Price);
+
+        if (refunded == Economy::Result::Success)
+        {
+            // A second committed change, so a second revision each - see the note above.
+            //
+            // Inside the success branch on purpose: a refund that did NOT happen changed no
+            // authoritative state, and advancing for it would make the revision count
+            // attempts rather than changes.
+            Economy::AdvanceRevision(buyer);
+            Economy::AdvanceRevision(seller);
+        }
+        else
+        {
+            // Should be unreachable: the money moved this way a moment ago, so the room
+            // exists. Logged at error rather than assumed away, because if it ever does
+            // happen somebody has been charged for a car they did not get.
+            spdlog::error("[MONEY] vehicle {} refund FAILED ({}) - buyer {} may be charged "
+                          "for a car they did not receive",
+                          acSale.VehicleId, Economy::Describe(refunded), acSale.BuyerId);
+        }
+
         store.SaveCharacter(acSale.BuyerId, acBuyer.Username, buyer);
         store.SaveCharacter(acSale.SellerId, seller.Name, seller);
 
@@ -3563,8 +3773,45 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         const int64_t senderBefore = sender.Money;
         const int64_t recipientBefore = recipient.Money;
 
-        sender.Money -= amount;
-        recipient.Money += amount;
+        /*
+         * Through the economy mutator rather than by hand.
+         *
+         * The arithmetic here was `sender.Money -= amount; recipient.Money += amount;`, and
+         * the second half was unguarded: a recipient near the int64 ceiling wrapped, and a
+         * transfer that pushed anybody past the plausible-balance ceiling produced a balance
+         * the SAVE path already refuses to accept - legal here, impossible there.
+         *
+         * Transfer checks the recipient's headroom BEFORE the payer is touched, because
+         * money that leaves one side and cannot arrive at the other has been destroyed and
+         * no error code gives it back.
+         */
+        // Revision headroom for BOTH before either moves - see the note in ApplyTrade.
+        if (Economy::CanAdvanceRevision(sender) != Economy::Result::Success ||
+            Economy::CanAdvanceRevision(recipient) != Economy::Result::Success)
+        {
+            spdlog::error("[MONEY] refused a transfer - a participant's economy revision is "
+                          "exhausted. Nothing was moved.");
+
+            Tell(acSender, "That transfer could not be made.");
+            return true;
+        }
+
+        const auto moved = Economy::Transfer(sender, recipient, amount);
+
+        if (moved != Economy::Result::Success)
+        {
+            spdlog::warn("[MONEY] refused a transfer of {} from {}: {}", amount,
+                         acSender.Username, Economy::Describe(moved));
+
+            Tell(acSender, fmt::format("That transfer could not be made - {}.",
+                                       Economy::Describe(moved)));
+            return true;
+        }
+
+        // One each, for the one thing that happened. After the transfer succeeded, on the
+        // copies, before either is saved.
+        Economy::AdvanceRevision(sender);
+        Economy::AdvanceRevision(recipient);
 
         store.SaveCharacter(acSender.DiscordId, acSender.Username, sender);
         store.SaveCharacter(recipientId, pRecipient->Name, recipient);
@@ -5630,6 +5877,69 @@ void ChatSystem::HandleChatMessageRequest(const PacketEvent<client::ChatMessageR
         return;
     }
     auto* pPlayer = entity.get<PlayerComponent>();
+
+    /*
+     * FLOOD CONTROL, before anything is parsed, logged or relayed.
+     *
+     * Asked for by both briefs - the phone's section 27 ("prevent spam without making
+     * normal RP communication annoying") and the trade brief's section 30 - and chat had
+     * none. Quickhacks have per-hack cooldowns and movement rejects floods; this was the
+     * one path a client could drive as fast as it liked, and it is the path that copies
+     * text to every player in range AND appends it to the log on disk.
+     *
+     * Checked FIRST, so a flooding client costs the server a comparison rather than a
+     * broadcast and a disk write. Everything below this - truncation, control-character
+     * stripping, command dispatch - is work a flood should never reach.
+     *
+     * A SLIDING WINDOW rather than a minimum gap between messages. A fixed delay punishes
+     * somebody firing off several short lines in a scene, which is the thing a roleplay
+     * server exists for, while still permitting a sustained stream at exactly the limit.
+     *
+     * TUNED DELIBERATELY LOOSE. A real flood sends thousands a second, so anything in this
+     * range stops it equally - which means the number should be chosen to never catch a
+     * real player rather than to be tight. Both briefs say the same thing: "prevent spam
+     * WITHOUT making normal RP communication annoying". The first draft was 10 per 5s and
+     * the test caught it refusing a line every 400ms, which is fast but not inhuman. Twenty
+     * is four a second sustained - past anyone typing - and still bounds the server to four
+     * broadcasts and four log writes per player per second, which is the actual cost.
+     *
+     * NOT exempted for staff. A single limit has no privilege hole to find, and no
+     * moderator types faster than this either.
+     */
+    constexpr int64_t kChatWindowMs = 5000;
+    constexpr uint32_t kChatBurst = 20;
+
+    const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::system_clock::now().time_since_epoch())
+                           .count();
+
+    auto* pRate = entity.get_mut<PlayerComponent>();
+
+    if (nowMs - pRate->ChatWindowStartMs >= kChatWindowMs)
+    {
+        pRate->ChatWindowStartMs = nowMs;
+        pRate->ChatInWindow = 0;
+        pRate->ChatFloodWarned = false;
+    }
+
+    ++pRate->ChatInWindow;
+
+    if (pRate->ChatInWindow > kChatBurst)
+    {
+        // Told once per window. Replying to every message of a flood is the same denial of
+        // service with the server volunteering to do the work.
+        if (!pRate->ChatFloodWarned)
+        {
+            pRate->ChatFloodWarned = true;
+
+            Tell(*pPlayer, "You are sending messages too quickly - slow down.");
+
+            spdlog::warn("[chat] rate limited {} ({} in {}ms)", pPlayer->Username, pRate->ChatInWindow,
+                         kChatWindowMs);
+        }
+
+        return;
+    }
 
     // Length is checked before the message is logged, let alone broadcast.
     //

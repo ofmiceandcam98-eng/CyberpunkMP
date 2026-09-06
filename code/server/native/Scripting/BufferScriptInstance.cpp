@@ -1,4 +1,5 @@
 #include "BufferScriptInstance.h"
+#include <cstring>
 
 
 TP_EXPORT IBuffer* IBuffer::Create()

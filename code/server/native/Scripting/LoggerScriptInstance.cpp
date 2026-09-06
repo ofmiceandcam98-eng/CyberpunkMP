@@ -1,5 +1,6 @@
 #include "LoggerScriptInstance.h"
 #include <GameServer.h>
+#include <mutex>
 
 
 LoggerScriptInstance::LoggerScriptInstance(const char* aName)

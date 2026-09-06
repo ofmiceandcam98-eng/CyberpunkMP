@@ -115,6 +115,189 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   `test/character-selector` on 21 Aug and was never merged. Cherry-picked. *Check for an
   existing fix on a side branch before writing a new one.*
 
+- **CRITICAL, OPEN, NOT FIXED — movement replication is per-packet and walks every player.**
+  `MovementComponent::Register` installs a flecs observer on `flecs::OnSet`, and
+  `HandleMoveEntityRequest` sets the component once per received packet. So one movement
+  packet runs `ReplicateMovementComponent`, which does `world().each(...)` over **every
+  player on the server** with a distance check and a send for each one in range. There is
+  no inbound rate limit and no coalescing.
+  - **Amplification:** 1 client packet → O(players) server work, at an unbounded inbound
+    rate. One attacker at 1000 packets/s against 32 players is ~32,000 relevance checks a
+    second, plus sends.
+  - **The existing LOD does not save it.** `ShouldSendTo` reduces by distance — full rate
+    ≤200m, `% 4` to 600m, `% 16` beyond — but the divisors are keyed on
+    `MovementComponent::Sequence`, which `Level.cpp:982` increments **per received packet**.
+    A flood therefore scales sends linearly too; the divisors cut the constant, not the
+    growth. And the walk itself is never reduced.
+  - **DO NOT "fix" this with a packet-rate rejection.** Movement is legitimately
+    high-frequency and dropping packets causes rubber-banding. The right shape is
+    coalescing: store the newest authoritative state on receipt (cheap), and replicate on
+    the server's own tick so five packets arriving between ticks cost one relevance pass,
+    not five.
+  - **COALESCING IS NOW IMPLEMENTED BEHIND `Config::CoalesceMovement`, DEFAULT OFF**
+    (2026-09-04). A packet stores the newest state and raises `ReplicationPending` (a flag,
+    never a queue — O(players), not O(packets)); `GameServer::ReplicatePendingMovement`
+    walks pending entities once per tick. **The rate was not invented**: `UpdateRate{30}`
+    already existed in config and was already sent to clients as their send rate — it was
+    simply never used server-side for anything. A compliant client therefore sees the same
+    cadence it does today; only bunched or flooded packets collapse.
+  - **The sequence split that made it safe.** `Sequence` (received, per packet) is now
+    separate from `ReplicatedSequence` (per replication). The wire and the LOD both use the
+    latter, so a flood can no longer outrun the `% 4` / `% 16` reduction, and the client's
+    staleness test still sees a strictly increasing number either way. **Both consumers were
+    mapped before changing it** — server LOD, and `InterpolationSystem.cpp:721` which drops
+    anything `<=` the last applied.
+  - **STILL OPEN. The flag stays OFF until a live two-client test.** Unit tests prove the
+    cost model (25 checks: 1000 pps drops from 31,000 relevance checks to ~930, a 33x
+    reduction, with the newest state surviving); they cannot prove the absence of jitter or
+    rubber-banding. A design plus green tests is not a fix.
+
+- ~~Movement accepts OUT-OF-ORDER packets~~ **FIXED 2026-09-04.** `MoveEntityRequest` is
+  `unreliable` (UDP, reordering expected) and the handler took whatever arrived last, so a
+  packet overtaken in flight could rewind the server's position — which is a wrong
+  AUTHORIZATION answer, not just a wrong dot: chat range, voice range, jail geofencing, and
+  the trade and medical distance checks all read it. Now rejected before the component is
+  written, before anything is marked pending, and before any walk.
+  - **`tick` is wall-clock milliseconds since the epoch** (`NetworkWorldSystem::GetTick`;
+    `InterpolationSystem.cpp:208` names the magnitude). Established before writing the fix,
+    and it removed most of the machinery the fix would otherwise have needed: it is globally
+    monotonic, it does **not** reset on spawn/respawn/character switch/reconnect, and a
+    uint64 of milliseconds does not wrap in any timeframe that matters — so no per-session
+    ordering domain, no lifecycle baseline reset, and no serial-number arithmetic.
+  - **A new ordering domain is a new component**, not a counter reset: a fresh puppet has
+    `Tick == 0` and accepts anything, which is what makes respawn and character switch work
+    with no special case.
+  - **The one real edge case is the client's wall clock moving backwards** (NTP, or someone
+    changing their system time). Strict rejection would freeze that player until real time
+    caught up — permanently, for a large jump. A backward step larger than 30s is treated as
+    a clock reset and re-baselined. Safe rather than a hole: ownership and epoch are already
+    validated, so it only concerns an entity the sender controls, and a client that wants to
+    be somewhere false just sends a position — the check defends against the NETWORK
+    reordering packets, not against a lying client.
+  - Also fixed in passing: `ReplicatedSequence` and `ReplicationPending` were not being
+    carried across the wholesale component replace, so the LOD would have reset to 0 on
+    every packet and `% 4` would have been true every time — interest management silently
+    off. Caught by writing the ordering check next to it.
+
+- **VOICE HAD NO RATE CAP** (fixed 2026-09-04). Frame size was capped at 1KB and the radius
+  was already server-decided from an intent, but nothing bounded frame RATE — so the same
+  per-population relay walk ran as fast as a client cared to send. Now 100/s inbound
+  (a real client sends ~50), checked after the cheap size rejection and **before** the
+  movement lookup, the call-partner search and the relay walk, so a refused frame costs
+  none of them. Logged once per window, never answered.
+  - Worst case now bounded: 100 frames × 31 recipients ≈ 3,100 relays/s per speaker, about
+    620 KB/s at real Opus frame size (~200 bytes); the 1KB ceiling caps the pathological
+    case near 3.1 MB/s. Both numbers are asserted in `voice_test` so they cannot drift.
+
+### Server-authority audit, 2026-09-04 (Cam stream)
+
+- **CRITICAL, KNOWN, ACCEPTED — the client is authoritative over its own money and
+  inventory.** `HandleSaveCharacterRequest` does `character.Money = aMessage.get_money()`
+  and rebuilds `character.Inventory` from the client's list. A modified client can declare
+  any balance or any items. **This is not an oversight**: the code says so ("Possessions,
+  taken from the client and kept by the server") and the standing decision is recorded in
+  place — *"Recorded, not refused… refusing here, before there is a ledger showing how
+  often it happens or a server-side balance to fall back to, would take money off players
+  whose client is simply ahead of the server. Measure first."* Instrumentation is already
+  in (`[MONEY]` boundaries, `audit.RecordMoney`). **Do not refuse plausible values without
+  that ledger.**
+  - **Fixed the impossible half (2026-09-04):** a negative balance, or one above 1e9, is
+    now refused and the STORED balance kept. Negative would make `AvailableMoney` negative
+    forever, permanently blocking trade and pay; above-1e9 is the trivial exploit needing no
+    race at all. Deliberately far above any real player — refusing what *cannot* happen, not
+    policing what might.
+  - Everything else in trade (reservations, overflow, availability) is sound and is
+    downstream of this: it protects the transfer, not the declaration.
+
+- **CORRECTION — my earlier "epoch validated on movement only" finding was WRONG**, and the
+  conclusion it implied was wrong too. `AuthorityComponent::Epoch` is **not a session epoch**.
+  Its own header says what it is: "which grant of SIMULATION RIGHTS over this entity is
+  current… Only entities that can change hands carry this - vehicles today. Player puppets
+  never transfer, so they never need it, and the epoch check simply does not apply to them."
+  It is a vehicle-handoff ordering counter. **There is no session epoch anywhere, including
+  movement** — so "other handlers are missing the check movement has" was not a real gap.
+  - **Stale-session mutation is prevented structurally instead, in three layers**, and
+    together they are complete:
+    1. **An old CONNECTION cannot reach a new session.** The transport is
+       GameNetworkingSockets — connection-oriented, per-connection encrypted sessions — and
+       `PlayerManager::Remove` erases the connection→player mapping on disconnect. All 16
+       mutating handlers resolve via `GetByConnectionId` and bail when absent.
+    2. **An old CHARACTER cannot mutate a new one.** `HandleSelectCharacterRequest` refuses
+       a switch while the player still has a live puppet — *"the autosave would then write
+       the new character's state over the old one's record"*. Every gameplay mutation needs
+       a puppet, so the window does not exist.
+    3. **Within one connection nothing arrives out of order**, because only FOUR messages
+       are unreliable — `MoveEntityRequest`/`NotifyEntityMove` and
+       `VoiceFrameRequest`/`NotifyVoiceFrame`. Everything that mutates persistent state is
+       `kReliable` and ordered. Movement has its own ordering check; voice mutates nothing.
+  - **`Verify.ps1` now guards leg 3** ("unreliable messages"), because it is the one a future
+    commit could break silently — marking a new mutation unreliable for latency would reopen
+    the whole class and nothing else would notice. The check found the two server→client
+    halves I had not enumerated, which is the check earning its place on its first run.
+  - **NOT adding epoch fields to other handlers.** With no stale path to close, that would be
+    the speculative protocol change the audit brief explicitly forbids.
+
+- **Audited and SOUND, no change needed:** vehicle ownership (`VehicleStore` owns
+  `OwnerId`, `Create`, `Transfer`); weapon ammo (`MagazineAmmo`/`ReserveAmmo` server-side);
+  quickhack cooldown (`MinIntervalMs`); combat refusing a downed attacker; revive checking
+  both `LifeState` **and** server-side distance (`kTreatmentDistance`); trade distance,
+  reservations and atomic commit.
+
+- **NOT APPLICABLE — there is no world-object system.** No doors, gates, containers,
+  elevators or interactables are synchronised at all, so §12/§13 of the audit brief have
+  nothing to audit rather than something unaudited. Worth knowing before anyone builds one.
+
+- **IDEMPOTENCY: `RequestLedger`, and phone sends now use it** (2026-09-04). A client that
+  does not hear back retries, and "the server never got it" is indistinguishable from "it
+  got it and the reply was lost" — so a retry can arrive for work already done. Harmless for
+  a movement packet; a duplicate for anything that CREATES something.
+  - `MessageStore::Send` takes an optional request id. Seen before → returns the ORIGINAL
+    message id without writing a second message. Recorded on **success only**, so a refusal
+    ("no eddies", "blocked") does not become a permanent verdict outliving its reason.
+  - **Empty id means no idempotency and is never a key.** Treating it as one would make
+    every idless send collide — the second text anybody sent would return the first one's id
+    and never be written. The only phone path today (`/text` over the reliable chat channel)
+    has no id to offer, so behaviour is unchanged; this is infrastructure ahead of the RPC.
+  - **Bounded three ways** because a cache keyed on client-supplied strings is a
+    memory-exhaustion surface: a TTL (5 min), a per-owner cap (64) and a global cap (4096),
+    all enforced on insert, oldest-first. **Per-owner is enforced before global on purpose** —
+    otherwise one flooder evicts everyone else's entries and *their* retries duplicate.
+  - **Keyed on the authenticated owner**, so one player cannot replay another's id.
+  - **Not cleared on disconnect**, deliberately: "dropped before hearing the answer,
+    reconnected, asked again" is precisely the retry it exists to catch. Entries expire on
+    time instead, which does not care why the connection went away.
+
+- **CHAT HAD NO RATE LIMIT AT ALL.** Quickhacks have per-hack cooldowns and movement
+  rejects floods, but the one path a client could drive as fast as it liked was the one
+  that copies text to **every player in range** *and* appends it to the log on disk. Both
+  briefs ask for this (phone §27, trade §30). Now a sliding window per player, checked
+  before anything is parsed, logged or relayed, warning **once per window** so the refusal
+  cannot itself be spammed.
+  - **The test set the number, not the other way round.** First draft was 10 per 5s;
+    `ratelimit_test` failed on "a line every 400ms", which is fast typing rather than a
+    bot. Raised to 20 per 5s rather than weakening the test — a real flood is thousands a
+    second, so anything in this range stops it identically, which means the limit should be
+    chosen to never catch a real player. If anyone tightens it, that test is what says
+    whether a human would notice.
+  - Not exempted for staff: one limit, no privilege hole.
+
+- **THE LINUX BUILD IS NOW PARTLY GATED, and 34 latent breakages were already there.**
+  Verify used to end by admitting "there is no GCC on this machine, so server portability
+  is only ever proven by a deploy". `tools/CheckIncludes.ps1` closes the one class of
+  GCC-only failure that has actually cost us a day — a `std::` symbol used without the
+  header that declares it, which MSVC forgives transitively and libstdc++ does not.
+  - **It found 34 across 24 files on its first run** (`<cstdio>`, `<utility>`, `<algorithm>`,
+    `<mutex>`, `<atomic>`, `<functional>`, `<thread>`…). All added; MSVC build still clean.
+    Every one of those was a live risk to the weekend migration, because a container build
+    that fails does NOT roll back — the deploy keeps the previous image, so on **new**
+    hardware nothing would have come up at all.
+  - Wired into `Verify.ps1`, so it gates every ship. **Self-tested both ways**: a planted
+    missing `<cstring>` fails the gate with the file and symbol named; restoring it passes.
+  - The script was UNTRACKED until now, which is exactly the hazard the portability decree
+    describes — an untracked file that incoming commits later create refuses the pull. Now
+    committed.
+  - Still a lint, not a compiler. A clean run is not a promise GCC is happy.
+
 - **A SYMLINKED PLUGIN DLL SILENTLY KILLS THE WHOLE MOD.** Cam's game came up with a
   completely stock main menu, nothing crashed, and it looked like every menu change had
   been reverted. It had not: RED4ext loaded the plugin, the plugin resolved its OWN path
@@ -134,6 +317,99 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
     installed DLL is not a reparse point.
   - **First diagnostic for "the mod did nothing": `red4ext/logs/red4ext-*.log`.** A plugin
     that fails during `Load` says so there and nowhere else.
+
+### FOR ZELDFEP — NETCODE IS FROZEN, THE BRANCH IS NOW A REFERENCE (2026-09-05)
+
+**START HERE AFTER THE SWAP: `docs/ZELDFEP-AFTER-THE-SWAP.md`** — the ordered
+pick-it-up-and-finish-it note. This block is the summary; that document is the plan.
+
+**Read this before touching anything on the branch.** Nothing here changes the live servers, but
+it changes what this branch IS. **Working branch is now `wip/world-state`** (pushed to `fork`);
+`feat/world-state` stays unpushed during the migration so the production NAS cron cannot rebuild
+the live server mid-swap.
+
+**1. Hard freeze on runtime multiplayer networking**, until Cam says the server swap is complete.
+No production `.proto`, handlers, transport, RPC, replication, auth, movement, vehicle, combat,
+voice, phone, selector, or economy networking. This matches what you asked for before the swap;
+it is now written down and it applies to both streams.
+
+**2. `feat/world-state` is now classified OUTGOING SERVER REFERENCE IMPLEMENTATION.** Not a
+deployment target, not the base for the new server, and deliberately NOT cleaned up. A full
+netcode rollback was proposed, audited, and **rejected** — the numbers are in
+`docs/OUTGOING-SERVER-NETCODE-MAP.md` §0, but briefly: the branch is +20,760 lines, the "netcode"
+files are +6,046, and the actual transport is ~1,500-2,500. The rest is persistence, permissions,
+admin tooling and economy work that must survive. `HandleSaveCharacterRequest` is one function
+that is simultaneously a packet handler AND the money guard, the starter kit, the Stage 5
+observation and the audit log. Splitting it is a rewrite, not a revert.
+
+**3. The branch protocol already differs from published `fork/main`** — and has since long before
+this work:
+
+```
+fork/main:        client 0x88b2f6b5cbefc91c   server 0xb2f2bf7363a7f337
+feat/world-state: client 0xc67c52a1b6c5f096   server 0xa14513f4653e80f
+```
+
+134 lines from `9af9e8d` (character slots), `1d5aec2` (phone calls), `8156ebb` (`/call` fix).
+Deliberately NOT reverted. **Do not assume branch protocol == published protocol.**
+
+**4. Three handoff documents are the authority for rebuilding on the new server:**
+
+| Document | What |
+|---|---|
+| `docs/NEW-SERVER-NETCODE-PORTING-HANDOFF.md` | all ten phases; rebuild without reading old code |
+| `docs/OUTGOING-SERVER-NETCODE-MAP.md` | where the old netcode is; every mixed file split keep/don't-port |
+| `docs/NEW-SERVER-AUTHORITY-HANDOFF.md` | economy authority + proven Cyberpunk facts |
+
+**Read the requirements first. Do not start by copying old code.**
+
+**5. Findings that affect your half:**
+- **Money is NOT server-authoritative** — 17 vanilla paths bypass `Economy::`. Vendors move eddies
+  client-side (`vendor.script:1180`, proven from the game's own source). Money is an inventory
+  item.
+- **No vanilla inventory operation is observed at all** — zero hooks on `TransactionSystem`,
+  vendors, crafting, loot, stash.
+- **The item model cannot represent a real item** — `(TweakDBID, quantity)` in,
+  `GiveItemByTDBID` out. A restore hands back a BASE item, losing mods/tier/upgrades. **This is a
+  live data-loss path today**, independent of any authority work.
+- **The cell grid culls nothing** — relevance is effectively broadcast.
+- **netpack does not range-validate enums** — an undeclared value round-trips intact. Two
+  generator defects found and fixed (`b6fc19c`); production protos byte-identical after.
+
+**6. Still unresolved, and not solved by being documented:** movement coalescing (flag OFF, never
+2-client tested — that test needs you), the remote-vehicle-mount crash, cell-grid relevance, money
+authority, item fidelity, and the character session lock.
+
+**7. Selector and full inventory authority are PARKED** until the new server has auth, identity,
+CharacterID, persistence, session lock and authoritative load/spawn.
+
+Phase 5 stages 1-5 stand as architecture and were **not** the reason for the swap.
+
+### Phase 5 (economy authority) — stages 1–5 built, NOTHING BEHAVES DIFFERENTLY YET
+
+Full detail in `docs/PHASE5-ECONOMY-AUTHORITY.md`; this row is the ledger pointer. All of it
+is **local and unpushed** — per Cam, nothing ships before the server swap.
+
+- **The one client-authoritative door is still open, deliberately.** `character.Money =
+  aMessage.get_money()` is untouched. Closing it is Stage 7, and Stage 7 is a flag day.
+- **What is built is the machinery, not the cutover:** atomic persistence for all six stores
+  (Stage 1), the `EconomyRevision`/`MigratedAt` fields (2), a trust-once migration that
+  **nothing calls** (3), `EconomyMutator.h` as the single boundary every server-side money and
+  inventory change now routes through (4/4B), and transaction-scoped revisions plus stale
+  classification (5).
+- **Migration is INERT. No character anywhere is migrated**, so revisions sit at 0 and the
+  Stage 5 observation never fires. This is the intended state — the machinery gets to be
+  proven while being wrong about it is still free.
+- **Two things need a live server and are therefore blocked on the migration:** activating the
+  trust-once migration (irreversible — review the `[MONEY]` audit trail first), and any wire
+  change. The client-observed revision needs a field on `SaveCharacterRequest`, and netpack
+  derives the protocol id from the `.proto` **text**, so that is a flag day like 6 and 7.
+- **The regression that must keep passing for the rest of Phase 5** (`trade_real_test`):
+  *ordinary play never migrates anybody.* If runtime could produce a migrated record the
+  migration gate would mean nothing.
+- **For the other stream:** if you add a server-side money or inventory mutation, route it
+  through `Economy::` and advance the revision **once per transaction, at the boundary** — not
+  inside the primitives. The primitives deliberately never touch it.
 
 ### Landed 2026-09-04 (zeldfep stream) — the launcher is open source
 - **THE RED SMARTSCREEN SCREEN IS UNSIGNED CODE, NOT MALWARE — and the obvious fix does not

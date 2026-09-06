@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <limits>
 
 struct ItemStack { unsigned long long Id; unsigned int Quantity; };
 struct Character { std::string CharacterId; long long Money{0}; std::vector<ItemStack> Inventory; };
@@ -36,9 +37,18 @@ static bool MoveAssets(Character& from, Character& to, const TradeSide& offer, s
         [](const ItemStack& s){ return s.Quantity == 0; }), from.Inventory.end());
     for (const auto& o : offer.Items)
     {
-        if (auto* s = FindStack(to, o.Id)) s->Quantity += o.Quantity;
+        if (auto* s = FindStack(to, o.Id))
+        {
+            // Overflow refused, not wrapped - see PlayerStore::MoveAssets. uint32 wrapping
+            // silently destroys the difference; the same sum the other way mints it.
+            if (s->Quantity > std::numeric_limits<unsigned int>::max() - o.Quantity)
+                return fail("quantity_overflow");
+            s->Quantity += o.Quantity;
+        }
         else to.Inventory.push_back({o.Id, o.Quantity});
     }
+    if (offer.Money > 0 && to.Money > std::numeric_limits<long long>::max() - offer.Money)
+        return fail("money_overflow");
     from.Money -= offer.Money;
     to.Money   += offer.Money;
     return true;
@@ -146,6 +156,73 @@ int main()
         Character a{"A",0,{{kAmmo,10}}}; Character b{"B",0,{}};
         std::string why;
         Check(!ApplyTrade(a,b,{"A",0,{{kAmmo,0}}},{"B",0,{}},&why) && why == "zero_quantity", "offering zero is refused");
+    }
+
+    { // INTEGER OVERFLOW - the brief's section 17, and it was unguarded until 2026-09-04.
+      //
+      // Reachable because what a player HOLDS comes from SaveCharacterRequest, i.e. the
+      // client reporting its own inventory. The offer is bounded by the holding, but the
+      // holding is only bounded by what a hostile client claims.
+        constexpr unsigned int kNearMax = std::numeric_limits<unsigned int>::max() - 5;
+        Character a{"A", 0, {{kAmmo, 100}}};
+        Character b{"B", 0, {{kAmmo, kNearMax}}};
+        const auto before = TotalOf(a,b,kAmmo);
+        std::string why;
+        Check(!ApplyTrade(a,b,{"A",0,{{kAmmo,100}}},{"B",0,{}},&why) && why == "quantity_overflow",
+              "a stack that would wrap uint32 is REFUSED, not wrapped");
+        Check(FindStack(a,kAmmo)->Quantity == 100 && FindStack(b,kAmmo)->Quantity == kNearMax,
+              "and nothing moved");
+        Check(TotalOf(a,b,kAmmo) == before, "no ammo was destroyed by a wrap");
+    }
+
+    { // the same, for money
+        Character a{"A", 5000, {}};
+        Character b{"B", std::numeric_limits<long long>::max() - 100, {}};
+        const auto m0 = TotalMoney(a,b);
+        std::string why;
+        Check(!ApplyTrade(a,b,{"A",5000,{}},{"B",0,{}},&why) && why == "money_overflow",
+              "a balance that would wrap int64 is REFUSED");
+        Check(TotalMoney(a,b) == m0, "and no money was created or destroyed");
+    }
+
+    { // section 31.2 - item for cash, one side giving only goods
+        Character a{"A", 0, {{kPistol,1}}}; Character b{"B", 9000, {}};
+        const auto m0 = TotalMoney(a,b);
+        std::string why;
+        Check(ApplyTrade(a,b,{"A",0,{{kPistol,1}}},{"B",7500,{}},&why), "item for cash succeeds");
+        Check(a.Money == 7500 && b.Money == 1500, "cash moved one way only");
+        Check(TotalMoney(a,b) == m0 && TotalOf(a,b,kPistol) == 1, "and nothing was created");
+    }
+
+    { // section 31.3 - cash for cash
+        Character a{"A", 1000, {}}; Character b{"B", 400, {}};
+        const auto m0 = TotalMoney(a,b);
+        std::string why;
+        Check(ApplyTrade(a,b,{"A",600,{}},{"B",400,{}},&why), "cash for cash succeeds");
+        Check(a.Money == 800 && b.Money == 600, "both balances netted correctly");
+        Check(TotalMoney(a,b) == m0, "TOTAL MONEY IS UNCHANGED");
+    }
+
+    { // section 31.6 - several distinct items at once, and a partial failure still rolls back
+        Character a{"A", 0, {{kPistol,1},{kAmmo,200},{kJacket,3}}};
+        Character b{"B", 0, {}};
+        std::string why;
+        Check(ApplyTrade(a,b,{"A",0,{{kPistol,1},{kAmmo,150},{kJacket,2}}},{"B",0,{}},&why),
+              "three item types move in one trade");
+        Check(FindStack(b,kPistol)->Quantity == 1 && FindStack(b,kAmmo)->Quantity == 150 &&
+              FindStack(b,kJacket)->Quantity == 2, "each arrived in the right quantity");
+        Check(!FindStack(a,kPistol) && FindStack(a,kAmmo)->Quantity == 50 &&
+              FindStack(a,kJacket)->Quantity == 1, "and the remainders are right");
+    }
+
+    { // the same id listed twice in one offer must not let you spend it twice
+        Character a{"A", 0, {{kAmmo,100}}}; Character b{"B", 0, {}};
+        const auto before = TotalOf(a,b,kAmmo);
+        std::string why;
+        Check(!ApplyTrade(a,b,{"A",0,{{kAmmo,60},{kAmmo,60}}},{"B",0,{}},&why) &&
+              why == "insufficient_items",
+              "offering the same stack twice to reach 120 of 100 is refused");
+        Check(TotalOf(a,b,kAmmo) == before && b.Inventory.empty(), "and nothing moved");
     }
 
     { // the whole point, stated once more

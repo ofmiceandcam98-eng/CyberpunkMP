@@ -1,0 +1,47 @@
+// Scratch protocol - NOT part of the game protocol, never built into anything.
+//
+// WHY IT EXISTS
+//
+// netpack has enum support that has never been exercised: no .proto in this project
+// declares an enum, so the TYPE_ENUM paths in the generator have never run. The Stage 6
+// design proposes two enums, which makes "does this work at all" a prerequisite question
+// rather than an implementation detail.
+//
+// This file is the answer to that question. It is deliberately kept OUT of code/protocol/
+// so that it cannot change any protocol identifier: the identifier is derived per-file, and
+// a file that is never fed to the Protocol target is never part of any wire format.
+//
+// Run it by hand:
+//     build/windows/x64/release/NetPack.exe tools/netpack-scratch/enumtest.proto <outdir>
+//
+// See tools/tests/netpack_enum_test.cpp for the round trip.
+
+syntax = "proto3";
+
+package enumtest;
+
+enum TestEnum {
+    TEST_ZERO = 0;
+    TEST_ONE = 1;
+    TEST_TWO = 2;
+}
+
+message EnumTest {
+    TestEnum value = 1;
+}
+
+// A second message covering the shapes the real proposal would use: an enum beside other
+// fields (so the presence bitfield and field ordering are involved), and a repeated enum.
+message EnumMixed {
+    TestEnum verb = 1;
+    uint64 revision = 2;
+    string note = 3;
+    repeated TestEnum history = 4;
+}
+
+message Protocol {
+    oneof content {
+        EnumTest enum_test = 1;
+        EnumMixed enum_mixed = 2;
+    }
+}

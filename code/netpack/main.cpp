@@ -22,9 +22,20 @@ std::string GetType(const google::protobuf::FieldDescriptor* field)
     }
     else if (type == google::protobuf::FieldDescriptor::TYPE_ENUM)
     {
+        // enum_type(), not message_type().
+        //
+        // This branch was a copy of the TYPE_MESSAGE one above and kept its accessor.
+        // FieldDescriptor::message_type() is only defined for TYPE_MESSAGE/TYPE_GROUP; on an
+        // enum field it returns null, and ->file() then dereferences it. The generator
+        // SEGFAULTED - exit 139, no output - on the first enum field ever declared, and it
+        // died inside HashProtocol, so it never reached the point of emitting anything.
+        //
+        // It survived this long because no .proto in the project declares an enum: the whole
+        // TYPE_ENUM path had never executed. Found while checking whether the Stage 6 design
+        // was buildable, which it was not. See tools/netpack-scratch/enumtest.proto.
         name = google::protobuf::compiler::cpp::ClassName(field->enum_type());
-        if (field->message_type()->file()->package() != field->file()->package())
-            name = field->message_type()->file()->package() + "::" + name;
+        if (field->enum_type()->file()->package() != field->file()->package())
+            name = field->enum_type()->file()->package() + "::" + name;
     }
     else
     {
@@ -417,7 +428,17 @@ void GenerateUniqueDeserializer(std::ostream& out, const google::protobuf::Field
             }
             else if (field->type() == google::protobuf::FieldDescriptor::TYPE_ENUM)
             {
-                out << name << " = static_cast<" << GetType(field) << ">(Serialization::ReadVarInt(aReader) & ~(" << cpp::PrimitiveTypeName(field->cpp_type())
+                // GetInternalType, not GetType - the ELEMENT type, not the container.
+                //
+                // This function is called per element for a repeated field, so `name` is one
+                // element. GetType wraps a repeated field in Vector<>, which made a repeated
+                // enum generate `element = static_cast<Vector<TestEnum>>(ReadVarInt(...))` -
+                // casting an integer to a vector. It does not compile.
+                //
+                // The generic branch below has always used GetInternalType for this reason;
+                // the enum branch was written separately and did not. Second defect found on
+                // the same never-executed path as the message_type() crash in GetType.
+                out << name << " = static_cast<" << GetInternalType(field) << ">(Serialization::ReadVarInt(aReader) & ~(" << cpp::PrimitiveTypeName(field->cpp_type())
                     << "{0}));" << std::endl;
             }
             else

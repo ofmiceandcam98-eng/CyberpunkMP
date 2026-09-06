@@ -1,8 +1,19 @@
 #pragma once
 
+#include <limits>   // numeric_limits, for the trade overflow guards - MSVC supplies this
+                    // transitively, the GCC container the server builds in does not
+
+#include <mutex>    // Flush is serialised - see its note
+
+#include "AtomicWrite.h"
+#include "EconomyMigration.h"
+#include "EconomyMutator.h"    // trade routes its arithmetic through the one boundary
 #include "CharacterRecord.h"
 
 #include "PermissionLevel.h"
+#include <algorithm>
+#include <chrono>
+#include <utility>
 /**
  * Where each player was, kept across sessions.
  *
@@ -953,6 +964,23 @@ struct PlayerStore
         if (!pLeft || !pRight)
             return fail("no_character");
 
+        /*
+         * REVISION HEADROOM IS PART OF VALIDATION, checked before a single byte moves.
+         *
+         * Asked here rather than at the end because discovering that the second participant
+         * cannot take another revision AFTER the first has been mutated would mean unwinding
+         * a transaction that should never have started. A trade where either side is
+         * exhausted fails whole - both live records untouched.
+         *
+         * Unmigrated characters answer Success and stay at revision 0, so this changes
+         * nothing for the legacy population while migration is inactive.
+         */
+        if (Economy::CanAdvanceRevision(*pLeft) != Economy::Result::Success ||
+            Economy::CanAdvanceRevision(*pRight) != Economy::Result::Success)
+        {
+            return fail("revision_exhausted");
+        }
+
         // Copies. Every mutation below happens on these, so a validation failure halfway
         // through leaves the real records untouched rather than half-traded.
         CharacterRecord left = *pLeft;
@@ -963,6 +991,20 @@ struct PlayerStore
 
         if (!MoveAssets(right, left, acRight, apReason))
             return false;
+
+        /*
+         * ONE revision each, for the whole trade.
+         *
+         * Not one per item, not one per direction, not one per Economy call - a trade of
+         * two thousand eddies and three items is ONE thing that happened to each
+         * participant. The primitives deliberately do not touch the revision so that this
+         * is the only place it can advance.
+         *
+         * On the candidates, after both directions have already succeeded, so a trade that
+         * fails advances nothing.
+         */
+        Economy::AdvanceRevision(left);
+        Economy::AdvanceRevision(right);
 
         // Only now does anything real change.
         *pLeft = left;
@@ -1012,24 +1054,183 @@ struct PlayerStore
     }
 
     // Writes only when something actually changed, so calling this on a timer is cheap.
+    /**
+     * What the trust-once economy migration WOULD do. Changes nothing.
+     *
+     * Phase 5 stage 3. Reads the server's own persisted records - never a client's save,
+     * never a live inventory query, never anything the client can influence.
+     *
+     * NOT CALLED BY ANYTHING during normal operation. See EconomyMigration.h for why the
+     * mechanism exists before it is allowed to run.
+     */
+    EconomyMigration::Report InspectEconomyMigration() const
+    {
+        return EconomyMigration::Inspect(GatherCharacters(m_records));
+    }
+
+    /**
+     * Cross the boundary for every character, or for none of them.
+     *
+     * THE TRANSACTION, and its order is the whole point:
+     *
+     *     inspect the live records          - read only
+     *     refuse unless every one is clean  - all or nothing
+     *     COPY them                         - the live set is still untouched
+     *     migrate the copy
+     *     persist the copy atomically       - Stage 1's guarantee, same writer
+     *     only THEN swap the copy in
+     *
+     * The last two lines in that order are what stops RAM and disk disagreeing. Migrating
+     * the live records first and persisting afterwards would mean a failed write leaves the
+     * server believing everybody is migrated while the file says nobody is - and the next
+     * successful save would then write that false belief to disk permanently.
+     *
+     * Persistence goes through AtomicWrite, exactly as Flush does, under the same mutex.
+     * There is deliberately no second writer.
+     *
+     * `aNowSeconds` is injected rather than read here so tests are deterministic; callers
+     * pass server time.
+     */
+    bool CommitEconomyMigration(int64_t aNowSeconds, EconomyMigration::Report* apReport = nullptr,
+                                std::string* apError = nullptr)
+    {
+        const auto fail = [apError](const char* acpWhy)
+        {
+            if (apError)
+                *apError = acpWhy;
+            return false;
+        };
+
+        std::lock_guard<std::mutex> lock(m_writeMutex);
+
+        const auto report = EconomyMigration::Inspect(GatherCharacters(m_records));
+
+        if (apReport)
+            *apReport = report;
+
+        if (!report.CanCommit())
+            return fail("some records need attention - nothing was migrated");
+
+        if (report.Candidates == 0)
+            return true;   // everything already migrated; a no-op is a success
+
+        // The copy. Nothing live is touched until the write has succeeded.
+        std::vector<PlayerRecord> candidate = m_records;
+
+        size_t migrated = 0;
+
+        for (auto& record : candidate)
+        {
+            for (auto* pList : {&record.Characters, &record.RetiredCharacters})
+            {
+                for (auto& character : *pList)
+                {
+                    if (EconomyMigration::Apply(character, aNowSeconds))
+                        ++migrated;
+                }
+            }
+        }
+
+        std::string payload;
+
+        try
+        {
+            payload = nlohmann::json(candidate).dump(2);
+        }
+        catch (const std::exception& e)
+        {
+            spdlog::error("[MIGRATION] could not serialise the migrated records: {}. Nothing "
+                          "was changed, on disk or in memory.",
+                          e.what());
+            return fail("serialisation failed");
+        }
+
+        std::string reason;
+
+        if (!AtomicWrite::Replace(m_path, payload, &reason))
+        {
+            spdlog::error("[MIGRATION] could not persist: {}. The previous file is intact and "
+                          "NO character was marked migrated.",
+                          reason);
+            return fail("the write failed");
+        }
+
+        // Persisted. Only now does the server believe it.
+        m_records = std::move(candidate);
+        m_dirty = false;
+
+        spdlog::info("[MIGRATION] economy migration committed: {} character(s) migrated, {} "
+                     "already were. Their money and inventory are unchanged; the server now "
+                     "owns them.",
+                     migrated, report.AlreadyMigrated);
+
+        return true;
+    }
+
+    /**
+     * Persist every record, without ever leaving players.json truncated.
+     *
+     * This used to open the live file with an ofstream, which TRUNCATES it, and then stream
+     * a freshly serialised document into it. Between those two moments the authoritative
+     * copy of every character on the server did not exist - and a crash, a power cut, a full
+     * disk or a killed container in that window left an empty or half-written file with no
+     * backup to fall back on.
+     *
+     * See AtomicWrite for the replacement sequence and why its ORDER is the design.
+     *
+     * SERIALISED FIRST, INTO MEMORY. A json exception now happens before anything on disk
+     * has been touched, so a record that cannot be serialised costs a log line rather than
+     * the database.
+     *
+     * LOCKED. The three callers - the thirty-second tick, the disconnect path and the
+     * destructor - are all on the game thread today, but a shutdown racing a tick would
+     * interleave two serialisations into one file, and a file that is half one state and
+     * half another is corrupt in a way that reads as valid JSON. The mutex is uncontended
+     * on the normal path and removes the whole class.
+     *
+     * m_dirty is cleared ONLY on success. A failed write leaves the store dirty so the next
+     * tick tries again, rather than silently believing it has been saved.
+     */
     void Flush()
     {
         if (!m_dirty || m_path.empty())
             return;
 
+        std::lock_guard<std::mutex> lock(m_writeMutex);
+
+        // Re-checked under the lock: another caller may have written it while we waited.
+        if (!m_dirty)
+            return;
+
+        std::string payload;
+
         try
         {
-            std::filesystem::create_directories(m_path.parent_path());
-
-            std::ofstream file(m_path);
-            file << nlohmann::json(m_records).dump(2);
-
-            m_dirty = false;
+            payload = nlohmann::json(m_records).dump(2);
         }
         catch (const std::exception& e)
         {
-            spdlog::error("Could not write {}: {}", m_path.string(), e.what());
+            spdlog::error("Could not serialise {}: {}. The file on disk is UNCHANGED and still "
+                          "valid; nothing was written.",
+                          m_path.string(), e.what());
+            return;
         }
+
+        std::string reason;
+
+        if (!AtomicWrite::Replace(m_path, payload, &reason))
+        {
+            spdlog::error("Could not write {}: {}. The previous file is intact - it will be "
+                          "retried on the next save.",
+                          m_path.string(), reason);
+            return;
+        }
+
+        // Non-fatal detail from a successful write - a backup that could not be taken.
+        if (!reason.empty())
+            spdlog::warn("{}: {}", m_path.string(), reason);
+
+        m_dirty = false;
     }
 
 private:
@@ -1090,36 +1291,97 @@ private:
 
         // Items first, so a failure on the last stack does not leave money already moved
         // in this copy - it costs nothing and keeps the failure shape uniform.
+        /*
+         * Through Economy::RemoveItem. Same rules, one implementation.
+         *
+         * RemoveItem erases an emptied stack as it goes, where this loop used to sweep them
+         * afterwards. The outcome is identical - a zero-quantity stack is not a holding
+         * either way - and doing it inside the primitive means every caller gets it rather
+         * than every caller having to remember the sweep.
+         *
+         * The distinct reasons are preserved because callers and tests read them: a zero
+         * quantity is a malformed offer, a missing or too-small stack is not.
+         */
         for (const auto& offered : acOffer.Items)
         {
-            if (offered.Quantity == 0)
+            const auto taken = Economy::RemoveItem(aFrom, offered.Id, offered.Quantity);
+
+            if (taken == Economy::Result::Success)
+                continue;
+
+            if (taken == Economy::Result::InvalidAmount)
                 return fail("zero_quantity");
 
-            auto* pStack = FindStack(aFrom, offered.Id);
+            if (taken == Economy::Result::InvalidItem)
+                return fail("insufficient_items");   // id 0 is not something anybody holds
 
-            if (!pStack || pStack->Quantity < offered.Quantity)
-                return fail("insufficient_items");
-
-            pStack->Quantity -= offered.Quantity;
+            return fail("insufficient_items");
         }
 
-        // Erase what is now empty. A zero-quantity stack is not a holding, and leaving one
-        // behind makes "do they have any" answer yes forever.
-        aFrom.Inventory.erase(std::remove_if(aFrom.Inventory.begin(), aFrom.Inventory.end(),
-                                             [](const CharacterRecord::ItemStack& acStack)
-                                             { return acStack.Quantity == 0; }),
-                              aFrom.Inventory.end());
-
+        /*
+         * OVERFLOW IS CHECKED ON THE WAY IN, not hoped away.
+         *
+         * The brief's section 17 lists integer overflow among the duplication exploits to
+         * defend against, and until now neither add was guarded. Quantity is uint32_t and
+         * Money is int64_t, so a large enough receiving side wraps: a stack of 4.29 billion
+         * plus ten becomes nine, and the difference is not moved anywhere - it is destroyed.
+         * The same arithmetic run the other way mints value out of nothing.
+         *
+         * WHY IT IS REACHABLE AT ALL, which is the part worth writing down. The offer itself
+         * is bounded - a sender cannot offer more than they hold, checked above. But what
+         * they HOLD arrives from SaveCharacterRequest, which is the client reporting its own
+         * inventory, so a hostile client can claim to be carrying four billion of something.
+         * Section 24 is explicit that every client is assumed malicious; that makes this a
+         * live path rather than a theoretical one.
+         *
+         * Refusing is right rather than clamping. A clamp silently changes the trade both
+         * players agreed to, and "you now have fewer than we said" is a support ticket
+         * nobody can reconstruct. ApplyTrade validates on copies, so a refusal here leaves
+         * both records exactly as they were.
+         */
+        /*
+         * Through Economy::AddItem rather than by hand - the merge-or-create and the uint32
+         * overflow guard now live in one place instead of being restated here.
+         *
+         * Semantics are unchanged: AddItem merges into the first matching stack or creates
+         * one, exactly as this loop did, and refuses a wrap rather than clamping. The
+         * duplicate-stack quirk (first match wins) is preserved deliberately - see the note
+         * on Economy::FindStack.
+         */
         for (const auto& offered : acOffer.Items)
         {
-            if (auto* pStack = FindStack(aTo, offered.Id))
-                pStack->Quantity += offered.Quantity;
-            else
-                aTo.Inventory.push_back({offered.Id, offered.Quantity});
+            if (Economy::AddItem(aTo, offered.Id, offered.Quantity) != Economy::Result::Success)
+                return fail("quantity_overflow");
         }
 
-        aFrom.Money -= acOffer.Money;
-        aTo.Money += acOffer.Money;
+        /*
+         * MONEY THROUGH Economy::Transfer, and this DOES change one thing - deliberately,
+         * and it is the reason this is worth a paragraph.
+         *
+         * The old code checked only for an int64 wrap. Transfer also refuses a result above
+         * kMaxPlausibleMoney, the same ceiling the save path and the migration use. So a
+         * trade that would push somebody past a billion eddies now fails where it used to
+         * succeed.
+         *
+         * That is a fix rather than a regression. Without it, trade could produce a balance
+         * that HandleSaveCharacterRequest then refuses on the next save - so the money would
+         * appear, then silently revert, and the player would report losing it with nothing
+         * in the log explaining why. One ceiling, enforced everywhere, is the only version
+         * of this that does not produce that.
+         *
+         * A zero-money trade is common - most trades are items only - so it is skipped
+         * rather than passed to Transfer, which correctly treats a zero amount as invalid.
+         */
+        if (acOffer.Money > 0)
+        {
+            const auto moved = Economy::Transfer(aFrom, aTo, acOffer.Money);
+
+            if (moved == Economy::Result::InsufficientFunds)
+                return fail("insufficient_funds");
+
+            if (moved != Economy::Result::Success)
+                return fail("money_overflow");
+        }
 
         return true;
     }
@@ -1160,5 +1422,26 @@ private:
 
     std::vector<PlayerRecord> m_records;
     std::filesystem::path m_path;
+    // Every character on the account, live and retired, as const pointers for Inspect.
+    // Retired ones are included deliberately: a restored character must not come back with
+    // an unmigrated economy, which would be a second opening balance long after the line.
+    static std::vector<const CharacterRecord*> GatherCharacters(const std::vector<PlayerRecord>& acRecords)
+    {
+        std::vector<const CharacterRecord*> all;
+
+        for (const auto& record : acRecords)
+        {
+            for (const auto* pList : {&record.Characters, &record.RetiredCharacters})
+            {
+                for (const auto& character : *pList)
+                    all.push_back(&character);
+            }
+        }
+
+        return all;
+    }
+
+    // Serialises Flush. Uncontended on the normal path; see Flush.
+    mutable std::mutex m_writeMutex;
     bool m_dirty{false};
 };

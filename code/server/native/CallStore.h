@@ -1,5 +1,7 @@
 #pragma once
 
+#include "AtomicWrite.h"
+
 /**
  * Player-to-player phone calls, owned by the server.
  *
@@ -59,6 +61,7 @@
 #include <random>
 
 #include <nlohmann/json.hpp>
+#include <utility>
 
 /**
  * How long a phone rings before it is a missed call, in seconds.
@@ -443,10 +446,15 @@ public:
 
         try
         {
-            std::filesystem::create_directories(m_path.parent_path());
+            std::string reason;
 
-            std::ofstream file(m_path);
-            file << nlohmann::json(m_history).dump(2);
+            // Atomic - see AtomicWrite. Dirty stays set on failure so it is retried.
+            if (!AtomicWrite::Replace(m_path, nlohmann::json(m_history).dump(2), &reason))
+            {
+                spdlog::error("Could not write {}: {}. The previous file is intact.",
+                              m_path.string(), reason);
+                return;
+            }
 
             m_dirty = false;
         }

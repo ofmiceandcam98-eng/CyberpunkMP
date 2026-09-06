@@ -16,6 +16,8 @@
 #include "Scripting/RpcScriptInstance.h"
 
 #include "PlayerManager.h"
+#include <thread>
+#include <utility>
 
 
 using nlohmann::json;
@@ -156,6 +158,21 @@ GameServer::GameServer()
 
 GameServer::~GameServer()
 {
+    /*
+     * Last write before the process goes.
+     *
+     * Both stores are debounced - positions on a thirty-second timer, messages on a
+     * two-second one - so at shutdown each may be holding changes that have not reached
+     * disk. Nothing else was flushing them: a clean stop silently discarded up to half a
+     * minute of positions and a couple of seconds of texts, and the only symptom would be
+     * somebody insisting they sent a message that is not there.
+     *
+     * Forced rather than FlushIfDue, because there is no later tick to rely on. Both are
+     * no-ops when nothing is dirty, so a stop with nothing outstanding costs nothing.
+     */
+    m_messages.Flush();
+    m_players.Flush();
+
     GServer = nullptr;
 }
 
@@ -183,10 +200,82 @@ void GameServer::OnUpdate()
     ReportPlayerConnections(now);
     ReverifyPlayers(now);
     SavePlayerPositions(now);
+    ReplicatePendingMovement(now);
+
     EnforceJail(now);
     ExpireCalls(now);
 
+    // The debounced message write. Send() only marks the store dirty now, so this is what
+    // actually gets a text onto disk - at most once every couple of seconds no matter how
+    // fast anybody types. Before this, one message rewrote every conversation on the
+    // server, which is a full disk write bought with a single client packet.
+    m_messages.FlushIfDue();
+
+    // Drop request ids past their TTL. The ledger is capped on insert as well, so this is
+    // the slow-trickle half: without it a quiet server would accumulate entries for hours
+    // that no retry will ever ask about.
+    m_messages.Requests().Expire();
+
     m_pWorld->Update(std::chrono::duration_cast<std::chrono::duration<float>>(delta).count());
+}
+
+/**
+ * Send one movement update per moved entity per tick, instead of one per packet received.
+ *
+ * WHAT IT REPLACES. Movement replication is an observer on flecs::OnSet, and the handler
+ * sets the component once per accepted packet - so ONE movement packet ran a walk of every
+ * player on the server with a distance test and a send for each one in range. At 1000
+ * packets a second against 32 players that is ~32,000 relevance checks a second, from one
+ * connection, using entirely valid packets. The client's own send rate multiplied the
+ * server's fan-out.
+ *
+ * WHY NOT A RATE LIMIT. Movement is legitimately high-frequency and dropping packets
+ * produces rubber-banding - a fix more visible than the bug. This is STATE replication, not
+ * event replication: if five packets arrive between ticks only the fifth describes where
+ * anybody is, so the four before it were never going to be seen. Coalesce, do not reject.
+ *
+ * THE RATE IS NOT INVENTED. UpdateRate already exists in the config, defaults to 30, and is
+ * already sent to clients as the rate to transmit at - it was simply never used by the
+ * server for anything. Replicating at the same 30Hz means a compliant client sees exactly
+ * the update cadence it sees today; only bunched or flooded packets collapse.
+ *
+ * COST MODEL:
+ *      before   packets/sec x players            (unbounded in the client's send rate)
+ *      after    min(packets, UpdateRate) x players
+ *
+ * OFF BY DEFAULT. Changing replication cadence can introduce jitter in ways no unit test
+ * can see. The flag exists so this can be turned on for a two-client test and compared
+ * against current behaviour, rather than shipping as a silent difference.
+ */
+void GameServer::ReplicatePendingMovement(std::chrono::steady_clock::time_point aNow)
+{
+    if (!m_config.CoalesceMovement)
+        return;   // observer is still replicating per packet - nothing pending to drain
+
+    // Guard against a config of 0, which would divide by zero and, read as "no delay",
+    // would replicate every frame - the opposite of the point.
+    const auto rate = m_config.UpdateRate > 0 ? m_config.UpdateRate : 30;
+    const auto interval = std::chrono::milliseconds(1000 / rate);
+
+    if (aNow - m_lastMovementReplication < interval)
+        return;
+
+    m_lastMovementReplication = aNow;
+
+    /*
+     * Only entities with something new. ReplicateMovementComponent clears the flag itself,
+     * so an entity that has not moved since its last update is skipped entirely - a
+     * stationary server does no replication work at all, which is the same property the
+     * per-packet version had for free.
+     */
+    m_pWorld->get_world().each(
+        [](flecs::entity aEntity, MovementComponent& aMovement)
+        {
+            if (!aMovement.ReplicationPending)
+                return;
+
+            ReplicateMovementComponent(aEntity, aMovement);
+        });
 }
 
 void GameServer::SavePlayerPositions(std::chrono::steady_clock::time_point aNow)

@@ -25,9 +25,25 @@ Set-StrictMode -Off
 
 # git, not $PSScriptRoot\.. - so this is correct when called from a worktree or a
 # subdirectory, and fails loudly outside a checkout rather than guessing.
-$script:Repo = (& git rev-parse --show-toplevel 2>$null)
+#
+# BUT ASKED ABOUT THE SCRIPT'S OWN LOCATION, NOT THE SHELL'S.
+#
+# `git rev-parse --show-toplevel` answers for the CURRENT DIRECTORY. With one checkout that
+# is the same answer either way, which is why this went unnoticed. With two checkouts of
+# this project on one machine - and there are two - it means the tooling audits whichever
+# repository the shell happens to be standing in, not the one the tooling belongs to.
+#
+# That is not theoretical. Verify.ps1 was run from this checkout while the shell sat in the
+# other one, and it reported SEVEN portability failures in files nobody had touched: it was
+# faithfully auditing the stale checkout, which does not have the 34 GCC include fixes from
+# 75d6ece. A false failure that reads as a real regression is expensive at any time and
+# especially so during a deployment window.
+#
+# `git -C` keeps every property the original had - worktrees resolve correctly, a
+# non-checkout still throws - and only changes WHICH directory the question is about.
+$script:Repo = (& git -C $PSScriptRoot rev-parse --show-toplevel 2>$null)
 if (-not $script:Repo) {
-    throw "Not inside a git checkout. Run this from the repository."
+    throw "Not inside a git checkout: $PSScriptRoot is not in one. The tooling resolves the repository from its OWN location, not the current directory."
 }
 $script:Repo = (Resolve-Path $script:Repo).Path
 

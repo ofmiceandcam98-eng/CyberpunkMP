@@ -66,6 +66,11 @@
 #include <random>
 
 #include <nlohmann/json.hpp>
+#include <cstddef>
+#include <utility>
+
+#include "AtomicWrite.h"
+#include "RequestLedger.h"   // idempotent sends - a retry must not create a second message
 
 /**
  * How many messages a single conversation keeps.
@@ -216,10 +221,25 @@ public:
      * than one caller - a chat command today, a phone app later - and a rule enforced at
      * one surface is a rule the other one gets to break.
      */
+    /**
+     * `acRequestId` makes sending idempotent - a retry returns the original message id
+     * instead of creating a second message.
+     *
+     * OPTIONAL, and empty means "this caller has no id", which behaves exactly as before.
+     * That matters: the only phone path today is the /text command over the reliable chat
+     * channel, which has no request id to offer, and treating an empty id as a key would
+     * make every idless send collide with every other one - the second text anybody sent
+     * would silently return the first one's id and never be written.
+     *
+     * The id is supplied by the CLIENT, and that is safe because the ledger is keyed on the
+     * authenticated sender as well: one player cannot replay another player's id, and the
+     * worst a client can do with its own is decline to have its own retries deduplicated.
+     */
     std::string Send(const std::string& acFromCharacterId,
                      const std::string& acToCharacterId,
                      const std::string& acBody,
-                     std::string* apReason = nullptr)
+                     std::string* apReason = nullptr,
+                     const std::string& acRequestId = {})
     {
         const auto fail = [apReason](const char* acpWhy) -> std::string
         {
@@ -227,6 +247,11 @@ public:
                 *apReason = acpWhy;
             return {};
         };
+
+        // Answered before anything is validated, parsed or written. A retry must be cheap
+        // as well as safe - re-running the work and then discarding it would be neither.
+        if (const auto* pAlready = m_requests.Find(acFromCharacterId, acRequestId))
+            return *pAlready;
 
         if (!m_readable)
             return fail("store_unreadable");
@@ -270,14 +295,24 @@ public:
                                             static_cast<std::ptrdiff_t>(excess));
         }
 
+        // Marked, not written. The write is debounced - see FlushIfDue. Flushing here meant
+        // one text re-serialised every conversation on the server and rewrote the whole
+        // file, which is a full disk write bought with a single client packet.
         m_dirty = true;
-        Flush();
 
         if (apReason)
             apReason->clear();
 
+        // Recorded only on SUCCESS. A refused send must stay refused on retry - remembering
+        // a failure would turn "you had no eddies" or "that number is blocked" into a
+        // permanent verdict that outlives the reason for it.
+        m_requests.Record(acFromCharacterId, acRequestId, message.MessageId);
+
         return message.MessageId;
     }
+
+    // Expiry runs from the server tick, not on lookup - see RequestLedger.
+    RequestLedger& Requests() { return m_requests; }
 
     /**
      * Everything owed to this character, oldest first.
@@ -363,8 +398,10 @@ public:
 
         if (changed)
         {
+            // Debounced like Send. Losing this flag to a crash is the safe direction: an
+            // undelivered message is simply delivered again next time, which is why it is
+            // set only after every line has reached the connection.
             m_dirty = true;
-            Flush();
         }
     }
 
@@ -456,6 +493,51 @@ public:
         return Undelivered(acCharacterId).size();
     }
 
+    /**
+     * Write if enough time has passed. Called from the server tick.
+     *
+     * WHY THIS EXISTS - disk write amplification.
+     *
+     * Send() and the delivery marker used to call Flush() directly, which meant ONE text
+     * message re-serialised EVERY conversation on the server to pretty-printed JSON and
+     * rewrote the whole file. One client packet, one full write of the entire message
+     * history - and the cost grows with that history, so it is cheapest on the day you test
+     * it and worst on the day it matters.
+     *
+     * Debounced instead, the same way PlayerStore's positions are: mutations only mark the
+     * store dirty, and the write happens on a timer. Under a flood the disk sees one write
+     * per interval instead of one per message, and normal texting is unaffected because
+     * nobody types faster than the interval anyway.
+     *
+     * TWO SECONDS, not the thirty PlayerStore uses. A lost position is re-derived from where
+     * the player actually is a moment later; a lost message is gone and the sender believes
+     * it was sent. Two seconds bounds the damage to something no one would notice while
+     * still cutting the flood case by orders of magnitude.
+     *
+     * Losing the DELIVERED flag on a crash is the safe direction and always was: an
+     * undelivered message is simply delivered again next time, which is why the marker is
+     * set only after every line has reached the connection.
+     */
+    void FlushIfDue()
+    {
+        if (!m_dirty)
+            return;
+
+        constexpr int64_t kFlushIntervalSeconds = 2;
+
+        const auto now = Now();
+
+        if (now - m_lastFlushAt < kFlushIntervalSeconds)
+            return;
+
+        m_lastFlushAt = now;
+        Flush();
+    }
+
+    /**
+     * Write now, regardless of the timer. For disconnect and shutdown, where there is no
+     * later tick to rely on.
+     */
     void Flush()
     {
         if (!m_dirty || m_path.empty() || !m_readable)
@@ -463,10 +545,17 @@ public:
 
         try
         {
-            std::filesystem::create_directories(m_path.parent_path());
+            std::string reason;
 
-            std::ofstream file(m_path);
-            file << nlohmann::json(m_conversations).dump(2);
+            // Atomic. The live file is never truncated and a failure leaves the previous
+            // contents complete - see AtomicWrite. m_dirty stays set on failure, so the
+            // next tick retries rather than believing it has saved.
+            if (!AtomicWrite::Replace(m_path, nlohmann::json(m_conversations).dump(2), &reason))
+            {
+                spdlog::error("Could not write {}: {}. The previous file is intact.",
+                              m_path.string(), reason);
+                return;
+            }
 
             m_dirty = false;
         }
@@ -537,6 +626,11 @@ private:
 
     std::vector<Conversation> m_conversations;
     std::filesystem::path m_path;
+    // Idempotency for sends. Bounded and expiring - see RequestLedger.
+    RequestLedger m_requests;
+
+    // When the debounced write last happened - see FlushIfDue.
+    int64_t m_lastFlushAt{0};
     bool m_dirty{false};
 
     // Cleared by a failed load, and never set again for the life of the process.
