@@ -199,6 +199,37 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   misdiagnosed as a `MessageStore` bug.
 
 ### Needs a live session (built, never validated with humans)
+- **FIELD SESSION 2026-09-06 (zeldfep, test box, `test.19`): "empty map", then "put into a BOX
+  AGAIN". Both diagnosed, both ALREADY FIXED IN HEAD, neither fix is in `test.19`.**
+  - **The BOX is `8401ec3`, whose commit message names it: "spawn: recover from fall-through
+    instead of looping in a box".** The teleport lands before the destination is
+    collision-ready, the player drops through the floor, and the game's OWN out-of-bounds
+    recovery parks them in a holding volume. Nothing puts them back, so it loops — fall,
+    recover, fall. Escape is luck: a reconnect that happens to land after streaming caught up,
+    which is exactly what zeldfep described ("disconnected -> reconnected and now im in
+    world"). The fix arms a watchdog 1.5s after the teleport and re-places up to 3 times;
+    guards spawn AND respawn because both come through `DoTeleport`.
+  - **THE SERVER WAS INNOCENT and the log proves it** — `New arrival zeldfep placed at the
+    start point (-1720.4, -1956.6, 62.4)` fired on EVERY new-character connect (17:41:41,
+    17:44:45). Do not chase the arrivals point for this symptom.
+  - **"Empty map" is the same root one step earlier**: the world loaded is the template, with
+    every quest fact at zero (`ep1_active=0`, `q304_block_dogtown_gate=0`,
+    `ow_combat_zone_mini_world_stories=0`, `holo_setup_active=1`). Proven outright by
+    `[MONEY] 4 restore: first spawn, stripped 121694 template eddies` — the player was
+    briefly holding the template character's balance. `#q000_spwn_start` is a HOLDING ROOM by
+    design (see the clean-start row); the server's arrival teleport is what is supposed to
+    move you out of it.
+  - **`MpLoadOwnCharacterSave` produced NO log lines in either session** — zero `[OwnSave]`
+    entries across both. Worth knowing before anyone reads fault A's fix as "the template
+    load is new": on `test.19` the client is already landing in the template without that
+    code having run at all. `9d4daea` makes the choice deliberate rather than accidental; it
+    does not introduce it.
+  - Also seen, not chased: **21 C++ exceptions at one address during world attach**
+    (`0x00007FFE6FA2187A`, several threads, 17:38:23-17:38:48), and
+    `[error] [Character] no customization state to save` twice. Neither stopped the session.
+  - **Pause menu: zeldfep had NO menus available and closed the game from the taskbar.** That
+    is the best-effort unpause row below, still unconfirmed, and this is a second sighting.
+
 - **Pause menu unpause is BEST-EFFORT, 2026-09-04.** The menu opens again (an inline
   `UnpauseGame()` in `OnInitialize` was killing it — the `SetMenuModeEvent` is queued and
   consumed a frame later, so the unpause landed before the layer read it). The unpause is
@@ -1143,6 +1174,11 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
 ### PENDING SHIP — three things are built and reach nobody until a launcher release (2026-09-06)
 Nothing here is broken; all of it is committed, verified and inert until shipped. Ship them
 together — three separate releases for one evening's work is how release notes stop being read.
+- **Fall-through recovery** (`8401ec3`) — **the BOX.** Hit live on 2026-09-06 and it is
+  the most player-visible thing in this bundle: a new character loops fall/recover/fall in a
+  holding volume until a reconnect happens to land right. Not in `test.19`.
+- **Section rail** (`a9a9c94`) — the settings scrollbar replaced by arrows, per zeldfep
+  ("I dont want scroll bar"). Built 2026-09-04, never shipped.
 - **Fault A redscript** (`9d4daea`) — `OwnSave` loads the world template always.
   COMPILE-CHECKED against a real 2.31 install. Client-side, so a release is the only route.
 - **Dev-panel text** (`eff8701`) — new test address, and it no longer claims deploys come from
