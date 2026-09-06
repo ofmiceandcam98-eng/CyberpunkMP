@@ -79,8 +79,12 @@ contextBridge.exposeInMainWorld('launcher', {
   startCoord: () => ipcRenderer.invoke('coord:start'),
   stopCoord: () => ipcRenderer.invoke('coord:stop'),
 
-  // Opens the invite to Cam's tailnet in the real browser.
+  // Opens the invite to the server's network in the real browser.
   openTailscaleInvite: () => ipcRenderer.invoke('tailscale:invite'),
+
+  // Same, for the test deployment. It is a separate tailnet node, so it needs its own
+  // device share - one share cannot cover two devices.
+  openTailscaleTestInvite: () => ipcRenderer.invoke('tailscale:test-invite'),
 
   // The curated Nexus mod list, and the Nexus account used to fetch from it.
   // The API key is never handed to the page - only whether one is stored, and the name.

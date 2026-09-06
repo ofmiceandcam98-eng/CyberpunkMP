@@ -1240,6 +1240,20 @@
             </div>
           </div>
 
+          <!-- The test deployment is its own tailnet node, so it needs its own device
+               share - a share is bound to one device id and cannot cover both servers.
+               Accepting the main one does not get you onto this. -->
+          <div class="tool">
+            <div style="min-width:0">
+              <div class="tool-name">Join the test server's network</div>
+              <div class="tool-desc">
+                Separate from the main invite - accepting that one does not get you here.
+                You need this once before the test server can reach you.
+              </div>
+            </div>
+            <button class="action ghost" id="openTailscaleTestInvite">Open invite</button>
+          </div>
+
           <div class="tool">
             <div style="min-width:0;flex:1">
               <div class="tool-name">Test builds</div>
@@ -2627,6 +2641,12 @@
     const result = await window.launcher.openTailscaleInvite()
     if (!result.ok) setSettingsStatus(result.error, 'bad')
     else setSettingsStatus('Invite opened in your browser.', 'good')
+  })
+
+  $('openTailscaleTestInvite').addEventListener('click', async () => {
+    const result = await window.launcher.openTailscaleTestInvite()
+    if (!result.ok) setSettingsStatus(result.error, 'bad')
+    else setSettingsStatus('Test-server invite opened in your browser.', 'good')
   })
 
   // Server override. The inputs always show what is actually saved, not what was last

@@ -5481,6 +5481,28 @@ ipcMain.handle('tailscale:invite', async () => {
   return { ok: true }
 })
 
+/*
+ * The same thing for the TEST server, which is a separate tailnet node and therefore a
+ * separate device share - a share is bound to one device id and cannot cover both.
+ *
+ * Its button lives in the DEV panel, which is already hidden unless the published role map
+ * says this account is an admin. That is the same courtesy-not-a-wall caveat as above: the
+ * field is in a public release asset either way.
+ *
+ * Absent field is a normal state, not an error - there is not always a test deployment
+ * standing, and the message says which link is missing so it cannot be confused with the
+ * main one.
+ */
+ipcMain.handle('tailscale:test-invite', async () => {
+  const published = await fetchPublishedServer()
+  const invite = published?.tailscaleTestInvite
+
+  if (!invite) return { ok: false, error: 'No test-server invite is published yet.' }
+
+  await shell.openExternal(invite)
+  return { ok: true }
+})
+
 // ---------------------------------------------------------------------------
 // The dev key
 //
