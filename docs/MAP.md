@@ -836,6 +836,31 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   at character creation. NEXT: make a character, watch `settlement: armed` -> `INITIALIZED`,
   then buy something, reconnect, confirm it survived.
 
+- **MONEY: the instrument finally produced data, 2026-09-06, and it says RECORDED AND
+  OVERWRITTEN — not "never recorded".** The map had said for weeks that the four `[MONEY]`
+  boundaries postdated every session in the logs and that one live session would decide which
+  fix to write. This is that session, on the test box, `v0.3.114-worldstate-test.19`.
+  - Measured, in order, one character created and immediately reconnected:
+    ```
+    17:39:16  [MONEY] 3 received: client says 300, server had 0,     delta 300
+    17:39:16  [StarterKit] zeldfep - character 'zeldfep', streetkid, 20000 eddies
+    17:39:16  zeldfep stored 21 item stack(s) and 300 eddies
+    17:40:35  [MONEY] 3 received: client says 300, server had 20000, delta -19700
+    17:41:41  zeldfep spawns with 21 stored item stack(s) and 300 eddies
+    ```
+  - **The client reports 300 every time, and 300 is what the game actually holds.** The server
+    grants 20000 into its OWN record; the game never sees it. The next capture truthfully
+    reports the real in-game balance and the server overwrites its 20000 with 300.
+  - **So the bug is not persistence and not the capture. The GRANT is fictional.**
+    `StarterKit`'s 20000 is a number written to the server record that never becomes in-game
+    eddies, and every honest capture afterwards erases it. Chasing "money does not save" was
+    chasing the symptom - the record saves perfectly, it just saves the truth.
+  - **Only boundary 3 (`received`) ever fires.** 1, 2 and 4 produced nothing across the whole
+    session, so the chain is instrumented at one point in practice. Worth fixing before the
+    next money investigation, or the same blind spot repeats.
+  - CONFIDENCE: two data points, one session, one player. The delta is exact and the mechanism
+    is consistent, but it wants a second session before anyone rewrites the economy on it.
+
 - **Money does not persist — but the restore no longer CONFISCATES earned money (`f53e4df`,
   untested live).** The 2026-08-28 observation stands: 84 eddies picked up; every subsequent
   capture read exactly `20000` — nothing decayed, a gain never entered the record.
