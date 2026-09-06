@@ -233,6 +233,20 @@ struct Config : IConfig
     // nothing next to what the connection already carries.
     uint16_t UpdateRate{30};
     std::string Password{};
+
+    // Public server-list endpoint. EMPTY MEANS DO NOT ANNOUNCE, and empty is the default.
+    //
+    // This used to be hardcoded to https://cyberpunk.skyrim-together.com - upstream Tilted
+    // Phoques' master server. That subdomain HAS NO DNS RECORD (verified 2026-09-06 from
+    // the NAS and from inside the container; the parent skyrim-together.com still resolves,
+    // so the subdomain was retired). Every server has therefore been announcing into
+    // nothing once a minute, logging an error each time, since whenever they pulled it.
+    //
+    // We do not use that list anyway: discovery is publish/server.json, which every
+    // launcher fetches from releases/latest. So the default is off - it announces only if
+    // somebody deliberately points it at a list that exists.
+    std::string ServerListEndpoint{};
+
     FlecsConfig Flecs{};
     DiscordConfig Discord{};
 
@@ -248,8 +262,9 @@ struct Config : IConfig
     uint16_t GetTickRate() const override { return TickRate; }
     uint16_t GetUpdateRate() const override { return UpdateRate; }
     const char* GetPassword() const { return Password.c_str(); }
+    const char* GetServerListEndpoint() const { return ServerListEndpoint.c_str(); }
     const FlecsConfig& GetFlecsConfig() const { return Flecs; }
     const DiscordConfig& GetDiscordConfig() const { return Discord; }
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(Config, Name, Description, IconUrl, MaxPlayer, Tags, TickRate, UpdateRate, Public, Port, Password, ApiKey, Flecs, Discord)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(Config, Name, Description, IconUrl, MaxPlayer, Tags, TickRate, UpdateRate, Public, Port, Password, ApiKey, ServerListEndpoint, Flecs, Discord)
 };

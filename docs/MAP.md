@@ -1077,12 +1077,27 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   and the map's advice stands: do it once most players are on v0.3.114, because the gate
   refuses mismatched installs at the door.
 
-- **The live server cannot reach the server list.** `Server could not reach the server list!
-  Could not establish connection`, logged EVERY 60 SECONDS, continuously (observed
-  2026-09-04 across a 3-hour-old container). Direct joins are unaffected, so this is public
-  DISCOVERY being dead rather than the server being down - which is exactly why it has gone
-  unnoticed. Not yet diagnosed: whether the list host is gone, moved, or unreachable from
-  inside the tailscale sidecar's netns.
+- **Server list: DIAGNOSED AND FIXED 2026-09-06. It was also a REMOTE KILL SWITCH.**
+  - Symptom: `Server could not reach the server list! Could not establish connection`, every
+    60s, both deployments — live for hours, and 1s after boot on a clean rebuild of the test
+    box, which is what proved it systemic rather than a stale binary.
+  - Cause, VERIFIED: `ServerListSystem.cpp` hardcoded
+    `https://cyberpunk.skyrim-together.com` — upstream Tilted Phoques' master server.
+    **That subdomain has NO DNS RECORD** (`getent hosts` from the NAS *and* from inside
+    `cyberpunkmp-server`); parent `skyrim-together.com` still resolves to Cloudflare, so it
+    was RETIRED, not broken. Nothing was ever wrong on our side.
+  - **The real find: `if (response->status == 403) GServer->Kill();`** — a third party we
+    forked away from could shut down every server this project runs. Inert only because the
+    DNS is gone; a re-pointed, re-registered or squatted subdomain kills every deployment at
+    once, and during a migration that reads as the migration failing.
+  - Fixed: endpoint is `Config::ServerListEndpoint`, **default EMPTY = do not announce**
+    (checked before the thread spawns, so no detached thread per minute and one info line
+    instead of an error forever). A 403 now sets `m_refused` and STOPS announcing — a list
+    refusing us is a reason to leave that list, never to disconnect people who are playing.
+    `m_refused`/`m_announcedDisabled` are `std::atomic` because the announce runs on a
+    detached thread (this project has already lost a day to a "cannot happen" data race).
+  - Discovery never depended on it: `publish/server.json`, fetched from `releases/latest`.
+  - **Do not re-point this at a public list without deciding what a 403 should mean.**
 
 - **Live server runs feat-built code while `main` lags** — the cron half is FIXED: the NAS
   cron now pulls `origin/feat/world-state` (remote `ofmiceandcam98-eng`, confirmed live
