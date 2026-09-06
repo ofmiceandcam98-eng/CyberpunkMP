@@ -42,8 +42,25 @@ $backups = Join-Path $repo 'backups'
 # Files worth keeping, in the order they matter.
 $files = @('players.json', 'respawn.json', 'startpoint.json', 'worldstate.json', 'server.json')
 
-$nasUser = 'truenas_admin'
-$nasHost = '100.90.85.33'
+# The account and host are NOT in this file, because the repository is public and naming
+# them hands anyone with a foothold a free step. They come from ship.local.ps1 (gitignored,
+# beside the other machine-local settings) or from the environment.
+#
+# Failing loudly beats defaulting: a backup script that silently targets the wrong box
+# writes nothing anywhere useful and says it succeeded.
+. (Join-Path $PSScriptRoot 'Environment.ps1')
+
+$nasUser = if ($env:NCO_NAS_USER) { $env:NCO_NAS_USER } else { $script:NasUser }
+$nasHost = if ($env:NCO_NAS_HOST) { $env:NCO_NAS_HOST } else { $script:NasHost }
+
+if (-not $nasUser -or -not $nasHost) {
+    Write-Host "No backup target configured." -ForegroundColor Red
+    Write-Host "  Set `$NasUser and `$NasHost in tools\ship.local.ps1, or NCO_NAS_USER and" -ForegroundColor Yellow
+    Write-Host "  NCO_NAS_HOST in the environment. Real values are NOT in this repo - see" -ForegroundColor Yellow
+    Write-Host "  docs\deploy\ADDRESSES.example.md." -ForegroundColor Yellow
+    exit 1
+}
+
 $nasPath = '/mnt/vol/projects/nco-backups'
 $sshKey  = Join-Path $env:USERPROFILE '.ssh\nco_nas'
 

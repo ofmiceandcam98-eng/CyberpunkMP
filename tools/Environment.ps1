@@ -81,6 +81,14 @@ foreach ($remote in @('fork', 'origin')) {
 
 # --- machine-specific -------------------------------------------------------
 
+# Backup target. Deliberately EMPTY here and set in ship.local.ps1, which is gitignored:
+# this repository is public, and naming the account and host of the box that holds every
+# secret is the one step an attacker with a foothold would otherwise have to work for.
+# See docs/deploy/ADDRESSES.example.md.
+$script:NasUser = $null
+$script:NasHost = $null
+
+
 $script:GameDir = $null
 
 $localConfig = Join-Path $PSScriptRoot "ship.local.ps1"

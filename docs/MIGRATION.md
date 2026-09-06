@@ -160,7 +160,7 @@ Tick as you go. Anything unticked is not done, however sure anyone feels.
 - [x] Docker installed from the official repo (not `docker.io` - BuildKit needed for the xmake cache mount)
 - [x] **`Docker Root Dir: /mnt/vol/docker`** and `/var/lib/docker` absent
 - [x] `zeldfep` in the `docker` group
-- [x] Tailscale up, host node `100.74.122.79`
+- [x] Tailscale up, host node `<server-host>`
 - [x] SSH key authorised for the assistant
 
 ### Code and state
@@ -179,11 +179,11 @@ Tick as you go. Anything unticked is not done, however sure anyone feels.
 ### Bring-up — IN PROGRESS
 - [x] Live: `docker compose up -d --build` completes (full native compile, 10-15 min)
 - [x] Live: status endpoint answers `State: running` via the sidecar netns
-- [x] Live: **new tailnet address recorded** (replaces `100.80.243.29`)
+- [x] Live: **new tailnet address recorded** (replaces `<old-live-server>`)
 - [ ] Live: a returning character logs `has character '<name>' (played)`, NOT `never spawned`
 - [x] coord-api container up; `GET /health` answers; posting works again
 - [x] Test: built and started with `-p nco-authority`
-- [x] Test: **new tailnet address recorded** (replaces `100.125.74.56`)
+- [x] Test: **new tailnet address recorded** (replaces `<old-test-server>`)
 - [x] Cron installed, both lines, repointed at `/mnt/vol/projects/CyberpunkMP`
 
 ### Player-facing — do LAST, only after the above is green
@@ -210,6 +210,6 @@ Tick as you go. Anything unticked is not done, however sure anyone feels.
 ### After the cutover — still open
 - [ ] Launcher `index.html` dev panel hardcodes the OLD test-server address. **Needs a ship** - `server.json` is fetched at runtime, `index.html` is baked into the launcher.
 - [ ] Sanitise internal addresses out of the public repo (18 tracked files; `publish/ASSISTANT_UPDATES.md` + `assistant-updates.json` are the ones that actually ship). Full copy to live off-git on the server. **Migration retires the old addresses anyway** - no history rewrite, force-push is forbidden.
-- [ ] `CLAUDE-HANDOFF.md` §2 claims `100.109.102.127` "is dead". It was **seen on the tailnet 2026-09-06**. Correct it.
+- [ ] `CLAUDE-HANDOFF.md` §2 claims `<a-desktop>` "is dead". It was **seen on the tailnet 2026-09-06**. Correct it.
 - [ ] Old NAS deployments: decide archive vs delete. Do not delete until the new box has served a real session.
 - [ ] `rmdir /mnt/vol/NASa` on the new box once confirmed empty.

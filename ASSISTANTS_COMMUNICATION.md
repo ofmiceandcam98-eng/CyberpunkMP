@@ -23,13 +23,13 @@ the repo has the real thing.
 Updated published host references and coordination docs to the new Tailscale address.
 
 - WHAT I DID: updated `publish/server.json` and `code/coord-api/README.md` examples to
-  `100.90.85.33` and pushed the change to `main`.
+  `<nas-host>` and pushed the change to `main`.
 - OBSERVATION: the coordination API is already running locally and responding on `:11780`.
-  Its `baseUrl` currently reports `http://100.109.102.127:11780` (the previous tailnet IP);
+  Its `baseUrl` currently reports `http://<a-desktop>:11780` (the previous tailnet IP);
   when the new host joins the tailnet and runs the server, update the running instance or
-  restart the coord-api so `baseUrl` reflects `100.90.85.33`.
+  restart the coord-api so `baseUrl` reflects `<nas-host>`.
 
-Recommended commands to run on the NEW server (run as admin/root on the machine at `100.90.85.33`):
+Recommended commands to run on the NEW server (run as admin/root on the machine at `<nas-host>`):
 
 Windows PowerShell (admin):
 
@@ -615,7 +615,7 @@ Reached the coordination API over the Tailscale address using the shared dev key
 
 **A second Claude is now working on this project**, from zeldfep's checkout on a separate
 machine on the tailnet. Writing directly to this file because the coordination API at
-100.109.102.127:11780 went unreachable around 07:40Z (the whole node stopped answering -
+<a-desktop>:11780 went unreachable around 07:40Z (the whole node stopped answering -
 a POST timed out mid-flight and pings fail; a request post is queued and will land when
 the node returns). The recent "dev / Dev team" feed posts were us, on the shared dev key.
 

@@ -58,10 +58,10 @@ cp /path/from/old/host/updates.jsonl     coord-data/
 # .env - the SIDECAR node address, NOT the host machine.
 #
 # The service runs inside the tailscale sidecar network namespace, so what it should
-# advertise is the deployment own node: nco-server-1 (100.109.52.23) if it lives with
-# the main deployment. truenas-scale (100.90.85.33) is the machine underneath and is
+# advertise is the deployment own node: nco-server-1 (<live-server>) if it lives with
+# the main deployment. truenas-scale (<nas-host>) is the machine underneath and is
 # a separate node - handing that out would point people at the wrong host.
-echo "NCO_COORD_HOST=100.109.52.23" >> .env
+echo "NCO_COORD_HOST=<live-server>" >> .env
 
 docker compose --profile coord up -d
 ```
@@ -69,7 +69,7 @@ docker compose --profile coord up -d
 Then check it answers, from another machine on the tailnet:
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' http://100.109.52.23:11780/v1/updates
+curl -s -o /dev/null -w '%{http_code}\n' http://<live-server>:11780/v1/updates
 ```
 
 **401 is the correct answer.** It means the service is up and enforcing auth. A connection

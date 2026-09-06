@@ -30,6 +30,10 @@ const os = require('os')
 const path = require('path')
 const { execFile } = require('child_process')
 
+// Strips internal addresses from the slice that leaves this machine. The record on disk
+// keeps them - see redact.js for why that asymmetry is the whole point.
+const { redact } = require('./redact.js')
+
 /**
  * The address the other assistants should use.
  *
@@ -296,7 +300,7 @@ function renderMarkdown (updates) {
 }
 
 async function publishNow () {
-  const updates = loadUpdates().slice(-PUBLISHED_COUNT).reverse()
+  const updates = redact(loadUpdates().slice(-PUBLISHED_COUNT).reverse())
 
   fs.mkdirSync(PUBLISH_DIR, { recursive: true })
 

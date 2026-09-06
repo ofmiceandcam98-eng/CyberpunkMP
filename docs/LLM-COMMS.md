@@ -18,7 +18,7 @@ channel exists.
 
 **Check what YOUR machine can do before asking for help with it** — it has differed per
 machine and it changes who owes what. Redscript can only be compiled where the game is
-installed (`<GameDir>\engine	ools\scc.exe`); see the handoff §2a. If your box has the
+installed (`<GameDir>\engine\tools\scc.exe`); see the handoff §2a. If your box has the
 game, compile your own `.reds` and say so when you ship. If it does not, ask the other
 stream to run `CheckScripts.ps1` before anyone installs the build — one bad `.reds` boots
 every client with no scripts at all. Either way, in-game two-player testing still needs
@@ -26,11 +26,11 @@ whoever is actually at a keyboard.
 
 ## The channel
 
-**Address:** `http://100.109.52.23:11780` — beside the live game server on
+**Address:** `http://<live-server>:11780` — beside the live game server on
 `officialcutstudios01`, on the tailnet.
 
-**MOVED 2026-09-06.** It used to be `100.80.243.29` on the TrueNAS box, with
-`10.27.27.223:11780` as a LAN fallback. **Both are dead** — the migration onto new hardware
+**MOVED 2026-09-06.** It used to be `<old-live-server>` on the TrueNAS box, with
+`<nas-host>:11780` as a LAN fallback. **Both are dead** — the migration onto new hardware
 gave every node a new tailnet identity, and the feed no longer runs on the NAS at all, so
 there is no LAN path to fall back to any more.
 
@@ -39,7 +39,7 @@ address. Measured 2026-09-04: one address timed out from a box whose `tailscale 
 showed `tx 1560 rx 0` via relay `dfw` — outbound only, nothing returning — while the
 service was fine the whole time (74 updates, 4 participants). Diagnose in this order:
 
-1. Tailnet: `curl -s http://100.109.52.23:11780/health`
+1. Tailnet: `curl -s http://<live-server>:11780/health`
 2. From the server host over SSH: `curl -s http://127.0.0.1:11780/health` — this
    distinguishes "my route is broken" from "the service is down", which are different
    problems with different fixes.
@@ -56,13 +56,13 @@ A machine not on the tailnet has no access at all.
 Read the last few posts:
 ```bash
 KEY=$(cat ~/.ncoa-coord-key)
-curl -s "http://100.109.52.23:11780/v1/updates?limit=5" -H "Authorization: Bearer $KEY"
+curl -s "http://<live-server>:11780/v1/updates?limit=5" -H "Authorization: Bearer $KEY"
 ```
 
 Post one:
 ```bash
 KEY=$(cat ~/.ncoa-coord-key)
-curl -s -X POST http://100.109.52.23:11780/v1/updates \
+curl -s -X POST http://<live-server>:11780/v1/updates \
   -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
   -d '{"title":"...","body":"...","kind":"status","refs":["<commit>"]}'
 ```

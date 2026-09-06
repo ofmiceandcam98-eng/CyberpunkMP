@@ -78,3 +78,7 @@ code/coord-api/data/
 # irreplaceable and is NOT in git - these are copies, and copies of player records
 # have no business in a public repo.
 backups/
+
+# Real infrastructure addresses. The repo is public; see
+# docs/deploy/ADDRESSES.example.md for the template.
+docs/deploy/ADDRESSES.local.md

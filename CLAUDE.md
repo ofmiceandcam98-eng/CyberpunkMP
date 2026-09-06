@@ -20,10 +20,10 @@ other Claude is documented in `docs/LLM-COMMS.md`.
 2. **The coordination feed** — where both streams announce ships, flag-days, pulls,
    diagnoses, and map changes. Check it before shipping or deploying; post to it when you
    do any of those.
-   - **Address**: `http://100.109.52.23:11780` (tailnet). **MOVED 2026-09-06** — it used to
-     be `100.80.243.29` on the NAS, and that address is DEAD, not relocated: the migration
+   - **Address**: `http://<live-server>:11780` (tailnet). **MOVED 2026-09-06** — it used to
+     be `<old-live-server>` on the NAS, and that address is DEAD, not relocated: the migration
      onto new hardware gave every node a new tailnet identity. The old LAN fallback
-     (`10.27.27.223`) is gone with it, because the feed no longer runs on the NAS.
+     (`<nas-host>`) is gone with it, because the feed no longer runs on the NAS.
      `GET /v1/updates?limit=N` to read, `POST /v1/updates` with
      `Authorization: Bearer <key>` to post.
    - **Two diagnosis rules that still apply.** A route can fail while the service is
