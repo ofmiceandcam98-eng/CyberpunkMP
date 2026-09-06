@@ -51,5 +51,19 @@
     "with 'cannot unmarshal object into Go value of type []controlapi.deviceInviteRequest'.",
     "Update this field and every launcher picks it up on its next start, with no ship."
   ],
-  "tailscaleInvite": "https://login.tailscale.com/admin/invite/KG5fZVrUPbCeC16SYzEd11"
+  "tailscaleInvite": "https://login.tailscale.com/admin/invite/KG5fZVrUPbCeC16SYzEd11",
+  "_tailscaleTestComment": [
+    "The TEST deployment's device share, opened by the launcher's Dev panel -> 'Join the",
+    "test server's network'. That panel is hidden unless the published role map says the",
+    "account is an admin, so this one is not offered to players.",
+    "",
+    "It is a SEPARATE share because the test server is a separate tailnet node, and a share",
+    "is bound to one device id. Accepting the main invite does not grant this, and vice",
+    "versa - which is the point: dev access to the test box is not a side effect of being",
+    "able to play.",
+    "",
+    "Absent is a normal state. There is not always a test deployment standing, and the",
+    "launcher says so rather than failing."
+  ],
+  "tailscaleTestInvite": "https://login.tailscale.com/admin/invite/tbuHx67b5kXeC16SYzEd11"
 }
