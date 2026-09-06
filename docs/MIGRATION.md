@@ -145,3 +145,71 @@ docker info | grep -i "docker root dir"             # must say /mnt/vol/docker
 rebuilds only when server-relevant paths changed, defers while players are online, and
 announces map changes on the feed. That is the "quick deployment from git" requirement —
 the only manual steps are the ones above, because they are the ones git must not hold.
+
+---
+
+## 5. THE 2026-09-06 CUTOVER — live checklist
+
+Tick as you go. Anything unticked is not done, however sure anyone feels.
+**Old box:** TrueNAS, deployments stopped. **New box:** `officialcutstudios01`, Ubuntu 26.04.
+
+### Hardware and OS
+- [x] Ubuntu Server 26.04.1 installed, hostname `officialcutstudios01`
+- [x] `/` on the 238G NVMe (LVM, extended to 232G), `/boot/efi` + `/boot` present
+- [x] 1.09T SSD at `/mnt/vol`, **fstab by UUID** (not `/dev/sdX` - letters move)
+- [x] Docker installed from the official repo (not `docker.io` - BuildKit needed for the xmake cache mount)
+- [x] **`Docker Root Dir: /mnt/vol/docker`** and `/var/lib/docker` absent
+- [x] `zeldfep` in the `docker` group
+- [x] Tailscale up, host node `100.74.122.79`
+- [x] SSH key authorised for the assistant
+
+### Code and state
+- [x] `/mnt/vol/projects/CyberpunkMP` cloned, `feat/world-state`, 4 submodules
+- [x] `/mnt/vol/projects/CyberpunkMP-authority` cloned, same
+- [x] Both old deployments stopped (**0 players at the moment of stop**)
+- [x] `config/` carried, both deployments
+- [x] `coord-data/` carried (live only)
+- [x] `.env` carried, both
+- [x] `docker-compose.override.yml` carried (test only - UNTRACKED, not reproducible from git)
+- [x] `logs/` carried, both
+- [x] **Checksum verified**: `players.json` md5 identical (74 characters), `updates.jsonl` identical (95 posts)
+- [x] Fresh `TS_AUTHKEY` minted (`k4DKQhY33d11CNTRL`, expires 2026-12-05, reusable + preauthorised), written to both `.env`, mode 600, backups kept
+- [x] Docs repointed `/mnt/vol/NASa` -> `/mnt/vol/projects` (`99d1551`)
+
+### Bring-up — IN PROGRESS
+- [ ] Live: `docker compose up -d --build` completes (full native compile, 10-15 min)
+- [ ] Live: status endpoint answers `State: running` via the sidecar netns
+- [ ] Live: **new tailnet address recorded** (replaces `100.80.243.29`)
+- [ ] Live: a returning character logs `has character '<name>' (played)`, NOT `never spawned`
+- [ ] coord-api container up; `GET /health` answers; posting works again
+- [ ] Test: built and started with `-p nco-authority`
+- [ ] Test: **new tailnet address recorded** (replaces `100.125.74.56`)
+- [ ] Cron installed, both lines, repointed at `/mnt/vol/projects/CyberpunkMP`
+
+### Player-facing — do LAST, only after the above is green
+- [ ] `publish/server.json`: `host` + `coordHost` -> new address. **MUST be committed on `main`** - the publish workflow triggers on push to `main` only, and `workflow_dispatch` also checks out `main`. An edit on `feat/world-state` reaches nobody.
+- [ ] Confirm the release asset actually updated (`releases/latest/download/server.json`)
+- [ ] **Invite distributed via Discord, NOT via `server.json`** - see the decision below
+- [ ] Players told to relaunch
+
+### Decisions taken during this cutover, recorded so they are not re-litigated
+- **`tailscaleInvite` comes OUT of `server.json`.** That file is fetched from
+  `releases/latest/download/server.json` with **no authentication** - verified, `http 200`
+  to an anonymous request - so the invite was a tailnet join link on a public URL. The
+  launcher's `tailscale:invite` handler has **no Discord or role check** either; it opens
+  the link for anyone who clicks. The old invite is already consumed by an unidentifiable
+  party. Omitting the field degrades gracefully ("No invite link is published yet").
+  Fresh invite handed out in Discord instead.
+  **Proper fix, later:** serve it from the coord-api behind the dev-role gate, exactly how
+  coord keys are already handed out - `server.json` states that principle for the coord key
+  and then violates it three lines further down.
+- **`/mnt/vol/projects`, not `/mnt/vol/NASa`.** `NASa` was a TrueNAS *pool* name and means
+  nothing on Ubuntu. Cheap to change: the cron takes the deployment dir as an argument and
+  compose paths are relative, so only documentation referenced it.
+
+### After the cutover — still open
+- [ ] Launcher `index.html` dev panel hardcodes the OLD test-server address. **Needs a ship** - `server.json` is fetched at runtime, `index.html` is baked into the launcher.
+- [ ] Sanitise internal addresses out of the public repo (18 tracked files; `publish/ASSISTANT_UPDATES.md` + `assistant-updates.json` are the ones that actually ship). Full copy to live off-git on the server. **Migration retires the old addresses anyway** - no history rewrite, force-push is forbidden.
+- [ ] `CLAUDE-HANDOFF.md` §2 claims `100.109.102.127` "is dead". It was **seen on the tailnet 2026-09-06**. Correct it.
+- [ ] Old NAS deployments: decide archive vs delete. Do not delete until the new box has served a real session.
+- [ ] `rmdir /mnt/vol/NASa` on the new box once confirmed empty.
