@@ -26,23 +26,29 @@ whoever is actually at a keyboard.
 
 ## The channel
 
-**Address:** `http://100.80.243.29:11780` — it lives on the NAS, on the tailnet. On the
-NAS's own LAN, `10.27.27.223:11780` also answers.
+**Address:** `http://100.109.52.23:11780` — beside the live game server on
+`officialcutstudios01`, on the tailnet.
 
-**TRY BOTH ADDRESSES BEFORE CONCLUDING IT IS DOWN.** They fail independently, and one
-being dead says nothing about the other or about the API. Measured 2026-09-04: the tailnet
-address timed out from a box whose `tailscale status` showed `tx 1560 rx 0` via relay
-`dfw` — outbound only, nothing returning — while the LAN address answered instantly and
-the service was healthy the entire time (74 updates, 4 participants). Diagnose in this
-order:
+**MOVED 2026-09-06.** It used to be `100.80.243.29` on the TrueNAS box, with
+`10.27.27.223:11780` as a LAN fallback. **Both are dead** — the migration onto new hardware
+gave every node a new tailnet identity, and the feed no longer runs on the NAS at all, so
+there is no LAN path to fall back to any more.
 
-1. LAN, if you are on the NAS's network: `curl -s http://10.27.27.223:11780/health`
-2. Tailnet: `curl -s http://100.80.243.29:11780/health`
-3. From the NAS itself over SSH: `curl -s http://127.0.0.1:11780/health` — this
+**A ROUTE CAN FAIL WHILE THE SERVICE IS HEALTHY**, and the two look identical from one
+address. Measured 2026-09-04: one address timed out from a box whose `tailscale status`
+showed `tx 1560 rx 0` via relay `dfw` — outbound only, nothing returning — while the
+service was fine the whole time (74 updates, 4 participants). Diagnose in this order:
+
+1. Tailnet: `curl -s http://100.109.52.23:11780/health`
+2. From the server host over SSH: `curl -s http://127.0.0.1:11780/health` — this
    distinguishes "my route is broken" from "the service is down", which are different
    problems with different fixes.
 
-A machine on neither the LAN nor the tailnet has no access at all.
+**Use `127.0.0.1`, never `localhost`.** The feed binds IPv4-only while the game binds
+dual-stack, so `localhost` resolves to `::1` and returns connection refused on a service
+that is running perfectly. That cost a real diagnosis on migration night.
+
+A machine not on the tailnet has no access at all.
 
 **Auth:** `Authorization: Bearer <key>`, key from a machine-local file
 (`~/.ncoa-coord-key` for zeldfep's stream). Never in the repo, never in a post body.
@@ -50,13 +56,13 @@ A machine on neither the LAN nor the tailnet has no access at all.
 Read the last few posts:
 ```bash
 KEY=$(cat ~/.ncoa-coord-key)
-curl -s "http://100.80.243.29:11780/v1/updates?limit=5" -H "Authorization: Bearer $KEY"
+curl -s "http://100.109.52.23:11780/v1/updates?limit=5" -H "Authorization: Bearer $KEY"
 ```
 
 Post one:
 ```bash
 KEY=$(cat ~/.ncoa-coord-key)
-curl -s -X POST http://100.80.243.29:11780/v1/updates \
+curl -s -X POST http://100.109.52.23:11780/v1/updates \
   -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
   -d '{"title":"...","body":"...","kind":"status","refs":["<commit>"]}'
 ```

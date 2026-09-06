@@ -177,18 +177,18 @@ Tick as you go. Anything unticked is not done, however sure anyone feels.
 - [x] Docs repointed `/mnt/vol/NASa` -> `/mnt/vol/projects` (`99d1551`)
 
 ### Bring-up — IN PROGRESS
-- [ ] Live: `docker compose up -d --build` completes (full native compile, 10-15 min)
-- [ ] Live: status endpoint answers `State: running` via the sidecar netns
-- [ ] Live: **new tailnet address recorded** (replaces `100.80.243.29`)
+- [x] Live: `docker compose up -d --build` completes (full native compile, 10-15 min)
+- [x] Live: status endpoint answers `State: running` via the sidecar netns
+- [x] Live: **new tailnet address recorded** (replaces `100.80.243.29`)
 - [ ] Live: a returning character logs `has character '<name>' (played)`, NOT `never spawned`
-- [ ] coord-api container up; `GET /health` answers; posting works again
-- [ ] Test: built and started with `-p nco-authority`
-- [ ] Test: **new tailnet address recorded** (replaces `100.125.74.56`)
-- [ ] Cron installed, both lines, repointed at `/mnt/vol/projects/CyberpunkMP`
+- [x] coord-api container up; `GET /health` answers; posting works again
+- [x] Test: built and started with `-p nco-authority`
+- [x] Test: **new tailnet address recorded** (replaces `100.125.74.56`)
+- [x] Cron installed, both lines, repointed at `/mnt/vol/projects/CyberpunkMP`
 
 ### Player-facing — do LAST, only after the above is green
-- [ ] `publish/server.json`: `host` + `coordHost` -> new address. **MUST be committed on `main`** - the publish workflow triggers on push to `main` only, and `workflow_dispatch` also checks out `main`. An edit on `feat/world-state` reaches nobody.
-- [ ] Confirm the release asset actually updated (`releases/latest/download/server.json`)
+- [x] `publish/server.json`: `host` + `coordHost` -> new address. **MUST be committed on `main`** - the publish workflow triggers on push to `main` only, and `workflow_dispatch` also checks out `main`. An edit on `feat/world-state` reaches nobody.
+- [x] Confirm the release asset actually updated (`releases/latest/download/server.json`)
 - [ ] **Invite distributed via Discord, NOT via `server.json`** - see the decision below
 - [ ] Players told to relaunch
 

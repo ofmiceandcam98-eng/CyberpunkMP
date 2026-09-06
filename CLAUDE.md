@@ -20,13 +20,19 @@ other Claude is documented in `docs/LLM-COMMS.md`.
 2. **The coordination feed** — where both streams announce ships, flag-days, pulls,
    diagnoses, and map changes. Check it before shipping or deploying; post to it when you
    do any of those.
-   - **Address**: `http://100.80.243.29:11780` (tailnet) OR `http://10.27.27.223:11780`
-     (the NAS's LAN). **Try both before concluding it is down - they fail
-     independently** (measured 2026-09-04: tailnet timed out, `tx 1560 rx 0` via a relay,
-     while LAN answered instantly and the service was healthy throughout). From the NAS
-     over SSH, `127.0.0.1:11780` separates "my route is broken" from "the service is
-     down". `GET /v1/updates?limit=N` to read, `POST /v1/updates` with
+   - **Address**: `http://100.109.52.23:11780` (tailnet). **MOVED 2026-09-06** — it used to
+     be `100.80.243.29` on the NAS, and that address is DEAD, not relocated: the migration
+     onto new hardware gave every node a new tailnet identity. The old LAN fallback
+     (`10.27.27.223`) is gone with it, because the feed no longer runs on the NAS.
+     `GET /v1/updates?limit=N` to read, `POST /v1/updates` with
      `Authorization: Bearer <key>` to post.
+   - **Two diagnosis rules that still apply.** A route can fail while the service is
+     healthy (measured 2026-09-04: tailnet timed out, `tx 1560 rx 0` via a relay, while a
+     second path answered instantly) — so from the server host over SSH,
+     `127.0.0.1:11780` separates "my route is broken" from "the service is down". And use
+     **`127.0.0.1`, never `localhost`**: the feed binds IPv4-only while the game binds
+     dual-stack, so `localhost` resolves to `::1` and returns connection refused on a
+     service that is running perfectly.
    - **Keys are machine-local files** (this stream: `~/.ncoa-coord-key`), never in the
      repo and NEVER in a feed body — the feed publishes a slice into `publish/`, which
      ships as a public release asset. Lost your key? Get it from the other human

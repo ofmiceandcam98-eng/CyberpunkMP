@@ -1115,6 +1115,41 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   project does not currently have. Until then: keep the invite single-seat and rotate it when
   consumed; the launcher picks up the new one on its next start with no ship.
 
+### PENDING SHIP — three things are built and reach nobody until a launcher release (2026-09-06)
+Nothing here is broken; all of it is committed, verified and inert until shipped. Ship them
+together — three separate releases for one evening's work is how release notes stop being read.
+- **Fault A redscript** (`9d4daea`) — `OwnSave` loads the world template always.
+  COMPILE-CHECKED against a real 2.31 install. Client-side, so a release is the only route.
+- **Dev-panel text** (`eff8701`) — new test address, and it no longer claims deploys come from
+  a push to `main` when the cron tracks `feat/world-state`. The second one has been actively
+  misleading dev-role users.
+- **Test-server invite button** (`e41f71c`) — its data half (`tailscaleTestInvite`) is ALREADY
+  live in `server.json`, so the field is published and nothing reads it yet. Harmless, but the
+  button is the half that matters.
+- **The distinction that decides what needs a ship:** `publish/server.json` is fetched at
+  runtime from `releases/latest/download`, so address and invite changes land with no release.
+  `index.html`, `main.js` and `preload.mjs` are baked into the launcher and do not.
+
+### Post-migration leftovers (2026-09-06) — none blocking, all easy to forget
+- **The ACL names eight shared users explicitly as well as `autogroup:shared`.** Belt and
+  braces, because Tailscale's preview cannot verify the autogroup for shared-in users. **Remove
+  the names only once somebody has actually connected and proved the autogroup works** — see
+  the device-share entry.
+- **The admin panel shares the GAME port (11778)**, not the `WebPort` 11779 that is configured
+  and never bound. So no ACL can separate "can play" from "can reach the admin panel"; the only
+  gate there is the credential, which is why it answers `401`. If that separation is ever
+  wanted, the server has to actually bind the admin surface on `WebPort` first.
+- **Old tailnet nodes still hold the good MagicDNS names.** `nco-server` and `nco-test-server`
+  belong to the retired devices, which is why the live ones are `nco-server-1` and
+  `nco-test-server-1`. Deleting the old devices frees the names — do it after everyone has
+  reconnected, not before.
+- **The old NAS deployments are STOPPED but INTACT.** Nothing was deleted. Do not wipe until the
+  new box has served a real session with real players.
+- **`install digest not computable`** — the launcher checkup reports required component
+  `cyberpunk_multiplayer` has no `archive.sha256`, so it launches unattested. The digest gate is
+  not actually attesting the payload on that path. Predates the migration; own bug.
+- **`/mnt/vol/NASa` on the new box** is empty but `rmdir` reports it as non-empty. Cosmetic.
+
 ### Operational debts
 - **"Built and pushed" is NOT "deployed" - three surfaces, each of which bit once on
   2026-08-28.** Every time, a correct fix looked broken because the thing under test was not

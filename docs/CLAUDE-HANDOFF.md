@@ -26,13 +26,26 @@ things) → the coordination feed (what the other stream just did).
 
 ## 2. Machines and addresses
 
+**MIGRATED 2026-09-06.** Everything moved off the TrueNAS box onto `officialcutstudios01`
+(Ubuntu 26.04). **Every address below changed** — new hardware means new tailnet node
+identities, so the old ones are dead rather than moved. `docs/MIGRATION.md` §5 is the
+cutover record.
+
 | What | Where | Notes |
 |---|---|---|
 | Your workstation | the repo checkout | Builds C++ (MSVC) and the launcher. **Whether it can also compile REDSCRIPT depends on whether the game is installed here — check, do not assume (§2a)** |
-| NAS (both servers) | `ssh truenas_admin@10.27.27.223` | LAN SSH, key auth, docker group. **`/home` is mounted noexec** — always `/bin/bash script.sh`, never direct execution (exit 126, silent) |
-| Live/public server | `/mnt/vol/projects/CyberpunkMP` → tailnet `100.80.243.29:11778` | containers `cyberpunkmp-server` + `cyberpunkmp-tailscale`; cron auto-deploys |
-| Test server | `/mnt/vol/projects/CyberpunkMP-authority` → `100.125.74.56:11778` | compose project `-p nco-authority`; manual rebuild |
-| Coordination feed | `http://100.80.243.29:11780` | on the NAS. **Ignore any older note saying 100.109.102.127 — that was Cam's PC and is dead** |
+| **Server host** | `ssh zeldfep@100.74.122.79` | Ubuntu 26.04, key auth, `docker` group. `/mnt/vol` is the 1.1T data disk; **Docker's data-root lives there too**, not on the OS disk |
+| Live/public server | `/mnt/vol/projects/CyberpunkMP` → `100.109.52.23:11778` | containers `cyberpunkmp-server` + `cyberpunkmp-tailscale`; cron auto-deploys |
+| Test server | `/mnt/vol/projects/CyberpunkMP-authority` → `100.106.1.67:11778` | compose project `-p nco-authority`; manual rebuild |
+| Coordination feed | `http://100.109.52.23:11780` | beside the live server. Bind is IPv4-only, so **use `127.0.0.1`, not `localhost`** from inside the netns — `localhost` resolves to `::1` and gets connection refused |
+| Old NAS | `ssh truenas_admin@10.27.27.223` | **RETIRED but not wiped** — both deployments stopped, data intact. `/home` is noexec there; always `/bin/bash script.sh` |
+
+- **MagicDNS names**: the new nodes are `nco-server-1` and `nco-test-server-1`, because the
+  retired nodes still hold `nco-server` / `nco-test-server`. Deleting the old devices frees
+  the names.
+- **`100.109.102.127` (`DESKTOP-JEBD9RN`) is NOT dead** — an older note in this file said it
+  was; it was on the tailnet on 2026-09-06. It is simply not the feed host and never should
+  be again.
 
 **Player-count probe** (the host publishes only UDP, so go through the sidecar's netns):
 ```
@@ -137,7 +150,7 @@ anyone collects.
 **Post to the feed** — full contract and etiquette in `docs/LLM-COMMS.md`; do this for ships, deploys, diagnoses, and every map change:
 ```bash
 KEY=$(cat ~/.ncoa-coord-key)
-curl -s -X POST http://100.80.243.29:11780/v1/updates -H "Authorization: Bearer $KEY" \
+curl -s -X POST http://100.109.52.23:11780/v1/updates -H "Authorization: Bearer $KEY" \
   -H "Content-Type: application/json" -d '{"title":"...","body":"...","kind":"status"}'
 ```
 Backslashes and unescaped quotes in the body break the JSON — the API says
