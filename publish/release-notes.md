@@ -6,6 +6,21 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.115
+
+**Three things that could make a new character unplayable are fixed.**
+
+- **You no longer get stuck in a featureless box when you make a character.** This was the worst one. A new character was placed into the world before the ground under them finished loading, so they fell through it — and the game's own out-of-bounds recovery dropped them into a holding room with nothing in it. Nothing put them back, so it repeated: fall, recover, fall. The only escape was quitting and rejoining until the timing happened to work. The mod now checks a moment after placing you and puts you back if you have fallen, a few times over, before giving up.
+- **Every session now starts in the same world.** The mod needs somewhere to stand while the server tells it who you are, and it used to pick whichever of your Cyberpunk saves was newest — which could be another character, an old test save, or a session from months ago. That is why the world sometimes looked wrong or oddly empty, and why it was different for different people. It now always loads the multiplayer world, every time.
+- **The settings panel has arrows instead of a scrollbar.** Sections move one at a time with the buttons on the right; the mouse wheel still works.
+
+**Still being worked on, so you know rather than wonder:**
+
+- **Your face and body may still not be the character you made.** The world the mod loads brings its own character with it, and the server's copy of your appearance has to be applied over the top. When that fails you look like somebody else. Your inventory, money and equipment are unaffected — it is specifically the body.
+- **Money does not stick yet, and we now know exactly why.** New characters are granted eddies that never actually reach the game, so the next save writes back what you really have and the grant vanishes. Measured this week rather than guessed at. It is not that your money fails to save — the save is honest, the grant was not. The fix belongs with work already underway.
+
+If you hit a crash, send the log — `tools\CollectCrash.ps1` gathers it in one step. Run it **before** relaunching; relaunching overwrites the evidence.
+
 ## What changed — v0.3.113
 
 **The chat box is on screen from the moment you spawn.**
