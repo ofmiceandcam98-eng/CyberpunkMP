@@ -10,7 +10,7 @@
     "before blaming the server for being down."
   ],
   "name": "Night City Online",
-  "host": "100.80.243.29",
+  "host": "100.109.52.23",
   "port": 11778,
   "requiresTailscale": true,
   "_coordComment": [
@@ -22,14 +22,6 @@
     "it is not published anywhere public, because a key that ships with the installer is",
     "a key everyone has."
   ],
-  "coordHost": "100.80.243.29",
-  "coordPort": 11780,
-  "_tailscaleComment": [
-    "Invite to the server's network (the deployment carries its own tailnet node - see",
-    "the tailscale sidecar in docker-compose.yml), so joining is a button rather than a",
-    "link someone has to send by hand. The launcher only shows it to people it has",
-    "already verified are in the Discord - see the note in index.html. Invites may be",
-    "single-seat: rotate via the Tailscale API when one is consumed."
-  ],
-  "tailscaleInvite": "https://login.tailscale.com/uinv/i5iZxi6p4D21eC16SYzEd11"
+  "coordHost": "100.109.52.23",
+  "coordPort": 11780
 }
