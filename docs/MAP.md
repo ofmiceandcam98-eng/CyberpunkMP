@@ -1065,6 +1065,24 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
 - **Rollback is off-tailnet**: `api.tailscale.com` and the admin console are public, so a bad
   policy can always be reverted even if it locks the tailnet. That is why this was safe to
   apply directly.
+- **DECIDED 2026-09-06 (zeldfep), NOT BUILT: "Join the server's network" must be gated on
+  DISCORD ROLE.** The invite button lives in the launcher's TOOLS panel and today opens for
+  anyone who clicks — `ipcMain.handle('tailscale:invite')` has no check of any kind. It should
+  hand out an invite only to someone whose Discord role says they belong.
+  - **The launcher already holds everything needed.** It completes Discord OAuth before the
+    tailnet is ever required (the trail logs `token present, name <player>` at launch), and it
+    already resolves roles for the dev panel. So the check is a role test on an identity that
+    is in hand, not new plumbing.
+  - **Client-side alone is NOT the fix, and this is the trap to avoid:** `server.json` is
+    served from `releases/latest/download` with no authentication, so anyone can read the
+    invite out of it whatever the button does. A UI check is a courtesy, not a control.
+  - **The honest architecture is two halves.** (1) The launcher checks the role before
+    offering the button — stops the accidental case. (2) The invite stops being a static field
+    in a public file and is issued per-request by an endpoint that verifies the Discord token,
+    which must live OFF the tailnet, because someone who needs an invite cannot reach anything
+    on it. That endpoint is the piece that does not exist yet and needs public hosting.
+  - **Until both exist, scope is the control, not secrecy** — see the ACL entry above. A
+    leaked invite buys reaching the game servers on two ports, nothing else.
 - **STILL OPEN — the permanent fix for public distribution.** Rotation is the only thing
   limiting a leaked invite today, and it is manual. The durable answer is a PUBLIC endpoint
   (not on the tailnet) that checks the Discord token the launcher already holds before handing
