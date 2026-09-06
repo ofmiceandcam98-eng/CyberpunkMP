@@ -320,8 +320,13 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
 
 ### FOR ZELDFEP — NETCODE IS FROZEN, THE BRANCH IS NOW A REFERENCE (2026-09-05)
 
-**Read this before touching anything on `feat/world-state`.** Nothing here changes the live
-servers — nothing is pushed — but it changes what this branch IS.
+**START HERE AFTER THE SWAP: `docs/ZELDFEP-AFTER-THE-SWAP.md`** — the ordered
+pick-it-up-and-finish-it note. This block is the summary; that document is the plan.
+
+**Read this before touching anything on the branch.** Nothing here changes the live servers, but
+it changes what this branch IS. **Working branch is now `wip/world-state`** (pushed to `fork`);
+`feat/world-state` stays unpushed during the migration so the production NAS cron cannot rebuild
+the live server mid-swap.
 
 **1. Hard freeze on runtime multiplayer networking**, until Cam says the server swap is complete.
 No production `.proto`, handlers, transport, RPC, replication, auth, movement, vehicle, combat,
