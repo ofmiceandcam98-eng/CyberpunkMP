@@ -44,7 +44,7 @@ $files = @('players.json', 'respawn.json', 'startpoint.json', 'worldstate.json',
 
 $nasUser = 'truenas_admin'
 $nasHost = '100.90.85.33'
-$nasPath = '/mnt/vol/NASa/nco-backups'
+$nasPath = '/mnt/vol/projects/nco-backups'
 $sshKey  = Join-Path $env:USERPROFILE '.ssh\nco_nas'
 
 # ---------------------------------------------------------------------------

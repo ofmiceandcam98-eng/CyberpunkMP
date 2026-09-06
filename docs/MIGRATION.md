@@ -100,7 +100,7 @@ the 1.09T.** Ubuntu Server, no LVM - plain partitions are easier to recover and 
 | `/mnt/vol` | SSD 1.09T | **Deployments AND Docker.** Same path as today, deliberately |
 
 - **`/mnt/vol` is not a cosmetic choice.** The deployments already live at
-  `/mnt/vol/NASa/CyberpunkMP` and `/mnt/vol/NASa/CyberpunkMP-authority`, so keeping the mount
+  `/mnt/vol/projects/CyberpunkMP` and `/mnt/vol/projects/CyberpunkMP-authority`, so keeping the mount
   point identical means the cron lines in 2e, every compose path, and every path in this
   document transfer UNCHANGED. Mount it anywhere else and all of them need editing - and one
   of them gets missed at 2am.

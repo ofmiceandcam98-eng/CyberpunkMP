@@ -30,8 +30,8 @@ things) → the coordination feed (what the other stream just did).
 |---|---|---|
 | Your workstation | the repo checkout | Builds C++ (MSVC) and the launcher. **Whether it can also compile REDSCRIPT depends on whether the game is installed here — check, do not assume (§2a)** |
 | NAS (both servers) | `ssh truenas_admin@10.27.27.223` | LAN SSH, key auth, docker group. **`/home` is mounted noexec** — always `/bin/bash script.sh`, never direct execution (exit 126, silent) |
-| Live/public server | `/mnt/vol/NASa/CyberpunkMP` → tailnet `100.80.243.29:11778` | containers `cyberpunkmp-server` + `cyberpunkmp-tailscale`; cron auto-deploys |
-| Test server | `/mnt/vol/NASa/CyberpunkMP-authority` → `100.125.74.56:11778` | compose project `-p nco-authority`; manual rebuild |
+| Live/public server | `/mnt/vol/projects/CyberpunkMP` → tailnet `100.80.243.29:11778` | containers `cyberpunkmp-server` + `cyberpunkmp-tailscale`; cron auto-deploys |
+| Test server | `/mnt/vol/projects/CyberpunkMP-authority` → `100.125.74.56:11778` | compose project `-p nco-authority`; manual rebuild |
 | Coordination feed | `http://100.80.243.29:11780` | on the NAS. **Ignore any older note saying 100.109.102.127 — that was Cam's PC and is dead** |
 
 **Player-count probe** (the host publishes only UDP, so go through the sidecar's netns):
@@ -129,7 +129,7 @@ collisions, and announces `docs/MAP.md` changes on the feed. Force it when empty
 `cd <deploy> && git pull --ff-only && docker compose up -d --build`.
 
 **Read the field:** every launcher POSTs session logs to the server →
-`/mnt/vol/NASa/CyberpunkMP/logs/clients/<player>/` (newest 10 + `launcher-trail.log`).
+`/mnt/vol/projects/CyberpunkMP/logs/clients/<player>/` (newest 10 + `launcher-trail.log`).
 **First stop for any "it broke on my machine" — never ask a player for files.**
 Client-side redscript must log via `ScriptLog` to reach these; `FTLog` reaches nothing
 anyone collects.
