@@ -89,6 +89,46 @@ only in one machine's memory does not bind the other stream — promote it to `C
 
 ## 4. Standing a deployment up on new hardware
 
+### 4a. Disk layout on the new box (decided 2026-09-06, zeldfep)
+
+Two disks: a 238G NVMe and a 1.09T SSD. **OS on the NVMe, everything CyberpunkMP-related on
+the 1.09T.** Ubuntu Server, no LVM - plain partitions are easier to recover and to resize.
+
+| Path | Disk | Why |
+|---|---|---|
+| `/` | NVMe 238G | OS only. Guided "Use an entire disk" creates the ESP + root correctly |
+| `/mnt/vol` | SSD 1.09T | **Deployments AND Docker.** Same path as today, deliberately |
+
+- **`/mnt/vol` is not a cosmetic choice.** The deployments already live at
+  `/mnt/vol/NASa/CyberpunkMP` and `/mnt/vol/NASa/CyberpunkMP-authority`, so keeping the mount
+  point identical means the cron lines in 2e, every compose path, and every path in this
+  document transfer UNCHANGED. Mount it anywhere else and all of them need editing - and one
+  of them gets missed at 2am.
+- **MOVE THE DOCKER DATA ROOT OR THE NVMe FILLS ANYWAY.** `/var/lib/docker` sits on `/` by
+  default, and the server image is a full native compile: layers plus the xmake build cache
+  run to tens of GB. Putting only the repo on the big disk leaves the actual bulk on the OS
+  disk. Do this before pulling anything:
+
+```
+sudo systemctl stop docker
+sudo mkdir -p /mnt/vol/docker
+sudo rsync -aP /var/lib/docker/ /mnt/vol/docker/    # skip on a fresh Docker install
+echo '{ "data-root": "/mnt/vol/docker" }' | sudo tee /etc/docker/daemon.json
+sudo systemctl start docker
+docker info | grep -i "docker root dir"             # must say /mnt/vol/docker
+```
+
+- **Partitioning trap, cost real time on the install:** subiquity will not offer **Add GPT
+  Partition** on a disk already marked "to be formatted as ext4". A whole-disk format leaves
+  no free space and no room for an ESP, which is why "Select a boot disk" then cannot be
+  satisfied - the two errors are one problem. **Reformat first, then add partitions**, or skip
+  manual mode and use guided "Use an entire disk" on the OS disk.
+- **The USB installer shows up as a local disk** with an `iso9660` partition, and it carries
+  the only ESP the installer can see. Do not touch it, and do not let its ESP stand in for the
+  target disk.
+
+
+
 1. `git clone` the repo; `git checkout feat/world-state` (what deploys today — see the
    live-vs-main entry in the map).
 2. Copy `<old deploy>/config/` wholesale, `coord-data/` (live only), `.env`, and
