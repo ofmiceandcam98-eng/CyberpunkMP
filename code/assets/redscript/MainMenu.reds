@@ -484,7 +484,7 @@ private func PopulateMenuItemList() -> Void {
             this.MpCsOpen();
 
             this.AddMenuItem("PLAY", n"OnMultiplayerContinue");
-            this.AddMenuItem("NEW CHARACTER (REPLACES YOURS)", n"OnMultiplayerNewCharacter");
+            this.AddMenuItem("CREATE NEW CHARACTER", n"OnMultiplayerNewCharacter");
 
             // The trash can.
             //
@@ -504,7 +504,7 @@ private func PopulateMenuItemList() -> Void {
             // Creation stays reachable without a connection, because it runs the game's own
             // New Game flow and arms the join on the way through - somebody with no
             // character can still make one while the server is being slow.
-            this.AddMenuItem("NEW CHARACTER (REPLACES YOURS)", n"OnMultiplayerNewCharacter");
+            this.AddMenuItem("CREATE NEW CHARACTER", n"OnMultiplayerNewCharacter");
         }
 
         /*
@@ -685,15 +685,40 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
             // The connection belongs after the creator, when a world exists to arrive in.
             network.RequestJoin();
 
-            // Says out loud that what arrives next REPLACES the stored character.
-            //
-            // Without this the server has no way to tell the difference. It captures an
-            // appearance only for a player who has none, so anybody with an existing
-            // character went through the whole creator and was then spawned as the
-            // character they had just replaced - the creation was silently discarded.
-            //
-            // The client is the only side that knows which menu entry was pressed, so the
-            // client is what says so.
+            /*
+             * POINT AT A FREE SLOT FIRST, so the character that comes out of the creator is
+             * an ADDITION. zeldfep, 2026-09-07: "new character (replaces yours) should not
+             * be a thing anymore".
+             *
+             * The server writes an appearance save into whichever slot the account is
+             * pointed at, so aiming that pointer is the whole of it. Without this the
+             * account stays pointed at the character in play and the creator's output lands
+             * on top of them - which is exactly the "the new player deletes the new
+             * character created" report.
+             *
+             * Only while connected, because SelectCharacterSlot is a request and there is
+             * nothing to send it down otherwise. That case is a brand-new account making its
+             * first character, where the server's own default of slot 0 is already right.
+             *
+             * A full account changes nothing and says so. Replacing somebody silently
+             * because they have no room is the behaviour being removed, not a fallback.
+             */
+            if network.IsConnected() {
+                let free = this.MpCsFirstFreeSlot();
+
+                if free >= 0 {
+                    FTLog(s"[Selector] new character will be created in slot \(free + 1)");
+                    network.SelectCharacterSlot(free);
+                } else {
+                    FTLogWarning(s"[Selector] every unlocked slot is full - creation not armed");
+                    this.MpCsSay("Every slot you have is full. Delete one first.");
+                    return true;
+                }
+            }
+
+            // Arms the appearance capture. Without it the client only captures for a player
+            // who has none, so somebody with an existing character went through the whole
+            // creator and had the result silently discarded.
             network.MarkNewCharacter();
         } else {
             FTLogError(s"[CyberpunkMP] No NetworkWorldSystem in the menu - cannot arm the join");

@@ -228,15 +228,20 @@ void ChatSystem::HandleSelectCharacterRequest(const PacketEvent<client::SelectCh
             EndCallFor(pOutgoing->CharacterId, CallState::Ended);
     }
 
-    const std::string refusal = store.SelectSlot(pPlayer->DiscordId, aMessage.get_slot());
+    const std::string refusal = store.SelectSlot(pPlayer->DiscordId, aMessage.get_slot(),
+                                                 pPlayer->Level);
 
     if (!refusal.empty())
     {
         spdlog::info("{} could not select slot {}: {}", pPlayer->Username, aMessage.get_slot(),
                      refusal);
 
-        SendCharacterList(*pPlayer, refusal == "empty_slot"
-                                        ? "There is no character in that slot."
+        // Locked is not the same refusal as broken, and saying so is the difference between
+        // "this is not yours yet" and "something went wrong". An empty slot is no longer a
+        // refusal at all - selecting one is how a second character gets made.
+        SendCharacterList(*pPlayer, refusal == "slot_locked"
+                                        ? "That slot is locked. Extra character slots are "
+                                          "unlocked separately."
                                         : "That character could not be selected.");
         return;
     }
@@ -424,7 +429,21 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
     // the next field added to CharacterRecord would break too. Copying first inverts the
     // default: a new field survives unless a save deliberately changes it.
     CharacterRecord character = pExisting ? *pExisting : CharacterRecord{};
-    character.Slot = 0;
+
+    /*
+     * THE SAVE LANDS IN THE ACTIVE SLOT, which is what makes a second character possible.
+     *
+     * This was `character.Slot = 0` and it is the bug behind "the new player deletes the
+     * new character created". Every save, from the creator or from a ripperdoc, was written
+     * to slot 0 - so making a character while pointed at slot 2 wrote over slot 0's
+     * character instead, and a staff member editing their face in slot 2 clobbered slot 0
+     * without touching the character they were actually playing.
+     *
+     * pExisting is already the character in the ACTIVE slot (FindCharacter defaults to it),
+     * so the two agree by construction: editing keeps its own slot, and creating while
+     * pointed at an empty slot writes a new character there rather than over anybody.
+     */
+    character.Slot = store.ActiveSlotFor(pPlayer->DiscordId);
     character.IsMale = aMessage.get_is_male();
     character.Appearance = Base64::Encode(std::vector<uint8_t>(blob.begin(), blob.end()));
 
@@ -5505,6 +5524,42 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         // a new character - refusing here would leave no way at all. It asks instead.
         if (target == "new")
         {
+            /*
+             * A FREE SLOT MEANS NOTHING GETS RETIRED. zeldfep, 2026-09-07: "new character
+             * (replaces yours) should not be a thing anymore".
+             *
+             * This command was written when an account held exactly one character, so
+             * "new" could only mean "replace". With slots it usually means ADD, and the
+             * destructive path is now the exception rather than the rule: it is reached
+             * only by an account whose entitled slots are all full.
+             *
+             * Pointing at the free slot is the entire mechanism. The creator's save lands
+             * in whatever slot the account is pointed at, so arming it here means the next
+             * character is created rather than overwriting the one in play.
+             */
+            const int free = store.FirstFreeSlot(acSender.DiscordId, acSender.Level);
+
+            if (free >= 0)
+            {
+                const std::string refusal = store.SelectSlot(acSender.DiscordId, free, acSender.Level);
+
+                if (!refusal.empty())
+                {
+                    Tell(acSender, "A new character could not be started just now.");
+                    spdlog::warn("{} could not be pointed at free slot {}: {}", acSender.Username,
+                                 free, refusal);
+                    return true;
+                }
+
+                spdlog::info("{} is starting a new character in slot {} - nothing retired",
+                             acSender.Username, free);
+
+                Tell(acSender, fmt::format("Slot {} is ready for a new character - your other "
+                                           "characters are untouched.", free + 1));
+                Tell(acSender, "Make them at any ripperdoc, or from CREATE NEW CHARACTER on the main menu.");
+                return true;
+            }
+
             const auto* pCharacter = store.FindCharacter(acSender.DiscordId);
 
             if (!pCharacter)
@@ -5513,6 +5568,9 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
                 Tell(acSender, "Change how you look at any ripperdoc - it saves by itself.");
                 return true;
             }
+
+            // Every entitled slot is full, so this is the destructive path after all.
+            Tell(acSender, "All of your character slots are full.");
 
             // The confirmation carries the word, not just a bare repeat: typing the same
             // line twice is exactly what a habit does.

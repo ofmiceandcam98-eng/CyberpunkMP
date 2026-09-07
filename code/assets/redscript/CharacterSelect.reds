@@ -42,6 +42,17 @@ public func MpCsVoid() -> HDRColor = new HDRColor(0.016, 0.016, 0.031, 1.0)
 public func MpCsFont() -> String = "base\\gameplay\\gui\\fonts\\raj\\raj.inkfontfamily"
 
 /**
+ * How many slots exist at all, locked or not.
+ *
+ * MUST MATCH PlayerStore::kMaxSlots. The two are separate constants in separate languages
+ * because the ceiling is not something the protocol carries - the server sends how many
+ * slots an account may USE (GetCharacterSlots), and the total is a fact about the product
+ * rather than about the account. If the server ever entitles somebody to more than this,
+ * the extra slots are simply not drawn, so a change to one is a change to both.
+ */
+public func MpCsMaxSlots() -> Int32 = 4
+
+/**
  * A filled rectangle at an absolute position.
  *
  * Every plate, rule, border and bar on this screen is one of these. Anchored top-left with
@@ -205,26 +216,35 @@ public func MpCsOpen() -> Void {
     MpCsRect(c, 68.0, 248.0, 540.0, 1.0, MpCsRed(), 0.9);
 
     // ---------------------------------------------------------------- roster
-    let slots = network.GetCharacterSlots();
+    //
+    // ALL FOUR SLOTS ARE ALWAYS DRAWN, whether or not this account may use them. zeldfep,
+    // 2026-09-07: "4 for devs and 4 for public players 1 slot unlocked 3 more after
+    // purchasing so just grey them out for now".
+    //
+    // Drawing only what somebody owns would mean a public account sees one card and no
+    // indication that more exist. Four cards with three greyed says what is on offer, and
+    // the day slots become purchasable the screen already has the shelf to sell from.
+    let unlocked = network.GetCharacterSlots();
 
-    if slots > 4 {
-        slots = 4;
+    if unlocked > MpCsMaxSlots() {
+        unlocked = MpCsMaxSlots();
     }
 
-    if slots < 1 {
-        slots = 1;
+    if unlocked < 1 {
+        unlocked = 1;
     }
 
-    // Keep the caret on something real. It can point at a retired slot after a delete, and
-    // a detail panel describing a character that is no longer there is worse than no panel.
-    if this.m_csCursor < 0 || this.m_csCursor >= slots {
+    // Keep the caret on something real, and never on a slot this account cannot use. It can
+    // point at a retired slot after a delete, and a dossier describing a character that is
+    // no longer there is worse than no dossier.
+    if this.m_csCursor < 0 || this.m_csCursor >= unlocked {
         this.m_csCursor = this.MpCsActiveSlot();
     }
 
     let slot = 0;
 
-    while slot < slots {
-        this.MpCsCard(c, slot, 68.0, 322.0 + Cast<Float>(slot) * 99.0);
+    while slot < MpCsMaxSlots() {
+        this.MpCsCard(c, slot, 68.0, 322.0 + Cast<Float>(slot) * 99.0, slot < unlocked);
         slot += 1;
     }
 
@@ -289,7 +309,8 @@ public func MpCsRegistration(parent: ref<inkCanvas>) -> Void {
  * readable at a glance and from across a room, which a colour change alone is not.
  */
 @addMethod(SingleplayerMenuGameController)
-public func MpCsCard(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float) -> Void {
+public func MpCsCard(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float,
+                     unlocked: Bool) -> Void {
     let network = GameInstance.GetNetworkWorldSystem();
 
     if !IsDefined(network) {
@@ -298,9 +319,30 @@ public func MpCsCard(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float) ->
 
     let index = this.MpCsRosterIndex(slot);
     let occupied = index >= 0;
-    let selected = slot == this.m_csCursor;
+    let selected = unlocked && slot == this.m_csCursor;
     let w = 568.0;
     let h = 90.0;
+
+    /*
+     * A LOCKED SLOT IS DRAWN, DIMMED, AND DOES NOTHING.
+     *
+     * Deliberately not hidden: the point of showing it is that somebody can see there are
+     * three more and that they are obtainable. Deliberately not pressable either - a card
+     * that highlights and then refuses is a worse answer than a card that never pretended.
+     */
+    if !unlocked {
+        MpCsRect(parent, x, y, w, h, MpCsPlate(), 0.45);
+        MpCsBorder(parent, x, y, w, h, MpCsRedDim(), 0.35);
+        MpCsNotch(parent, x + w, y, 26.0, MpCsVoid());
+        MpCsNotch(parent, x, y + h, 26.0, MpCsVoid());
+
+        MpCsText(parent, x + 15.0, y + 36.0, s"0\(slot + 1)", 13, n"Regular", MpCsInkFaint());
+        MpCsText(parent, x + 128.0, y + 32.0, "LOCKED", 26, n"Bold", MpCsInkFaint());
+        MpCsText(parent, x + 128.0, y + 62.0, "AN EXTRA CHARACTER SLOT", 13, n"Regular",
+                 MpCsInkFaint());
+
+        return;
+    }
 
     // The selected card steps right, as in the mockup.
     let cx = selected ? x + 14.0 : x;
@@ -336,10 +378,17 @@ public func MpCsCard(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float) ->
     MpCsNotch(parent, chipX + 64.0, chipY, 16.0, MpCsVoid());
 
     if !occupied {
-        MpCsText(parent, chipX + 26.0, chipY + 18.0, "-", 24, n"Bold", MpCsInkFaint());
-        MpCsText(parent, cx + 128.0, y + 32.0, "EMPTY SLOT", 26, n"Bold", MpCsInkFaint());
-        MpCsText(parent, cx + 128.0, y + 62.0, "NEW CHARACTER FILLS IT", 13, n"Regular",
-                 MpCsInkFaint());
+        MpCsText(parent, chipX + 26.0, chipY + 18.0, "+", 24, n"Bold",
+                 selected ? MpCsGold() : MpCsInkFaint());
+        MpCsText(parent, cx + 128.0, y + 32.0, "EMPTY SLOT", 26, n"Bold",
+                 selected ? MpCsGold() : MpCsInkFaint());
+
+        // An empty slot is a DESTINATION now, not a dead row. Selecting it points the
+        // account at it, and the creator's save lands there - which is what makes a second
+        // character an addition rather than a replacement.
+        MpCsText(parent, cx + 128.0, y + 62.0,
+                 selected ? "READY - CREATE NEW CHARACTER" : "SELECT TO CREATE HERE", 13,
+                 n"Regular", selected ? MpCsGold() : MpCsInkFaint());
 
         this.MpCsArm(parent, slot, cx, y, w, h);
         return;
@@ -476,15 +525,15 @@ protected cb func OnMpCsCardRelease(e: ref<inkPointerEvent>) -> Bool {
         return true;
     }
 
-    if this.MpCsRosterIndex(slot) < 0 {
-        this.MpCsOpen();
-        this.MpCsSay("That slot is empty - NEW CHARACTER fills it.");
-        return true;
-    }
+    let empty = this.MpCsRosterIndex(slot) < 0;
 
+    // The same call either way. The server accepts an empty slot as a destination - that is
+    // how a new character gets somewhere to go - so there is no special case here beyond
+    // what the screen says while it waits.
     network.SelectCharacterSlot(slot);
     this.MpCsOpen();
-    this.MpCsSay("switching...");
+    this.MpCsSay(empty ? "Slot armed - press CREATE NEW CHARACTER."
+                       : "switching...");
 
     // The answer comes back as a fresh roster, so poll for it rather than assuming the
     // switch took. SelectCharacterSlot only says the request was sent.
@@ -537,9 +586,9 @@ public func MpCsDetail(parent: ref<inkCanvas>, x: Float, y: Float) -> Void {
         MpCsText(parent, x + 26.0, y + 40.0, "NO CHARACTER", 40, n"Bold", MpCsInkFaint());
         MpCsRect(parent, x + 26.0, y + 100.0, w - 52.0, 1.0, MpCsRedDim(), 0.8);
         MpCsText(parent, x + 26.0, y + 124.0,
-                 "This slot is empty. NEW CHARACTER runs the", 19, n"Regular", MpCsInkDim());
+                 "This slot is empty. CREATE NEW CHARACTER", 19, n"Regular", MpCsInkDim());
         MpCsText(parent, x + 26.0, y + 150.0,
-                 "creator and fills it.", 19, n"Regular", MpCsInkDim());
+                 "runs the creator and fills it.", 19, n"Regular", MpCsInkDim());
         return;
     }
 
@@ -597,7 +646,7 @@ public func MpCsStatusLine(parent: ref<inkCanvas>, x: Float, y: Float) -> Void {
             message = error;
         } else {
             if !network.HasCharacter() {
-                message = "No character yet - NEW CHARACTER makes one.";
+                message = "No character yet - CREATE NEW CHARACTER makes one.";
             }
         }
     }
@@ -639,6 +688,40 @@ public func MpCsRosterIndex(slot: Int32) -> Int32 {
         }
 
         i += 1u;
+    }
+
+    return -1;
+}
+
+/**
+ * The lowest UNLOCKED slot with nobody in it, or -1 when there is no room.
+ *
+ * Unlocked, not merely drawn: the screen shows four cards to everybody, but a public
+ * account owns one of them. Creating into a locked slot would be refused by the server
+ * anyway - this is what stops the client asking.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsFirstFreeSlot() -> Int32 {
+    let network = GameInstance.GetNetworkWorldSystem();
+
+    if !IsDefined(network) {
+        return -1;
+    }
+
+    let unlocked = network.GetCharacterSlots();
+
+    if unlocked > MpCsMaxSlots() {
+        unlocked = MpCsMaxSlots();
+    }
+
+    let slot = 0;
+
+    while slot < unlocked {
+        if this.MpCsRosterIndex(slot) < 0 {
+            return slot;
+        }
+
+        slot += 1;
     }
 
     return -1;

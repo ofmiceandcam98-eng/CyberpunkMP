@@ -704,6 +704,22 @@ struct PlayerStore
     static constexpr int kStaffSlots = 4;
 
     /**
+     * How many slots an account can EVER have, unlocked or not.
+     *
+     * The selection screen draws all four for everybody - a public account sees its one
+     * unlocked slot and three locked ones, rather than seeing one slot and no hint that
+     * more exist. zeldfep, 2026-09-07: "4 for devs and 4 for public players 1 slot
+     * unlocked 3 more after purchasing so just grey them out for now".
+     *
+     * Kept beside the entitlements because the two must never disagree: a staff allowance
+     * larger than the ceiling would be slots nothing could draw.
+     */
+    static constexpr int kMaxSlots = 4;
+
+    static_assert(kStaffSlots <= kMaxSlots, "staff cannot be entitled to more slots than exist");
+    static_assert(kPlayerSlots <= kMaxSlots, "players cannot be entitled to more slots than exist");
+
+    /**
      * The most rows one account may EVER write, across every character it has ever had.
      *
      * Separate from the slot count, and it exists because deletion is soft: a retired
@@ -771,28 +787,87 @@ struct PlayerStore
      * there, so here is a different one" is how somebody ends up playing, and saving over,
      * a character they did not choose.
      */
-    std::string SelectSlot(const std::string& acDiscordId, int aSlot)
+    /**
+     * Point the account at one of its slots.
+     *
+     * AN EMPTY SLOT IS A VALID DESTINATION, and that is the whole mechanism behind adding a
+     * character rather than replacing one. Selecting an empty slot arms it: the account is
+     * now pointed somewhere with nobody in it, and the next appearance save creates a
+     * character THERE instead of overwriting whoever was in play.
+     *
+     * This used to refuse with "empty_slot", which is why NEW CHARACTER could only ever
+     * replace - there was no way to be pointed at an empty slot, so every creation landed
+     * on the character you already had.
+     *
+     * The entitlement is checked here rather than trusted from the caller, because this is
+     * the line that decides which slots an account may use at all. A locked slot is not a
+     * refusal about state, it is a refusal about permission, and it gets its own code so
+     * the client can say "buy it" rather than "try again".
+     */
+    std::string SelectSlot(const std::string& acDiscordId, int aSlot, EPermissionLevel aLevel)
     {
+        if (aSlot < 0 || aSlot >= kMaxSlots)
+            return "slot_out_of_range";
+
+        if (aSlot >= SlotsForLevel(aLevel))
+            return "slot_locked";
+
         auto* pRecord = FindMutable(acDiscordId);
         if (!pRecord)
             return "no_account";
 
-        for (const auto& character : pRecord->Characters)
+        if (pRecord->ActiveSlot != aSlot)
         {
-            if (character.Slot != aSlot)
-                continue;
-
-            if (pRecord->ActiveSlot != aSlot)
-            {
-                pRecord->ActiveSlot = aSlot;
-                m_dirty = true;
-                Flush();
-            }
-
-            return {};
+            pRecord->ActiveSlot = aSlot;
+            m_dirty = true;
+            Flush();
         }
 
-        return "empty_slot";
+        return {};
+    }
+
+    /**
+     * Which slot this account is pointed at. Zero for an account with no record yet, which
+     * is the first slot every account starts on.
+     */
+    int ActiveSlotFor(const std::string& acDiscordId) const
+    {
+        const auto* pRecord = Find(acDiscordId);
+        return pRecord ? pRecord->ActiveSlot : 0;
+    }
+
+    /**
+     * The lowest slot this account may use and has nobody in, or -1 when it is full.
+     *
+     * "May use" is the entitlement, so a public account with one slot and one character is
+     * full at one - the other three exist on screen but are not theirs yet.
+     */
+    int FirstFreeSlot(const std::string& acDiscordId, EPermissionLevel aLevel) const
+    {
+        const int slots = SlotsForLevel(aLevel);
+        const auto* pRecord = Find(acDiscordId);
+
+        if (!pRecord)
+            return slots > 0 ? 0 : -1;
+
+        for (int slot = 0; slot < slots; ++slot)
+        {
+            bool taken = false;
+
+            for (const auto& character : pRecord->Characters)
+            {
+                if (character.Slot == slot)
+                {
+                    taken = true;
+                    break;
+                }
+            }
+
+            if (!taken)
+                return slot;
+        }
+
+        return -1;
     }
 
     bool RetireCharacter(const std::string& acDiscordId, int aSlot = -1)
