@@ -1,0 +1,335 @@
+<title>Section Rail</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Barlow+Condensed:wght@500;600;700&display=swap">
+<style>
+  /* The launcher's own tokens, copied exactly out of code/launcher-lite/index.html so this
+     cannot flatter itself with colours the real thing does not have. */
+  :root{
+    --ground:#0d0e11;
+    --surface:#120a0d;
+    --line:#2a1418;
+    --ink:#e8e2e2;
+    --ink-dim:#9a8b8d;
+    --accent:#ff2a32;
+    --hazard:#f3c50f;
+    --radius:2px;
+    --mono:'JetBrains Mono',ui-monospace,'Cascadia Mono',Consolas,monospace;
+    --disp:'Barlow Condensed',system-ui,'Segoe UI',sans-serif;
+    --sans:system-ui,-apple-system,'Segoe UI',sans-serif;
+  }
+  /* Deliberately single-world: a mockup of a dark HUD has to be judged on the ground it
+     will actually sit on. Every colour is painted, nothing inherited. */
+  *{box-sizing:border-box;}
+  body{background:var(--ground);color:var(--ink);font-family:var(--sans);line-height:1.5;margin:0;padding:0 20px 80px;}
+  .wrap{max-width:1000px;margin:0 auto;}
+
+  header.top{padding:38px 0 20px;border-bottom:1px solid var(--line);}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--hazard);margin:0 0 10px;}
+  h1{font-family:var(--disp);font-size:clamp(30px,5vw,46px);font-weight:700;letter-spacing:.01em;text-transform:uppercase;margin:0 0 10px;line-height:1;}
+  .sub{margin:0;color:var(--ink-dim);font-size:14.5px;max-width:68ch;}
+  .sub b{color:var(--ink);font-weight:600;}
+
+  .cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(240px,300px);gap:30px;margin-top:32px;align-items:start;}
+  @media (max-width:820px){.cols{grid-template-columns:1fr;}}
+
+  /* ---- mock modal ------------------------------------------------------------------ */
+  .modal{position:relative;background:var(--surface);border:1px solid var(--line);overflow:hidden;}
+  .mhead{display:flex;align-items:center;gap:14px;padding:.7rem .9rem;border-bottom:1px solid var(--line);background:var(--ground);}
+  .mhead h3{margin:0;font-family:var(--disp);font-size:15px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;}
+  .tabs{display:flex;gap:6px;margin-left:auto;}
+  .tab{
+    font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+    background:transparent;border:1px solid var(--line);color:var(--ink-dim);
+    padding:.28rem .55rem;cursor:pointer;border-radius:var(--radius);
+  }
+  .tab[aria-selected="true"]{color:var(--hazard);border-color:var(--hazard);}
+  .mbody{
+    height:360px;overflow-y:auto;overscroll-behavior:contain;
+    padding:1rem;padding-right:3.4rem;display:flex;flex-direction:column;gap:1rem;
+    scrollbar-width:none;
+  }
+  .mbody::-webkit-scrollbar{display:none;}
+
+  /* the real group heading, same rule as ships in the launcher */
+  .rail-group{
+    font-family:var(--mono);font-size:.66rem;font-weight:700;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--ink-dim);
+    margin:.35rem 0 -.35rem;padding-bottom:.35rem;border-bottom:1px solid var(--line);
+  }
+  .mbody > .rail-group:first-child{margin-top:0;}
+  .tool{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;}
+  .tool-name{font-size:13.5px;font-weight:600;color:var(--ink);}
+  .tool-desc{font-size:11.5px;color:var(--ink-dim);line-height:1.45;margin-top:.15rem;}
+  .ghost{
+    background:transparent;border:1px solid var(--line);color:var(--ink);
+    font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+    padding:.3rem .55rem;cursor:pointer;flex:none;border-radius:var(--radius);
+  }
+  .ghost:hover{border-color:var(--hazard);color:var(--hazard);}
+
+  /* ---- the rail, exactly as built --------------------------------------------------- */
+  .section-rail{
+    position:absolute;right:.5rem;top:50%;transform:translateY(-50%);
+    display:flex;flex-direction:column;align-items:center;gap:.3rem;
+    width:2.4rem;z-index:3;user-select:none;
+  }
+  .section-rail::before,.section-rail::after{
+    content:"";width:1.6rem;height:5px;flex:none;
+    background:repeating-linear-gradient(45deg,var(--hazard) 0 3px,#140406 3px 7px);
+    opacity:.22;transition:opacity .18s ease;
+  }
+  .section-rail.at-top::before,.section-rail.at-end::after{opacity:1;}
+  .section-rail button.rail-step{
+    width:1.75rem;height:1.5rem;cursor:pointer;flex:none;
+    background:var(--surface);border:1px solid var(--line);color:var(--hazard);
+    font-size:.58rem;line-height:1;padding:0;font-family:var(--mono);
+    transition:border-color .15s ease,background .15s ease,color .15s ease;
+    clip-path:polygon(0 0,calc(100% - 6px) 0,100% 6px,100% 100%,6px 100%,0 calc(100% - 6px));
+  }
+  .section-rail button.rail-step:hover:not(:disabled){border-color:var(--hazard);background:var(--ground);}
+  .section-rail button.rail-step:disabled{color:var(--ink-dim);opacity:.45;cursor:default;}
+  .rail-track{display:flex;flex-direction:column;align-items:stretch;gap:1px;padding:.25rem 0;width:100%;}
+  .rail-num{
+    font-family:var(--mono);font-size:.54rem;font-weight:500;letter-spacing:.04em;
+    font-variant-numeric:tabular-nums;text-align:center;
+    padding:2px 0;border:0;background:transparent;color:var(--ink-dim);
+    cursor:pointer;opacity:.5;transition:opacity .14s ease,color .14s ease;
+  }
+  .rail-num:hover{opacity:1;color:var(--hazard);}
+  .rail-num.on{
+    opacity:1;color:#140406;font-weight:700;
+    background:repeating-linear-gradient(45deg,var(--hazard) 0 5px,#d8ae0b 5px 10px);
+    clip-path:polygon(0 0,calc(100% - 5px) 0,100% 5px,100% 100%,5px 100%,0 calc(100% - 5px));
+  }
+  .rail-pos{
+    font-family:var(--mono);font-size:.55rem;letter-spacing:.06em;
+    font-variant-numeric:tabular-nums;color:var(--ink-dim);padding-top:.1rem;
+  }
+  .rail-pos b{color:var(--hazard);font-weight:600;}
+
+  /* ---- side notes -------------------------------------------------------------------- */
+  aside h2{font-family:var(--disp);font-size:15px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;margin:0 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line);}
+  aside + aside, aside.next{margin-top:26px;}
+  ul.notes{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px;}
+  ul.notes li{font-size:12.5px;color:var(--ink-dim);line-height:1.5;padding-left:14px;position:relative;}
+  ul.notes li::before{content:"\203A";position:absolute;left:0;top:-1px;color:var(--hazard);font-family:var(--mono);font-size:13px;}
+  ul.notes b{color:var(--ink);font-weight:600;}
+  .names{display:flex;flex-direction:column;gap:5px;margin:0;padding:0;list-style:none;}
+  .names li{display:flex;gap:9px;align-items:baseline;font-size:12.5px;color:var(--ink);}
+  .names span{font-family:var(--mono);font-size:10.5px;color:var(--hazard);flex:none;}
+  .names em{font-style:normal;color:var(--ink-dim);font-size:11.5px;}
+  footer.foot{margin-top:44px;padding-top:16px;border-top:1px solid var(--line);font-size:12.5px;color:var(--ink-dim);max-width:80ch;}
+  footer.foot b{color:var(--ink);}
+  code{font-family:var(--mono);font-size:.92em;color:var(--ink);}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;}}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <p class="eyebrow">Launcher · settings modal · as built</p>
+    <h1>Section Rail</h1>
+    <p class="sub">Option B, wired up and counting <b>sections instead of rows</b>. Tools went from thirteen stops to four. <b>Switch tabs, scroll, click the numbers, run it to the ends.</b> The only thing left for you to check is whether the group names are the right ones.</p>
+  </header>
+
+  <div class="cols">
+    <div class="modal">
+      <div class="mhead">
+        <h3>Settings</h3>
+        <div class="tabs" role="tablist">
+          <button class="tab" role="tab" id="tabTools" aria-selected="true">Tools</button>
+          <button class="tab" role="tab" id="tabVoice" aria-selected="false">Voice</button>
+        </div>
+      </div>
+      <div class="mbody" id="body"></div>
+      <div class="section-rail" id="rail">
+        <button class="rail-step" type="button" data-dir="-1" aria-label="Previous section">&#9650;</button>
+        <div class="rail-track" id="track"></div>
+        <button class="rail-step" type="button" data-dir="1" aria-label="Next section">&#9660;</button>
+        <span class="rail-pos" id="pos"><b>01</b>/01</span>
+      </div>
+    </div>
+
+    <div>
+      <aside>
+        <h2>The names I chose</h2>
+        <ul class="names" id="nameList"></ul>
+      </aside>
+
+      <aside class="next">
+        <h2>What it does</h2>
+        <ul class="notes">
+          <li><b>One number per section</b>, current one struck with caution striping. Hover a number to see the section name.</li>
+          <li>Striped caps at both ends sit dim until you <b>hit a limit</b>, then go solid.</li>
+          <li>Arrows step, numbers jump, the wheel still scrolls and the rail follows.</li>
+          <li><b>Yellow now carries navigation</b>, so warnings stay apart by form: warning states are flat hazard, and this striped plate is the only striped hazard in the app. Keep new warning states flat.</li>
+          <li>A pane with no headings falls back to counting rows, so nothing regresses in the panes that are too short to need grouping.</li>
+        </ul>
+      </aside>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <b>One row moved to make four honest groups:</b> <code>Uninstall launcher</code> was sitting in the middle of the maintenance run, between <code>Launcher folder</code> and <code>Verify game files</code>. It is now last, at the bottom of <b>Repair and remove</b>. Nothing else changed order. Voice got the same treatment with no reordering at all — it already fell into three. Needs a launcher ship to reach anyone.
+  </footer>
+</div>
+
+<script>
+(function () {
+  var PANES = {
+    tools: [
+      ['Connection', [
+        ['Join the server’s network', 'You need this once before the server can reach you.'],
+        ['Checkup', 'Runs the whole checklist at once and names the first thing that is broken.'],
+        ['Test server connection', 'Checks every link between this PC and the game server.']
+      ]],
+      ['Install', [
+        ['Install everything', 'The mod and every framework it needs, in one press.'],
+        ['Nexus Mods account', 'Lets the launcher fetch mods without you clicking through the site.']
+      ]],
+      ['This PC', [
+        ['Desktop shortcut', 'Puts Night City Online on your desktop.'],
+        ['Developer overlay', 'Extra diagnostics on screen while you play.'],
+        ['Launcher folder', 'Opens where the launcher keeps its files.']
+      ]],
+      ['Repair and remove', [
+        ['Verify game files', 'Re-checks the install against the manifest.'],
+        ['Direct install from Nexus', 'Paste a link or a mod number and install it here.'],
+        ['Reinstall mod files', 'Puts the payload back without touching your settings.'],
+        ['Deep clean', 'Clears caches and leftovers from older installs.'],
+        ['Uninstall launcher', 'Removes everything this launcher ever wrote.']
+      ]]
+    ],
+    voice: [
+      ['Devices', [
+        ['Audio devices', 'Windows has to allow microphone access before it will tell us device names.'],
+        ['Microphone', 'Which device the game listens to.'],
+        ['Voice output', 'Where other players come out.']
+      ]],
+      ['Keys and mode', [
+        ['Push-to-talk key', 'Held to talk. Rebindable.'],
+        ['Voice range key', 'Cycles whisper, normal, shout.'],
+        ['Voice mode', 'Push to talk, or open mic.']
+      ]],
+      ['Levels', [
+        ['Microphone volume', 'How loud you are to everyone else.'],
+        ['Voice chat volume', 'How loud everyone else is to you.'],
+        ['Saved on this PC', 'Your voice settings stay on this machine.']
+      ]]
+    ]
+  };
+
+  var body = document.getElementById('body');
+  var rail = document.getElementById('rail');
+  var track = document.getElementById('track');
+  var out = document.getElementById('pos');
+  var steps = rail.querySelectorAll('.rail-step');
+  var nameList = document.getElementById('nameList');
+  var stops = [];
+
+  function pad (n) { return String(n).padStart(2, '0'); }
+
+  function render (which) {
+    body.textContent = '';
+    track.textContent = '';
+    nameList.textContent = '';
+
+    PANES[which].forEach(function (group) {
+      var h = document.createElement('h4');
+      h.className = 'rail-group';
+      h.textContent = group[0];
+      body.appendChild(h);
+
+      group[1].forEach(function (t) {
+        var row = document.createElement('div');
+        row.className = 'tool';
+        var left = document.createElement('div');
+        left.style.minWidth = '0';
+        var n = document.createElement('div');
+        n.className = 'tool-name'; n.textContent = t[0];
+        var d = document.createElement('div');
+        d.className = 'tool-desc'; d.textContent = t[1];
+        left.appendChild(n); left.appendChild(d);
+        var b = document.createElement('button');
+        b.className = 'ghost'; b.type = 'button'; b.textContent = 'Open';
+        row.appendChild(left); row.appendChild(b);
+        body.appendChild(row);
+      });
+
+      var li = document.createElement('li');
+      var num = document.createElement('span');
+      num.textContent = pad(PANES[which].indexOf(group) + 1);
+      var label = document.createElement('div');
+      label.textContent = group[0] + ' ';
+      var em = document.createElement('em');
+      em.textContent = '(' + group[1].length + ')';
+      label.appendChild(em);
+      li.appendChild(num); li.appendChild(label);
+      nameList.appendChild(li);
+    });
+
+    stops = [].slice.call(body.querySelectorAll('.rail-group'));
+    stops.forEach(function (sec, i) {
+      var mark = document.createElement('button');
+      mark.type = 'button';
+      mark.className = 'rail-num';
+      mark.textContent = pad(i + 1);
+      mark.title = sec.textContent;
+      mark.setAttribute('aria-label', 'Go to ' + sec.textContent);
+      mark.addEventListener('click', function () { go(i); });
+      track.appendChild(mark);
+    });
+
+    body.scrollTop = 0;
+    rail.dataset.pos = '';
+    update();
+  }
+
+  function current () {
+    var c = 0;
+    for (var i = 0; i < stops.length; i++) {
+      if (stops[i].offsetTop <= body.scrollTop + 12) c = i;
+    }
+    return c;
+  }
+
+  function go (i) {
+    i = Math.max(0, Math.min(stops.length - 1, i));
+    body.scrollTo({ top: i === 0 ? 0 : stops[i].offsetTop - 8, behavior: 'smooth' });
+  }
+
+  function update () {
+    var c = current();
+    var marks = track.children;
+    for (var i = 0; i < marks.length; i++) marks[i].classList.toggle('on', i === c);
+
+    var text = pad(c + 1) + '/' + pad(stops.length);
+    if (rail.dataset.pos !== text) {
+      rail.dataset.pos = text;
+      out.textContent = '';
+      var b = document.createElement('b');
+      b.textContent = pad(c + 1);
+      out.append(b, '/' + pad(stops.length));
+    }
+
+    var atTop = body.scrollTop <= 4;
+    var atEnd = body.scrollTop + body.clientHeight >= body.scrollHeight - 4;
+    steps[0].disabled = c === 0 && atTop;
+    steps[1].disabled = c >= stops.length - 1 && atEnd;
+    rail.classList.toggle('at-top', atTop);
+    rail.classList.toggle('at-end', atEnd);
+  }
+
+  steps[0].addEventListener('click', function () { go(current() - 1); });
+  steps[1].addEventListener('click', function () { go(current() + 1); });
+  body.addEventListener('scroll', update, { passive: true });
+
+  var tabs = { tools: document.getElementById('tabTools'), voice: document.getElementById('tabVoice') };
+  Object.keys(tabs).forEach(function (k) {
+    tabs[k].addEventListener('click', function () {
+      Object.keys(tabs).forEach(function (o) { tabs[o].setAttribute('aria-selected', String(o === k)); });
+      render(k);
+    });
+  });
+
+  render('tools');
+})();
+</script>

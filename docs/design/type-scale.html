@@ -1,0 +1,252 @@
+<title>Type Scale</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Barlow+Condensed:wght@500;600;700&display=swap">
+<style>
+  /* The launcher's own tokens, copied out of code/launcher-lite/index.html. */
+  :root{
+    --ground:#0d0e11;
+    --surface:#120a0d;
+    --line:#2a1418;
+    --ink:#e8e2e2;
+    --ink-dim:#9a8b8d;
+    --accent:#ff2a32;
+    --hazard:#f3c50f;
+    --radius:2px;
+    --mono:'JetBrains Mono',ui-monospace,'Cascadia Mono',Consolas,monospace;
+    --disp:'Barlow Condensed',system-ui,'Segoe UI',sans-serif;
+    --sans:system-ui,-apple-system,'Segoe UI',sans-serif;
+
+    /* THE PROPOSAL */
+    --fs-micro:.58rem;
+    --fs-label:.68rem;
+    --fs-small:.74rem;
+    --fs-body:.84rem;
+    --fs-lead:1.02rem;
+    --fs-head:1.15rem;
+    --fs-icon:1.2rem;
+  }
+  *{box-sizing:border-box;}
+  body{background:var(--ground);color:var(--ink);font-family:var(--sans);line-height:1.5;margin:0;padding:0 20px 80px;}
+  .wrap{max-width:1000px;margin:0 auto;}
+
+  header.top{padding:38px 0 20px;border-bottom:1px solid var(--line);}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--hazard);margin:0 0 10px;}
+  h1{font-family:var(--disp);font-size:clamp(30px,5vw,46px);font-weight:700;letter-spacing:.01em;text-transform:uppercase;margin:0 0 10px;line-height:1;}
+  .sub{margin:0;color:var(--ink-dim);font-size:14.5px;max-width:70ch;}
+  .sub b{color:var(--ink);font-weight:600;}
+
+  h2.sec{
+    font-family:var(--disp);font-size:17px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;
+    margin:40px 0 4px;padding-bottom:7px;border-bottom:1px solid var(--line);
+  }
+  .lede{margin:0 0 16px;font-size:13px;color:var(--ink-dim);max-width:74ch;}
+  .lede b{color:var(--ink);}
+
+  /* ---- the mess ------------------------------------------------------------------- */
+  .mess{display:flex;flex-wrap:wrap;gap:6px;}
+  .chip{
+    font-family:var(--mono);font-size:11px;color:var(--ink-dim);
+    border:1px solid var(--line);padding:3px 7px;border-radius:var(--radius);
+    font-variant-numeric:tabular-nums;
+  }
+  .chip b{color:var(--ink);font-weight:500;}
+
+  /* ---- the scale ------------------------------------------------------------------- */
+  .steps{display:flex;flex-direction:column;gap:0;border:1px solid var(--line);}
+  .step{
+    display:grid;grid-template-columns:7.5rem 4.5rem 1fr;gap:16px;align-items:baseline;
+    padding:13px 15px;border-bottom:1px solid var(--line);
+  }
+  .step:last-child{border-bottom:none;}
+  .step .tok{font-family:var(--mono);font-size:11px;color:var(--hazard);letter-spacing:.03em;}
+  .step .val{font-family:var(--mono);font-size:11px;color:var(--ink-dim);font-variant-numeric:tabular-nums;}
+  .step .demo{color:var(--ink);min-width:0;}
+  .step .demo em{display:block;font-style:normal;color:var(--ink-dim);font-size:11.5px;margin-top:4px;font-family:var(--sans);}
+  .step .demo em code{color:var(--ink-dim);}
+
+  .d-micro{font-size:var(--fs-micro);font-family:var(--mono);letter-spacing:.04em;}
+  .d-label{font-size:var(--fs-label);font-family:var(--mono);letter-spacing:.14em;text-transform:uppercase;font-weight:700;}
+  .d-small{font-size:var(--fs-small);}
+  .d-body{font-size:var(--fs-body);font-weight:600;}
+  .d-lead{font-size:var(--fs-lead);font-family:var(--mono);letter-spacing:.12em;font-weight:600;}
+  .d-head{font-size:var(--fs-head);font-weight:600;}
+  .d-icon{font-size:var(--fs-icon);line-height:1;}
+
+  /* ---- what moves ------------------------------------------------------------------ */
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th{
+    text-align:left;font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--ink-dim);font-weight:500;padding:0 10px 8px 0;border-bottom:1px solid var(--line);
+  }
+  td{padding:9px 10px 9px 0;border-bottom:1px solid var(--line);color:var(--ink-dim);vertical-align:top;}
+  td.what{color:var(--ink);}
+  td.mono{font-family:var(--mono);font-size:11.5px;font-variant-numeric:tabular-nums;white-space:nowrap;}
+  .up{color:var(--hazard);}
+  .down{color:var(--accent);}
+  tr:last-child td{border-bottom:none;}
+
+  /* ---- before / after -------------------------------------------------------------- */
+  .ba{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:22px;}
+  .panel{border:1px solid var(--line);background:var(--surface);}
+  .ptag{
+    font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;
+    padding:7px 12px;border-bottom:1px solid var(--line);color:var(--ink-dim);background:var(--ground);
+  }
+  .panel.after .ptag{color:var(--hazard);}
+  .pbody{padding:14px;display:flex;flex-direction:column;gap:14px;}
+  .mockhead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-bottom:10px;border-bottom:1px solid var(--line);}
+  .mockhead .x{background:none;border:0;color:var(--ink-dim);cursor:default;padding:0;line-height:1;}
+  .grouplab{font-family:var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--ink-dim);font-weight:700;}
+  .row{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;}
+  .rname{font-weight:600;color:var(--ink);}
+  .rdesc{color:var(--ink-dim);line-height:1.45;margin-top:2px;}
+  .rbtn{
+    background:transparent;border:1px solid var(--line);color:var(--ink);
+    font-family:var(--mono);letter-spacing:.08em;text-transform:uppercase;
+    padding:.3rem .55rem;flex:none;border-radius:var(--radius);cursor:default;
+  }
+
+  /* BEFORE - the sizes actually in the file today */
+  .before .mockhead h3{font-size:1rem;margin:0;font-weight:700;font-family:var(--disp);letter-spacing:.08em;text-transform:uppercase;}
+  .before .x{font-size:1.3rem;}
+  .before .grouplab{font-size:.66rem;}
+  .before .rname{font-size:.84rem;}
+  .before .rdesc{font-size:.72rem;}
+  .before .rbtn{font-size:.62rem;}
+  .before .foot{font-size:.7rem;color:var(--ink-dim);font-family:var(--mono);letter-spacing:.08em;}
+
+  /* AFTER - the seven steps */
+  .after .mockhead h3{font-size:var(--fs-head);margin:0;font-weight:700;font-family:var(--disp);letter-spacing:.08em;text-transform:uppercase;}
+  .after .x{font-size:var(--fs-icon);}
+  .after .grouplab{font-size:var(--fs-label);}
+  .after .rname{font-size:var(--fs-body);}
+  .after .rdesc{font-size:var(--fs-small);}
+  .after .rbtn{font-size:var(--fs-micro);}
+  .after .foot{font-size:var(--fs-label);color:var(--ink-dim);font-family:var(--mono);letter-spacing:.08em;}
+
+  footer.foot{margin-top:44px;padding-top:16px;border-top:1px solid var(--line);font-size:12.5px;color:var(--ink-dim);max-width:80ch;}
+  footer.foot b{color:var(--ink);}
+  code{font-family:var(--mono);font-size:.92em;color:var(--ink);}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;}}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <p class="eyebrow">Launcher · sizing only, not style</p>
+    <h1>Type Scale</h1>
+    <p class="sub">The launcher has <b>24 different font sizes</b> in one window — <code>.54</code>, <code>.55</code>, <code>.58</code>, <code>.6</code>, <code>.62</code>, <code>.64</code>, <code>.66</code>, <code>.68</code>, <code>.7</code>, <code>.72</code>, <code>.74</code>… none of them chosen against each other. This is a proposal to collapse them onto <b>seven steps</b>. Same typefaces, same weights, same colours: only the sizes move.</p>
+  </header>
+
+  <h2 class="sec">What is in there now</h2>
+  <p class="lede">Every distinct <code>font-size</code> in <code>index.html</code>, with how many rules use it. <b>Nine rules agree on <code>.72rem</code>. The other fifteen sizes are used once or twice each</b> — that is drift, not a decision.</p>
+  <div class="mess">
+    <span class="chip"><b>1.3</b> ×1</span><span class="chip"><b>1.15</b> ×2</span><span class="chip"><b>1.1</b> ×1</span>
+    <span class="chip"><b>1.02</b> ×1</span><span class="chip"><b>1</b> ×1</span><span class="chip"><b>.85</b> ×1</span>
+    <span class="chip"><b>.84</b> ×2</span><span class="chip"><b>.82</b> ×2</span><span class="chip"><b>.8</b> ×2</span>
+    <span class="chip"><b>.78</b> ×2</span><span class="chip"><b>.76</b> ×1</span><span class="chip"><b>.75</b> ×1</span>
+    <span class="chip"><b>.74</b> ×2</span><span class="chip"><b>.72</b> ×9</span><span class="chip"><b>.7</b> ×5</span>
+    <span class="chip"><b>.68</b> ×3</span><span class="chip"><b>.66</b> ×1</span><span class="chip"><b>.64</b> ×1</span>
+    <span class="chip"><b>.62</b> ×2</span><span class="chip"><b>.6</b> ×1</span><span class="chip"><b>.58</b> ×1</span>
+    <span class="chip"><b>.55</b> ×1</span><span class="chip"><b>.54</b> ×1</span>
+  </div>
+
+  <h2 class="sec">The seven steps</h2>
+  <p class="lede">Rendered at their real size. Each one keeps the job the sizes it absorbs were already doing.</p>
+  <div class="steps">
+    <div class="step">
+      <span class="tok">--fs-micro</span><span class="val">.58rem</span>
+      <span class="demo"><span class="d-micro">01/04 · READY · 102.6 MB</span>
+        <em>Rail numbers, badges, small chips. Absorbs <code>.54 .55 .58 .6 .62</code></em></span>
+    </div>
+    <div class="step">
+      <span class="tok">--fs-label</span><span class="val">.68rem</span>
+      <span class="demo"><span class="d-label">Repair and remove</span>
+        <em>Section headings, tab labels, footer, admin labels. Absorbs <code>.64 .66 .68 .7</code></em></span>
+    </div>
+    <div class="step">
+      <span class="tok">--fs-small</span><span class="val">.74rem</span>
+      <span class="demo"><span class="d-small">Re-checks the install against the manifest.</span>
+        <em>Descriptions, status lines, notes, hints. Absorbs <code>.72 .74 .75 .76 .78</code> — the biggest group in the app</em></span>
+    </div>
+    <div class="step">
+      <span class="tok">--fs-body</span><span class="val">.84rem</span>
+      <span class="demo"><span class="d-body">Verify game files</span>
+        <em>Setting names, dropdowns, the lede paragraph. Absorbs <code>.8 .82 .84 .85</code></em></span>
+    </div>
+    <div class="step">
+      <span class="tok">--fs-lead</span><span class="val">1.02rem</span>
+      <span class="demo"><span class="d-lead">PLAY</span>
+        <em>The Play button, and only that. Absorbs <code>1 1.02</code></em></span>
+    </div>
+    <div class="step">
+      <span class="tok">--fs-head</span><span class="val">1.15rem</span>
+      <span class="demo"><span class="d-head">Night City Online</span>
+        <em>Brand, page title, modal title. Absorbs <code>1 1.15</code></em></span>
+    </div>
+    <div class="step">
+      <span class="tok">--fs-icon</span><span class="val">1.2rem</span>
+      <span class="demo"><span class="d-icon">&#9881; &times;</span>
+        <em>Chrome glyphs — the gear and the close. They are <b>different sizes today</b> (1.1 and 1.3) for no reason. Absorbs <code>1.1 1.3</code></em></span>
+    </div>
+  </div>
+
+  <h2 class="sec">What actually moves</h2>
+  <p class="lede">Most of it is invisible — <b>nineteen of the twenty-four sizes shift by half a pixel or less</b>. These are the only changes you would notice.</p>
+  <table>
+    <thead><tr><th>What</th><th>Now</th><th>Becomes</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="what">Settings title</td>
+        <td class="mono">1rem</td><td class="mono up">1.15rem &#9650;</td>
+        <td>The modal's title was smaller than the app's own title. Same size now.</td>
+      </tr>
+      <tr>
+        <td class="what">Close &times;</td>
+        <td class="mono">1.3rem</td><td class="mono down">1.2rem &#9660;</td>
+        <td rowspan="2">Two chrome glyphs in the same header, drawn at two different sizes. They match now.</td>
+      </tr>
+      <tr>
+        <td class="what">Gear</td>
+        <td class="mono">1.1rem</td><td class="mono up">1.2rem &#9650;</td>
+      </tr>
+      <tr>
+        <td class="what">Mod buttons, badges</td>
+        <td class="mono">.6 – .62rem</td><td class="mono down">.58rem &#9660;</td>
+        <td>Joins the rail numbers. All the tiny mono readouts are one size.</td>
+      </tr>
+      <tr>
+        <td class="what">Action buttons</td>
+        <td class="mono">.8rem</td><td class="mono up">.84rem &#9650;</td>
+        <td>Reads as a control, not as description text.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 class="sec">Side by side</h2>
+  <p class="lede">The same settings section, drawn with today's sizes and with the scale. Nothing else differs.</p>
+  <div class="ba">
+    <div class="panel before">
+      <div class="ptag">Before — six sizes in one card</div>
+      <div class="pbody">
+        <div class="mockhead"><h3>Settings</h3><button class="x" type="button" aria-hidden="true">&times;</button></div>
+        <div class="grouplab">Repair and remove</div>
+        <div class="row"><div><div class="rname">Verify game files</div><div class="rdesc">Re-checks the install against the manifest.</div></div><button class="rbtn" type="button">Run</button></div>
+        <div class="row"><div><div class="rname">Deep clean</div><div class="rdesc">Clears caches and leftovers from older installs.</div></div><button class="rbtn" type="button">Clean</button></div>
+        <div class="foot">v0.3.115 · patch 2.31</div>
+      </div>
+    </div>
+    <div class="panel after">
+      <div class="ptag">After — four steps off the scale</div>
+      <div class="pbody">
+        <div class="mockhead"><h3>Settings</h3><button class="x" type="button" aria-hidden="true">&times;</button></div>
+        <div class="grouplab">Repair and remove</div>
+        <div class="row"><div><div class="rname">Verify game files</div><div class="rdesc">Re-checks the install against the manifest.</div></div><button class="rbtn" type="button">Run</button></div>
+        <div class="row"><div><div class="rname">Deep clean</div><div class="rdesc">Clears caches and leftovers from older installs.</div></div><button class="rbtn" type="button">Clean</button></div>
+        <div class="foot">v0.3.115 · patch 2.31</div>
+      </div>
+    </div>
+  </div>
+
+  <footer class="foot">
+    Say go and every <code>font-size</code> in the file points at one of these seven tokens, so the next person adding a row picks a step instead of inventing a number. <b>No typeface, weight or colour changes.</b> The <code>.72em</code> on the Play button's chevron stays relative on purpose — it is sized against the button, not the page. Needs a launcher ship to reach anyone.
+  </footer>
+</div>
