@@ -10,7 +10,7 @@
     "before blaming the server for being down."
   ],
   "name": "Night City Online",
-  "host": "100.80.243.29",
+  "host": "100.109.52.23",
   "port": 11778,
   "requiresTailscale": true,
   "_coordComment": [
@@ -22,14 +22,48 @@
     "it is not published anywhere public, because a key that ships with the installer is",
     "a key everyone has."
   ],
-  "coordHost": "100.80.243.29",
+  "coordHost": "100.109.52.23",
   "coordPort": 11780,
   "_tailscaleComment": [
-    "Invite to the server's network (the deployment carries its own tailnet node - see",
-    "the tailscale sidecar in docker-compose.yml), so joining is a button rather than a",
-    "link someone has to send by hand. The launcher only shows it to people it has",
-    "already verified are in the Discord - see the note in index.html. Invites may be",
-    "single-seat: rotate via the Tailscale API when one is consumed."
+    "Invite to the server's network, opened by the launcher's Tools -> 'Join the server's",
+    "network' button. EVERY player needs this once: the server is reachable only over the",
+    "tailnet, so somebody who has not joined cannot reach anything, including the coord API.",
+    "",
+    "THIS IS A DEVICE SHARE (/admin/invite/...), NOT A USER INVITE (/uinv/...), and the",
+    "difference matters. A user invite makes the person a MEMBER of this tailnet, and then",
+    "only ACLs stop them reaching the NAS and everyone's machines. A device share gives them",
+    "exactly one node - the game server - and nothing else, by construction rather than by",
+    "policy. It is also how the eight existing players already have access.",
+    "",
+    "It lives here rather than behind a gate because no gate can work for the case that",
+    "matters: somebody who has not joined the tailnet cannot reach anything ON the tailnet",
+    "to be checked by. The launcher's Discord sign-in happens before that point, so a PUBLIC",
+    "endpoint checking the Discord token is the only gated route that could ever work - that",
+    "is the open item in MIGRATION.md, and it needs hosting this project does not have.",
+    "",
+    "So this URL is effectively public, and that is survivable precisely BECAUSE it is a",
+    "device share: whoever finds it gets the game server, not the tailnet.",
+    "",
+    "WHEN THE SERVER MOVES, THIS MUST BE REMINTED. Shares are bound to a device id, so new",
+    "hardware means a new node means a new share and everyone re-accepts - the old one keeps",
+    "pointing at a machine that is gone. Mint with POST to",
+    "/api/v2/device/<id>/device-invites; the body is an ARRAY, and an object is rejected",
+    "with 'cannot unmarshal object into Go value of type []controlapi.deviceInviteRequest'.",
+    "Update this field and every launcher picks it up on its next start, with no ship."
   ],
-  "tailscaleInvite": "https://login.tailscale.com/uinv/i5iZxi6p4D21eC16SYzEd11"
+  "tailscaleInvite": "https://login.tailscale.com/admin/invite/KG5fZVrUPbCeC16SYzEd11",
+  "_tailscaleTestComment": [
+    "The TEST deployment's device share, opened by the launcher's Dev panel -> 'Join the",
+    "test server's network'. That panel is hidden unless the published role map says the",
+    "account is an admin, so this one is not offered to players.",
+    "",
+    "It is a SEPARATE share because the test server is a separate tailnet node, and a share",
+    "is bound to one device id. Accepting the main invite does not grant this, and vice",
+    "versa - which is the point: dev access to the test box is not a side effect of being",
+    "able to play.",
+    "",
+    "Absent is a normal state. There is not always a test deployment standing, and the",
+    "launcher says so rather than failing."
+  ],
+  "tailscaleTestInvite": "https://login.tailscale.com/admin/invite/tbuHx67b5kXeC16SYzEd11"
 }
