@@ -1663,21 +1663,38 @@ compiles`) against the real 2.31 install.
      without it, because the release had already been cut. The launcher can only deliver what
      is in a release.
 
-- **Manifest is signed on the RELEASE but not armed on ANY server. Re-measured 2026-09-07 on
-  the new hardware.** The old "no signing key" debt is CLOSED — the key exists, is pinned, and
-  both v0.3.114 and v0.3.115 shipped `server-manifest.json` + `.sig` (see the manifest section).
-  What remains is the server half, and it is MEASURED, not assumed: `/api/v1/status/` on BOTH
-  boxes answers `"ManifestVersion": "", "Release": ""` (live and test, 2026-09-07 — the
-  migration carried the gap across, it did not create it). Absent file = checks disabled, by
-  design, so nothing is broken; it is simply not on yet.
-  - **Arming is a copy into each server's `config/`, and it is a DECISION, not a chore.** The
-    gate refuses mismatched installs AT THE DOOR, so arming it the day a release lands locks
-    out everyone still on `test.19` or v0.3.114 until they relaunch. Do it once most players
-    are on the current build — and the Discord announcement is what makes that happen, which is
-    why the un-posted v0.3.115 announcement blocks this too.
-  - **`audioware` and `red_data` are not curated** — no version pin, no fileId, no hashes
-    (MANIFEST-ARCHITECTURE.md §3.3). The ship warns and continues because policy is `warn`.
-    Curate them before policy ever moves to enforcing, or arming refuses honest installs.
+- **THE MANIFEST GATE WAS NEVER ARMABLE, AND "not armed yet" WAS THE WRONG DIAGNOSIS
+  (found 2026-09-07 while trying to arm it).** Fixed generator-side in `7294cb5`; a ship is
+  needed before arming can do anything.
+  - **The bug:** the install digest is `id:version:archive.sha256` for every component with
+    `required:true` and `audience:"all"`. `cyberpunk_multiplayer` is required, so BOTH
+    implementations reach it and NEITHER can proceed — the launcher throws *"required
+    component ... has no archive.sha256"* (`manifest.js:361`), the server logs *"missing
+    version/archive hash - manifest checks stay disabled"* and clears the version
+    (`GameServer.cpp:823`). Only `class:bundled` components were hashed, because only they
+    name a prerequisite zip; the payload's hash lived at `client.payload.archive` and never
+    on the component. Six of seven required components had a hash. The seventh did not.
+  - **WHY IT HID FOR THREE RELEASES, and this is the lesson.** Both sides fail OPEN by
+    design. Arming a server with that manifest loads it, computes nothing, disables every
+    check, and `/api/v1/status/` keeps answering `ManifestVersion: ""` — identical to never
+    having armed it. We measured that empty string three times and read it as a chore nobody
+    had done. **A fail-open component reports "off" the same way whether it was never
+    switched on or cannot switch on. Check the log line, not the status field.**
+  - **The selftest never caught it because it never passed `--payload-zip`** — it was
+    generating a manifest no ship would ever produce. It does now, plus three checks on the
+    invariant both consumers depend on, and the generator REFUSES to emit a manifest whose
+    required components cannot be digested.
+  - **What arming now takes, in order:** ship (any release regenerates the manifest, and the
+    payload component will carry its hash) → copy `server-manifest.json` into the TEST
+    server's `config/` and prove a real client joins → then live. The gate is a HARD REFUSE,
+    not a warning: `kManifestMismatch` for any version mismatch (including an empty one, so
+    a client started without the launcher is refused too) and `kDigestMismatch` for content,
+    with `N=0` previous versions allowed by default. **Anyone not on the newly-shipped build
+    is locked out until they relaunch**, which is why the announcement goes first.
+  - **`audioware` and `red_data` are still uncurated** (no pin, no fileId, no hashes,
+    MANIFEST-ARCHITECTURE.md §3.3). They are `class:nexus` and optional, so they are NOT in
+    the digest and do not block arming — but `policy.unknownMods` cannot move off `warn`
+    until they are done.
 
 - **Server list: DIAGNOSED AND FIXED 2026-09-06. It was also a REMOTE KILL SWITCH.**
   - Symptom: `Server could not reach the server list! Could not establish connection`, every
