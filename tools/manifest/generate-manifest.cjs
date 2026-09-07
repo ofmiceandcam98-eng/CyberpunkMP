@@ -306,6 +306,28 @@ for (const comp of components) {
 // someone forgot to bump it.
 payloadComponents[0].version = args.release.slice(1)
 
+// ...and its archive hash, which is the SAME bytes as client.payload.archive.
+//
+// THIS IS WHY THE MANIFEST GATE HAS NEVER BEEN ARMABLE. The install digest is
+// computed from every component with required:true and audience:"all" as
+// `id:version:archive.sha256`, in BOTH implementations. The payload is required, so
+// both of them reach it and both of them refuse: the launcher throws
+// `install digest: required component "cyberpunk_multiplayer" has no archive.sha256`
+// (manifest.js:361) and the server logs "required but missing version/archive hash -
+// manifest checks stay disabled" and clears the version (GameServer.cpp:823).
+//
+// So arming a server with a manifest generated before this line existed does nothing
+// at all: it loads, fails to compute a digest, disables checks, and the status endpoint
+// keeps reporting ManifestVersion "" - which is exactly what we kept measuring and
+// misreading as "nobody has armed it yet".
+//
+// Only bundled components get a hash above, because only they name a prerequisite zip.
+// The payload's bytes are hashed into payloadArchive; the component just needs to carry
+// the same object so the digest can see it.
+if (payloadArchive) {
+  payloadComponents[0].archive = payloadArchive
+}
+
 // ---------------------------------------------------------------------------
 // Install order - topological sort of the dependency graph
 //
@@ -394,6 +416,21 @@ function ordered (obj, keyOrder) {
     if (!(key in out) && !key.startsWith('_')) out[key] = obj[key]
   }
   return out
+}
+
+// Every component the install digest will reach must carry what the digest needs. Both
+// consumers refuse a manifest that fails this - the launcher by throwing, the server by
+// silently disabling every check - so a manifest that cannot be digested is a manifest
+// that ships a dead gate. Refuse to emit one.
+for (const comp of components) {
+  if (comp.required !== true || (comp.audience || 'all') !== 'all') continue
+  const sha = comp.archive && comp.archive.sha256
+  if (typeof comp.version !== 'string' || comp.version === '' || typeof sha !== 'string' || sha === '') {
+    blocked(`component ${comp.id} is required:true but has no ${!comp.version ? 'version' : 'archive.sha256'}. ` +
+            'The install digest is computed from id:version:archive.sha256 for every required component, ' +
+            'so both the launcher and the server would refuse this manifest and every manifest check would ' +
+            'be silently off. Give it an archive block, or make it optional.')
+  }
 }
 
 const COMPONENT_KEYS = ['id', 'name', 'types', 'class', 'version', 'required', 'networkImpact', 'audience', 'author', 'source', 'license', 'archive', 'nexus', 'files', 'dependencies']

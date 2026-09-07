@@ -69,6 +69,14 @@ try {
   fs.mkdirSync(prereqs, { recursive: true })
   fs.writeFileSync(path.join(prereqs, 'FakeFramework-1.0.0.zip'), 'not a real zip - selftest prerequisite\n')
 
+  // Every real ship passes --payload-zip (Ship.ps1). The fixture did not, so it was
+  // generating a manifest no ship would ever produce - and the payload component's
+  // missing archive.sha256, which disables every manifest check on BOTH sides, sailed
+  // straight through this selftest for three releases. Test the shipping path, or the
+  // test is theatre.
+  const payloadZip = path.join(tmp, 'ModPayload.zip')
+  fs.writeFileSync(payloadZip, 'not a real zip - selftest payload')
+
   const goodSource = path.join(pub, 'manifest-source.json')
   fs.writeFileSync(goodSource, JSON.stringify({
     game: { id: 'cyberpunk2077', supportedVersion: '2.31', enforce: 'warn' },
@@ -87,7 +95,8 @@ try {
   const genArgs = out => [
     '--staged', staged, '--source', goodSource, '--out', out,
     '--release', 'v0.0.1', '--channel', 'development',
-    '--protocol-client', '0x8579ff3e88d82943', '--protocol-server', 'bfc3bfaab24320a0'
+    '--protocol-client', '0x8579ff3e88d82943', '--protocol-server', 'bfc3bfaab24320a0',
+    '--payload-zip', payloadZip
   ]
 
   // --- generation + determinism ---------------------------------------------
@@ -112,6 +121,31 @@ try {
       !!installOrder && installOrder.order.join(',') === 'red4ext,cyberpunk_multiplayer')
     check('generator: bundled prerequisite zip hashed',
       /^[0-9a-f]{64}$/.test(manifest.components.find(c => c.id === 'red4ext').archive.sha256))
+
+    // THE REGRESSION THAT DISABLED EVERY MANIFEST CHECK ON BOTH SIDES.
+    //
+    // The install digest is computed from `id:version:archive.sha256` for every component
+    // with required:true and audience:"all". The payload component is required, so both
+    // implementations reach it - and until 2026-09-07 the generator never gave it an
+    // archive block, because only class:bundled components got hashed. Result: the
+    // launcher threw (manifest.js:361) and the server logged "missing version/archive
+    // hash - manifest checks stay disabled" and cleared the version (GameServer.cpp:823).
+    //
+    // Nothing failed loudly enough to notice. The servers simply reported ManifestVersion
+    // "" forever, which read as "nobody armed it" rather than "it cannot be armed".
+    const payloadComp = manifest.components.find(c => c.class === 'payload')
+    check('generator: the payload component carries an archive hash',
+      !!payloadComp && /^[0-9a-f]{64}$/.test(payloadComp.archive && payloadComp.archive.sha256))
+    check('generator: payload component hash matches client.payload.archive',
+      !!payloadComp && payloadComp.archive.sha256 === manifest.client.payload.archive.sha256)
+
+    // The invariant both consumers actually depend on, stated once.
+    const undigestible = manifest.components
+      .filter(c => c.required === true && (c.audience || 'all') === 'all')
+      .filter(c => !c.version || !(c.archive && c.archive.sha256))
+      .map(c => c.id)
+    check('generator: every required component can be digested', undigestible.length === 0,
+      undigestible.join(', '))
 
     // Same-day serial arithmetic: a second manifest generated against the
     // first must advance NN, nothing else.
@@ -138,7 +172,7 @@ try {
   }, null, 2))
 
   const gc = run('generate-manifest.cjs', ['--staged', staged, '--source', cycleSource, '--out', path.join(tmp, 'never.json'),
-    '--release', 'v0.0.1', '--channel', 'development', '--protocol-client', '1', '--protocol-server', '2'])
+    '--release', 'v0.0.1', '--channel', 'development', '--protocol-client', '1', '--protocol-server', '2', '--payload-zip', payloadZip])
   check('generator: refuses a dependency cycle', gc.status !== 0)
   check('generator: the refusal names the loop members',
     gc.status !== 0 && gc.stderr.includes('RELEASE BLOCKED') && gc.stderr.includes('loop_a') && gc.stderr.includes('loop_b'),
@@ -157,7 +191,7 @@ try {
   }, null, 2))
 
   const gg = run('generate-manifest.cjs', ['--staged', staged, '--source', ghostSource, '--out', path.join(tmp, 'never2.json'),
-    '--release', 'v0.0.1', '--channel', 'development', '--protocol-client', '1', '--protocol-server', '2'])
+    '--release', 'v0.0.1', '--channel', 'development', '--protocol-client', '1', '--protocol-server', '2', '--payload-zip', payloadZip])
   check('generator: refuses a dependency naming no component',
     gg.status !== 0 && gg.stderr.includes('ghost'), gg.stderr)
 
@@ -188,7 +222,7 @@ try {
       components: comps, loadRules: [], compatibility: { entries: [] }, policy: { unknownMods: 'warn' }
     }, null, 2))
     const gd = run('generate-manifest.cjs', ['--staged', staged, '--source', src, '--out', path.join(tmp, `never-${needle}.json`),
-      '--release', 'v0.0.1', '--channel', 'development', '--protocol-client', '1', '--protocol-server', '2'])
+      '--release', 'v0.0.1', '--channel', 'development', '--protocol-client', '1', '--protocol-server', '2', '--payload-zip', payloadZip])
     check(`generator: refuses ${label}`,
       gd.status !== 0 && gd.stderr.includes(needle) && gd.stderr.includes(phrase), gd.stderr)
   }
