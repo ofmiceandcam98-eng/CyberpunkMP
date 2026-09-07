@@ -1,357 +1,312 @@
 <title>Trade Screen</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap">
 <style>
-  /* Cyberpunk 2077's in-game vocabulary, read off the inventory screen: near-black ground
-     with a red vignette, cyan for what is YOURS and active, red for structure and for the
-     other side, yellow for eddies. Angular clipped corners everywhere, condensed uppercase
-     type, thin rules. Deliberately single-world - this is a mockup of a game screen and
-     must be judged on the ground it will sit on, so every colour is painted, none inherited. */
+  /* Cyberpunk's in-game vocabulary, and - the point of this revision - AT GAME SCALE.
+     Everything inside .stage is authored in 1920x1080 units, the resolution ink lays out
+     against, then scaled to whatever the page is. So a padding of 14 here is 14 game
+     pixels, and the panel really is the size it would be on screen.
+
+     Deliberately single-world: this is a mockup of a game overlay and has to be judged on
+     the ground it will sit on. Every colour is painted, none inherited. */
   :root{
-    --void:#08080c;
-    --panel:#12101a;
-    --panel-2:#191320;
-    --red:#f4374a;
-    --red-dim:#7a1f2c;
-    --red-glow:rgba(244,55,74,.16);
-    --cyan:#3ce8ef;
-    --cyan-dim:#1d6e77;
-    --gold:#f5d033;
-    --ink:#e8eef2;
-    --ink-dim:#8a97a3;
-    --ink-faint:#5a6570;
+    --void:#08080c; --panel:rgba(16,12,22,.93); --panel-2:rgba(24,17,31,.93);
+    --red:#f4374a; --red-dim:#7a1f2c; --cyan:#3ce8ef; --cyan-dim:#1d6e77;
+    --gold:#f5d033; --ink:#e8eef2; --ink-dim:#8a97a3; --ink-faint:#5a6570;
     --disp:'Rajdhani',system-ui,'Segoe UI',sans-serif;
     --mono:'Share Tech Mono',ui-monospace,Consolas,monospace;
   }
   *{box-sizing:border-box;}
-  body{
-    margin:0;padding:0;background:var(--void);color:var(--ink);
-    font-family:var(--disp);line-height:1.35;
-    background-image:
-      radial-gradient(ellipse 90% 60% at 50% 100%, rgba(120,20,35,.42), transparent 70%),
-      radial-gradient(ellipse 70% 50% at 50% 0%, rgba(60,20,40,.30), transparent 70%);
-    background-attachment:fixed;
-  }
-  .screen{max-width:1400px;margin:0 auto;padding:0 18px 40px;}
+  body{margin:0;background:var(--void);color:var(--ink);font-family:var(--disp);}
+  .page{max-width:1500px;margin:0 auto;padding:22px 18px 60px;}
 
-  /* scanline wash, the way the game's menus sit under one */
-  .screen::before{
-    content:"";position:fixed;inset:0;pointer-events:none;z-index:9;
-    background:repeating-linear-gradient(0deg, rgba(255,255,255,.018) 0 1px, transparent 1px 3px);
-  }
+  h1.t{font-size:26px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;margin:0 0 6px;}
+  p.lede{margin:0 0 16px;color:var(--ink-dim);font-size:15px;max-width:80ch;}
+  p.lede b{color:var(--ink);}
 
-  /* ---------- top bar ------------------------------------------------------ */
-  .topbar{
-    display:flex;align-items:center;gap:26px;flex-wrap:wrap;
-    padding:18px 4px 12px;border-bottom:1px solid var(--red-dim);
-  }
-  .stat{display:flex;align-items:baseline;gap:7px;}
-  .stat b{font-family:var(--mono);font-size:19px;color:var(--cyan);line-height:1;}
-  .stat span{font-size:13px;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-dim);font-weight:600;}
-  .tabs{display:flex;gap:22px;margin:0 auto;}
-  .tab{
-    font-size:15px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;
-    color:var(--ink-faint);padding-bottom:5px;border-bottom:2px solid transparent;
-  }
-  .tab.on{color:var(--cyan);border-bottom-color:var(--cyan);}
-  .purse{display:flex;align-items:center;gap:20px;font-family:var(--mono);font-size:17px;}
-  .purse .w{color:var(--red);}
-  .purse .e{color:var(--gold);}
-
-  /* ---------- title -------------------------------------------------------- */
-  .title{display:flex;align-items:baseline;gap:16px;padding:20px 4px 6px;}
-  .title h1{
-    margin:0;font-size:31px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;
-    color:var(--ink);
-  }
-  .title .with{font-size:15px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-dim);font-weight:600;}
-  .title .with b{color:var(--red);}
-  .hazard{
-    flex:1;height:9px;min-width:60px;
-    background:repeating-linear-gradient(115deg,var(--red-dim) 0 7px,transparent 7px 15px);
-    opacity:.6;
-  }
-
-  /* ---------- layout ------------------------------------------------------- */
-  .cols{
-    display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1fr);
-    gap:16px;margin-top:14px;
-  }
-  @media (max-width:1000px){ .cols{grid-template-columns:1fr;} }
-
-  .panel{
-    background:linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+  /* ---------- the 1920x1080 stage ----------------------------------------- */
+  .frame{
+    position:relative;width:100%;aspect-ratio:16/9;overflow:hidden;
     border:1px solid var(--red-dim);
-    position:relative;
-    clip-path:polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px));
-    padding:0 0 12px;
-    min-width:0;
+    background:
+      radial-gradient(ellipse 60% 45% at 22% 78%, rgba(120,25,45,.30), transparent 70%),
+      radial-gradient(ellipse 70% 60% at 76% 26%, rgba(20,60,80,.22), transparent 70%),
+      linear-gradient(160deg,#0a0a10 0%, #14101a 55%, #0c0c12 100%);
   }
-  .panel.mine{border-color:var(--cyan-dim);}
-  .phead{
-    display:flex;align-items:center;gap:10px;
-    padding:11px 14px 9px;border-bottom:1px solid var(--red-dim);
+  .frame::after{
+    content:"";position:absolute;inset:0;pointer-events:none;
+    background:repeating-linear-gradient(0deg, rgba(255,255,255,.02) 0 1px, transparent 1px 3px);
   }
-  .panel.mine .phead{border-bottom-color:var(--cyan-dim);}
-  .phead h2{
-    margin:0;font-size:15px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--ink);
+  /* Everything inside is authored at 1920x1080 and scaled as one unit. */
+  .stage{
+    position:absolute;top:0;left:0;width:1920px;height:1080px;
+    transform-origin:top left;
   }
-  .panel.mine .phead h2{color:var(--cyan);}
-  .panel.theirs .phead h2{color:var(--red);}
-  .phead .count{margin-left:auto;font-family:var(--mono);font-size:13px;color:var(--ink-faint);}
 
-  /* ---------- item rows ---------------------------------------------------- */
-  .list{display:flex;flex-direction:column;gap:5px;padding:11px 12px;min-height:150px;}
+  .glyph{
+    position:absolute;font-family:var(--mono);font-size:15px;color:rgba(255,255,255,.10);
+    letter-spacing:.3em;
+  }
+
+  /* ---------- chat, where it actually sits -------------------------------- */
+  /* BottomLeft anchor, margin(60, 0, 0, 200) - read from ChatController.reds. */
+  .chat{
+    position:absolute;left:60px;bottom:200px;width:640px;height:330px;
+    background:var(--panel);border:1px solid var(--red-dim);
+    clip-path:polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px));
+    display:flex;flex-direction:column;
+  }
+  .chat .hd{
+    padding:10px 16px 8px;border-bottom:1px solid var(--red-dim);
+    font-size:17px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--red);
+  }
+  .chat .msgs{flex:1;padding:12px 16px;display:flex;flex-direction:column;gap:8px;overflow:hidden;}
+  .chat .m{font-size:19px;line-height:1.25;}
+  .chat .m i{font-style:normal;color:var(--cyan);font-weight:600;}
+  .chat .m u{text-decoration:none;color:var(--red);font-weight:600;}
+  .chat .m span{color:var(--ink-dim);}
+  .chat .in{
+    margin:0 16px 14px;padding:9px 12px;border:1px solid var(--red-dim);
+    font-family:var(--mono);font-size:16px;color:var(--ink-faint);
+    clip-path:polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px));
+  }
+
+  /* ---------- the trade panel, NEXT TO chat -------------------------------- */
+  .trade{
+    position:absolute;left:730px;bottom:200px;width:900px;height:470px;
+    background:linear-gradient(180deg,var(--panel) 0%, var(--panel-2) 100%);
+    border:1px solid var(--cyan-dim);
+    clip-path:polygon(0 0, calc(100% - 20px) 0, 100% 20px, 100% 100%, 20px 100%, 0 calc(100% - 20px));
+    display:flex;flex-direction:column;
+  }
+  .trade .hd{
+    display:flex;align-items:center;gap:14px;padding:11px 18px 9px;
+    border-bottom:1px solid var(--cyan-dim);
+  }
+  .trade .hd h2{margin:0;font-size:20px;font-weight:700;letter-spacing:.17em;text-transform:uppercase;color:var(--cyan);}
+  .trade .hd .with{font-size:16px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-dim);font-weight:600;}
+  .trade .hd .with b{color:var(--red);}
+  .trade .hd .wt{margin-left:auto;font-family:var(--mono);font-size:16px;color:var(--gold);}
+
+  .halves{flex:1;display:grid;grid-template-columns:1fr 1fr;min-height:0;}
+  .half{display:flex;flex-direction:column;min-height:0;padding:11px 14px 0;}
+  .half + .half{border-left:1px solid var(--red-dim);}
+  .half h3{
+    margin:0 0 8px;font-size:15px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;
+  }
+  .half.you h3{color:var(--cyan);}
+  .half.them h3{color:var(--red);}
+  .half h3 em{font-style:normal;float:right;font-family:var(--mono);font-size:14px;color:var(--ink-faint);letter-spacing:0;}
+
+  .rows{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;gap:5px;}
   .row{
-    display:flex;align-items:center;gap:11px;
-    background:rgba(255,255,255,.028);
-    border:1px solid rgba(244,55,74,.20);
-    padding:8px 11px;cursor:pointer;
-    clip-path:polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px));
-    transition:background .12s ease, border-color .12s ease;
+    display:flex;align-items:center;gap:10px;padding:7px 10px;
+    background:rgba(255,255,255,.03);border:1px solid rgba(244,55,74,.22);
+    clip-path:polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
+    cursor:pointer;transition:background .12s ease, border-color .12s ease;
   }
-  .row:hover{background:rgba(60,232,239,.07);border-color:var(--cyan-dim);}
-  .row.offered{border-color:var(--cyan-dim);background:rgba(60,232,239,.09);}
-  .panel.theirs .row{cursor:default;border-color:rgba(244,55,74,.30);}
-  .panel.theirs .row:hover{background:rgba(255,255,255,.028);border-color:rgba(244,55,74,.30);}
-  .icon{
-    width:30px;height:30px;flex:none;border:1px solid var(--red-dim);
-    background:rgba(244,55,74,.10);
-    clip-path:polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px));
-    display:grid;place-items:center;font-family:var(--mono);font-size:11px;color:var(--ink-faint);
+  .half.them .row{cursor:default;}
+  .row:hover{background:rgba(60,232,239,.08);border-color:var(--cyan-dim);}
+  .half.them .row:hover{background:rgba(255,255,255,.03);border-color:rgba(244,55,74,.22);}
+  .row.on{border-color:var(--cyan-dim);background:rgba(60,232,239,.10);}
+  .ic{
+    width:26px;height:26px;flex:none;border:1px solid var(--red-dim);
+    background:rgba(244,55,74,.10);display:grid;place-items:center;
+    font-family:var(--mono);font-size:12px;color:var(--ink-faint);
+    clip-path:polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px));
   }
-  .panel.mine .row.offered .icon{border-color:var(--cyan-dim);color:var(--cyan);background:rgba(60,232,239,.12);}
+  .row.on .ic{border-color:var(--cyan-dim);color:var(--cyan);}
   .nm{min-width:0;flex:1;}
-  .nm .n{font-size:15px;font-weight:600;letter-spacing:.03em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  .nm .t{font-size:11.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-faint);font-weight:600;}
-  .qty{font-family:var(--mono);font-size:15px;color:var(--ink-dim);flex:none;}
-  .row.offered .qty{color:var(--cyan);}
-  .empty{
-    padding:26px 12px;text-align:center;font-size:13px;letter-spacing:.1em;
-    text-transform:uppercase;color:var(--ink-faint);font-weight:600;
-  }
+  .nm .n{font-size:17px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2;}
+  .nm .s{font-size:12.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-faint);font-weight:600;}
+  .q{font-family:var(--mono);font-size:16px;color:var(--ink-dim);flex:none;}
+  .row.on .q{color:var(--cyan);}
+  .none{padding:18px 0;text-align:center;font-size:14px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-faint);font-weight:600;}
 
-  /* ---------- eddies row --------------------------------------------------- */
-  .eddies{
-    display:flex;align-items:center;gap:10px;margin:2px 12px 0;padding:9px 11px;
-    border:1px solid rgba(245,208,51,.28);background:rgba(245,208,51,.05);
-    clip-path:polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px));
+  .ed{
+    display:flex;align-items:center;gap:9px;margin:8px 0 11px;padding:7px 10px;
+    border:1px solid rgba(245,208,51,.28);background:rgba(245,208,51,.06);
+    clip-path:polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
   }
-  .eddies .lab{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold);font-weight:700;}
-  .eddies .val{margin-left:auto;font-family:var(--mono);font-size:17px;color:var(--gold);}
-  .step{
+  .ed .l{font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold);font-weight:700;}
+  .ed .v{margin-left:auto;font-family:var(--mono);font-size:17px;color:var(--gold);}
+  .st{
     background:none;border:1px solid rgba(245,208,51,.35);color:var(--gold);
-    font-family:var(--mono);font-size:13px;width:24px;height:24px;cursor:pointer;padding:0;
-    clip-path:polygon(0 0, calc(100% - 5px) 0, 100% 5px, 100% 100%, 5px 100%, 0 calc(100% - 5px));
+    font-family:var(--mono);font-size:13px;width:23px;height:23px;cursor:pointer;padding:0;line-height:1;
   }
-  .step:hover{background:rgba(245,208,51,.16);}
-  .panel.theirs .step{display:none;}
+  .st:hover{background:rgba(245,208,51,.18);}
 
-  /* ---------- confirm bar -------------------------------------------------- */
-  .confirm{
-    margin-top:16px;border:1px solid var(--red-dim);
-    background:linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
-    clip-path:polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px));
-    padding:14px 16px;display:flex;align-items:center;gap:22px;flex-wrap:wrap;
+  .foot{
+    display:flex;align-items:center;gap:16px;padding:10px 18px 12px;
+    border-top:1px solid var(--red-dim);
   }
-  .led{display:flex;align-items:center;gap:9px;font-size:13.5px;letter-spacing:.11em;text-transform:uppercase;font-weight:600;}
-  .led i{
-    width:11px;height:11px;display:block;background:var(--ink-faint);
-    clip-path:polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
-  }
-  .led.on i{background:var(--cyan);box-shadow:0 0 9px rgba(60,232,239,.75);}
-  .led.on{color:var(--cyan);}
-  .led.off{color:var(--ink-faint);}
-  .warn{
-    flex:1;min-width:200px;font-size:13px;color:var(--ink-dim);
-    font-family:var(--mono);
-  }
-  .warn b{color:var(--gold);}
-  .acts{display:flex;gap:10px;margin-left:auto;}
+  .led{display:flex;align-items:center;gap:8px;font-size:14px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;}
+  .led i{width:10px;height:10px;display:block;background:var(--ink-faint);clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);}
+  .led.on i{background:var(--cyan);box-shadow:0 0 8px rgba(60,232,239,.8);}
+  .led.on{color:var(--cyan);} .led.off{color:var(--ink-faint);}
+  .acts{margin-left:auto;display:flex;gap:9px;}
   .btn{
-    font-family:var(--disp);font-size:15px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;
-    padding:9px 20px;cursor:pointer;border:1px solid var(--red-dim);background:transparent;color:var(--ink-dim);
-    clip-path:polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px));
-    transition:.12s;
+    font-family:var(--disp);font-size:16px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;
+    padding:7px 20px;cursor:pointer;background:transparent;color:var(--ink-dim);border:1px solid var(--red-dim);
+    clip-path:polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
   }
   .btn:hover{border-color:var(--red);color:var(--red);}
   .btn.go{border-color:var(--cyan-dim);color:var(--cyan);}
-  .btn.go:hover{background:rgba(60,232,239,.13);border-color:var(--cyan);}
-  .btn.go.armed{background:var(--cyan);color:#04181a;border-color:var(--cyan);}
+  .btn.go:hover{background:rgba(60,232,239,.14);border-color:var(--cyan);}
+  .btn.go.armed{background:var(--cyan);color:#04181a;}
 
-  .escbar{display:flex;justify-content:flex-end;padding:14px 4px 0;}
-  .esc{display:flex;align-items:center;gap:8px;font-size:13px;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-dim);font-weight:600;}
-  .esc b{
-    font-family:var(--mono);font-size:11px;border:1px solid var(--ink-faint);
-    padding:2px 6px;color:var(--ink-dim);font-weight:400;
+  .rule{
+    position:absolute;left:730px;bottom:160px;width:900px;
+    font-family:var(--mono);font-size:14px;color:var(--ink-faint);
   }
+  .rule b{color:var(--gold);}
 
-  .notes{
-    margin-top:34px;padding-top:16px;border-top:1px solid var(--red-dim);
-    font-family:var(--disp);
-  }
+  /* ---------- notes below the frame --------------------------------------- */
+  .notes{margin-top:26px;padding-top:16px;border-top:1px solid var(--red-dim);}
   .notes h3{font-size:14px;letter-spacing:.14em;text-transform:uppercase;margin:0 0 10px;color:var(--red);}
   .notes ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px;}
-  .notes li{font-size:14px;color:var(--ink-dim);padding-left:16px;position:relative;line-height:1.5;}
+  .notes li{font-size:14.5px;color:var(--ink-dim);padding-left:17px;position:relative;line-height:1.5;}
   .notes li::before{content:"//";position:absolute;left:0;color:var(--red-dim);font-family:var(--mono);font-size:12px;}
   .notes b{color:var(--ink);font-weight:600;}
+  .notes code{font-family:var(--mono);font-size:.92em;color:var(--cyan);}
   @media (prefers-reduced-motion:reduce){*{transition:none!important;}}
 </style>
 
-<div class="screen">
-  <div class="topbar">
-    <div class="stat"><b>12</b><span>Level</span></div>
-    <div class="stat"><b>08</b><span>Street Cred</span></div>
-    <nav class="tabs">
-      <span class="tab">Cyberware</span>
-      <span class="tab">Inventory</span>
-      <span class="tab on">Trade</span>
-      <span class="tab">Map</span>
-      <span class="tab">Character</span>
-    </nav>
-    <div class="purse"><span class="w">&#9650; 6/200</span><span class="e">&#8364;$ 20100</span></div>
-  </div>
+<div class="page">
+  <h1 class="t">Trade &mdash; next to chat, at game scale</h1>
+  <p class="lede">Everything inside the frame is authored in <b>1920&times;1080 units</b>, the resolution ink lays out against, then scaled as one piece &mdash; so the panel is the size it would really be on screen. The chat box sits where <code>ChatController.reds</code> puts it: <b>BottomLeft anchor, margin(60, 0, 0, 200)</b>. The trade panel takes the space to its right on the same bottom line. <b>Click a row in YOU OFFER to add or remove it.</b></p>
 
-  <div class="title">
-    <h1>Trade</h1>
-    <span class="with">with <b>Noremac</b></span>
-    <span class="hazard"></span>
-  </div>
+  <div class="frame" id="frame">
+    <div class="stage" id="stage">
+      <span class="glyph" style="left:120px;top:90px">NIGHT CITY // 2077</span>
+      <span class="glyph" style="left:1560px;top:120px">06:42</span>
 
-  <div class="cols">
-    <section class="panel">
-      <div class="phead"><h2>Your inventory</h2><span class="count" id="invCount"></span></div>
-      <div class="list" id="inv"></div>
-    </section>
-
-    <section class="panel mine">
-      <div class="phead"><h2>You offer</h2><span class="count" id="mineCount"></span></div>
-      <div class="list" id="mine"></div>
-      <div class="eddies">
-        <span class="lab">Eddies</span>
-        <button class="step" type="button" id="less">&minus;</button>
-        <button class="step" type="button" id="more">+</button>
-        <span class="val" id="myEddies">0</span>
+      <!-- chat, for position reference -->
+      <div class="chat">
+        <div class="hd">Chat</div>
+        <div class="msgs">
+          <div class="m"><i>zeldfep:</i> got the lexington?</div>
+          <div class="m"><u>Noremac:</u> yeah, 2500 and it's yours</div>
+          <div class="m"><i>zeldfep:</i> opening trade</div>
+          <div class="m"><span>&mdash; Noremac opened a trade with you &mdash;</span></div>
+        </div>
+        <div class="in">Say something&hellip;</div>
       </div>
-    </section>
 
-    <section class="panel theirs">
-      <div class="phead"><h2>Noremac offers</h2><span class="count">3 items</span></div>
-      <div class="list">
-        <div class="row"><span class="icon">&#9632;</span><span class="nm"><span class="n">Militech M-10AF Lexington</span><span class="t">Pistol &middot; Rare</span></span><span class="qty">&times;1</span></div>
-        <div class="row"><span class="icon">&#9632;</span><span class="nm"><span class="n">MaxDoc Mk.2</span><span class="t">Consumable</span></span><span class="qty">&times;6</span></div>
-        <div class="row"><span class="icon">&#9632;</span><span class="nm"><span class="n">Kiroshi Optics Mk.1</span><span class="t">Cyberware &middot; Uncommon</span></span><span class="qty">&times;1</span></div>
-      </div>
-      <div class="eddies">
-        <span class="lab">Eddies</span>
-        <span class="val">2 500</span>
-      </div>
-    </section>
-  </div>
+      <!-- the trade panel -->
+      <div class="trade">
+        <div class="hd">
+          <h2>Trade</h2>
+          <span class="with">with <b>Noremac</b></span>
+          <span class="wt">&#9650; 6/200 &nbsp; &#8364;$ 20100</span>
+        </div>
 
-  <div class="confirm">
-    <span class="led off" id="myLed"><i></i>You: not confirmed</span>
-    <span class="led on"><i></i>Noremac: confirmed</span>
-    <span class="warn" id="warn">Both sides must confirm. Either can change the offer, and <b>any change clears both confirmations.</b></span>
-    <div class="acts">
-      <button class="btn" type="button">Cancel</button>
-      <button class="btn go" type="button" id="confirmBtn">Confirm</button>
+        <div class="halves">
+          <div class="half you">
+            <h3>You offer <em id="yc"></em></h3>
+            <div class="rows" id="mine"></div>
+            <div class="ed">
+              <span class="l">Eddies</span>
+              <button class="st" type="button" id="less">&minus;</button>
+              <button class="st" type="button" id="more">+</button>
+              <span class="v" id="myEd">0</span>
+            </div>
+          </div>
+
+          <div class="half them">
+            <h3>Noremac offers <em>3</em></h3>
+            <div class="rows">
+              <div class="row"><span class="ic">&#9632;</span><span class="nm"><span class="n">Militech M-10AF Lexington</span><span class="s">Pistol &middot; Rare</span></span><span class="q">&times;1</span></div>
+              <div class="row"><span class="ic">&#9632;</span><span class="nm"><span class="n">MaxDoc Mk.2</span><span class="s">Consumable</span></span><span class="q">&times;6</span></div>
+              <div class="row"><span class="ic">&#9632;</span><span class="nm"><span class="n">Kiroshi Optics Mk.1</span><span class="s">Cyberware</span></span><span class="q">&times;1</span></div>
+            </div>
+            <div class="ed"><span class="l">Eddies</span><span class="v">2 500</span></div>
+          </div>
+        </div>
+
+        <div class="foot">
+          <span class="led off" id="myLed"><i></i>You: not confirmed</span>
+          <span class="led on"><i></i>Noremac: confirmed</span>
+          <div class="acts">
+            <button class="btn" type="button">Cancel</button>
+            <button class="btn go" type="button" id="ok">Confirm</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="rule">Any change to either offer <b>clears both confirmations</b>.</div>
     </div>
   </div>
 
-  <div class="escbar"><span class="esc"><b>ESC</b> Close</span></div>
-
   <div class="notes">
-    <h3>What this mockup is asserting</h3>
+    <h3>What changed from the first pass, and why</h3>
     <ul>
-      <li><b>Three columns, one direction of travel.</b> Your inventory on the left, what you are giving in the middle, what you are getting on the right. Click a row to move it into the offer; click it again to pull it back.</li>
-      <li><b>Cyan is yours, red is theirs.</b> The game already uses cyan for equipped and active, red for structure — so the side you control reads as cyan without inventing a new colour.</li>
-      <li><b>Any change clears both confirmations.</b> Server-side rule, surfaced here rather than discovered. It is the one thing that stops a swap-at-the-last-moment scam, and it is invisible in the chat version.</li>
-      <li><b>Eddies are a first-class row, not an item.</b> They are gold, they sit under the items on both sides, and only your side has steppers.</li>
-      <li><b>The weight readout stays visible.</b> A trade that would put you over 200 has to be refusable before both sides confirm, not after.</li>
-      <li><b>This replaces <span style="font-family:var(--mono)">/trade item &lt;id&gt; &lt;quantity&gt;</span></b> — a flow that needs <span style="font-family:var(--mono)">/inventory</span> first just to learn an id you can paste.</li>
+      <li><b>It is an overlay, not a full-screen menu.</b> First version was an inventory-style screen taking the whole display. This one sits beside chat, because that is where the conversation that starts a trade already is &mdash; and because a full-screen menu during an RP scene takes you out of it.</li>
+      <li><b>Two columns, not three.</b> At real size there is no room for a separate inventory column. Picking an item comes from the row list on your side; the inventory it draws from is the one the game already has.</li>
+      <li><b>Anchored to the same bottom line as chat</b> &mdash; 200 game-pixels up, matching <code>margin(60, 0, 0, 200)</code>. The two panels read as one strip rather than two floating windows.</li>
+      <li><b>Weight and eddies stay in the header.</b> A trade that would put you over 200 has to be refusable <b>before</b> both sides confirm.</li>
+      <li><b>Chat stays live behind it.</b> Trades get negotiated in text; hiding the conversation to complete the deal would be the wrong trade-off.</li>
+      <li><b>Sizes here are honest but not authoritative</b> &mdash; the 60 and 200 margins are read from the code; the panel's own 900&times;470 is a proposal, and the real one wants checking against a 1920&times;1080 capture in game.</li>
     </ul>
   </div>
 </div>
 
 <script>
 (function(){
+  // Scale the 1920x1080 stage to whatever width the frame has.
+  var frame = document.getElementById('frame');
+  var stage = document.getElementById('stage');
+  function fit(){
+    var s = frame.clientWidth / 1920;
+    stage.style.transform = 'scale(' + s + ')';
+  }
+  fit();
+  window.addEventListener('resize', fit);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fit);
+
   var INV = [
-    { n:'Unity',                 t:'Pistol · Common',      q:1 },
-    { n:'Nekomata',              t:'Sniper · Rare',        q:1 },
-    { n:'MaxDoc Mk.1',           t:'Consumable',           q:12 },
-    { n:'Bounce Back Mk.2',      t:'Consumable',           q:4 },
-    { n:'Common Cyberdeck',      t:'Cyberware',            q:1 },
-    { n:'Scrap Electronics',     t:'Component · Common',   q:37 },
-    { n:'Rare Isotope Plating',  t:'Component · Rare',     q:3 }
+    { n:'Nekomata',             s:'Sniper · Rare',      q:1 },
+    { n:'MaxDoc Mk.1',          s:'Consumable',         q:12 },
+    { n:'Scrap Electronics',    s:'Component',          q:37 },
+    { n:'Bounce Back Mk.2',     s:'Consumable',         q:4 }
   ];
-
-  var offered = {};
-  var eddies = 0;
-  var myConfirmed = false;
-
-  function row(item, i, inOffer){
-    var el = document.createElement('div');
-    el.className = 'row' + (offered[i] ? ' offered' : '');
-    el.innerHTML =
-      '<span class="icon">&#9632;</span>' +
-      '<span class="nm"><span class="n"></span><span class="t"></span></span>' +
-      '<span class="qty"></span>';
-    el.querySelector('.n').textContent = item.n;
-    el.querySelector('.t').textContent = item.t;
-    el.querySelector('.qty').textContent = '×' + (inOffer ? offered[i] : item.q);
-    el.addEventListener('click', function(){ toggle(i); });
-    return el;
-  }
-
-  function toggle(i){
-    if (offered[i]) { delete offered[i]; } else { offered[i] = INV[i].q; }
-    clearConfirms();
-    render();
-  }
+  var on = {}, eddies = 0, confirmed = false;
 
   function clearConfirms(){
-    // The rule the chat version could never show: touching the offer un-confirms BOTH sides.
-    myConfirmed = false;
+    confirmed = false;
     var led = document.getElementById('myLed');
     led.className = 'led off';
     led.innerHTML = '<i></i>You: not confirmed';
-    document.getElementById('confirmBtn').classList.remove('armed');
+    document.getElementById('ok').classList.remove('armed');
   }
 
   function render(){
-    var inv = document.getElementById('inv');
-    var mine = document.getElementById('mine');
-    inv.textContent = ''; mine.textContent = '';
-
-    INV.forEach(function(item, i){ inv.appendChild(row(item, i, false)); });
-
-    var keys = Object.keys(offered);
-    if (!keys.length){
-      var e = document.createElement('div');
-      e.className = 'empty';
-      e.textContent = 'Nothing offered yet — pick from your inventory';
-      mine.appendChild(e);
-    } else {
-      keys.forEach(function(i){ mine.appendChild(row(INV[i], i, true)); });
-    }
-
-    document.getElementById('invCount').textContent = INV.length + ' stacks';
-    document.getElementById('mineCount').textContent = keys.length + (keys.length === 1 ? ' item' : ' items');
-    document.getElementById('myEddies').textContent = eddies.toLocaleString('en-US').replace(/,/g, ' ');
+    var box = document.getElementById('mine');
+    box.textContent = '';
+    INV.forEach(function(it, i){
+      var el = document.createElement('div');
+      el.className = 'row' + (on[i] ? ' on' : '');
+      el.innerHTML = '<span class="ic">&#9632;</span><span class="nm"><span class="n"></span><span class="s"></span></span><span class="q"></span>';
+      el.querySelector('.n').textContent = it.n;
+      el.querySelector('.s').textContent = it.s;
+      el.querySelector('.q').textContent = '×' + it.q;
+      el.addEventListener('click', function(){
+        if (on[i]) { delete on[i]; } else { on[i] = it.q; }
+        clearConfirms(); render();
+      });
+      box.appendChild(el);
+    });
+    document.getElementById('yc').textContent = Object.keys(on).length;
+    document.getElementById('myEd').textContent = eddies.toLocaleString('en-US').replace(/,/g, ' ');
   }
 
-  document.getElementById('more').addEventListener('click', function(){
-    eddies += 500; clearConfirms(); render();
-  });
-  document.getElementById('less').addEventListener('click', function(){
-    eddies = Math.max(0, eddies - 500); clearConfirms(); render();
-  });
-  document.getElementById('confirmBtn').addEventListener('click', function(){
-    myConfirmed = !myConfirmed;
+  document.getElementById('more').addEventListener('click', function(){ eddies += 500; clearConfirms(); render(); });
+  document.getElementById('less').addEventListener('click', function(){ eddies = Math.max(0, eddies - 500); clearConfirms(); render(); });
+  document.getElementById('ok').addEventListener('click', function(){
+    confirmed = !confirmed;
     var led = document.getElementById('myLed');
-    led.className = 'led ' + (myConfirmed ? 'on' : 'off');
-    led.innerHTML = '<i></i>You: ' + (myConfirmed ? 'confirmed' : 'not confirmed');
-    this.classList.toggle('armed', myConfirmed);
+    led.className = 'led ' + (confirmed ? 'on' : 'off');
+    led.innerHTML = '<i></i>You: ' + (confirmed ? 'confirmed' : 'not confirmed');
+    this.classList.toggle('armed', confirmed);
   });
 
   render();
