@@ -369,17 +369,46 @@ if ($Mod) {
         # succeeds, the version moves, the DLL is new, and the script half of the mod is
         # silently whatever it was last time. That looks exactly like a redscript change
         # that "did not work" and sends you debugging code the game never received.
-        Copy-Item "code\assets\redscript\*" -Destination "distrib\launcher\mod\assets\redscript\" -Recurse -Force
+        # MIRROR, NOT MERGE. Copy-Item -Force adds and overwrites but never REMOVES, and
+        # distrib/ is gitignored, so anything the repo stops shipping stays there forever.
+        # Twelve Ink controllers moved from assets/redscript/ into assets/redscript/Ink/
+        # and their old flat copies sat in distrib for weeks. Every payload since carried
+        # BOTH, so redscript saw twelve duplicate class definitions and refused to compile
+        # any of them - "The game will start but no scripts will take effect", naming
+        # exactly those twelve files. The check below passed the whole time because it only
+        # asked "is every repo file shipped correctly?" and never "is anything shipped that
+        # the repo does not have?".
+        $shippedRoot = "distrib\launcher\mod\assets\redscript"
+        if (Test-Path $shippedRoot) { Remove-Item $shippedRoot -Recurse -Force }
+        New-Item -ItemType Directory -Path $shippedRoot -Force | Out-Null
+        Copy-Item "code\assets\redscript\*" -Destination "$shippedRoot\" -Recurse -Force
 
         $stale = @()
         Get-ChildItem "code\assets\redscript" -Recurse -Filter *.reds | ForEach-Object {
             $relative = $_.FullName.Substring((Resolve-Path "code\assets\redscript").Path.Length + 1)
-            $shipped = "distrib\launcher\mod\assets\redscript\$relative"
+            $shipped = "$shippedRoot\$relative"
             if (-not (Test-Path $shipped)) { $stale += "$relative (missing)" }
             elseif ((Get-FileHash $_.FullName).Hash -ne (Get-FileHash $shipped).Hash) { $stale += $relative }
         }
         if ($stale.Count -gt 0) { Die "scripts did not ship: $($stale -join ', ')" }
-        Ok "scripts deployed and match source"
+
+        # And the other direction, which is the one that actually bit. A file the repo no
+        # longer has is not a harmless leftover in redscript: two definitions of one class
+        # is a compile error for the WHOLE mod, not just for that file.
+        $sourceRel = @{}
+        Get-ChildItem "code\assets\redscript" -Recurse -Filter *.reds | ForEach-Object {
+            $sourceRel[$_.FullName.Substring((Resolve-Path "code\assets\redscript").Path.Length + 1)] = $true
+        }
+        $orphans = @()
+        Get-ChildItem $shippedRoot -Recurse -Filter *.reds | ForEach-Object {
+            $relative = $_.FullName.Substring((Resolve-Path $shippedRoot).Path.Length + 1)
+            if (-not $sourceRel.ContainsKey($relative)) { $orphans += $relative }
+        }
+        if ($orphans.Count -gt 0) {
+            Die ("shipped scripts the repo does not have: $($orphans -join ', '). " +
+                 "Duplicate class definitions stop the ENTIRE mod compiling - delete $shippedRoot and re-run.")
+        }
+        Ok "scripts deployed, match source, and nothing extra"
 
         # The same check for the assets that are NOT redscript.
         #
