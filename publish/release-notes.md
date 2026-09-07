@@ -6,6 +6,33 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.116
+
+**A settings panel you can actually cross, and a pass over everything that looked slightly off.**
+
+- **Settings navigate by section now, not by row.** The rail on the right used to step through
+  every individual setting — Tools was thirteen stops and crossing it meant thirteen presses.
+  Tools is now four sections (Connection, Install, This PC, Repair and remove) and Voice is
+  three (Devices, Keys and mode, Levels). Click a number to jump straight there, hover it to
+  see where it goes. The arrows still step and the wheel still scrolls.
+- **The rail reads as part of the game's interface.** Numbered readout with the current
+  section marked in hazard yellow, and striped caps at the top and bottom that light up when
+  there is nothing further in that direction — so "I am at the end" is something you can see
+  rather than something you have to work out.
+- **One row moved:** *Uninstall launcher* was sitting in the middle of the maintenance tools,
+  between *Launcher folder* and *Verify game files*. It is now last, at the bottom of *Repair
+  and remove*, where you would look for it.
+- **Text sizes are consistent.** The launcher had twenty-four different font sizes in one
+  window, most of them used once. There are seven now. Almost all of it you will not notice;
+  what you may notice is that the gear and the close button are finally the same size, and the
+  Settings title matches the app title.
+
+**Nothing about gameplay changed in this build.** The character, world and money fixes went out
+in v0.3.115 — if you have not played since then, that release note is below and still applies.
+
+If you hit a crash, send the log — `tools\CollectCrash.ps1` gathers it in one step. Run it
+**before** relaunching; relaunching overwrites the evidence.
+
 ## What changed — v0.3.115
 
 **Three things that could make a new character unplayable are fixed.**
