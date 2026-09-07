@@ -57,6 +57,14 @@ auto-load — read it deliberately. Cam's stream: it auto-loads; keep it current
   both layers.
 - **The helper rule**: content mods are never load-bearing — no feature depends on one,
   none gates Play/join/digest.
+- **The transparency rule** (zeldfep, 2026-09-07): **every player-facing announcement says
+  what changed.** *"make sure when pushing to discord you explain whats being done in those
+  updates we want to be tranparent."* `AnnounceRelease.ps1` now pulls the
+  `## What changed - <tag>` section out of `publish/release-notes.md` into the Discord post,
+  so the two cannot disagree and nobody is asked to update on trust — which matters most
+  right after a week where three releases shipped a mod that could not load. Missing section
+  = the script warns loudly and still posts; write the section rather than shipping quiet.
+
 - **The design language**: `docs/DESIGN-LANGUAGE.md` is what "keep it uniform" means -
   the palette and what each colour SAYS, seven type sizes, the clipped-corner signature,
   and the striped-vs-flat hazard rule. Pick a token; do not invent a value. The launcher is
