@@ -1484,6 +1484,27 @@ setup a new box needs, not a bug in `Ship.ps1`.
   gate correctly refused, which is the gate doing its job. **`git checkout -- code/launcher-lite/package.json`
   after ANY failed ship**, before retrying.
 
+### server.json IS CANONICAL ON MAIN AND SHIPPABLE FROM ANY BRANCH (2026-09-07, cost an outage)
+**v0.3.115 took the live server offline for every player and nothing anywhere reported it.**
+The ship was cut from `feat/world-state` and republishes `publish/server.json` onto the release
+as a matter of course. That branch had never received the migration edit — it landed on `main`
+only (`2a648bf`, `d4b2172`) — so the asset every launcher fetches reverted to `100.80.243.29`,
+the node retired on 2026-09-06.
+- **Both servers were up the whole time** (`State: running`, uptimes 7279s / 12873s). The
+  launcher's own Checkup was right and specific: `Server target - 100.80.243.29:11778 - the
+  published server` then `Server answers - no route`. Believe that panel; it named the fault.
+- **It reverted the tailnet invite too**, from the DEVICE SHARE back to the old `/uinv/` USER
+  invite that `d4b2172` deliberately replaced — a user invite makes the person a tailnet
+  MEMBER, after which only ACLs keep them off everyone's machines. It also dropped
+  `tailscaleTestInvite`, leaving the test-server button that shipped in the SAME release with
+  nothing to read.
+- **No gate could have caught it.** The notes gate, `Verify.ps1` and manifest signing all
+  passed — the file was valid JSON pointing at a dead host, which is not a category any of
+  them check.
+- **THE RULE: before any ship not cut from `main`, diff that file against `main`.**
+  `git diff main -- publish/server.json` must be empty, or take main's copy first.
+  Fixed in `101dd2f`; asset re-uploaded and verified anonymously.
+
 ### v0.3.115 SHIPPED 2026-09-07 — the bundle that was pending is now live
 Cut from `feat/world-state` (`ea76c34`), full `-Mod` ship on zeldfep's box. `/releases/latest`
 answers `v0.3.115`; `NightCityOnline-Setup.exe` 102.6 MB, HTTP 200. Manifest `2026.09.07.01`
