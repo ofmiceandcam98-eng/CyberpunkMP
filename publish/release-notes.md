@@ -6,6 +6,29 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.117
+
+**Install verification starts working. Nothing you can see, and worth knowing about.**
+
+- **The launcher can now prove your install matches what the server expects.** Every release
+  ships a signed list of what a correct installation contains; the launcher checks your files
+  against it and the server can check that you checked. That has been shipping since v0.3.114
+  and has not actually been running — one entry in the list was missing the fingerprint the
+  check needs, so both halves quietly turned themselves off rather than guessing. It is fixed,
+  and this is the first release where the check can genuinely run.
+- **What this buys you:** a half-finished update or a mod folder that got edited by hand stops
+  being something you find out about through strange behaviour hours later. It becomes a
+  message at the door telling you to press Verify.
+- **It is not switched on at the servers yet.** When it is, you will need to be on the current
+  build to join — so relaunch the launcher and let it update before your next session. There
+  will be a heads-up in Discord before that happens.
+
+**No gameplay or interface changes in this build.** The settings rail and the visual pass went
+out in v0.3.116, and the character, world and money fixes in v0.3.115; both notes are below.
+
+If you hit a crash, send the log — `tools\CollectCrash.ps1` gathers it in one step. Run it
+**before** relaunching; relaunching overwrites the evidence.
+
 ## What changed — v0.3.116
 
 **A settings panel you can actually cross, and a pass over everything that looked slightly off.**
