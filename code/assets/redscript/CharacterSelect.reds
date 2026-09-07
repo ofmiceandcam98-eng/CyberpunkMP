@@ -1,0 +1,678 @@
+// THE CHARACTER SELECTION SCREEN.
+//
+// Built at runtime out of ink primitives, hung on the main menu controller's root. There
+// is no .inkwidget behind it and no archive to load: everything here is a rectangle, a
+// piece of text, or a margin. That is a deliberate trade rather than a shortcut -
+// authoring a widget resource means building WolvenKit, packing an archive and shipping a
+// flag-day-sized asset change, and this screen can exist tonight without any of it.
+//
+// WHAT IS MISSING BECAUSE OF THAT TRADE, so nobody has to rediscover it: the photographic
+// backdrop. An image needs a texture inside an .archive. Until that lands, the backplate
+// below stands in for it - a dark scrim with the mockup's own sky colours bled across it.
+// Everything else - the plates, the clipped corners, the gold active state, the type
+// scale, the detail panel - is the design as approved.
+//
+// Coordinates are the mockup's, at the 1920x1080 the game lays ink out in. They are
+// absolute on purpose: this screen is a composition, and a flow layout would drift the
+// moment a name ran long.
+
+import CyberpunkMP.World.*
+
+/*
+ * The palette, straight from the mockup, as HDRColor.
+ *
+ * Named rather than inlined because the same six colours appear thirty times between here
+ * and the bottom of the file, and the design language's whole point is that a value is
+ * picked from the palette rather than invented at the call site. Anything above 1.0 is
+ * deliberate - ink treats it as emission, which is what makes gold on a dark plate read as
+ * lit rather than painted.
+ */
+public func MpCsGold() -> HDRColor = new HDRColor(2.0, 1.68, 0.24, 1.0)
+public func MpCsGoldDim() -> HDRColor = new HDRColor(0.49, 0.42, 0.11, 1.0)
+public func MpCsRed() -> HDRColor = new HDRColor(1.0, 0.18, 0.27, 1.0)
+public func MpCsRedDim() -> HDRColor = new HDRColor(0.49, 0.11, 0.16, 1.0)
+public func MpCsInk() -> HDRColor = new HDRColor(0.95, 0.96, 0.97, 1.0)
+public func MpCsInkDim() -> HDRColor = new HDRColor(0.59, 0.63, 0.67, 1.0)
+public func MpCsInkFaint() -> HDRColor = new HDRColor(0.37, 0.42, 0.46, 1.0)
+public func MpCsPlate() -> HDRColor = new HDRColor(0.04, 0.03, 0.055, 1.0)
+public func MpCsVoid() -> HDRColor = new HDRColor(0.016, 0.016, 0.031, 1.0)
+
+// The font the game itself uses. Borrowing it rather than shipping one is why this screen
+// reads as part of Cyberpunk instead of as an overlay sitting on top of it.
+public func MpCsFont() -> String = "base\\gameplay\\gui\\fonts\\raj\\raj.inkfontfamily"
+
+/**
+ * A filled rectangle at an absolute position.
+ *
+ * Every plate, rule, border and bar on this screen is one of these. Anchored top-left with
+ * an anchor POINT of (0,0) so the margin reads as x/y from the top-left corner of the
+ * parent - without the anchor point the widget's own centre lands on the corner instead,
+ * which is the bug that ate an evening on the old panel.
+ */
+public func MpCsRect(parent: ref<inkCompoundWidget>, x: Float, y: Float, w: Float, h: Float,
+                     color: HDRColor, opacity: Float) -> ref<inkRectangle> {
+    let r = new inkRectangle();
+    r.SetAnchor(inkEAnchor.TopLeft);
+    r.SetAnchorPoint(new Vector2(0.0, 0.0));
+    r.SetMargin(new inkMargin(x, y, 0.0, 0.0));
+    r.SetSize(new Vector2(w, h));
+    r.SetTintColor(color);
+    r.SetOpacity(opacity);
+    r.Reparent(parent);
+
+    return r;
+}
+
+/**
+ * A line of text at an absolute position.
+ */
+public func MpCsText(parent: ref<inkCompoundWidget>, x: Float, y: Float, text: String,
+                     size: Int32, style: CName, color: HDRColor) -> ref<inkText> {
+    let t = new inkText();
+    t.SetAnchor(inkEAnchor.TopLeft);
+    t.SetAnchorPoint(new Vector2(0.0, 0.0));
+    t.SetMargin(new inkMargin(x, y, 0.0, 0.0));
+    t.SetFontFamily(MpCsFont());
+    t.SetFontStyle(style);
+    t.SetFontSize(size);
+    t.SetText(text);
+    t.SetTintColor(color);
+    t.Reparent(parent);
+
+    return t;
+}
+
+/**
+ * THE CLIPPED CORNER, which is the signature of this whole design language.
+ *
+ * ink has no polygon clipping, so the notch is drawn rather than cut: a square the colour
+ * of what is BEHIND the plate, rotated 45 degrees and parked over the corner so it eats
+ * it. The rotation is why this works at all - an axis-aligned square would just be a
+ * smaller square sitting in the corner.
+ *
+ * Only the top-right and bottom-left are notched, which is the asymmetry the mockup uses
+ * and the game's own panels use: notching all four reads as a stop sign.
+ */
+public func MpCsNotch(parent: ref<inkCompoundWidget>, x: Float, y: Float, size: Float,
+                      color: HDRColor) -> Void {
+    let n = new inkRectangle();
+    n.SetAnchor(inkEAnchor.TopLeft);
+    n.SetAnchorPoint(new Vector2(0.5, 0.5));
+    n.SetMargin(new inkMargin(x, y, 0.0, 0.0));
+    n.SetSize(new Vector2(size, size));
+    n.SetTintColor(color);
+    n.SetRotation(45.0);
+    n.Reparent(parent);
+}
+
+/**
+ * A one-pixel outline, as four rules.
+ *
+ * Cheaper to read than to look at: ink rectangles have no stroke, so a border is the four
+ * edges drawn individually. Kept in one function because getting three of the four right
+ * and the fourth an pixel off is exactly the kind of thing nobody sees until it ships.
+ */
+public func MpCsBorder(parent: ref<inkCompoundWidget>, x: Float, y: Float, w: Float, h: Float,
+                       color: HDRColor, opacity: Float) -> Void {
+    MpCsRect(parent, x, y, w, 1.0, color, opacity);
+    MpCsRect(parent, x, y + h - 1.0, w, 1.0, color, opacity);
+    MpCsRect(parent, x, y, 1.0, h, color, opacity);
+    MpCsRect(parent, x + w - 1.0, y, 1.0, h, color, opacity);
+}
+
+// ============================================================================ state
+
+@addField(SingleplayerMenuGameController)
+let m_csRoot: wref<inkCanvas>;
+
+// Which slot the caret is on. This is the SCREEN's selection, not the server's - pressing
+// a card moves this immediately so the screen answers the press, and the server's own
+// answer arrives afterwards as a fresh roster and redraws everything.
+@addField(SingleplayerMenuGameController)
+let m_csCursor: Int32;
+
+@addField(SingleplayerMenuGameController)
+let m_csStatus: wref<inkText>;
+
+@addField(SingleplayerMenuGameController)
+let m_csOpen: Bool;
+
+// ============================================================================ build
+
+/**
+ * Open the selector, or rebuild it in place if it is already open.
+ *
+ * Rebuilding wholesale rather than mutating the widgets that changed. It is a few hundred
+ * rectangles on a menu that is not rendering a world, the cost is invisible, and the
+ * alternative is holding an array of widget references per slot and keeping them in step
+ * with a roster that can change shape underneath them - which is where this kind of screen
+ * usually goes wrong.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsOpen() -> Void {
+    let root = this.GetRootCompoundWidget();
+
+    if !IsDefined(root) {
+        FTLogError(s"[Selector] no root widget - cannot open the character screen");
+        return;
+    }
+
+    let network = GameInstance.GetNetworkWorldSystem();
+
+    if !IsDefined(network) {
+        return;
+    }
+
+    if IsDefined(this.m_csRoot) {
+        this.m_csRoot.RemoveAllChildren();
+    } else {
+        let canvas = new inkCanvas();
+        canvas.SetName(n"mp_character_select");
+        canvas.SetAnchor(inkEAnchor.Fill);
+        canvas.SetInteractive(true);
+        canvas.Reparent(root);
+
+        this.m_csRoot = canvas;
+    }
+
+    this.m_csOpen = true;
+    this.m_csRoot.SetVisible(true);
+
+    let c = this.m_csRoot;
+
+    // ---------------------------------------------------------------- backplate
+    //
+    // STANDING IN FOR THE RENDER. The approved backdrop is a photograph, and a photograph
+    // needs a texture inside an .archive - the one piece of this screen that cannot be
+    // built out of primitives. Until that ships, this is a near-black scrim with the
+    // mockup's own sky bled across it: magenta high and centre, red low and left, cyan
+    // right. Three rectangles is not a skyline, but it is the right LIGHT, and it stops
+    // the panels floating on whatever the menu happens to be showing behind them.
+    MpCsRect(c, 0.0, 0.0, 1920.0, 1080.0, MpCsVoid(), 0.93);
+    MpCsRect(c, 240.0, 60.0, 1440.0, 620.0, new HDRColor(0.75, 0.16, 0.43, 1.0), 0.20);
+    MpCsRect(c, 0.0, 320.0, 780.0, 620.0, MpCsRed(), 0.10);
+    MpCsRect(c, 1180.0, 240.0, 740.0, 560.0, new HDRColor(0.16, 0.59, 0.86, 1.0), 0.12);
+    MpCsRect(c, 0.0, 860.0, 1920.0, 220.0, MpCsVoid(), 0.55);
+
+    // Registration marks. The mockup's corner brackets - the detail that says "this is an
+    // instrument you are reading" rather than "this is a dialog box".
+    this.MpCsRegistration(c);
+
+    // ---------------------------------------------------------------- title
+    MpCsText(c, 68.0, 96.0, "NIGHT CITY ONLINE", 14, n"Medium", MpCsGold());
+    MpCsText(c, 68.0, 122.0, "SELECT IDENTITY", 76, n"Bold", MpCsInk());
+    MpCsText(c, 68.0, 214.0, "WHO ARE YOU TONIGHT", 15, n"Regular", MpCsInkFaint());
+    MpCsRect(c, 68.0, 248.0, 540.0, 1.0, MpCsRed(), 0.9);
+
+    // ---------------------------------------------------------------- roster
+    let slots = network.GetCharacterSlots();
+
+    if slots > 4 {
+        slots = 4;
+    }
+
+    if slots < 1 {
+        slots = 1;
+    }
+
+    // Keep the caret on something real. It can point at a retired slot after a delete, and
+    // a detail panel describing a character that is no longer there is worse than no panel.
+    if this.m_csCursor < 0 || this.m_csCursor >= slots {
+        this.m_csCursor = this.MpCsActiveSlot();
+    }
+
+    let slot = 0;
+
+    while slot < slots {
+        this.MpCsCard(c, slot, 68.0, 322.0 + Cast<Float>(slot) * 99.0);
+        slot += 1;
+    }
+
+    // ---------------------------------------------------------------- detail
+    this.MpCsDetail(c, 1232.0, 196.0);
+
+    // ---------------------------------------------------------------- actions
+    //
+    // The three verbs, on the game's own menu items rather than here. These are LABELS of
+    // what the menu underneath can do, drawn in the mockup's positions so the composition
+    // is right; the presses themselves stay on menu items, which are focusable and
+    // controller-navigable in a way a runtime widget is not.
+    this.MpCsStatusLine(c, 68.0, 934.0);
+
+    MpCsText(c, 68.0, 1004.0, "IDENTITY IS A TOOL. MAKE IT YOURS.", 13, n"Regular", MpCsInkFaint());
+
+    FTLog(s"[Selector] character screen open - \(slots) slot(s), caret on \(this.m_csCursor)");
+}
+
+/**
+ * Close the screen without destroying it. Reopening is then a rebuild rather than a
+ * reparent, and the menu underneath is never left with an invisible interactive canvas
+ * over it eating clicks.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsClose() -> Void {
+    if IsDefined(this.m_csRoot) {
+        this.m_csRoot.SetVisible(false);
+        this.m_csRoot.SetInteractive(false);
+    }
+
+    this.m_csOpen = false;
+}
+
+/**
+ * The four corner brackets.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsRegistration(parent: ref<inkCanvas>) -> Void {
+    let a = 0.55;
+
+    // top-left
+    MpCsRect(parent, 34.0, 34.0, 20.0, 1.0, MpCsRed(), a);
+    MpCsRect(parent, 34.0, 34.0, 1.0, 20.0, MpCsRed(), a);
+    // top-right
+    MpCsRect(parent, 1866.0, 34.0, 20.0, 1.0, MpCsRed(), a);
+    MpCsRect(parent, 1885.0, 34.0, 1.0, 20.0, MpCsRed(), a);
+    // bottom-left
+    MpCsRect(parent, 34.0, 1045.0, 20.0, 1.0, MpCsRed(), a);
+    MpCsRect(parent, 34.0, 1026.0, 1.0, 20.0, MpCsRed(), a);
+    // bottom-right
+    MpCsRect(parent, 1866.0, 1045.0, 20.0, 1.0, MpCsRed(), a);
+    MpCsRect(parent, 1885.0, 1026.0, 1.0, 20.0, MpCsRed(), a);
+}
+
+/**
+ * One character card.
+ *
+ * 568 x 90 with an 18px notch, the mockup's dimensions. The active card is the one piece
+ * of gold on the screen: gold border, a lit plate, a 5px bar hanging off its left edge,
+ * and it sits 14px further right than the others. That offset is doing real work - it is
+ * readable at a glance and from across a room, which a colour change alone is not.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsCard(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float) -> Void {
+    let network = GameInstance.GetNetworkWorldSystem();
+
+    if !IsDefined(network) {
+        return;
+    }
+
+    let index = this.MpCsRosterIndex(slot);
+    let occupied = index >= 0;
+    let selected = slot == this.m_csCursor;
+    let w = 568.0;
+    let h = 90.0;
+
+    // The selected card steps right, as in the mockup.
+    let cx = selected ? x + 14.0 : x;
+
+    let plate = selected ? MpCsGold() : MpCsPlate();
+    let plateAlpha = selected ? 0.14 : 0.72;
+    let edge = selected ? MpCsGold() : MpCsRedDim();
+    let edgeAlpha = selected ? 1.0 : 0.85;
+
+    MpCsRect(parent, cx, y, w, h, plate, plateAlpha);
+    MpCsBorder(parent, cx, y, w, h, edge, edgeAlpha);
+
+    // The notches, painted the colour of the backplate so they read as cut out of the card.
+    MpCsNotch(parent, cx + w, y, 26.0, MpCsVoid());
+    MpCsNotch(parent, cx, y + h, 26.0, MpCsVoid());
+
+    if selected {
+        MpCsRect(parent, cx - 14.0, y + 6.0, 5.0, h - 12.0, MpCsGold(), 1.0);
+    }
+
+    // Slot number.
+    MpCsText(parent, cx + 15.0, y + 36.0, s"0\(slot + 1)", 13, n"Regular",
+             selected ? MpCsGold() : MpCsInkFaint());
+
+    // The chip - a 64px square with the character's initial in it. Empty slots get a
+    // dash, which is the one thing that distinguishes "nobody here" from "somebody whose
+    // name failed to load".
+    let chipX = cx + 47.0;
+    let chipY = y + 13.0;
+
+    MpCsRect(parent, chipX, chipY, 64.0, 64.0, MpCsRed(), occupied ? 0.14 : 0.05);
+    MpCsBorder(parent, chipX, chipY, 64.0, 64.0, edge, occupied ? 0.9 : 0.4);
+    MpCsNotch(parent, chipX + 64.0, chipY, 16.0, MpCsVoid());
+
+    if !occupied {
+        MpCsText(parent, chipX + 26.0, chipY + 18.0, "-", 24, n"Bold", MpCsInkFaint());
+        MpCsText(parent, cx + 128.0, y + 32.0, "EMPTY SLOT", 26, n"Bold", MpCsInkFaint());
+        MpCsText(parent, cx + 128.0, y + 62.0, "NEW CHARACTER FILLS IT", 13, n"Regular",
+                 MpCsInkFaint());
+
+        this.MpCsArm(parent, slot, cx, y, w, h);
+        return;
+    }
+
+    let name = network.GetRosterName(Cast<Uint32>(index));
+    let shown = NotEquals(name, "") ? name : "unnamed";
+
+    MpCsText(parent, chipX + 24.0, chipY + 16.0, StrLeft(shown, 1), 24, n"Bold",
+             selected ? MpCsGold() : MpCsInkDim());
+
+    MpCsText(parent, cx + 128.0, y + 24.0, shown, 26, n"Bold",
+             selected ? MpCsGold() : MpCsInk());
+
+    // Lifepath and state on one line. This is what the protocol flag day was FOR - with
+    // four characters the name alone stops being enough to tell them apart.
+    let lifepath = network.GetRosterLifepath(Cast<Uint32>(index));
+    let meta = NotEquals(lifepath, "") ? lifepath : "no lifepath on record";
+
+    if !network.HasRosterSpawnedBefore(Cast<Uint32>(index)) {
+        meta += "  -  NEVER PLAYED";
+    }
+
+    MpCsText(parent, cx + 128.0, y + 58.0, meta, 14, n"Regular", MpCsInkFaint());
+
+    // Level, right-aligned by measurement rather than by anchor: the card is a canvas and
+    // the number is at most four glyphs, so a fixed inset lands it in the same place every
+    // time without a second layout pass.
+    let level = network.GetRosterLevel(Cast<Uint32>(index));
+
+    MpCsText(parent, cx + w - 84.0, y + 32.0, s"LV \(level)", 26, n"Regular",
+             selected ? MpCsGold() : MpCsInkDim());
+
+    this.MpCsArm(parent, slot, cx, y, w, h);
+}
+
+/**
+ * Make a card pressable.
+ *
+ * A transparent interactive rectangle laid over the whole card, named for its slot. The
+ * name is how the callback knows which card was hit - ink hands the handler the widget it
+ * landed on, and reading a name off it is far less fragile than keeping a parallel array
+ * of references in step with a roster that changes shape.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsArm(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float, w: Float,
+                    h: Float) -> Void {
+    let hit = new inkRectangle();
+    hit.SetName(this.MpCsHitName(slot));
+    hit.SetAnchor(inkEAnchor.TopLeft);
+    hit.SetAnchorPoint(new Vector2(0.0, 0.0));
+    hit.SetMargin(new inkMargin(x, y, 0.0, 0.0));
+    hit.SetSize(new Vector2(w, h));
+    hit.SetOpacity(0.0);
+    hit.SetInteractive(true);
+    hit.Reparent(parent);
+
+    hit.RegisterToCallback(n"OnRelease", this, n"OnMpCsCardRelease");
+}
+
+@addMethod(SingleplayerMenuGameController)
+public func MpCsHitName(slot: Int32) -> CName {
+    if slot == 0 {
+        return n"mp_cs_hit_0";
+    }
+
+    if slot == 1 {
+        return n"mp_cs_hit_1";
+    }
+
+    if slot == 2 {
+        return n"mp_cs_hit_2";
+    }
+
+    return n"mp_cs_hit_3";
+}
+
+@addMethod(SingleplayerMenuGameController)
+public func MpCsSlotFromHit(name: CName) -> Int32 {
+    if Equals(name, n"mp_cs_hit_0") {
+        return 0;
+    }
+
+    if Equals(name, n"mp_cs_hit_1") {
+        return 1;
+    }
+
+    if Equals(name, n"mp_cs_hit_2") {
+        return 2;
+    }
+
+    if Equals(name, n"mp_cs_hit_3") {
+        return 3;
+    }
+
+    return -1;
+}
+
+/**
+ * A card was clicked.
+ *
+ * Moves the caret and redraws immediately, then asks the server. Answering the press on
+ * the frame it happens is the whole difference between a screen that feels built and one
+ * that feels broken - the old panel's only feedback for a press was a load or nothing.
+ *
+ * Empty slots move the caret and say what fills them, and send NOTHING. The server's reply
+ * to "select an empty slot" is a refusal nobody asked for.
+ */
+@addMethod(SingleplayerMenuGameController)
+protected cb func OnMpCsCardRelease(e: ref<inkPointerEvent>) -> Bool {
+    if !e.IsAction(n"click") {
+        return false;
+    }
+
+    let target = e.GetTarget();
+
+    if !IsDefined(target) {
+        return false;
+    }
+
+    let slot = this.MpCsSlotFromHit(target.GetName());
+
+    if slot < 0 {
+        return false;
+    }
+
+    this.m_csCursor = slot;
+
+    let network = GameInstance.GetNetworkWorldSystem();
+
+    if !IsDefined(network) || !network.IsConnected() {
+        FTLogError(s"[Selector] card pressed with no connection");
+        this.MpCsOpen();
+        return true;
+    }
+
+    if this.MpCsRosterIndex(slot) < 0 {
+        this.MpCsOpen();
+        this.MpCsSay("That slot is empty - NEW CHARACTER fills it.");
+        return true;
+    }
+
+    network.SelectCharacterSlot(slot);
+    this.MpCsOpen();
+    this.MpCsSay("switching...");
+
+    // The answer comes back as a fresh roster, so poll for it rather than assuming the
+    // switch took. SelectCharacterSlot only says the request was sent.
+    let poll = new MpSelectorPoll();
+    poll.controller = this;
+    poll.attempts = 0;
+    poll.enterWhenKnown = false;
+
+    GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(poll, 0.25, false);
+    return true;
+}
+
+// ============================================================================ detail
+
+/**
+ * The dossier on whoever the caret is on.
+ *
+ * 620 wide with a striped gold header, which is the design language's "this is the thing
+ * in play" marker - flat fills are states, stripes are attention.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsDetail(parent: ref<inkCanvas>, x: Float, y: Float) -> Void {
+    let network = GameInstance.GetNetworkWorldSystem();
+
+    if !IsDefined(network) {
+        return;
+    }
+
+    let w = 620.0;
+    let h = 460.0;
+
+    MpCsRect(parent, x, y, w, h, MpCsPlate(), 0.82);
+    MpCsBorder(parent, x, y, w, h, MpCsGoldDim(), 0.9);
+    MpCsNotch(parent, x + w, y, 34.0, MpCsVoid());
+    MpCsNotch(parent, x, y + h, 34.0, MpCsVoid());
+
+    // The hazard strip: alternating gold and dark, drawn as blocks. Striped rather than
+    // flat because this panel is what the ENTER press acts on - it is the screen's claim
+    // about who you are about to become, and that is worth marking.
+    let i = 0;
+
+    while i < 34 {
+        MpCsRect(parent, x + 1.0 + Cast<Float>(i) * 18.0, y + 1.0, 9.0, 7.0, MpCsGold(), 0.85);
+        i += 1;
+    }
+
+    let index = this.MpCsRosterIndex(this.m_csCursor);
+
+    if index < 0 {
+        MpCsText(parent, x + 26.0, y + 40.0, "NO CHARACTER", 40, n"Bold", MpCsInkFaint());
+        MpCsRect(parent, x + 26.0, y + 100.0, w - 52.0, 1.0, MpCsRedDim(), 0.8);
+        MpCsText(parent, x + 26.0, y + 124.0,
+                 "This slot is empty. NEW CHARACTER runs the", 19, n"Regular", MpCsInkDim());
+        MpCsText(parent, x + 26.0, y + 150.0,
+                 "creator and fills it.", 19, n"Regular", MpCsInkDim());
+        return;
+    }
+
+    let u = Cast<Uint32>(index);
+    let name = network.GetRosterName(u);
+    let shown = NotEquals(name, "") ? name : "unnamed";
+
+    MpCsText(parent, x + 26.0, y + 34.0, shown, 40, n"Bold", MpCsGold());
+
+    // Level as a filled chip - the mockup's inverted badge, dark ink on gold.
+    MpCsRect(parent, x + w - 130.0, y + 44.0, 104.0, 30.0, MpCsGold(), 1.0);
+    MpCsText(parent, x + w - 116.0, y + 49.0, s"LEVEL \(network.GetRosterLevel(u))", 15,
+             n"Medium", new HDRColor(0.1, 0.08, 0.0, 1.0));
+
+    MpCsRect(parent, x + 26.0, y + 96.0, w - 52.0, 1.0, MpCsRedDim(), 0.8);
+
+    // Key/value rows. Every one of these is a fact the server sent, which is the point of
+    // the panel: it is the roster made legible, not a description of it.
+    let lifepath = network.GetRosterLifepath(u);
+    let rowY = y + 122.0;
+
+    this.MpCsRow(parent, x, rowY, w, "LIFEPATH",
+                 NotEquals(lifepath, "") ? lifepath : "not recorded");
+    this.MpCsRow(parent, x, rowY + 46.0, w, "SLOT", s"0\(this.m_csCursor + 1) OF 04");
+    this.MpCsRow(parent, x, rowY + 92.0, w, "STATUS",
+                 network.HasRosterSpawnedBefore(u) ? "played" : "never played");
+    this.MpCsRow(parent, x, rowY + 138.0, w, "IN PLAY",
+                 network.IsRosterActive(u) ? "yes - this is you" : "no");
+
+    MpCsText(parent, x + 26.0, y + h - 92.0, "PLAY ENTERS THE WORLD AS THIS", 14, n"Medium",
+             MpCsGold());
+    MpCsText(parent, x + 26.0, y + h - 62.0, "CHARACTER.", 14, n"Medium", MpCsGold());
+}
+
+@addMethod(SingleplayerMenuGameController)
+public func MpCsRow(parent: ref<inkCanvas>, x: Float, y: Float, w: Float, key: String,
+                    value: String) -> Void {
+    MpCsText(parent, x + 26.0, y, key, 13, n"Regular", MpCsInkFaint());
+    MpCsText(parent, x + 240.0, y - 4.0, value, 17, n"Regular", MpCsInk());
+    MpCsRect(parent, x + 26.0, y + 30.0, w - 52.0, 1.0, MpCsRedDim(), 0.35);
+}
+
+// ============================================================================ status
+
+@addMethod(SingleplayerMenuGameController)
+public func MpCsStatusLine(parent: ref<inkCanvas>, x: Float, y: Float) -> Void {
+    let network = GameInstance.GetNetworkWorldSystem();
+    let message = "";
+
+    if IsDefined(network) {
+        let error = network.GetCharacterError();
+
+        // A refusal outranks everything - it is the answer to the press they just made.
+        if NotEquals(error, "") {
+            message = error;
+        } else {
+            if !network.HasCharacter() {
+                message = "No character yet - NEW CHARACTER makes one.";
+            }
+        }
+    }
+
+    this.m_csStatus = MpCsText(parent, x, y, message, 19, n"Regular", MpCsGold());
+}
+
+/**
+ * Say something on the status line without rebuilding the screen.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsSay(message: String) -> Void {
+    if IsDefined(this.m_csStatus) {
+        this.m_csStatus.SetText(message);
+    }
+}
+
+// ============================================================================ roster
+
+/**
+ * The roster index sitting in a given slot, or -1.
+ *
+ * Slots are not contiguous - retiring the character in slot 1 of three leaves 0 and 2
+ * occupied - so every lookup goes through here rather than indexing the roster directly.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsRosterIndex(slot: Int32) -> Int32 {
+    let network = GameInstance.GetNetworkWorldSystem();
+
+    if !IsDefined(network) {
+        return -1;
+    }
+
+    let i = 0u;
+
+    while i < network.GetRosterCount() {
+        if network.GetRosterSlot(i) == slot {
+            return Cast<Int32>(i);
+        }
+
+        i += 1u;
+    }
+
+    return -1;
+}
+
+/**
+ * The slot the server says is in play, or the first occupied one, or 0.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsActiveSlot() -> Int32 {
+    let network = GameInstance.GetNetworkWorldSystem();
+
+    if !IsDefined(network) {
+        return 0;
+    }
+
+    let first = -1;
+    let i = 0u;
+
+    while i < network.GetRosterCount() {
+        let slot = network.GetRosterSlot(i);
+
+        if slot >= 0 {
+            if network.IsRosterActive(i) {
+                return slot;
+            }
+
+            if first < 0 {
+                first = slot;
+            }
+        }
+
+        i += 1u;
+    }
+
+    return first >= 0 ? first : 0;
+}
