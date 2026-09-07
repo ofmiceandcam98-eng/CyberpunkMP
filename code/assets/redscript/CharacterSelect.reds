@@ -186,6 +186,36 @@ public func MpCsOpen() -> Void {
         this.m_csRoot = canvas;
     }
 
+    /*
+     * THE MENU'S COORDINATE SPACE IS NOT 1920x1080, AND ASSUMING IT WAS PUT THIS SCREEN AT
+     * HALF SIZE IN THE CORNER.
+     *
+     * Measured live 2026-09-07: a rectangle built 1920 wide covered about 960 screen pixels,
+     * so this controller's root lays out in roughly double the virtual resolution ink is
+     * usually described in. Every absolute coordinate below landed at half its intended
+     * place - the dossier panel drew on top of the roster and the backplate stopped in the
+     * middle of the screen.
+     *
+     * Rather than doubling every number and hoping, the composition stays authored in the
+     * mockup's own 1920x1080 and the CANVAS is scaled to whatever the root actually is. That
+     * is self-correcting: it is right on this controller, right at any resolution, and right
+     * if a patch changes the space underneath us.
+     *
+     * A root that has not been laid out yet reports zero, and scaling by zero would draw
+     * nothing at all - so an unmeasurable root falls back to 1:1, which is wrong in exactly
+     * the way the screenshot showed rather than invisible.
+     */
+    let rootSize = root.GetSize();
+    let scale = 1.0;
+
+    if rootSize.X > 1.0 {
+        scale = rootSize.X / 1920.0;
+    }
+
+    this.m_csRoot.SetScale(new Vector2(scale, scale));
+
+    FTLog(s"[Selector] root is \(rootSize.X)x\(rootSize.Y) - composition scaled by \(scale)");
+
     this.m_csOpen = true;
     this.m_csRoot.SetVisible(true);
 
@@ -193,17 +223,45 @@ public func MpCsOpen() -> Void {
 
     // ---------------------------------------------------------------- backplate
     //
-    // STANDING IN FOR THE RENDER. The approved backdrop is a photograph, and a photograph
-    // needs a texture inside an .archive - the one piece of this screen that cannot be
-    // built out of primitives. Until that ships, this is a near-black scrim with the
-    // mockup's own sky bled across it: magenta high and centre, red low and left, cyan
-    // right. Three rectangles is not a skyline, but it is the right LIGHT, and it stops
-    // the panels floating on whatever the menu happens to be showing behind them.
-    MpCsRect(c, 0.0, 0.0, 1920.0, 1080.0, MpCsVoid(), 0.93);
-    MpCsRect(c, 240.0, 60.0, 1440.0, 620.0, new HDRColor(0.75, 0.16, 0.43, 1.0), 0.20);
-    MpCsRect(c, 0.0, 320.0, 780.0, 620.0, MpCsRed(), 0.10);
-    MpCsRect(c, 1180.0, 240.0, 740.0, 560.0, new HDRColor(0.16, 0.59, 0.86, 1.0), 0.12);
-    MpCsRect(c, 0.0, 860.0, 1920.0, 220.0, MpCsVoid(), 0.55);
+    // THE RENDER, as a real texture. It ships in zz_NightCityOnline_Selector.archive as an
+    // xbm plus a single-texture inkatlas - an inkImage can only bind an ATLAS, never a raw
+    // xbm, which is the whole reason that atlas exists.
+    //
+    // What was here before was three translucent rectangles standing in for a skyline, and
+    // they read exactly as badly as that sounds: flat magenta and blue slabs across the top
+    // half of the screen. They are gone rather than layered under the image.
+    //
+    // An opaque black bed goes down FIRST. The image is drawn at the 1920x1080 it was
+    // authored at, and anything the menu is showing behind it - the badlands, the expansion
+    // logo - must not read through the edges if a resolution ever leaves a seam.
+    // Anchored Fill rather than sized, deliberately. Every other coordinate on this screen
+    // depends on the scale measured above being right; this one does not. If the root ever
+    // reports zero and the scale falls back to 1:1, the composition is wrong but the screen
+    // is still BLACK behind it rather than half-covered over the game's own menu - which is
+    // the difference between something that looks unfinished and something that looks broken.
+    let bed = new inkRectangle();
+    bed.SetName(n"mp_cs_bed");
+    bed.SetAnchor(inkEAnchor.Fill);
+    bed.SetMargin(new inkMargin(0.0, 0.0, 0.0, 0.0));
+    bed.SetTintColor(MpCsVoid());
+    bed.SetOpacity(1.0);
+    bed.Reparent(c);
+
+    let backdrop = new inkImage();
+    backdrop.SetName(n"mp_cs_backdrop");
+    backdrop.SetAnchor(inkEAnchor.TopLeft);
+    backdrop.SetAnchorPoint(new Vector2(0.0, 0.0));
+    backdrop.SetMargin(new inkMargin(0.0, 0.0, 0.0, 0.0));
+    backdrop.SetSize(new Vector2(1920.0, 1080.0));
+    backdrop.SetAtlasResource(r"nightcityonline\\character_select_bg.inkatlas");
+    backdrop.SetTexturePart(n"whole");
+    backdrop.Reparent(c);
+
+    // Just enough gradient for panel text to sit on, as the mockup put it - "the picture is
+    // the design; washing it out to make room for UI would waste it". Two soft plates down
+    // the left and bottom where the roster and the footer live, and nothing anywhere else.
+    MpCsRect(c, 0.0, 0.0, 720.0, 1080.0, MpCsVoid(), 0.55);
+    MpCsRect(c, 0.0, 880.0, 1920.0, 200.0, MpCsVoid(), 0.45);
 
     // Registration marks. The mockup's corner brackets - the detail that says "this is an
     // instrument you are reading" rather than "this is a dialog box".

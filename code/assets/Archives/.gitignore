@@ -1,1 +1,7 @@
 *.zip
+
+# Derived, and 3.7 MB of it: the xbm is one WolvenKit import away from
+# source/raw/nightcityonline/character_select_bg.png. The PNG is the source of truth and the
+# PACKED archive is what actually ships, so both of those are tracked and this intermediate
+# is not. Regeneration steps live beside the archive in xmake.lua.
+*.xbm

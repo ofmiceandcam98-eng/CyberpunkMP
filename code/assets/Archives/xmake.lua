@@ -48,3 +48,30 @@ target("Archives")
     -- The spawn tag is the base game's own #q000_spwn_start, which is a holding area rather
     -- than a place - the server moves new arrivals to its start point on connect.
     add_files("packed/archive/pc/mod/zz_NightCityOnline_CleanStart.archive")
+
+    -- The character selection screen's backdrop.
+    --
+    -- A THIRD archive, for the same reason there is a second one: CyberpunkMP.archive is a
+    -- packed binary in the tree and repacking it to add two files risks losing something
+    -- already in it for no benefit. ArchiveXL loads every archive in this directory.
+    --
+    -- Two files, both authored here rather than overriding anything CDPR ships:
+    --
+    --   nightcityonline\character_select_bg.xbm       the render, at exactly the 1920x1080
+    --                                                 the menu lays out in
+    --   nightcityonline\character_select_bg.inkatlas  a single-texture atlas with one part
+    --                                                 called "whole", which is the only way
+    --                                                 an inkImage can reference a texture -
+    --                                                 it binds an atlas, never a raw xbm
+    --
+    -- The atlas was built from a stock LOADING SCREEN atlas rather than authored blind
+    -- (base\gameplay\gui\fullscreen\loading\bsc_d_a_4k.inkatlas), because those are already
+    -- the exact shape wanted: one full-screen image, one "whole" part, full UV. Its slot 0
+    -- and slot 1 are the 4K and 1080p variants the game picks between; both point at the one
+    -- texture here, since it is authored at the resolution the menu uses.
+    --
+    -- Regenerating it, if the render ever changes: replace source\raw\nightcityonline\
+    -- character_select_bg.png, then WolvenKit.CLI import -> convert deserialize the atlas
+    -- json beside it -> pack. The .inkatlas.json is kept in the tree ON PURPOSE so the atlas
+    -- can be rebuilt without extracting a stock one again.
+    add_files("packed/archive/pc/mod/zz_NightCityOnline_Selector.archive")
