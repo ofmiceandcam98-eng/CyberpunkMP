@@ -6,6 +6,34 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.118
+
+**If the game was crashing on launch or starting with nothing working, this is the one to get.**
+
+- **The mod can no longer take the game down over a startup setting.** Everything the
+  launcher passes at launch — your voice keys, the server address, your name — has a working
+  default, so none of it is essential. Reading one of them could still kill the whole process
+  before the mod had written a single line of its log, which is why some crashes left nothing
+  to send. Now a bad value gets logged and skipped, and you get into the game.
+- **Crashes leave evidence again.** The mod writes its first log line the moment it starts, so
+  an empty log file is no longer possible. If it does fall over, the last line says how far it
+  got. Several crash reports this week arrived as 0-byte files, which is the same as no report.
+- **The launcher stops claiming it sent a log when there was nothing to send.** If the mod
+  crashed before writing anything, the message now says so instead of pointing at an empty
+  file on your Desktop.
+- **Two release-pipeline guards, so this class of breakage cannot reach you again.** A build
+  is now refused if it contains a script the source does not have, or if any two scripts
+  define the same thing. That is what broke v0.3.115 through v0.3.117: a duplicated set of
+  interface scripts made the game refuse to compile ANY of the mod, so it started with nothing
+  working. Fixed in the payload, and now impossible to publish.
+
+**If you were on v0.3.115, .116 or .117, you were running a mod that could not load.** That is
+what the "REDScript compilation has failed" box was, and why the game looked like the mod did
+nothing. Update and it is gone.
+
+If you hit a crash, send the log — `tools\CollectCrash.ps1` gathers it in one step. Run it
+**before** relaunching; relaunching overwrites the evidence.
+
 ## What changed — v0.3.117
 
 **Install verification starts working. Nothing you can see, and worth knowing about.**

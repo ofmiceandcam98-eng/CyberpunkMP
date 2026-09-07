@@ -410,6 +410,47 @@ if ($Mod) {
         }
         Ok "scripts deployed, match source, and nothing extra"
 
+        # THE DURABLE GATE, and it is Cam's idea rather than mine: refuse to publish if any
+        # class, struct or enum is DEFINED IN MORE THAN ONE .reds. The mirror above removes
+        # the cause we found; this catches the whole class of bug regardless of cause, which
+        # is the difference between fixing an incident and closing it.
+        #
+        # Redscript refuses the ENTIRE mod on a duplicate definition - not the file, the mod
+        # - so the game starts and no script takes effect. Every player who updated to
+        # v0.3.115, .116 or .117 got that, and nothing in the pipeline noticed for three
+        # releases, because everything we check compiles the REPO and the repo was fine.
+        $definitions = @{}
+        Get-ChildItem $shippedRoot -Recurse -Filter *.reds | ForEach-Object {
+            $file = $_.FullName.Substring((Resolve-Path $shippedRoot).Path.Length + 1)
+            foreach ($line in (Get-Content $_.FullName)) {
+                # Deliberately loose: any leading modifiers, then the keyword and the name.
+                # A false positive here costs a re-run; a false negative costs every player.
+                if ($line -match '^\s*(?:public\s+|private\s+|protected\s+|native\s+|abstract\s+|final\s+|importonly\s+|persistent\s+)*(class|struct|enum)\s+([A-Za-z_][A-Za-z0-9_]*)') {
+                    $key = "$($Matches[1]) $($Matches[2])"
+                    if (-not $definitions.ContainsKey($key)) { $definitions[$key] = @() }
+                    $definitions[$key] += $file
+                }
+            }
+        }
+
+        $dupes = $definitions.GetEnumerator() |
+                 Where-Object { ($_.Value | Sort-Object -Unique).Count -gt 1 } |
+                 Sort-Object Name
+
+        if ($dupes) {
+            $lines = $dupes | ForEach-Object { "    $($_.Name)  ->  $(($_.Value | Sort-Object -Unique) -join ', ')" }
+            Die (@"
+DUPLICATE REDSCRIPT DEFINITIONS in the staged payload - publishing this would ship a mod
+that cannot compile, and redscript takes the WHOLE mod down over it, not just these files:
+
+$($lines -join "`n")
+
+Delete $shippedRoot and re-run. If two files legitimately need the same name, they cannot
+both ship - redscript has one flat namespace.
+"@)
+        }
+        Ok "no duplicate redscript definitions in the payload"
+
         # The same check for the assets that are NOT redscript.
         #
         # Redscript had this guard and the others did not, which is exactly why the gap
