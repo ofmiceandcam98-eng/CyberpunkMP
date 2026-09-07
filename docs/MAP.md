@@ -1663,6 +1663,25 @@ compiles`) against the real 2.31 install.
      without it, because the release had already been cut. The launcher can only deliver what
      is in a release.
 
+- **TEST SERVER IS ARMED (2026-09-07) AND THE TWO DIGEST IMPLEMENTATIONS AGREE.** First time
+  that has ever been true.
+  - `/mnt/vol/projects/CyberpunkMP-authority/config/server-manifest.json`, manifest
+    `2026.09.07.02` off v0.3.117. Test `/api/v1/status/` now answers
+    `"ManifestVersion": "2026.09.07.02", "Release": "v0.3.117"`. **Live is deliberately
+    untouched and still answers `""`.**
+  - **The C++ computed `addfcd78842167de29cb0f9fdd045babc63fd411ff927449091c9aad7bc6a8f4`,
+    byte-identical to an independent implementation of the canonical string from the spec.**
+    So `GameServer.cpp` and the documented format agree. The launcher's `manifest.js` is the
+    THIRD implementation and is still unproven — only a real client joining test proves it.
+  - **A `-Launcher` ship does NOT regenerate the manifest** (`Ship.ps1:914`, `if ($Mod)`), and
+    that is correct: the manifest describes the payload, so a launcher-only ship carries the
+    previous one forward with the unchanged bytes it describes. v0.3.117 therefore shipped
+    with the OLD broken manifest until a `-Mod` ship regenerated it into the same release.
+    **A generator fix reaches nobody until a `-Mod` ship.**
+  - **Still needed to arm LIVE:** one real client joins test and gets in. Then live, after
+    players are on v0.3.117 — the gate is a hard refuse and everyone else is locked out until
+    they relaunch.
+
 - **THE MANIFEST GATE WAS NEVER ARMABLE, AND "not armed yet" WAS THE WRONG DIAGNOSIS
   (found 2026-09-07 while trying to arm it).** Fixed generator-side in `7294cb5`; a ship is
   needed before arming can do anything.
