@@ -14,6 +14,9 @@ left there reaches every player.
 |---|---|
 | `section-rail.html` | The settings rail: hazard-index over tick-rail, and counting SECTIONS rather than rows. Tools went from 13 stops to 4. Shipped in v0.3.116. |
 | `type-scale.html` | Twenty-four ad-hoc font sizes collapsed onto seven tokens, with what visibly moves and what does not. Shipped in v0.3.116. |
+| `trade-screen.html` | A trade menu in the GAME's UI language, not the launcher's - three columns, cyan for your side, and the rule that any change clears both confirmations. Proposal; nothing built yet. |
+| `synced-traffic-plan.html` | Ambient traffic is unsynced today - nothing in the codebase touches it. Option B staged: suppress vanilla traffic first, then replicate through the path that already works. Proposal. |
+| `crash-plan-2026-09-07.html` | The 0x80000003 incident: what was fixed, and the table that maps each `[Boot]` line to the ten lines of startup it points at. |
 
 ## Why they are in git
 
