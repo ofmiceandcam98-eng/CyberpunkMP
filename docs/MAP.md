@@ -445,7 +445,17 @@ is **local and unpushed** — per Cam, nothing ships before the server swap.
   point-in-time split, not a live mirror** - it drifts until someone re-runs
   `git subtree split -P code/launcher-lite` and pushes, and SignPath builds from the public
   source, so the two must be in sync at application time.
-  **Open:** the SignPath application itself (deferred by Cam until the current build is done).
+  **THE MIRROR HAS DRIFTED, MEASURED 2026-09-07.** `NightCityOnline/launcher` HEAD is still
+  `eb8574c` (pushed 2026-09-04); `index.html`, `main.js`, `preload.mjs` and `package.json` all
+  differ from the monorepo now — v0.3.115 alone moved three of them. **SignPath builds from the
+  PUBLIC source, so a re-split has to happen before the application, not after.** Recipe, and
+  it regenerates from scratch every time (there is no local branch to preserve, and none is
+  kept — the public repo IS the record):
+  `git subtree split -P code/launcher-lite -b <tmp>` then push `<tmp>` to that repo's `main`,
+  re-adding the root `LICENSE` + `README.md` on top as `eb8574c` did. The split rewrites SHAs,
+  so its history is disjoint from the monorepo's — do not try to diff the two by commit.
+  **Open:** the SignPath application itself. Deferred until "the current build is done" — and
+  v0.3.115 shipping means that condition is now MET, so this is a live decision, not a wait.
   Honest risk - they also require no proprietary component, and a launcher whose job is
   installing non-open-source software is a fair thing for them to refuse. If they do, the
   fallback is a paid certificate, which needs the LLC that does not exist yet: Azure's
