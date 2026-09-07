@@ -695,6 +695,54 @@ foreach ($side in $sideFiles) {
     }
 }
 
+# ---------------------------------------------------------------------------
+# THE ADDRESS EVERY PLAYER DIALS IS DECIDED ON main AND SHIPPED FROM ANYWHERE.
+#
+# v0.3.115 was cut from feat/world-state, whose copy of server.json predated the server
+# migration. This step duly published it, and every launcher went back to dialling a node
+# that had been retired the day before. Both servers ran normally the entire time; the
+# launcher's Checkup named the fault precisely ("Server target - <dead>:11778 - the
+# published server") and it still took an hour, because valid JSON pointing at a dead host
+# passes the notes gate, Verify and the manifest without a murmur.
+#
+# So it gets checked here, where the file is actually published, for the same reason the
+# completeness check above exists: nothing about that ship was wrong except what it carried.
+# ---------------------------------------------------------------------------
+
+$serverJson = Join-Path $Repo "publish\server.json"
+$shipBranch = (& git -C $Repo rev-parse --abbrev-ref HEAD 2>$null)
+
+if ((Test-Path $serverJson) -and $shipBranch -and $shipBranch -ne "main") {
+    $mainCopy = & git -C $Repo show origin/main:publish/server.json 2>$null
+
+    if ($LASTEXITCODE -ne 0 -or -not $mainCopy) {
+        Warn "cannot read publish\server.json from origin/main - fetch main, then compare by hand before trusting this ship"
+    }
+    else {
+        $here  = ((Get-Content $serverJson -Raw) -replace "`r`n", "`n").TrimEnd()
+        $there = (($mainCopy -join "`n") -replace "`r`n", "`n").TrimEnd()
+
+        if ($here -ne $there) {
+            Die @"
+publish\server.json differs from origin/main, and this ship publishes THIS copy.
+
+  shipping from: $shipBranch
+
+That file is canonical on main. A stale copy on a feature branch silently repoints every
+launcher at whatever address the branch remembers - which is exactly how v0.3.115 sent the
+whole player base to a retired node while both servers were running fine.
+
+  Fix:  git checkout origin/main -- publish/server.json
+
+then re-run. If the difference here is deliberate, land it on main first - the workflow
+that republishes this asset only watches main, so anything else is a change that survives
+one ship and then silently reverts on the next one cut from a different branch.
+"@
+        }
+        Ok "server address matches origin/main"
+    }
+}
+
 # The world template every player loads.
 #
 # Zipped here rather than stored zipped, so the save stays inspectable in the repo - being
