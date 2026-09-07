@@ -32,6 +32,15 @@
     --hazard:  #f3c50f;
     --ok:      #3ddc64;
     --bad:     #f0a05a;
+    /* Declared because they were loose literals in component rules, which is how a kit
+       ends up with three ambers and nobody able to say which one is correct. Same values
+       as before - this changes nothing on screen, it just gives them one home. */
+    --update:  #c2621b;
+    --steel:   #2b303a;
+    /* ONE corner radius. This file had 2, 3, 4, 6 and 8px in it, none of them chosen -
+       and the modal, the panels and the notes card are all square already, so square is
+       what the kit actually is. Avatars stay round; they are pictures of people. */
+    --radius:  2px;
     --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
     --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   }
@@ -113,7 +122,7 @@
     background: var(--surface);
     color: var(--ink);
     border: 1px solid var(--line);
-    border-radius: 2px;
+    border-radius: var(--radius);
     font-family: inherit;
     font-size: .82rem;
   }
@@ -128,7 +137,7 @@
     height: 14px;
     background: var(--surface);
     border: 1px solid var(--line);
-    border-radius: 2px;
+    border-radius: var(--radius);
     overflow: hidden;
   }
   .voice-meter-fill {
@@ -284,7 +293,7 @@
     padding: .45rem .55rem;
     background: rgba(255,255,255,.02);
     border: 1px solid rgba(255,255,255,.06);
-    border-radius: 6px;
+    border-radius: var(--radius);
   }
 
   .mod-name {
@@ -302,7 +311,7 @@
     font-size: .6rem;
     letter-spacing: .04em;
     padding: .12rem .4rem;
-    border-radius: 3px;
+    border-radius: var(--radius);
     white-space: nowrap;
   }
   .mod-badge.ok      { background: rgba(70,200,120,.15); color: #6fdca0; }
@@ -313,7 +322,7 @@
     font-size: .62rem;
     letter-spacing: .04em;
     padding: .22rem .45rem;
-    border-radius: 4px;
+    border-radius: var(--radius);
     border: 1px solid rgba(255,255,255,.14);
     background: transparent;
     color: var(--ink);
@@ -350,7 +359,7 @@
   .card {
     background: var(--surface);
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: var(--radius);
     padding: 1.1rem 1.25rem;
     display: flex;
     flex-direction: column;
@@ -383,8 +392,8 @@
 
   .discord { background: #5865f2; color: #fff; }
   .join { background: #5865f2; color: #fff; }
-  .update { background: #c2621b; color: #fff; }
-  .verify { background: #2b303a; color: var(--ink); }
+  .update { background: var(--update); color: #fff; }
+  .verify { background: var(--steel); color: var(--ink); }
 
   /* Destructive and secondary actions, kept small and away from the main flow. */
   .footlinks {
@@ -529,7 +538,7 @@
   }
   /* Status lamps, not dots: square industrial LEDs. Idle is unlit housing; lit is a
      hot green with a glow, like the panel lamps on the reference kit's machinery. */
-  .dot { width: 8px; height: 8px; border-radius: 2px; background: #3a3f49; flex: 0 0 auto; }
+  .dot { width: 8px; height: 8px; border-radius: var(--radius); background: #3a3f49; flex: 0 0 auto; }
   .dot.on {
     background: #48ff85;
     box-shadow: 0 0 7px rgba(72, 255, 133, .55), inset 0 -2px 3px rgba(0, 0, 0, .35);
@@ -556,7 +565,7 @@
     margin-left: .75rem;
   }
   .gear:hover { color: var(--ink); }
-  .gear:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  .gear:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius); }
 
   .modal-backdrop {
     position: fixed; inset: 0; z-index: 50;
@@ -763,7 +772,26 @@
   .check { font-size: .72rem; display: flex; align-items: center; gap: .4rem; }
   .check.yes { color: var(--ok); }
   .check.no  { color: var(--bad); }
-  .check.warn { color: var(--warn, #e0af68); }
+  .check.warn { color: var(--hazard); }
+
+  /* Text inputs. These were six inline style attributes that disagreed with each other -
+     three radii between them, borders in rgba(255,255,255,.2) that belong to no palette,
+     and a background of var(--bg,#111) where --bg IS NOT DECLARED ANYWHERE, so every one
+     of them silently rendered the #111 fallback instead of a surface colour. */
+  .field {
+    background: var(--ground);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 6px 10px;
+    font: inherit;
+    min-width: 0;
+    flex: 1;
+  }
+  .field::placeholder { color: var(--ink-dim); }
+  .field:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .field-narrow { flex: 0 0 auto; width: 72px; }
+  .field-block  { flex: none; width: 100%; margin-top: .4rem; padding: .35rem .5rem; font-size: .75rem; }
 
   .tool { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
   .tool-name { font-size: .84rem; font-weight: 600; }
@@ -780,7 +808,7 @@
     border-radius: 0;
     font-family: "Cascadia Mono", Consolas, monospace;
     font-size: .72rem;
-    color: var(--accent, #fcee0a);
+    color: var(--accent);
     user-select: all;
     word-break: break-all;
     white-space: pre-wrap;
@@ -838,8 +866,8 @@
   .notes::-webkit-scrollbar { width: 8px; }
   .notes::-webkit-scrollbar-track { background: transparent; }
   .notes::-webkit-scrollbar-thumb {
-    background: #2b303a;
-    border-radius: 4px;
+    background: var(--steel);
+    border-radius: var(--radius);
   }
   .notes:hover::-webkit-scrollbar-thumb { background: #3d434f; }
   .notes h4 {
@@ -1132,7 +1160,7 @@
                 <div style="margin-top:.4rem"><span id="nexusState">Not signed in</span></div>
 
                 <input id="nexusKey" type="password" placeholder="Paste your Nexus API key here"
-                       style="margin-top:.4rem;width:100%;padding:.35rem .5rem;border-radius:4px;border:1px solid rgba(255,255,255,.14);background:rgba(0,0,0,.25);color:inherit;font-size:.75rem">
+                       class="field field-block">
                 <button class="mod-btn" id="nexusSave" style="margin-top:.35rem">Save key</button>
 
                 <!-- Nexus SSO - the one-click browser approval - only works for
@@ -1279,9 +1307,9 @@
               </div>
               <div class="btn-row" style="margin-top:8px">
                 <input type="text" id="devServerHost" placeholder="host or IP"
-                       style="flex:1;min-width:0;background:var(--bg,#111);color:inherit;border:1px solid rgba(255,255,255,.2);border-radius:6px;padding:6px 10px;font:inherit">
+                       class="field">
                 <input type="text" id="devServerPort" placeholder="11778"
-                       style="width:72px;background:var(--bg,#111);color:inherit;border:1px solid rgba(255,255,255,.2);border-radius:6px;padding:6px 10px;font:inherit">
+                       class="field field-narrow">
               </div>
             </div>
             <div class="btn-col">
@@ -1512,9 +1540,9 @@
            lifecycle request; the launcher only remembers it (encrypted). -->
       <div class="btn-row" id="serverCredRow" style="display:none; margin-top:.5rem">
         <input type="text" id="serverCredUser" placeholder="admin username"
-               style="flex:1;min-width:0;background:var(--bg,#111);color:inherit;border:1px solid rgba(255,255,255,.2);border-radius:6px;padding:6px 10px;font:inherit">
+               class="field">
         <input type="password" id="serverCredPass" placeholder="admin password"
-               style="flex:1;min-width:0;background:var(--bg,#111);color:inherit;border:1px solid rgba(255,255,255,.2);border-radius:6px;padding:6px 10px;font:inherit">
+               class="field">
         <button class="action ghost" id="serverCredSave">Save</button>
       </div>
 
@@ -1582,7 +1610,7 @@
              like everything else, listed under YOUR MODS above. -->
         <div class="btn-row" style="margin-top:.5rem">
           <input type="text" id="addModInput" placeholder="Nexus mod link or number..."
-                 style="flex:1;min-width:0;background:var(--bg,#111);color:inherit;border:1px solid rgba(255,255,255,.2);border-radius:0;padding:6px 10px;font:inherit"
+                 class="field"
                  spellcheck="false">
           <button class="action ghost" id="addModBtn" style="flex:0 0 auto">Add mod</button>
         </div>
