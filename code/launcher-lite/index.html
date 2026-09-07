@@ -41,6 +41,22 @@
        and the modal, the panels and the notes card are all square already, so square is
        what the kit actually is. Avatars stay round; they are pictures of people. */
     --radius:  2px;
+    /* ONE TYPE SCALE. This file had TWENTY-FOUR distinct font sizes in it - .54 .55 .58
+       .6 .62 .64 .66 .68 .7 .72 .74 .75 .76 .78 .8 .82 .84 .85 1 1.02 1.1 1.15 1.3 - and
+       nine rules agreeing on .72rem while fifteen other sizes were used once or twice
+       each. That is drift, not a decision: every new row invented its own number.
+
+       Seven steps, each keeping the job the sizes it absorbed were doing. Pick a step;
+       do not add a number. (zeldfep, 2026-09-07: "clean up the fonts so its a little more
+       uniform not the style the sizing.") */
+    --fs-micro: .58rem;   /* rail numbers, badges, mod buttons */
+    --fs-label: .68rem;   /* uppercase mono labels, tabs, footer */
+    --fs-small: .74rem;   /* descriptions, status lines, hints - the biggest group */
+    --fs-body:  .84rem;   /* setting names, selects, the lede */
+    --fs-lead:  1.02rem;  /* the Play button, and only that */
+    --fs-head:  1.15rem;  /* brand, h1, modal title */
+    --fs-icon:  1.2rem;   /* chrome glyphs: the gear and the close */
+
     --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
     --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   }
@@ -103,7 +119,7 @@
     font-weight: 800;
     letter-spacing: .16em;
     text-transform: uppercase;
-    font-size: 1.15rem;
+    font-size: var(--fs-head);
   }
   .brand::before { content: "/// "; font-family: var(--mono); font-weight: 700; color: var(--accent); }
   .brand span { color: var(--accent); }
@@ -124,7 +140,7 @@
     border: 1px solid var(--line);
     border-radius: var(--radius);
     font-family: inherit;
-    font-size: .82rem;
+    font-size: var(--fs-body);
   }
   .voice-select:disabled { color: var(--ink-dim); }
 
@@ -189,16 +205,16 @@
   .account.visible { display: flex; }
   .account img { width: 34px; height: 34px; border-radius: 50%; background: var(--surface); }
   .account .who { line-height: 1.25; }
-  .account .name { font-size: .85rem; font-weight: 600; }
+  .account .name { font-size: var(--fs-body); font-weight: 600; }
   .account .id {
     font-family: var(--mono);
-    font-size: .68rem;
+    font-size: var(--fs-label);
     color: var(--ink-dim);
     font-variant-numeric: tabular-nums;
   }
   .linkbtn {
     background: none; border: none; color: var(--ink-dim);
-    font-family: var(--sans); font-size: .72rem; cursor: pointer;
+    font-family: var(--sans); font-size: var(--fs-small); cursor: pointer;
     text-decoration: underline; text-underline-offset: 2px; padding: 0;
   }
   .linkbtn:hover { color: var(--ink); }
@@ -247,7 +263,7 @@
     padding: .45rem .6rem .5rem;
   }
   .modqueue-head {
-    font-size: .62rem;
+    font-size: var(--fs-micro);
     letter-spacing: .14em;
     color: var(--dim);
     margin-bottom: .35rem;
@@ -257,10 +273,10 @@
     align-items: center;
     gap: .5rem;
     padding: .22rem 0;
-    font-size: .8rem;
+    font-size: var(--fs-body);
   }
   .queue-row .qname { min-width: 9rem; }
-  .queue-row .qdetail { color: var(--dim); font-size: .72rem; flex: 1; }
+  .queue-row .qdetail { color: var(--dim); font-size: var(--fs-small); flex: 1; }
   .queue-row.failed .qdetail { color: var(--accent); }
   .queue-row.waiting .qdetail { color: var(--hazard); }
   .qbar {
@@ -299,7 +315,7 @@
   .mod-name {
     flex: 1;
     min-width: 0;
-    font-size: .76rem;
+    font-size: var(--fs-small);
     /* Long names truncate rather than wrapping the row to two lines and making the
        list jump about as it loads. */
     white-space: nowrap;
@@ -308,7 +324,7 @@
   }
 
   .mod-badge {
-    font-size: .6rem;
+    font-size: var(--fs-micro);
     letter-spacing: .04em;
     padding: .12rem .4rem;
     border-radius: var(--radius);
@@ -319,7 +335,7 @@
   .mod-badge.bad     { background: rgba(255,90,90,.15);  color: #ff8f8f; }
 
   .mod-btn {
-    font-size: .62rem;
+    font-size: var(--fs-micro);
     letter-spacing: .04em;
     padding: .22rem .45rem;
     border-radius: var(--radius);
@@ -353,8 +369,8 @@
     overflow: hidden;
   }
 
-  h1 { font-size: 1.15rem; margin: 0; font-weight: 600; }
-  p.lede { color: var(--ink-dim); margin: 0; max-width: 30rem; line-height: 1.45; font-size: .82rem; }
+  h1 { font-size: var(--fs-head); margin: 0; font-weight: 600; }
+  p.lede { color: var(--ink-dim); margin: 0; max-width: 30rem; line-height: 1.45; font-size: var(--fs-body); }
 
   .card {
     background: var(--surface);
@@ -373,7 +389,7 @@
 
   button.action {
     font-family: var(--mono);
-    font-size: .8rem;
+    font-size: var(--fs-body);
     font-weight: 700;
     letter-spacing: .07em;
     text-transform: uppercase;
@@ -409,7 +425,7 @@
     color: #140406;
     border-color: var(--accent);
     min-width: 12rem;
-    font-size: 1.02rem;
+    font-size: var(--fs-lead);
     font-family: 'NCO Display', var(--mono);
     letter-spacing: .12em;
     position: relative;
@@ -463,12 +479,12 @@
     width: 100%; gap: 1rem;
   }
   .admin-title {
-    font-family: var(--mono); font-size: .7rem; font-weight: 700;
+    font-family: var(--mono); font-size: var(--fs-label); font-weight: 700;
     letter-spacing: .14em; text-transform: uppercase; color: var(--ink-dim);
   }
   .serverstate {
     display: flex; align-items: center; gap: .45rem;
-    font-family: var(--mono); font-size: .72rem; color: var(--ink-dim);
+    font-family: var(--mono); font-size: var(--fs-small); color: var(--ink-dim);
   }
   .btn-row { display: flex; gap: .6rem; width: 100%; }
   .btn-col { display: flex; flex-direction: column; gap: 6px; }
@@ -509,17 +525,17 @@
        width the old size fit; under Windows display scaling the buttons shrink until
        RESTART crossed the corner cuts and the clip sliced the glyphs (zeldfep's screen,
        live on v0.3.101). Option E from the mock: the shape stays, the type yields. */
-    font-size: .7rem;
+    font-size: var(--fs-label);
     letter-spacing: .03em;
   }
   .admin-note {
-    font-family: var(--mono); font-size: .64rem; color: #5c616c;
+    font-family: var(--mono); font-size: var(--fs-label); color: #5c616c;
     word-break: break-all; text-align: center; line-height: 1.4;
   }
 
   .status {
     font-family: var(--mono);
-    font-size: .74rem;
+    font-size: var(--fs-small);
     color: var(--ink-dim);
     min-height: 1.2em;
   }
@@ -528,7 +544,7 @@
   .status.ok { color: var(--ok); }
 
   .gate {
-    font-size: .78rem;
+    font-size: var(--fs-small);
     color: var(--ink-dim);
     display: flex;
     align-items: center;
@@ -561,7 +577,7 @@
   /* --- settings modal --- */
   .gear {
     background: none; border: none; color: var(--ink-dim);
-    font-size: 1.1rem; cursor: pointer; padding: .2rem .4rem; line-height: 1;
+    font-size: var(--fs-icon); cursor: pointer; padding: .2rem .4rem; line-height: 1;
     margin-left: .75rem;
   }
   .gear:hover { color: var(--ink); }
@@ -601,14 +617,14 @@
     opacity: .92; pointer-events: none;
   }
   .modal-head h2 {
-    margin: 0; font-size: 1rem; font-weight: 700;
+    margin: 0; font-size: var(--fs-head); font-weight: 700;
     font-family: 'NCO Display', var(--mono);
     letter-spacing: .14em; text-transform: uppercase;
   }
   .modal-head h2::before { content: "/// "; font-family: var(--mono); color: var(--accent); }
   .modal-close {
     background: none; border: none; color: var(--ink-dim);
-    font-size: 1.3rem; cursor: pointer; line-height: 1; padding: 0 .2rem;
+    font-size: var(--fs-icon); cursor: pointer; line-height: 1; padding: 0 .2rem;
   }
   .modal-close:hover { color: var(--ink); }
 
@@ -630,7 +646,7 @@
   }
   .tabs button {
     background: none; border: none; cursor: pointer;
-    font-family: var(--mono); font-size: .68rem; font-weight: 700;
+    font-family: var(--mono); font-size: var(--fs-label); font-weight: 700;
     letter-spacing: .12em; text-transform: uppercase;
     color: var(--ink-dim); padding: .6rem .7rem .5rem;
     border-bottom: 2px solid transparent;
@@ -686,7 +702,7 @@
   .section-rail button.rail-step {
     width: 1.75rem; height: 1.5rem; cursor: pointer; flex: none;
     background: var(--surface); border: 1px solid var(--line);
-    color: var(--hazard); font-size: .58rem; line-height: 1; padding: 0;
+    color: var(--hazard); font-size: var(--fs-micro); line-height: 1; padding: 0;
     transition: border-color .15s ease, background .15s ease, color .15s ease;
     clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px));
   }
@@ -704,7 +720,7 @@
     padding: .25rem 0; width: 100%;
   }
   .rail-num {
-    font-family: var(--mono); font-size: .54rem; font-weight: 500; letter-spacing: .04em;
+    font-family: var(--mono); font-size: var(--fs-micro); font-weight: 500; letter-spacing: .04em;
     font-variant-numeric: tabular-nums; text-align: center;
     padding: 2px 0; border: 0; background: transparent; color: var(--ink-dim);
     cursor: pointer; opacity: .5;
@@ -722,7 +738,7 @@
      writing-mode: vertical-rl, which turned a two-character number into something you
      tilt your head for. Nothing else in this kit is set sideways. */
   .rail-pos {
-    font-family: var(--mono); font-size: .55rem; letter-spacing: .06em;
+    font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: .06em;
     font-variant-numeric: tabular-nums; color: var(--ink-dim); padding-top: .1rem;
   }
   .rail-pos b { color: var(--hazard); font-weight: 600; }
@@ -745,7 +761,7 @@
   .panel::before { top: -1px; left: -1px; border-top: 2px solid var(--accent); border-left: 2px solid var(--accent); }
   .panel::after { bottom: -1px; right: -1px; border-bottom: 2px solid var(--accent); border-right: 2px solid var(--accent); }
   .panel h3 {
-    margin: 0; font-family: var(--mono); font-size: .72rem; font-weight: 700;
+    margin: 0; font-family: var(--mono); font-size: var(--fs-small); font-weight: 700;
     letter-spacing: .14em; text-transform: uppercase; color: var(--ink);
     padding-bottom: .5rem;
     /* The motif, minimized: a slant-cut block accent over a hairline rule. */
@@ -756,13 +772,13 @@
   .panel h3::before { content: "/// "; color: var(--accent); }
   .panel.danger { border-color: #4a2b2b; }
   .panel.danger h3 { color: var(--bad); }
-  .panel-warn { margin: -.4rem 0 0; font-size: .74rem; color: var(--ink-dim); }
+  .panel-warn { margin: -.4rem 0 0; font-size: var(--fs-small); color: var(--ink-dim); }
 
   .field { display: flex; flex-direction: column; gap: .4rem; }
-  .field-label { font-size: .84rem; font-weight: 600; }
-  .field-hint { font-size: .72rem; color: var(--ink-dim); }
+  .field-label { font-size: var(--fs-body); font-weight: 600; }
+  .field-hint { font-size: var(--fs-small); color: var(--ink-dim); }
   .pathbox {
-    font-family: var(--mono); font-size: .72rem;
+    font-family: var(--mono); font-size: var(--fs-small);
     background: #0c0e12; border: 1px solid var(--line); border-radius: 0;
     padding: .5rem .6rem; word-break: break-all; color: var(--ink);
   }
@@ -770,7 +786,7 @@
 
   /* Green ticks and red crosses, so state is readable without parsing sentences. */
   .checks { display: flex; flex-direction: column; gap: .15rem; }
-  .check { font-size: .72rem; display: flex; align-items: center; gap: .4rem; }
+  .check { font-size: var(--fs-small); display: flex; align-items: center; gap: .4rem; }
   .check.yes { color: var(--ok); }
   .check.no  { color: var(--bad); }
   .check.warn { color: var(--hazard); }
@@ -792,7 +808,7 @@
   .field::placeholder { color: var(--ink-dim); }
   .field:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
   .field-narrow { flex: 0 0 auto; width: 72px; }
-  .field-block  { flex: none; width: 100%; margin-top: .4rem; padding: .35rem .5rem; font-size: .75rem; }
+  .field-block  { flex: none; width: 100%; margin-top: .4rem; padding: .35rem .5rem; font-size: var(--fs-small); }
 
   /* Section headings inside a pane. zeldfep, 2026-09-07: "too much scrolling I think it
      should be 4 total inside tools tabs" - the rail was indexing every individual setting
@@ -800,7 +816,7 @@
      the rail counts now, and they use the same label treatment as .admin-title so a new
      kind of heading did not have to be invented for them. */
   .rail-group {
-    font-family: var(--mono); font-size: .66rem; font-weight: 700;
+    font-family: var(--mono); font-size: var(--fs-label); font-weight: 700;
     letter-spacing: .14em; text-transform: uppercase; color: var(--ink-dim);
     margin: .35rem 0 -.35rem; padding-bottom: .35rem;
     border-bottom: 1px solid var(--line);
@@ -808,8 +824,8 @@
   .modal-body > section.panel > .rail-group:first-of-type { margin-top: 0; }
 
   .tool { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
-  .tool-name { font-size: .84rem; font-weight: 600; }
-  .tool-desc { font-size: .72rem; color: var(--ink-dim); line-height: 1.45; margin-top: .15rem; }
+  .tool-name { font-size: var(--fs-body); font-weight: 600; }
+  .tool-desc { font-size: var(--fs-small); color: var(--ink-dim); line-height: 1.45; margin-top: .15rem; }
   .ghost { background: #22262e; color: var(--ink); white-space: nowrap; }
 
   /* Shown in full and selectable on purpose: the whole point is to copy it out into
@@ -821,7 +837,7 @@
     border: 1px solid var(--line);
     border-radius: 0;
     font-family: "Cascadia Mono", Consolas, monospace;
-    font-size: .72rem;
+    font-size: var(--fs-small);
     color: var(--accent);
     user-select: all;
     word-break: break-all;
@@ -843,7 +859,7 @@
   footer {
     padding: .75rem 1.5rem;
     border-top: 1px solid var(--line);
-    font-size: .7rem;
+    font-size: var(--fs-label);
     color: var(--ink-dim);
     text-align: center;
   }
@@ -861,7 +877,7 @@
     overflow: hidden;
   }
   .notes {
-    font-size: .78rem;
+    font-size: var(--fs-small);
     line-height: 1.55;
     color: var(--ink-dim);
     text-align: left;
@@ -887,7 +903,7 @@
   .notes h4 {
     margin: .9rem 0 .3rem;
     font-family: var(--mono);
-    font-size: .7rem;
+    font-size: var(--fs-label);
     font-weight: 700;
     letter-spacing: .1em;
     text-transform: uppercase;
@@ -1188,8 +1204,8 @@
                      starts working the moment they whitelist us, but not offered as the
                      way in, because today it fails. -->
                 <details style="margin-top:.5rem">
-                  <summary style="cursor:pointer;font-size:.7rem">One-click sign-in (needs Nexus approval)</summary>
-                  <div style="margin-top:.3rem;font-size:.68rem">
+                  <summary style="cursor:pointer;font-size: var(--fs-label)">One-click sign-in (needs Nexus approval)</summary>
+                  <div style="margin-top:.3rem;font-size: var(--fs-label)">
                     Nexus only allows this for approved mod managers. It will fail until
                     they whitelist Night City Online.
                   </div>
