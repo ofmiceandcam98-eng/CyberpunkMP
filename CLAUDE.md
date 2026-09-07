@@ -88,6 +88,14 @@ auto-load — read it deliberately. Cam's stream: it auto-loads; keep it current
 
 ## How we work (either stream — violating these has already cost us evenings)
 
+- **A ZERO EXIT CODE IS NOT EVIDENCE. Check the artifact.** It has now cost us twice in one
+  night, in unrelated tools, and both times the symptom was silence rather than an error:
+  the launcher's installer recorded a successful install without writing files, and
+  `ShipTestBuild.ps1` built everything and published nothing while exiting 0. **After any
+  publish, install or deploy, go and look at the thing that was supposed to change** - the
+  release on GitHub, the files on disk, the endpoint's answer - and say in the report where
+  you looked. "It exited 0" is not a result; "the tag exists and carries both assets" is.
+
 - **Verify before you ship**: `.\tools\Verify.ps1` gates every ship. `-SkipVerify` exists
   for FALSE POSITIVES only — every use of it is a bug in Verify to fix, never a route
   around the gate.

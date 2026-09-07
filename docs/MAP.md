@@ -1705,6 +1705,28 @@ exist on no current branch (`origin/work/2.31-session-2026-08-09`).
 - **`Deep clean` will NOT fix this** — it sweeps the launcher's own footprint and never looks
   inside the mod folder. The tool is `Settings > Remove > Remove the mod`, then Install.
 
+### "EXIT 0" HAS MEANT "DID NOTHING" TWICE IN ONE NIGHT (2026-09-07)
+Different tools, different languages, same shape: the step reported success, produced no
+error, and changed nothing. Neither was caught by the exit code; both were caught by going
+and looking at the artifact.
+- **The launcher's installer.** Recorded `installedStamp` before checking what it had
+  written, so a failed install reported itself as up to date - and the pre-launch gate then
+  refused to help, because *"Your game files are out of date"* never fired. Green launcher,
+  correct manifest, three generations of payload on disk. Fixed in `f8f0847`; the stamp is
+  now saved only after an audit of the mod folder passes.
+- **`ShipTestBuild.ps1`.** Died probing for a tag that did not exist - `gh release view`
+  writes to stderr when absent, PowerShell 5.1 makes that an ErrorRecord, and
+  `$ErrorActionPreference='Stop'` makes it fatal. So ASKING WHETHER A RELEASE EXISTS killed
+  the script whenever the answer was no. It had already built the client and staged the
+  payload. **Exit code 0**, because the abort happened under a background run. `Ship.ps1`
+  hit this exact wall long ago and carries the fix at line 1072 with the reasoning written
+  out; the test-build lane never got it. Fixed in `ba1a7ad` - list the tags, check
+  membership, never `view` to probe for absence.
+- **THE RULE THAT FALLS OUT, now in CLAUDE.md:** after any publish, install or deploy, look
+  at the thing that was supposed to change. The release on GitHub, the files on disk, the
+  endpoint's answer. A tool whose job is de-risking cannot be trusted to report its own
+  failure.
+
 ### EVERY PLAYER WHO UPDATED GOT A MOD THAT COULD NOT COMPILE (found + fixed 2026-09-07)
 `028ab8a`. The payload shipped **twelve duplicate redscript classes** — every Ink controller
 appeared at BOTH `assets/redscript/<name>.reds` and `assets/redscript/Ink/<name>.reds`.
