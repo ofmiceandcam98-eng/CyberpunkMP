@@ -1939,9 +1939,20 @@ function handleGameCrash (exitCode) {
     const logDir = path.join(modDir || '', 'logs')
 
     if (modDir && existsSync(logDir)) {
+      // EMPTY LOGS ARE NOT EVIDENCE, and handing one over is worse than handing over
+      // nothing: it looks like the log was collected. A crash early enough that the mod
+      // never flushed leaves a 0-byte file - 2026-09-07, exit 0x80000003 two minutes in,
+      // 0 bytes on the Desktop and a dialog saying it had been sent. shipClientLogs
+      // already skips these (size > 0); this did not, so the two disagreed about whether
+      // there was anything to hand over.
       const newest = readdirSync(logDir)
         .filter((f) => f.startsWith('CyberpunkMP_') && f.endsWith('.log'))
-        .map((f) => ({ name: f, full: path.join(logDir, f), time: statSync(path.join(logDir, f)).mtimeMs }))
+        .map((f) => {
+          const full = path.join(logDir, f)
+          const stat = statSync(full)
+          return { name: f, full, time: stat.mtimeMs, size: stat.size }
+        })
+        .filter((f) => f.size > 0)
         .sort((a, b) => b.time - a.time)[0]
 
       if (newest) {
@@ -1962,11 +1973,15 @@ function handleGameCrash (exitCode) {
     mainWindow.focus()
   }
 
+  // Say which of the two actually happened. Claiming a shipment that did not occur is
+  // how a crash gets closed as "we have the log" when nobody has anything.
   const detail = savedTo
     ? `Your log was sent to the dev server automatically, and a copy is on your Desktop:\n\n${savedTo}\n\n` +
       'The path is on your clipboard in case anyone asks for the file directly.'
-    : 'The log could not be found automatically. Look in:\n\n' +
-      `${modDir ? path.join(modDir, 'logs') : 'your mod folder'}\n\nand send the newest file.`
+    : 'The mod did not write a log for this session - it crashed before it could, so '
+      + 'there was nothing to send and nothing to put on your Desktop. That is itself '
+      + 'worth reporting.\n\nSay when it happened and what you were doing. The '
+      + "launcher's own trail WAS uploaded and is the only record of this one."
 
   dialog.showMessageBox(mainWindow, {
     type: 'warning',
