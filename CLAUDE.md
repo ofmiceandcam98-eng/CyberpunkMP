@@ -80,6 +80,16 @@ auto-load — read it deliberately. Cam's stream: it auto-loads; keep it current
   a `common.proto` content change is a flag-day BY CONVENTION — both sides ship together.
 - **Keep probes and experiments out of `distrib/`** — the ship copies its assets
   wholesale, and anything left there ships to every player.
+- **NO STALE WORKLOADS.** zeldfep, 2026-09-07, after finding three background tasks in his
+  panel at 1h56m, 1h40m and 1h28m: *"I dont like just random stale workloads."* All three
+  were `until grep <pattern> <file>; do sleep 15; done` waiters watching ship attempts that
+  had already died without ever printing a string the pattern matched — one of them missed
+  because the ship said `STOPPED:` and that watcher's list did not include it. **Every wait
+  gets a deadline and a failure branch**; a poll loop with no timeout is not a wait, it is a
+  permanent fixture that makes the panel lie about what is in flight. **You started it, you
+  end it** — before you hand the turn back, the task panel is empty of your work and the
+  scratchpad holds only files something still points at.
+
 - **Don't pause the pipeline for a test session** — deploy and keep building; validation
   rides the next live session.
 - **Missing tooling**: ask to install it rather than shipping "not compiled / not tested"
