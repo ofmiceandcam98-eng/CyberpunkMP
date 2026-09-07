@@ -210,8 +210,17 @@ $title = "test.$shortNum - $Name"
 #
 # Explicitly NOT deleting and recreating the release: that would break the download URLs the
 # launcher may already be holding, and briefly leave the dev panel with no build at all.
-$exists = & gh release view $Tag --repo $GhRepo --json tagName 2>$null
-if ($LASTEXITCODE -eq 0) {
+# Asked as a LIST, not as "view this tag" - the same fix Ship.ps1 carries at line 1072, and
+# for the same reason. A missing release makes `gh release view` write to stderr, PowerShell
+# 5.1 turns native stderr into an ErrorRecord, and $ErrorActionPreference='Stop' makes that
+# fatal. So PROBING FOR ABSENCE killed the script - after the full verify, the client build
+# and the payload staging had all succeeded.
+#
+# It failed silently too: the abort happened inside a background run that exited 0, so the
+# only symptom was a test build that never appeared. 2026-09-07.
+$existingTags = (gh release list --repo $GhRepo --limit 100 --json tagName | ConvertFrom-Json).tagName
+
+if ($existingTags -contains $Tag) {
     Write-Host "  $Tag exists - updating it in place" -ForegroundColor DarkGray
 
     & gh release upload $Tag --repo $GhRepo --clobber $payload $dll
