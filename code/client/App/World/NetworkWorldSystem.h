@@ -201,6 +201,7 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     uint32_t GetRosterCount() const { return static_cast<uint32_t>(m_roster.size()); }
     Red::CString GetRosterId(uint32_t aIndex) const;
     Red::CString GetRosterName(uint32_t aIndex) const;
+    Red::CString GetRosterLifepath(uint32_t aIndex) const;
     int32_t GetRosterLevel(uint32_t aIndex) const;
     int32_t GetRosterSlot(uint32_t aIndex) const;
     bool IsRosterActive(uint32_t aIndex) const;
@@ -553,6 +554,10 @@ protected:
         int32_t Slot{0};
         bool SpawnedBefore{false};
         bool Active{false};
+
+        // Held as the server's own string and never parsed. See the note on
+        // CharacterSummary.lifepath - the client's job is to print it, not to know it.
+        std::string Lifepath;
     };
 
     std::vector<RosterEntry> m_roster;
@@ -922,6 +927,7 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(GetRosterCount);
     RTTI_METHOD(GetRosterId);
     RTTI_METHOD(GetRosterName);
+    RTTI_METHOD(GetRosterLifepath);
     RTTI_METHOD(GetRosterLevel);
     RTTI_METHOD(GetRosterSlot);
     RTTI_METHOD(IsRosterActive);

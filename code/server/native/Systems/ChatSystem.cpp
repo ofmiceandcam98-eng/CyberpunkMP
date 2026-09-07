@@ -145,6 +145,7 @@ void ChatSystem::SendCharacterList(const PlayerComponent& acPlayer, const std::s
                 summary.set_name(character.Name.c_str());
                 summary.set_level(character.Level);
                 summary.set_spawned_before(character.SpawnedBefore);
+                summary.set_lifepath(character.Lifepath.c_str());
 
                 // The slot is for DRAWING, never for identity. Slots are not contiguous -
                 // retiring the character in slot 1 of three leaves 0 and 2 occupied - so the

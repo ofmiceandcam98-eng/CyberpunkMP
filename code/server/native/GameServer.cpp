@@ -1160,6 +1160,10 @@ void GameServer::AdmitPlayer(const ConnectionId aConnectionId, const std::string
             summary.set_name(pCharacter->Name.c_str());
             summary.set_spawned_before(pCharacter->SpawnedBefore);
 
+            // Sent as stored, uninterpreted. A character created before the field existed
+            // has none, and that is a normal row rather than a broken one.
+            summary.set_lifepath(pCharacter->Lifepath.c_str());
+
             // The record's own Level field, not a search through Proficiencies. Both hold
             // it - the note in CharacterRecord explains why the overlap was kept - and
             // this is the one the spawn path applies, so a selector that read the other

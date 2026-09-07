@@ -1712,6 +1712,7 @@ void NetworkWorldSystem::AdoptRoster(const Vector<server::CharacterSummary>& acC
         entry.Slot = summary.get_slot();
         entry.SpawnedBefore = summary.get_spawned_before();
         entry.Active = summary.get_is_active();
+        entry.Lifepath = summary.get_lifepath().c_str();
 
         m_roster.push_back(std::move(entry));
     }
@@ -1749,6 +1750,13 @@ Red::CString NetworkWorldSystem::GetRosterId(uint32_t aIndex) const
 Red::CString NetworkWorldSystem::GetRosterName(uint32_t aIndex) const
 {
     return aIndex < m_roster.size() ? Red::CString(m_roster[aIndex].Name.c_str()) : Red::CString("");
+}
+
+Red::CString NetworkWorldSystem::GetRosterLifepath(uint32_t aIndex) const
+{
+    // Empty on a bad index, and empty is also what an older server sends - the selector has
+    // to treat "no lifepath" as a normal row rather than a broken one either way.
+    return aIndex < m_roster.size() ? Red::CString(m_roster[aIndex].Lifepath.c_str()) : Red::CString("");
 }
 
 int32_t NetworkWorldSystem::GetRosterLevel(uint32_t aIndex) const

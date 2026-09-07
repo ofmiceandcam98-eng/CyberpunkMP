@@ -37,6 +37,16 @@ message CharacterSummary {
     // and the server re-checks the id behind it.
     int32 slot = 5;
     bool is_active = 6;
+
+    // Nomad, Street Kid, Corporate - the one thing on a selector row that says who somebody
+    // IS rather than how far they got. The server has stored it on CharacterRecord since
+    // the record was written; it just never reached a client, so every selector could draw
+    // a name and a number and nothing else.
+    //
+    // Uninterpreted by the client, exactly like the appearance blob and the vehicle model:
+    // the server sends a string and the UI prints it. A client that understood lifepaths
+    // would need updating the day one is added.
+    string lifepath = 7;
 }
 
 message AuthenticationResponse {

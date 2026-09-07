@@ -131,6 +131,11 @@ public native class NetworkWorldSystem extends IGameSystem {
     public native func GetRosterCount() -> Uint32;
     public native func GetRosterId(index: Uint32) -> String;
     public native func GetRosterName(index: Uint32) -> String;
+
+    // Nomad / Street Kid / Corporate. EMPTY IS A VALID ANSWER - an older server does not
+    // send it, and a character created before the field existed has none. Draw the row
+    // without it rather than hiding the row.
+    public native func GetRosterLifepath(index: Uint32) -> String;
     public native func GetRosterLevel(index: Uint32) -> Int32;
 
     // -1 for a bad index, never 0: zero is a REAL slot, and a caller reading it as one
