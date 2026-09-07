@@ -1663,6 +1663,48 @@ compiles`) against the real 2.31 install.
      without it, because the release had already been cut. The launcher can only deliver what
      is in a release.
 
+### "EMPTY MAP" IS DEAD SCRIPTS, NOT A WORLD PROBLEM (2026-09-07)
+**The single most useful thing learned tonight.** When redscript refuses the mod, the C++ half
+still loads and connects, and the SERVER does everything right — measured, same minute:
+`zeldfep has character 'zeldfep' (played)`, `Restored zeldfep to (-1744.8, -1945.2, 61.4)`,
+`5435 bytes of appearance`, `10 stored item stack(s) and 20000 eddies`, `[Link] ping 1ms,
+0.0% loss`. Meanwhile every script that draws the world, the HUD and the chat is dead.
+- **So "I am on an empty map" is a CLIENT SCRIPT failure until proven otherwise.** Do not go
+  looking at world state, the template, or the save. Check the client log's first line.
+- **The one-line test:** the newest `<GameDir>/red4ext/plugins/zzzCyberpunkMP/logs/` file must
+  START with `[Boot] logger up`. If it starts with `Manifest:` the DLL is pre-v0.3.118 and the
+  scripts may be the duplicated set.
+
+### TWO MACHINES, TWO DIFFERENT HALVES OF ONE BUG (2026-09-07)
+Hours went into a contradiction that was two boxes being compared as one. Client logs upload
+into ONE folder per player (`logs/clients/zeldfep/`), so they interleave with nothing saying
+which machine wrote them.
+- **Tell them apart by the `[LocalPuppet]` paths**, which name the Windows user: `Users\Feli`
+  is the workstation, `Users\Felipe Ramos` is the box with the game on `K:`. zeldfep plays on
+  K:. `Server address:` in the same header says which server that session used.
+- On the night: K: had the new payload NOT installed (old DLL, dead scripts, connected fine and
+  saw an empty map); the workstation had the new DLL but a **saved server override** pointing at
+  `100.125.74.56`, a node retired in the migration. Each machine had exactly one half.
+- **`resolveServer()` prefers `settings.serverHost` over the published address, silently.** A
+  saved override outlives the server it named. Clear it in Settings > DEV to fall back to
+  published. **Worth a warning in the launcher and it does not have one yet.**
+
+### THE INSTALLER NEVER PROVED WHAT IT WROTE (fixed 2026-09-07, `f8f0847`)
+zeldfep's mod folder held THREE payload generations at once and every update reported success:
+all twelve Ink controllers at BOTH the top level and under `Ink/`, plus
+`World/CharacterProfile.reds` and `World/KiroshiScanner.reds` — which ship ONLY in test.19 and
+exist on no current branch (`origin/work/2.31-session-2026-08-09`).
+- **`extractPayloadClean` is NOT the bug — checked, not assumed.** It wipes the top-level
+  directories the zip carries, and the shipped zip uses forward slashes (61 of 62 entries), so
+  it does clear `assets/` and `Rpc/`. Something between "payload verified" and files on disk
+  short-circuits; the audit now catches it rather than the next person re-deriving this.
+- **ORDER MATTERS MORE THAN THE CHECK.** The stamp is saved AFTER the audit passes. Stamping
+  first is how a failed install reports itself up to date — and then the pre-launch gate
+  refuses to help, because *"Your game files are out of date"* never fires. Green launcher,
+  correct manifest, stale code, no way for the player to find out.
+- **`Deep clean` will NOT fix this** — it sweeps the launcher's own footprint and never looks
+  inside the mod folder. The tool is `Settings > Remove > Remove the mod`, then Install.
+
 ### EVERY PLAYER WHO UPDATED GOT A MOD THAT COULD NOT COMPILE (found + fixed 2026-09-07)
 `028ab8a`. The payload shipped **twelve duplicate redscript classes** — every Ink controller
 appeared at BOTH `assets/redscript/<name>.reds` and `assets/redscript/Ink/<name>.reds`.
