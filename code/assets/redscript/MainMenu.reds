@@ -68,8 +68,8 @@ public class MpSelectorPoll extends DelayCallback {
             if this.enterWhenKnown {
                 this.controller.MpEnterWithCharacter();
             } else {
-                // CONNECT: rebuild the menu so it now offers PLAY, SWITCH and DELETE
-                // against a roster that has actually arrived.
+                // CONNECT: rebuild the menu so it now offers PLAY, a row per character
+                // slot and DELETE, against a roster that has actually arrived.
                 this.controller.MpRefreshMenu();
             }
 
@@ -278,9 +278,6 @@ public func MpEnterWithCharacter() -> Void {
 let m_mpPanel: wref<inkVerticalPanel>;
 
 @addField(SingleplayerMenuGameController)
-let m_mpTitle: wref<inkText>;
-
-@addField(SingleplayerMenuGameController)
 let m_mpDetail: wref<inkText>;
 
 // First press of DELETE arms, second confirms. A character is hours of somebody's evening
@@ -309,43 +306,30 @@ public func MpBuildPanel() -> Void {
     // only its first characters stay visible - which is exactly what it did. (1,0) means
     // "line up MY top-right with that corner", so it grows inwards instead.
     panel.SetAnchorPoint(1.0, 0.0);
-    panel.SetMargin(new inkMargin(0.0, 120.0, 90.0, 0.0));
+    // 120 put this on top of the expansion logo - the panel's first line rendered straight
+    // through "PHANTOM LIBERTY". 260 clears it on 1080p and above.
+    panel.SetMargin(new inkMargin(0.0, 260.0, 90.0, 0.0));
     panel.SetFitToContent(true);
     panel.SetHAlign(inkEHorizontalAlign.Right);
     panel.Reparent(root);
 
-    let title = new inkText();
-    title.SetName(n"mp_character_title");
-    title.SetText("YOUR CHARACTER");
-    title.SetFontFamily("base\\gameplay\\gui\\fonts\\raj\\raj.inkfontfamily");
-    title.SetFontStyle(n"Medium");
-    title.SetFontSize(28);
-    title.SetLetterCase(textLetterCase.UpperCase);
-    title.SetHorizontalAlignment(textHorizontalAlignment.Right);
-    title.SetHAlign(inkEHorizontalAlign.Right);
-
-    // The same yellow the game uses for prompts, so it reads as the game speaking.
-    title.SetTintColor(new HDRColor(2.0, 1.75, 0.25, 1.0));
-    title.Reparent(panel);
-
     let detail = new inkText();
     detail.SetName(n"mp_character_detail");
-    detail.SetText("signing in...");
+    detail.SetText("");
     detail.SetFontFamily("base\\gameplay\\gui\\fonts\\raj\\raj.inkfontfamily");
     detail.SetFontStyle(n"Regular");
-    // 42 was wide enough that a long character name reached most of the way across the
-    // screen on its own. The title above it is the label; this is the value.
     detail.SetFontSize(32);
-    detail.SetMargin(new inkMargin(0.0, 6.0, 0.0, 0.0));
     detail.SetHorizontalAlignment(textHorizontalAlignment.Right);
     detail.SetHAlign(inkEHorizontalAlign.Right);
+
+    // The same yellow the game uses for prompts, so it reads as the game speaking.
+    detail.SetTintColor(new HDRColor(2.0, 1.75, 0.25, 1.0));
     detail.Reparent(panel);
 
     this.m_mpPanel = panel;
-    this.m_mpTitle = title;
     this.m_mpDetail = detail;
 
-    FTLog(s"[Selector] character panel built");
+    FTLog(s"[Selector] status line built");
 }
 
 @addMethod(SingleplayerMenuGameController)
@@ -371,93 +355,125 @@ public func MpUpdatePanel() -> Void {
         return;
     }
 
-    let slots = network.GetCharacterSlots();
-
+    /*
+     * NOTHING TO SAY IS THE NORMAL STATE, and it says nothing.
+     *
+     * This used to draw the whole roster - four slot lines, a used/total count and a hint -
+     * top-right, where it rendered straight through the expansion logo. That list is now
+     * the MENU: one full-width item per slot, which is the game's own surface and is
+     * clickable, focusable and controller-navigable, none of which a widget built at
+     * runtime gets for free.
+     *
+     * Keeping a second copy beside the menu would be two places to read the same fact, and
+     * the one on the right could not be pressed. So this is a status line now: blank unless
+     * there is a refusal to show or an action in flight.
+     */
     if !network.HasCharacter() {
-        this.m_mpTitle.SetText(slots > 1 ? s"\(slots) CHARACTER SLOTS" : "NO CHARACTER");
-        this.m_mpDetail.SetText("Press NEW CHARACTER to make one");
+        // The one state the rows cannot explain by themselves. Four EMPTY SLOT lines say
+        // what is missing but not what to do about it, and NEW CHARACTER is destructive
+        // enough that it should be named rather than guessed at.
+        this.m_mpDetail.SetText("No character yet - NEW CHARACTER makes one.");
         return;
     }
 
-    /*
-     * "1/4" - used out of total. Cam's ask, 2026-09-03.
-     *
-     * Counted from the roster rather than from HasCharacter, because with four slots the
-     * question is not "do you have one" but "how many of your slots are spoken for" - and
-     * that is the number that tells somebody whether NEW CHARACTER will cost them the one
-     * they already have.
-     */
-    let used = 0;
-    let counted = 0u;
+    this.m_mpDetail.SetText("");
+}
 
-    while counted < network.GetRosterCount() {
-        if network.GetRosterSlot(counted) >= 0 {
-            used += 1;
-        }
+/**
+ * One menu row for one slot.
+ *
+ * Full-width menu items rather than a panel, because selection has to be PRESSABLE and
+ * the game's item list is the only surface on this screen that reliably is. The caret
+ * marks who you are about to play as; lifepath and level are what tell two of your own
+ * characters apart at a glance, which is the entire reason the roster carries them.
+ *
+ * Slots are addressed by number, not by roster index: retiring the character in slot 1
+ * of three leaves 0 and 2 occupied, and a list built from the roster alone would draw
+ * two rows and silently renumber them.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpSlotLabel(slot: Int32) -> String {
+    let network = GameInstance.GetNetworkWorldSystem();
 
-        counted += 1u;
+    if !IsDefined(network) {
+        return s"      \(slot + 1).   ---";
     }
 
-    this.m_mpTitle.SetText(s"YOUR CHARACTERS   \(used)/\(slots)");
+    let i = 0u;
 
-    // One line per SLOT, not per character - the empty ones have to be visible, or there is
-    // no way to see that a slot is free without trying to use it.
-    //
-    // Drawn by walking slots and looking each one up in the roster, rather than by walking
-    // the roster: slots are not contiguous. Retiring the character in slot 1 of three leaves
-    // 0 and 2 occupied, and a list built from the roster alone would draw two rows and
-    // silently renumber them.
-    let lines = "";
-    let slot = 0;
+    while i < network.GetRosterCount() {
+        if network.GetRosterSlot(i) == slot {
+            let name = network.GetRosterName(i);
+            let shown = NotEquals(name, "") ? name : "unnamed";
+            let marker = network.IsRosterActive(i) ? ">  " : "     ";
 
-    while slot < slots {
-        let found = false;
-        let i = 0u;
+            // NEW rather than LEVEL 0: a character that has never been in the world has
+            // no level yet, and printing one implies a character that has been played.
+            let detail = network.HasRosterSpawnedBefore(i) ? s"LEVEL \(network.GetRosterLevel(i))" : "NEW";
 
-        while i < network.GetRosterCount() {
-            if network.GetRosterSlot(i) == slot {
-                let marker = network.IsRosterActive(i) ? "> " : "  ";
-                let name = network.GetRosterName(i);
-                let shown = NotEquals(name, "") ? name : "unnamed";
-                let state = network.HasRosterSpawnedBefore(i) ? s"LEVEL \(network.GetRosterLevel(i))" : "NEW";
+            // Lifepath is optional by design - a character made before the field existed
+            // has none, and that is a normal row rather than a broken one.
+            let lifepath = network.GetRosterLifepath(i);
 
-                lines += s"\(marker)\(slot + 1). \(shown)  -  \(state)\n";
-                found = true;
+            if NotEquals(lifepath, "") {
+                return s"\(marker)\(slot + 1).   \(shown)   -   \(lifepath)   -   \(detail)";
             }
 
-            i += 1u;
+            return s"\(marker)\(slot + 1).   \(shown)   -   \(detail)";
         }
 
-        if !found {
-            lines += s"  \(slot + 1). empty\n";
-        }
-
-        slot += 1;
+        i += 1u;
     }
 
-    /*
-     * Say what to press next. Cam's flow: pick a character or make one, THEN hit play.
-     *
-     * The panel is the only thing on this screen that knows which state the account is in,
-     * so it is the only thing that can name the right next step. A list of characters with
-     * no instruction leaves somebody looking at their own name wondering what it is for -
-     * which is exactly the report that prompted this.
-     */
-    lines += "\n";
+    return s"     \(slot + 1).   EMPTY SLOT";
+}
 
-    if used == 0 {
-        lines += "NEW CHARACTER to make one.";
-    } else {
-        lines += "> is who you will play as.\n";
-
-        if slots > 1 && used > 1 {
-            lines += "SWITCH CHARACTER to change, then PLAY.";
-        } else {
-            lines += "PLAY to enter the world.";
-        }
+/**
+ * Which event a slot row fires.
+ *
+ * Four fixed CNames rather than one built with StringToName, because the handler compares
+ * against literals and a name built at runtime is a different value than the literal that
+ * looks identical - the same trap Phone.reds carries a comment about.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpSlotEvent(slot: Int32) -> CName {
+    if slot == 0 {
+        return n"OnMultiplayerSlot1";
     }
 
-    this.m_mpDetail.SetText(lines);
+    if slot == 1 {
+        return n"OnMultiplayerSlot2";
+    }
+
+    if slot == 2 {
+        return n"OnMultiplayerSlot3";
+    }
+
+    return n"OnMultiplayerSlot4";
+}
+
+/**
+ * The slot a pressed row refers to, or -1 for any other menu item.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpSlotFromEvent(eventName: CName) -> Int32 {
+    if Equals(eventName, n"OnMultiplayerSlot1") {
+        return 0;
+    }
+
+    if Equals(eventName, n"OnMultiplayerSlot2") {
+        return 1;
+    }
+
+    if Equals(eventName, n"OnMultiplayerSlot3") {
+        return 2;
+    }
+
+    if Equals(eventName, n"OnMultiplayerSlot4") {
+        return 3;
+    }
+
+    return -1;
 }
 
 @wrapMethod(SingleplayerMenuGameController)
@@ -528,15 +544,40 @@ private func PopulateMenuItemList() -> Void {
             this.MpUpdatePanel();
 
             // PLAY is first and is the thing they came for. It reads as an answer to the
-            // panel beside it - "this is who you are, press this to be them" - which is
-            // only true because getting here required the server to have answered.
+            // rows under it - "this is who you are, press this to be them" - which is only
+            // true because getting here required the server to have answered.
             this.AddMenuItem("PLAY", n"OnMultiplayerContinue");
 
-            // Switching only makes sense with somewhere to switch to. One slot means one
-            // character, and an entry that can only ever re-select what you already are is
-            // noise on the one screen everybody sees.
-            if network.GetCharacterSlots() > 1 {
-                this.AddMenuItem("SWITCH CHARACTER", n"OnMultiplayerSwitchCharacter");
+            /*
+             * THE SELECTOR IS THE MENU. zeldfep's call, 2026-09-07: "just a full line menu
+             * item after hitting connect".
+             *
+             * One row per SLOT, drawn between PLAY and the destructive entries. The empty
+             * ones are drawn too, because otherwise there is no way to see that a slot is
+             * free without trying to use it - and NEW CHARACTER replaces rather than adds,
+             * so knowing how many slots are spoken for is the difference between making a
+             * character and losing one.
+             *
+             * This replaces two things at once: the floating YOUR CHARACTERS panel, which
+             * showed the same list somewhere you could not press, and SWITCH CHARACTER,
+             * which cycled blind. SWITCH also had a bug worth recording - it was DRAWN when
+             * GetCharacterSlots() > 1 but only ACTED when the roster held more than one
+             * character, so an account with one character in four slots got a button that
+             * did nothing at all and said nothing about why. Rows cannot have that bug:
+             * each one names the thing it selects.
+             */
+            let slot = 0;
+            let slots = network.GetCharacterSlots();
+
+            // Four events exist, so four rows can be addressed. A server handing out more
+            // draws the ones that can actually be pressed rather than dead rows.
+            if slots > 4 {
+                slots = 4;
+            }
+
+            while slot < slots {
+                this.AddMenuItem(this.MpSlotLabel(slot), this.MpSlotEvent(slot));
+                slot += 1;
             }
 
             this.AddMenuItem("NEW CHARACTER (REPLACES YOURS)", n"OnMultiplayerNewCharacter");
@@ -680,63 +721,57 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
         return true;
     }
 
-    // Step to the next slot that HAS a character in it.
+    // A CHARACTER ROW WAS PRESSED. Select that slot and rebuild the menu against the
+    // answer, so the caret moves onto the row they just pressed.
     //
-    // A cycle rather than a list, because the main menu's item list is the only reliably
-    // clickable, focusable, controller-navigable surface here, and four rows of characters
-    // on the front screen would bury MULTIPLAYER under them. The panel on the right shows
-    // every slot; this walks between them and marks the one in play with a caret.
+    // Pressing the row you are already on is allowed and costs a round trip: it is not
+    // worth a special case, and refusing it would need the menu to explain why.
     //
-    // Cycling only over OCCUPIED slots is the point: stepping onto an empty one would answer
-    // "there is no character in that slot" from the server, which is a refusal the player
-    // did not ask for.
-    if Equals(data.eventName, n"OnMultiplayerSwitchCharacter") {
+    // An empty slot answers rather than acts. The server's reply to "select slot 3" when
+    // slot 3 is empty is a refusal the player did not ask for, so the menu never sends it.
+    let pressedSlot = this.MpSlotFromEvent(data.eventName);
+
+    if pressedSlot >= 0 {
         let network = GameInstance.GetNetworkWorldSystem();
 
         if !IsDefined(network) || !network.IsConnected() {
-            FTLogError(s"[Selector] switch pressed with no connection");
+            FTLogError(s"[Selector] slot pressed with no connection");
             return true;
         }
 
-        let count = network.GetRosterCount();
-        if count <= 1u {
-            return true;
-        }
-
-        // Find where we are, then take the next one round. Not "active index + 1" against
-        // the slot number: the roster is sorted by slot and slots are not contiguous, so the
-        // successor of slot 0 may be slot 2.
-        let activeIndex = 0u;
+        let occupied = false;
         let i = 0u;
 
-        while i < count {
-            if network.IsRosterActive(i) {
-                activeIndex = i;
+        while i < network.GetRosterCount() {
+            if network.GetRosterSlot(i) == pressedSlot {
+                occupied = true;
             }
 
             i += 1u;
         }
 
-        let nextIndex = (activeIndex + 1u) % count;
-        let nextSlot = network.GetRosterSlot(nextIndex);
-
-        if nextSlot >= 0 {
-            network.SelectCharacterSlot(nextSlot);
-
+        if !occupied {
             if IsDefined(this.m_mpDetail) {
-                this.m_mpDetail.SetText("switching...");
+                this.m_mpDetail.SetText("That slot is empty - NEW CHARACTER fills it.");
             }
 
-            // The answer comes back as a fresh roster, so poll for it rather than assuming
-            // the switch took. SelectCharacterSlot only says the request was sent.
-            let poll = new MpSelectorPoll();
-            poll.controller = this;
-            poll.attempts = 0;
-            poll.enterWhenKnown = false;
-
-            GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(poll, 0.25, false);
+            return true;
         }
 
+        network.SelectCharacterSlot(pressedSlot);
+
+        if IsDefined(this.m_mpDetail) {
+            this.m_mpDetail.SetText("switching...");
+        }
+
+        // The answer comes back as a fresh roster, so poll for it rather than assuming the
+        // switch took. SelectCharacterSlot only says the request was sent.
+        let poll = new MpSelectorPoll();
+        poll.controller = this;
+        poll.attempts = 0;
+        poll.enterWhenKnown = false;
+
+        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(poll, 0.25, false);
         return true;
     }
 
