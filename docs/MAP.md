@@ -1502,6 +1502,27 @@ setup a new box needs, not a bug in `Ship.ps1`.
   gate correctly refused, which is the gate doing its job. **`git checkout -- code/launcher-lite/package.json`
   after ANY failed ship**, before retrying.
 
+### v0.3.116 SHIPPED 2026-09-07 — the design pass, and the new gate proving itself
+Cut from `feat/world-state` (`693a336`), `Ship.ps1 -Launcher`. `/releases/latest` answers
+`v0.3.116`; `NightCityOnline-Setup.exe` 107.5 MB, HTTP 200 anonymously; manifest pair present
+and promoted only after asset verification. Announced automatically to `#server-update` — the
+bot can post there now.
+- **`OK  server address matches origin/main`** — the gate added hours earlier after the v0.3.115
+  outage ran and passed on its first real ship. `server.json` on the release still answers
+  `100.109.52.23` with both invites, verified anonymously with the launcher's User-Agent.
+- **Carried:** the hazard-index section rail counting SECTIONS not rows (`05aef11`, Tools 13
+  stops → 4, Voice → 3, `Uninstall launcher` moved to the end of *Repair and remove*), the
+  uniformity pass (`8490d5d`), and the seven-step type scale (`a0f39c0`).
+- **Two undeclared CSS variables were the real find in that pass**, not the tidying: `--bg` and
+  `--warn` are used by component rules and declared NOWHERE, so six inputs silently rendered a
+  `#111` fallback and a third amber (`#e0af68`) sat on screen beside `--hazard` and `--bad`.
+  **A `var(--x, fallback)` with no declaration anywhere is a bug wearing a default.**
+- **NO PROTOCOL MOVEMENT since v0.3.115** (`git diff v0.3.115..HEAD -- code/protocol/` empty),
+  which is what made the carried-forward `distrib/launcher/mod/Rpc` bindings safe to trust.
+  Check that every time before reusing them.
+- **Gameplay is unchanged in this build** and the notes say so out loud, so nobody hunts for a
+  fix that is not in it.
+
 ### server.json IS CANONICAL ON MAIN AND SHIPPABLE FROM ANY BRANCH (2026-09-07, cost an outage)
 **v0.3.115 took the live server offline for every player and nothing anywhere reported it.**
 The ship was cut from `feat/world-state` and republishes `publish/server.json` onto the release
