@@ -9,9 +9,9 @@
      Deliberately single-world: this is a mockup of a game overlay and has to be judged on
      the ground it will sit on. Every colour is painted, none inherited. */
   :root{
-    --void:#08080c; --panel:rgba(16,12,22,.93); --panel-2:rgba(24,17,31,.93);
+    --void:#08080c; --panel:rgba(16,12,22,.62); --panel-2:rgba(24,17,31,.62);
     --red:#f4374a; --red-dim:#7a1f2c; --cyan:#3ce8ef; --cyan-dim:#1d6e77;
-    --gold:#f5d033; --ink:#e8eef2; --ink-dim:#8a97a3; --ink-faint:#5a6570;
+    --gold:#f5d033; --ink:#e8eef2; --ink-dim:#9dabb7; --ink-faint:#6d7986;
     --disp:'Rajdhani',system-ui,'Segoe UI',sans-serif;
     --mono:'Share Tech Mono',ui-monospace,Consolas,monospace;
   }
@@ -27,10 +27,16 @@
   .frame{
     position:relative;width:100%;aspect-ratio:16/9;overflow:hidden;
     border:1px solid var(--red-dim);
+    /* A suggestion of a street at night. Not decoration: a transparent panel over a flat
+       ground looks identical to an opaque one, so there has to be something to see. */
     background:
-      radial-gradient(ellipse 60% 45% at 22% 78%, rgba(120,25,45,.30), transparent 70%),
-      radial-gradient(ellipse 70% 60% at 76% 26%, rgba(20,60,80,.22), transparent 70%),
-      linear-gradient(160deg,#0a0a10 0%, #14101a 55%, #0c0c12 100%);
+      radial-gradient(circle 90px at 18% 62%, rgba(244,55,74,.34), transparent 70%),
+      radial-gradient(circle 70px at 34% 47%, rgba(60,232,239,.28), transparent 70%),
+      radial-gradient(circle 120px at 62% 40%, rgba(245,208,51,.16), transparent 72%),
+      radial-gradient(circle 80px at 82% 58%, rgba(60,232,239,.22), transparent 70%),
+      radial-gradient(circle 60px at 71% 68%, rgba(244,55,74,.20), transparent 72%),
+      linear-gradient(180deg, transparent 62%, rgba(0,0,0,.55) 100%),
+      linear-gradient(160deg,#0d0b14 0%, #1b1524 48%, #0b0a11 100%);
   }
   .frame::after{
     content:"";position:absolute;inset:0;pointer-events:none;
@@ -52,6 +58,7 @@
   .chat{
     position:absolute;left:60px;bottom:200px;width:640px;height:330px;
     background:var(--panel);border:1px solid var(--red-dim);
+    backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
     clip-path:polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px));
     display:flex;flex-direction:column;
   }
@@ -75,6 +82,7 @@
     position:absolute;left:730px;bottom:200px;width:900px;height:470px;
     background:linear-gradient(180deg,var(--panel) 0%, var(--panel-2) 100%);
     border:1px solid var(--cyan-dim);
+    backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
     clip-path:polygon(0 0, calc(100% - 20px) 0, 100% 20px, 100% 100%, 20px 100%, 0 calc(100% - 20px));
     display:flex;flex-direction:column;
   }
