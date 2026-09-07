@@ -52,6 +52,15 @@ auto-load — read it deliberately. Cam's stream: it auto-loads; keep it current
 
 ## The decrees (full text in the map's Standing Decrees — do not paraphrase from memory)
 
+- **The launcher is the one-click solution** (zeldfep, 2026-09-07): *"I should not have to
+  run things on my end unless we're fixing some issue, the whole point of the launcher is
+  one click solution."* Getting a build is Play. Handing a human a command is acceptable
+  only while diagnosing a live problem — never as how a build reaches somebody. Test builds
+  currently have NO launcher lane, so each one is a standing violation until they do; if you
+  are about to paste an install command, the honest version names that. And if you paste one
+  anyway, make the path ABSOLUTE — this session's cwd is the repo's PARENT, and a relative
+  path silently resolved to nothing for five builds straight.
+
 - **Boot policy**: straight to menu, both halves stay.
 - **The footprint rule**: uninstall leaves NOTHING; every write location in the footprint,
   both layers.

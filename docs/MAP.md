@@ -52,6 +52,26 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   Sits with, and is the operational half of, zeldfep's replicable-instances rule:
   authoritative state must never live only in one process's memory or one box's disk.
 
+- **THE LAUNCHER IS THE ONE-CLICK SOLUTION — nobody runs commands to get a build**
+  (zeldfep, 2026-09-07): *"I should not have to run things on my end unless we're fixing
+  some issue, the whole point of the launcher is one click solution."* Getting a build,
+  any build, is Play. A `.ps1` handed to a human is acceptable ONLY while diagnosing a
+  live problem, never as the route a build takes to reach somebody.
+  - **This binds US harder than it binds players.** zeldfep and Cam are the ones who get
+    handed install commands during a session, and every one of those is a lane the
+    launcher does not have. On the night this landed, five builds in a row were delivered
+    as `powershell ... DevInstall.ps1` — with a RELATIVE path that never once resolved,
+    because this session's cwd is the repo's parent. Nobody got any of those builds, the
+    failure was silent for hours, and screenshots were being read as evidence about code
+    that was never installed. **A manual step is not just friction, it is a place where
+    "did this even ship" stops being answerable.**
+  - **The open consequence: TEST BUILDS HAVE NO LAUNCHER LANE.** They are prereleases and
+    the launcher follows `/releases/latest`, so the only way one reaches a human today is
+    by hand — which this decree forbids. Until the launcher can opt into a test channel,
+    every test build is a standing violation. See Operational debts.
+  - Corollary for either stream: **if you are about to paste a command for somebody to
+    run, the honest version is "the launcher cannot do this yet, and that is a bug."**
+
 - **Boot policy** (2026-08-21): the game boots STRAIGHT TO THE MENU -
   `-skipStartScreen` + Fast Launch auto-install, both halves stay (main.js).
 
@@ -1663,6 +1683,30 @@ then refuses to create the containers** and leaves the OLD build running. The lo
 - **`/mnt/vol/NASa` on the new box** is empty but `rmdir` reports it as non-empty. Cosmetic.
 
 ### Operational debts
+- **THE LAUNCHER HAS NO TEST CHANNEL, so every test build violates the one-click decree**
+  (found 2026-09-07). `ShipTestBuild.ps1` publishes a PRERELEASE; the launcher follows
+  `/releases/latest`, which skips prereleases by design and correctly so. The gap is that
+  there is no supported way for a human to receive a test build, so the fallback has been
+  pasting a `DevInstall.ps1` line into chat.
+  - **That fallback failed silently for five builds straight.** The command carried a
+    RELATIVE path (`.\tools\DevInstall.ps1`), and the desktop app's Run button executes
+    from this session's cwd — **the repo's PARENT** — so it resolved to `Projects\tools\`
+    and errored every time. Hours of screenshots were read as evidence about builds that
+    were never installed. **If you must hand somebody a command, make the path ABSOLUTE**,
+    and treat the absence of a "it worked" as a failure rather than as consent.
+  - **The fix is a launcher lane**, not a better command: an opt-in test channel in
+    Settings > DEV that points the updater at the newest prerelease for a named branch.
+    Until that exists, say plainly that a test build cannot be delivered the sanctioned way.
+- **xmake install can run with a STALE FILE LIST, and it says "install ok!"** (cost a
+  shipped-and-verified build on 2026-09-07). A newly `add_files`-ed archive was NOT copied
+  to `distrib` on the first install after the `xmake.lua` edit; the second identical
+  invocation copied it. `zz_NightCityOnline_Selector.archive` therefore published in
+  test.24 as a 1 KB payload delta against a 3.7 MB asset.
+  - Same family as the "install everything" lesson below, one level deeper: the TARGET was
+    installed, its FILE LIST was not. **After adding a file to an xmake target, run the
+    install twice or verify `distrib` before shipping.**
+  - **It was caught by SIZE, not by any exit code** - the ship exited 0 and published.
+    A 3.7 MB asset cannot hide in a 1 KB delta. Check the published artifact's contents.
 - **"Built and pushed" is NOT "deployed" - three surfaces, each of which bit once on
   2026-08-28.** Every time, a correct fix looked broken because the thing under test was not
   the thing that was built, and each cost a full test round-trip with Cam. Verify the artifact
