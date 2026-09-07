@@ -1663,14 +1663,38 @@ compiles`) against the real 2.31 install.
      without it, because the release had already been cut. The launcher can only deliver what
      is in a release.
 
+### EVERY PLAYER WHO UPDATED GOT A MOD THAT COULD NOT COMPILE (found + fixed 2026-09-07)
+`028ab8a`. The payload shipped **twelve duplicate redscript classes** — every Ink controller
+appeared at BOTH `assets/redscript/<name>.reds` and `assets/redscript/Ink/<name>.reds`.
+Redscript refuses the whole mod on a duplicate definition: *"The game will start but no
+scripts will take effect"*, naming exactly those twelve files.
+- **Cause:** those twelve moved into `Ink/` at some point. Their old flat copies stayed in
+  `distrib/`, which is GITIGNORED, because `Copy-Item -Force` adds and overwrites but never
+  REMOVES. Every payload since carried both. **v0.3.115, .116 and .117 all shipped it** —
+  confirmed by unzipping v0.3.116's `ModPayload.zip`. Nobody had played since v0.3.115, which
+  is the only reason it was not reported sooner.
+- **THE CHECK PASSED THE WHOLE TIME AND THAT IS THE LESSON.** `Ship.ps1` verified "is every
+  repo file shipped correctly?" and never "is anything shipped that the repo does not have?"
+  **A one-directional comparison cannot see an extra file** — and in redscript an extra file
+  is not dead weight, it is a compile error for the entire mod.
+- **`CheckScripts.ps1` says "OK - redscript compiles" because it compiles the REPO.** The repo
+  was always fine. **Nothing in the pipeline has ever compiled what actually ships.** That gap
+  is still open; the orphan check closes the specific hole, not the class.
+- **Fixed:** the ship wipes the shipped redscript tree before copying (mirror, not merge) and
+  dies naming any file the repo does not have, plus the directory to delete.
+- **The dev machine had a DIFFERENT flavour of the same rot:** its game install had no
+  duplicates but six stale files (`Combat`, `MainMenu`, `OwnSave`, `PauseMenu`, `Phone`,
+  `World/NetworkWorldSystem`) — `xmake install` leaving `.reds` at previous contents, which
+  the ship works around for `distrib` but NOT for the game directory. Mirrored by hand.
+  **Two places rot; the ship only guards one.**
+
 - **TEST SERVER IS ARMED (2026-09-07) AND THE TWO DIGEST IMPLEMENTATIONS AGREE.** First time
   that has ever been true.
   - `/mnt/vol/projects/CyberpunkMP-authority/config/server-manifest.json`, manifest
-    `2026.09.07.02` off v0.3.117. Test `/api/v1/status/` now answers
-    `"ManifestVersion": "2026.09.07.02", "Release": "v0.3.117"`. **Live is deliberately
+    `2026.09.07.03` off v0.3.117 (re-armed after the duplicate-script fix regenerated it). **Live is deliberately
     untouched and still answers `""`.**
-  - **The C++ computed `addfcd78842167de29cb0f9fdd045babc63fd411ff927449091c9aad7bc6a8f4`,
-    byte-identical to an independent implementation of the canonical string from the spec.**
+  - **The C++ agreed with an independent implementation of the canonical string TWICE, on two
+    different manifests** — `2026.09.07.02` → `addfcd78…` and `2026.09.07.03` → `ff03041c…`.
     So `GameServer.cpp` and the documented format agree. The launcher's `manifest.js` is the
     THIRD implementation and is still unproven — only a real client joining test proves it.
   - **A `-Launcher` ship does NOT regenerate the manifest** (`Ship.ps1:914`, `if ($Mod)`), and
