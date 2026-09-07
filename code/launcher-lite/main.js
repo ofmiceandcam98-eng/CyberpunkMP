@@ -2889,6 +2889,46 @@ async function hasOwnWorldSince (installedAt) {
  * Both the folder and the files inside it - the game sorts on one of them and which is not
  * documented, so both are set rather than guessing and being subtly wrong.
  */
+/**
+ * Put the template BACK to the bottom of the save list when the session ends.
+ *
+ * THE TRAP THIS CLOSES. stampTemplateNewest runs every launch so the multiplayer world is
+ * the newest save - OwnSave's fallback is LoadLastCheckpoint, which takes whatever is
+ * newest, and that fallback has to land on the template. Correct, and it stays.
+ *
+ * What it also did was outlive the session. The mod removes Continue / New Game / Load
+ * Game from the menu, but ONLY when launched with -online and only if its scripts loaded
+ * (MainMenu.reds, PopulateMenuItemList). Open Cyberpunk from Steam afterwards and the
+ * vanilla menu is back - and CONTINUE loads the newest save, which we had just stamped to
+ * be the multiplayer template. A bare world with no server, no character and nothing to
+ * do. zeldfep, 2026-09-07: "when we hit continue the game drops us in that empty map."
+ *
+ * So the stamp becomes a session-length thing rather than a permanent one. During play the
+ * template is newest and the fallback works; afterwards their own last save is newest
+ * again and Continue does what it has always done.
+ *
+ * Backdated a year rather than to some remembered original: the file is ours, it is
+ * replaced on every launch that needs it, and nothing anywhere reads its timestamp except
+ * the save list's ordering.
+ */
+async function unstampTemplate () {
+  const target = templateDir()
+  if (!existsSync(target)) return false
+
+  const when = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000)
+
+  try {
+    for (const entry of await fsp.readdir(target)) {
+      await fsp.utimes(path.join(target, entry), when, when)
+    }
+    await fsp.utimes(target, when, when)
+    return true
+  } catch (err) {
+    console.warn('[template] could not un-stamp:', err.message)
+    return false
+  }
+}
+
 async function stampTemplateNewest () {
   const target = templateDir()
   if (!existsSync(target)) return false
@@ -3320,6 +3360,11 @@ async function launchGame () {
   // a file whose name they do not know.
   const onExit = (code) => {
     launcherLog(`game exited with code ${code}`)
+
+    // Before anything else, and on every exit including a crash: the multiplayer template
+    // stops being the newest save. Leaving it stamped is what makes a later launch from
+    // Steam drop the player into an empty world through vanilla CONTINUE.
+    unstampTemplate().catch(() => {})
 
     // 0 is a normal quit. 0xC0000005 (-1073741819) is an access violation - the crash
     // this project has spent days on. Anything else non-zero is also worth capturing.
