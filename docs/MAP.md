@@ -1323,10 +1323,9 @@ is **local and unpushed** — per Cam, nothing ships before the server swap.
 - **FIRST MANIFEST SHIPPED (2026-09-04, v0.3.114)**: `server-manifest.json` + `.sig`
   are on the release, signed by zeldfep's key (`882c415a` - pinned in every launcher
   since v0.3.97, so verification is immediate; Cam's key stays PAUSED per its entry).
-  Launchers now verify instead of "manifest absent - legacy path". Server-side arming
-  (copy the manifest into each server's `config/`) is now ACTIONABLE - do it at a
-  quiet moment AFTER most players are on v0.3.114, since the digest gate refuses
-  mismatched installs at the door.
+  Launchers now verify instead of "manifest absent - legacy path". v0.3.115 shipped the
+  next one (`2026.09.07.01`). Server-side arming is ACTIONABLE and STILL NOT DONE - see the
+  arming entry in the ledger for why it is a decision, not a chore.
 - **Server-side arming**: copy the shipped manifest to the server's `config/` dir —
   absent file = checks disabled (migration). Then manifest_version + install_digest
   gates go live at the door.
@@ -1475,25 +1474,32 @@ setup a new box needs, not a bug in `Ship.ps1`.
   gate correctly refused, which is the gate doing its job. **`git checkout -- code/launcher-lite/package.json`
   after ANY failed ship**, before retrying.
 
-### PENDING SHIP — three things are built and reach nobody until a launcher release (2026-09-06)
-Nothing here is broken; all of it is committed, verified and inert until shipped. Ship them
-together — three separate releases for one evening's work is how release notes stop being read.
-- **Fall-through recovery** (`8401ec3`) — **the BOX.** Hit live on 2026-09-06 and it is
-  the most player-visible thing in this bundle: a new character loops fall/recover/fall in a
-  holding volume until a reconnect happens to land right. Not in `test.19`.
-- **Section rail** (`a9a9c94`) — the settings scrollbar replaced by arrows, per zeldfep
-  ("I dont want scroll bar"). Built 2026-09-04, never shipped.
-- **Fault A redscript** (`9d4daea`) — `OwnSave` loads the world template always.
-  COMPILE-CHECKED against a real 2.31 install. Client-side, so a release is the only route.
+### v0.3.115 SHIPPED 2026-09-07 — the bundle that was pending is now live
+Cut from `feat/world-state` (`ea76c34`), full `-Mod` ship on zeldfep's box. `/releases/latest`
+answers `v0.3.115`; `NightCityOnline-Setup.exe` 102.6 MB, HTTP 200. Manifest `2026.09.07.01`
+(25,491 bytes, 74 payload files, 12 components) signed `882c415a` and verified against the
+launcher's pins BEFORE promotion. Redscript compile-checked inside the ship (`OK - redscript
+compiles`) against the real 2.31 install.
+- **Fall-through recovery** (`8401ec3`) — **the BOX.** The most player-visible thing in the
+  bundle. `test.19` does not have it, so anyone still on that build keeps looping.
+- **Section rail** (`a9a9c94`) — settings scrollbar replaced by arrows, per zeldfep.
+- **Fault A redscript** (`9d4daea`) — `OwnSave` loads the world template always. Client-side,
+  so a release was the only route it could ever take.
 - **Dev-panel text** (`eff8701`) — new test address, and it no longer claims deploys come from
-  a push to `main` when the cron tracks `feat/world-state`. The second one has been actively
-  misleading dev-role users.
-- **Test-server invite button** (`e41f71c`) — its data half (`tailscaleTestInvite`) is ALREADY
-  live in `server.json`, so the field is published and nothing reads it yet. Harmless, but the
-  button is the half that matters.
-- **The distinction that decides what needs a ship:** `publish/server.json` is fetched at
-  runtime from `releases/latest/download`, so address and invite changes land with no release.
-  `index.html`, `main.js` and `preload.mjs` are baked into the launcher and do not.
+  a push to `main` when the cron tracks `feat/world-state`.
+- **Test-server invite button** (`e41f71c`) — its data half (`tailscaleTestInvite`) was already
+  live in `server.json`; the half that reads it now exists.
+- **The distinction that decides what needs a ship, and it still holds:** `publish/server.json`
+  is fetched at runtime from `releases/latest/download`, so address and invite changes land
+  with NO release. `index.html`, `main.js` and `preload.mjs` are baked in and do not.
+- **STILL OPEN — nobody has been told.** The ship's Discord step exited 1: this box has no bot
+  token. It wants `tools\.discord-bot` (`token=` / `channel=` lines, gitignored at
+  `.gitignore:66`) or `DISCORD_BOT_TOKEN` + `DISCORD_CHANNEL_ID` in the environment; then
+  `tools\AnnounceRelease.ps1 -Tag v0.3.115`. The launcher self-updates regardless, so the cost
+  is people not knowing to relaunch, not people stuck on the old build.
+- **STILL OPEN — manifest curation.** The ship warned that `audioware` and `red_data` carry no
+  version pin, no fileId and no hashes (MANIFEST-ARCHITECTURE.md §3.3). Policy is `warn`, so it
+  shipped; it CANNOT move to enforcing until those two are curated.
 
 ### Post-migration leftovers (2026-09-06)
 - **THE OLD NAS IS EMPTY OF THIS PROJECT (2026-09-06). Archived, md5-verified, then deleted.**
@@ -1587,15 +1593,21 @@ together — three separate releases for one evening's work is how release notes
      without it, because the release had already been cut. The launcher can only deliver what
      is in a release.
 
-- **Manifest is signed on the RELEASE but not armed on any SERVER.** The old "no signing key"
-  debt is CLOSED - the key exists, is pinned, and v0.3.114 shipped `server-manifest.json` +
-  `.sig` (see the manifest section). What remains is the server half, and it is MEASURED, not
-  assumed: the live server's status endpoint answers `"ManifestVersion": "", "Release": ""`
-  (checked 2026-09-04), so no deployment has been given a copy of the manifest and the
-  digest gate is not running for anyone. Absent file = checks disabled, by design, so
-  nothing is broken - it is simply not on yet. Arming is a copy into each server's `config/`,
-  and the map's advice stands: do it once most players are on v0.3.114, because the gate
-  refuses mismatched installs at the door.
+- **Manifest is signed on the RELEASE but not armed on ANY server. Re-measured 2026-09-07 on
+  the new hardware.** The old "no signing key" debt is CLOSED — the key exists, is pinned, and
+  both v0.3.114 and v0.3.115 shipped `server-manifest.json` + `.sig` (see the manifest section).
+  What remains is the server half, and it is MEASURED, not assumed: `/api/v1/status/` on BOTH
+  boxes answers `"ManifestVersion": "", "Release": ""` (live and test, 2026-09-07 — the
+  migration carried the gap across, it did not create it). Absent file = checks disabled, by
+  design, so nothing is broken; it is simply not on yet.
+  - **Arming is a copy into each server's `config/`, and it is a DECISION, not a chore.** The
+    gate refuses mismatched installs AT THE DOOR, so arming it the day a release lands locks
+    out everyone still on `test.19` or v0.3.114 until they relaunch. Do it once most players
+    are on the current build — and the Discord announcement is what makes that happen, which is
+    why the un-posted v0.3.115 announcement blocks this too.
+  - **`audioware` and `red_data` are not curated** — no version pin, no fileId, no hashes
+    (MANIFEST-ARCHITECTURE.md §3.3). The ship warns and continues because policy is `warn`.
+    Curate them before policy ever moves to enforcing, or arming refuses honest installs.
 
 - **Server list: DIAGNOSED AND FIXED 2026-09-06. It was also a REMOTE KILL SWITCH.**
   - Symptom: `Server could not reach the server list! Could not establish connection`, every
@@ -1671,14 +1683,11 @@ together — three separate releases for one evening's work is how release notes
   soft-skips, and distrib\launcher\mod\Rpc must be assembled by hand (extracted from
   the previous payload; 9/10 stubs byte-match the repo, RedTypes.cs is the generated
   aggregate).
-  `Ship.ps1 -Mod` does NOT cut a new version — it republishes mod assets into whatever
-  release is already `latest`, so THREE different `ModPayload.zip` builds now exist under the
-  tag `v0.3.113` (28 Aug, and two on 30 Aug). Players still update correctly because the
-  launcher compares the ASSET ID, not the version string, but `.nco-version` reads the same
-  number for three builds — which will mislead the first bug report that quotes it. Cutting
-  v0.3.114 needs a `## What changed - v0.3.114` section in `publish\release-notes.md` and a
-  FULL ship (which also republishes the 103 MB installer). Held on the same 2026-08-30 budget
-  call as the signing-key pause.
+  **Still true and still a trap: `Ship.ps1 -Mod` does NOT cut a new version** - it republishes
+  mod assets into whatever release is already `latest`. THREE different `ModPayload.zip` builds
+  exist under the tag `v0.3.113` (28 Aug, and two on 30 Aug). Players still update correctly
+  because the launcher compares the ASSET ID, not the version string, but `.nco-version` reads
+  the same number for all three - which will mislead the first bug report that quotes it.
 
 ## 2. CODE MAP — where things live, and the gotcha that bites there
 
