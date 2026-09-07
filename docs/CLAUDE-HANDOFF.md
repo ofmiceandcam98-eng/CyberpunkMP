@@ -114,10 +114,23 @@ ships as a **public** release asset). Logs record credential *presence*, never v
 | Feed identity (deploy) | `~/.nco-deploy-coord-key` (NAS only) | the deploy's auto-announce |
 | **Release signing** | `~/.nco-manifest-key` (keyid `882c415a`) | **signed releases** — pinned in every launcher since v0.3.97; a replacement must be pinned and shipped two releases apart |
 | Tailscale API | `~/.tailscale-api-key` (mode 600) | minting auth keys + player invites |
-| Discord bot | `<deploy>/config/discord-bot-token` (NAS) | role resolution |
-| GitHub | Git Credential Manager | see §4 — `gh auth login` does NOT work here |
+| Discord bot | `<deploy>/config/discord-bot-token` on the SERVER, both deployments (mode 660) | role resolution. **The workstation has none**, which is why `AnnounceRelease.ps1` exits 1 here — it wants `tools/.discord-bot` (`token=` / `channel=`, gitignored) or `DISCORD_BOT_TOKEN` + `DISCORD_CHANNEL_ID` |
+| GitHub | `gh` CLI keyring (account `zeldfep`, scopes gist/read:org/repo/workflow) | pushes and every `gh api` call — see §4 |
 
 ## 4. Recipes that took a while to get right
+
+**`git push` HANGS, and it is Git Credential Manager, not the network.** GCM opens a GUI
+account picker ("which GitHub account / x-access-token") that a non-interactive shell can
+never answer, so the push sits there until it is killed — and the human at the keyboard gets
+a popup they did not ask for. `gh` is already authenticated on this box, so route GitHub
+auth through it instead (set repo-locally, so nothing else on the machine changes):
+```bash
+git config --local --add credential.https://github.com.helper '!gh auth git-credential'
+```
+Already applied to this checkout. For a one-off without changing config:
+`git -c credential.helper='!gh auth git-credential' push origin feat/world-state`.
+**`x-access-token`** in those prompts is not a thing to go find: it is the literal username
+GitHub expects when the password is a token, so GCM shows it as the account name.
 
 **GitHub token (bash only — PowerShell has no stdin for this and fails):**
 ```bash
