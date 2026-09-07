@@ -149,6 +149,34 @@ public class MpPhoneCall {
       if IsDefined(player) {
         GameObject.PlaySoundEvent(player, n"ui_phone_incoming_call");
       }
+    } else {
+      // NOT PLAYING A NEW RINGTONE IS NOT THE SAME AS STOPPING THE ONE ALREADY PLAYING,
+      // and that difference was the bug: zeldfep, 2026-09-07, "phone rings even after call
+      // is answered processed and hung up". This branch is where a ringing call becomes a
+      // connected one, so it is exactly where the ringing has to stop.
+      MpPhoneCall.StopRingtone();
+    }
+  }
+
+  /**
+   * Silence the incoming-call ringtone.
+   *
+   * ui_phone_incoming_call is a looping event: PlaySoundEvent starts it and nothing ends
+   * it on its own. Every path that leaves the RINGING state has to call this - answering,
+   * hanging up, the caller giving up, the server ending the call for any reason - because
+   * the phase written to the blackboard controls the WIDGET, not the audio. They are two
+   * separate systems and only one of them was being told.
+   *
+   * Safe to call when nothing is ringing; stopping an event that is not playing is a
+   * no-op, which is why every exit path calls it unconditionally rather than trying to
+   * track whether a ringtone is outstanding. Tracking that state is how you end up with a
+   * phone that rings forever because one branch forgot to clear the flag.
+   */
+  public static func StopRingtone() -> Void {
+    let player = GetPlayer(GetGameInstance());
+
+    if IsDefined(player) {
+      GameObject.StopSoundEvent(player, n"ui_phone_incoming_call");
     }
   }
 
@@ -160,6 +188,11 @@ public class MpPhoneCall {
    * with nothing left to dismiss it.
    */
   public static func Dismiss() -> Void {
+    // Before the blackboard write, and before the early return below. A call taken down
+    // while the blackboard is unavailable still has to stop ringing - the audio is not
+    // the widget's to clean up.
+    MpPhoneCall.StopRingtone();
+
     let bb = GameInstance.GetBlackboardSystem(GetGameInstance())
       .Get(GetAllBlackboardDefs().UI_ComDevice);
 
