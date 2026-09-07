@@ -2015,6 +2015,57 @@ function isProcessRunning (imageName) {
 // comment) knew this all along; the payload paths now do too. Every top-level DIRECTORY
 // the archive ships is deleted before extracting - top-level files (the DLL) are simply
 // overwritten, and logs/config/.nco-version survive because no payload ships them.
+/**
+ * Did the extract actually land? Asked of the disk, not of the extractor.
+ *
+ * zeldfep's install on 2026-09-07 held THREE generations of payload at once: the twelve
+ * Ink controllers at both the top level and under Ink/ (twelve duplicate class
+ * definitions, which makes redscript refuse the ENTIRE mod), plus two World scripts that
+ * only ever shipped in test.19. Every update in between reported success.
+ *
+ * extractPayloadClean wipes the top-level directories the zip carries before extracting,
+ * so that state should have been impossible - which is exactly why it needs checking
+ * rather than assuming. An installer that cannot prove what it wrote is an installer that
+ * reports success and leaves the player to find out through a compile dialog three
+ * releases later.
+ *
+ * Two questions, and the second is the one that was never asked: is everything the zip
+ * carried on disk, and is anything ELSE in the directories the zip owns?
+ */
+function auditPayloadInstall (aModDir, aZip) {
+  const shipped = new Set()
+  const ownedDirs = new Set()
+
+  for (const entry of aZip.getEntries()) {
+    if (entry.isDirectory) continue
+    const rel = entry.entryName.split('\\').join('/')
+    shipped.add(rel)
+    if (rel.includes('/')) ownedDirs.add(rel.split('/')[0])
+  }
+
+  const missing = []
+  for (const rel of shipped) {
+    if (!existsSync(path.join(aModDir, rel.split('/').join(path.sep)))) missing.push(rel)
+  }
+
+  // Only inside directories the payload owns. The mod folder legitimately holds things
+  // the zip never carried - logs/, .nco-version, config written at runtime - and calling
+  // those orphans would make the check cry wolf on every healthy install.
+  const orphans = []
+  const walk = (dir, prefix) => {
+    let entries
+    try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const e of entries) {
+      const rel = prefix ? prefix + '/' + e.name : e.name
+      if (e.isDirectory()) walk(path.join(dir, e.name), rel)
+      else if (!shipped.has(rel)) orphans.push(rel)
+    }
+  }
+  for (const dir of ownedDirs) walk(path.join(aModDir, dir), dir)
+
+  return { missing, orphans }
+}
+
 function extractPayloadClean (aModDir, aZip) {
   const shippedDirs = new Set()
   for (const entry of aZip.getEntries()) {
@@ -2072,7 +2123,29 @@ async function applyUpdate () {
     launcherLog(`payload verified against manifest ${manifest.manifestVersion} before install`)
   }
 
-  extractPayloadClean(modDir, new AdmZip(buffer))
+  const zip = new AdmZip(buffer)
+  extractPayloadClean(modDir, zip)
+
+  // Prove it, then record it. Stamping the settings BEFORE checking is how a failed
+  // install starts reporting itself as up to date, and the up-to-date gate then refuses
+  // to fix it: "Your game files are out of date" never fires, so the player launches
+  // stale code forever with a green launcher.
+  const audit = auditPayloadInstall(modDir, zip)
+  if (audit.missing.length || audit.orphans.length) {
+    const say = (label, list) =>
+      list.length
+        ? '\n' + label + ' (' + list.length + '): ' +
+          list.slice(0, 8).join(', ') + (list.length > 8 ? ', and more' : '')
+        : ''
+    throw new Error(
+      'The mod folder does not match what was just installed, so the install was NOT recorded.' +
+      say('Missing', audit.missing) +
+      say('Left over from an older install', audit.orphans) +
+      '\n\nLeftover scripts are the serious half: two definitions of one class make the ' +
+      'game refuse to compile the whole mod. Use Settings > Remove > "Remove the mod", then ' +
+      'install again.'
+    )
+  }
 
   saveSettings({ installedStamp: info.remoteStamp, installedVersion: info.version })
 
