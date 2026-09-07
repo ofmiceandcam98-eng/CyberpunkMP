@@ -1448,13 +1448,31 @@ is **local and unpushed** — per Cam, nothing ships before the server swap.
     on it. That endpoint is the piece that does not exist yet and needs public hosting.
   - **Until both exist, scope is the control, not secrecy** — see the ACL entry above. A
     leaked invite buys reaching the game servers on two ports, nothing else.
-- **STILL OPEN — the permanent fix for public distribution.** Rotation is the only thing
-  limiting a leaked invite today, and it is manual. The durable answer is a PUBLIC endpoint
-  (not on the tailnet) that checks the Discord token the launcher already holds before handing
-  out an invite — the launcher's Discord sign-in happens *before* the tailnet is needed, which
-  is what makes it the one gate that can work. Needs somewhere public to host it, which this
-  project does not currently have. Until then: keep the invite single-seat and rotate it when
-  consumed; the launcher picks up the new one on its next start with no ship.
+- **DECIDED 2026-09-07 — published invites are an ACCEPTED RISK while this is a closed alpha.**
+  zeldfep, asked directly about both links sitting in a public release asset: *"this is fine
+  is closed alpha."* So stop treating it as an open wound. **Both device shares are deliberately
+  published in `publish/server.json`, and both are meant to keep working:**
+  - Main server (Tools → "Join the server's network") and test server (Dev panel → "Join the
+    test server's network") are SEPARATE shares — a share binds to one device id and cannot
+    cover both. Accepting one does not get you the other; the UI says so in both places.
+  - **VERIFIED 2026-09-07 via the Tailscale API: both are `multiUse: true` with no email
+    restriction, and neither is exhausted.** They are not single-seat, so the old "rotate when
+    consumed" advice does NOT apply to these two — do not rotate them reflexively.
+  - Both handlers read the PUBLISHED file at click time (`fetchPublishedServer()`), so fixing
+    `server.json` fixes both buttons with no ship. The catch is the cache below.
+  - The exposure is bounded by what a share IS: exactly one node, by construction rather than
+    by policy. That is why `d4b2172` moved off a `/uinv/` user invite, which would have made
+    the holder a tailnet MEMBER with only ACLs standing between them and everyone's machines.
+    **Never swap these back to `/uinv/` links.**
+- **Revisit at open beta, not before.** The durable answer stays what it was: a PUBLIC endpoint
+  (not on the tailnet) that checks the Discord token the launcher already holds — the sign-in
+  happens *before* the tailnet is needed, which is what makes it the one gate that can work.
+  It needs somewhere public to host it, which this project still does not have.
+- **`fetchPublishedServer()` CACHES FOR THE PROCESS LIFETIME** (`main.js:443` — `if
+  (publishedServer) return publishedServer`, no TTL). A launcher that has already fetched a
+  bad or stale `server.json` keeps it until it is RESTARTED. That is why the fix for tonight's
+  outage was "restart the launcher" and not "wait a minute" — and it is why a bad publish
+  reaches everyone instantly but a good one does not.
 
 ### Shipping from a FRESH CHECKOUT needs three things the ship does not provide (2026-09-06)
 Every one of these stopped a v0.3.115 attempt cold. The gates all behaved correctly — this is
