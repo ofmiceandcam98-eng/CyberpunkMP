@@ -6,6 +6,26 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.119
+
+- **The phone stops ringing when you answer.** A call you picked up, dealt with and hung up
+  kept its ringtone playing underneath everything. The call panel came down correctly, which
+  is why it looked like the phone was haunted rather than broken: the ringtone is a separate
+  system from the on-screen call, and only one of the two was ever being told the call had
+  ended. It now goes quiet on answering, on hanging up, and on the other person giving up.
+- **A failed install can no longer report itself as a success.** The launcher now checks the
+  mod folder against what it just installed, and refuses to record the install if anything is
+  missing or left over from an older one. This is the fix for the worst kind of night: a green
+  launcher, the right version on screen, and the game quietly running files from three
+  releases ago. If it ever happens again it now says so, names the files, and tells you to
+  remove and reinstall.
+
+**If your game has been behaving strangely and reinstalling fixed it**, that is what this was.
+The launcher could not tell the difference between "installed" and "downloaded".
+
+If you hit a crash, send the log — `tools\CollectCrash.ps1` gathers it in one step. Run it
+**before** relaunching; relaunching overwrites the evidence.
+
 ## What changed — v0.3.118
 
 **If the game was crashing on launch or starting with nothing working, this is the one to get.**

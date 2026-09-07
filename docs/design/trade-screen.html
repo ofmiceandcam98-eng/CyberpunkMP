@@ -137,6 +137,17 @@
   }
   .ed .l{font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold);font-weight:700;}
   .ed .v{margin-left:auto;font-family:var(--mono);font-size:17px;color:var(--gold);}
+  /* Typed, not stepped-to. Reaching 2500 by pressing + is not a design, so the field is
+     the primary way in and the steppers are for the last unit or two. */
+  .ed input.v{
+    width:120px;text-align:right;background:transparent;border:0;padding:0;
+    font-family:var(--mono);font-size:17px;color:var(--gold);
+    -moz-appearance:textfield;
+  }
+  .ed input.v::-webkit-outer-spin-button,
+  .ed input.v::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
+  .ed input.v:focus{outline:none;border-bottom:1px solid var(--gold);}
+  .ed .max{font-family:var(--mono);font-size:13px;color:rgba(245,208,51,.55);flex:none;}
   .st{
     background:none;border:1px solid rgba(245,208,51,.35);color:var(--gold);
     font-family:var(--mono);font-size:13px;width:23px;height:23px;cursor:pointer;padding:0;line-height:1;
@@ -214,9 +225,11 @@
             <div class="rows" id="mine"></div>
             <div class="ed">
               <span class="l">Eddies</span>
-              <button class="st" type="button" id="less">&minus;</button>
-              <button class="st" type="button" id="more">+</button>
-              <span class="v" id="myEd">0</span>
+              <button class="st" type="button" id="less" aria-label="One less">&minus;</button>
+              <button class="st" type="button" id="more" aria-label="One more">+</button>
+              <input class="v" id="myEd" type="number" min="0" max="20100" step="1" value="0"
+                     inputmode="numeric" aria-label="Eddies to offer">
+              <span class="max">/ 20100</span>
             </div>
           </div>
 
@@ -304,11 +317,27 @@
       box.appendChild(el);
     });
     document.getElementById('yc').textContent = Object.keys(on).length;
-    document.getElementById('myEd').textContent = eddies.toLocaleString('en-US').replace(/,/g, ' ');
   }
 
-  document.getElementById('more').addEventListener('click', function(){ eddies += 500; clearConfirms(); render(); });
-  document.getElementById('less').addEventListener('click', function(){ eddies = Math.max(0, eddies - 500); clearConfirms(); render(); });
+  var PURSE = 20100;                       // what you are actually carrying
+  var edField = document.getElementById('myEd');
+
+  function setEddies(n, fromField){
+    // Clamp to the purse. Offering more than you have is not a thing the server would
+    // honour, so the field should not let you type it and then find out at confirm time.
+    n = Math.floor(Number(n) || 0);
+    eddies = Math.max(0, Math.min(PURSE, n));
+    if (!fromField || String(eddies) !== edField.value) edField.value = String(eddies);
+    clearConfirms();
+    render();
+  }
+
+  document.getElementById('more').addEventListener('click', function(){ setEddies(eddies + 1); });
+  document.getElementById('less').addEventListener('click', function(){ setEddies(eddies - 1); });
+  edField.addEventListener('input', function(){ setEddies(this.value, true); });
+  // Arrow keys step by one as well; the browser does that for a number input, but this
+  // keeps the clamp and the confirm-clearing on the same path.
+  edField.addEventListener('change', function(){ setEddies(this.value); });
   document.getElementById('ok').addEventListener('click', function(){
     confirmed = !confirmed;
     var led = document.getElementById('myLed');
