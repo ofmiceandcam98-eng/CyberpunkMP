@@ -436,6 +436,8 @@
     .dot.busy:not(.on) { animation: none; }
     .play.busy, .play.busy:disabled { animation: none; }
     .modal, .modal-backdrop { animation: none; }
+    .rail-tick, .section-rail button,
+    .section-rail::before, .section-rail::after { transition: none; }
   }
 
   button.action:disabled {
@@ -638,7 +640,7 @@
      right is the navigation; the wheel and keyboard still work underneath. */
   .modal-body {
     padding: 1.25rem;
-    padding-right: 3.1rem; /* room for the section rail */
+    padding-right: 3.4rem; /* room for the section rail */
     overflow-y: auto;
     overscroll-behavior: contain;
     display: flex; flex-direction: column; gap: 1rem;
@@ -646,27 +648,74 @@
   }
   .modal-body::-webkit-scrollbar { display: none; }
 
-  /* The section rail: angular arrows + a position readout, in the same vocabulary as
-     the rest of the kit (mono type, accent red, clipped corners, bracket energy). */
+  /* The section rail. The scrollbar is gone, so this is both how the modal says where
+     you are and how you travel - and it is built only from marks the kit already owns:
+     the clipped corner, the 120deg hatch off the Play button, mono readouts.
+
+     COLOUR IS LOAD-BEARING HERE, NOT DECORATION. Red is "here, and you can move" - the
+     same job it does on Play. Hazard yellow keeps the meaning it has everywhere else in
+     this launcher (the waiting queue row, the /// WARNING /// prefix, the busy spinner):
+     a limit. So the caps light yellow only when there is genuinely nowhere further to
+     go. Do not repaint the ticks yellow to match a reference image - it would make the
+     one colour that currently means "stop and read this" mean nothing. */
   .section-rail {
-    position: absolute; right: .55rem; top: 50%; transform: translateY(-50%);
-    display: flex; flex-direction: column; align-items: center; gap: .35rem;
-    z-index: 3;
+    position: absolute; right: .5rem; top: 50%; transform: translateY(-50%);
+    display: flex; flex-direction: column; align-items: center; gap: .3rem;
+    width: 2.15rem; z-index: 3; user-select: none;
   }
+  /* Hazard caps: the fine hatch from .play::before, turned across the travel axis.
+     Dim while there is room to move, solid the instant you hit an end - which is the
+     one thing the old numeric readout could not tell you without being read. */
+  .section-rail::before,
+  .section-rail::after {
+    content: ""; width: 1.15rem; height: 4px; flex: none;
+    background: repeating-linear-gradient(120deg, var(--hazard) 0 2px, transparent 2px 5px);
+    opacity: .16; transition: opacity .18s ease;
+  }
+  .section-rail.at-top::before,
+  .section-rail.at-end::after { opacity: 1; }
+
   .section-rail button {
-    width: 1.7rem; height: 1.7rem; cursor: pointer;
+    width: 1.75rem; height: 1.5rem; cursor: pointer; flex: none;
     background: var(--surface); border: 1px solid var(--line);
-    color: var(--accent); font-size: .62rem; line-height: 1; padding: 0;
+    color: var(--accent); font-size: .58rem; line-height: 1; padding: 0;
+    transition: border-color .15s ease, background .15s ease, color .15s ease;
     clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px));
   }
   .section-rail button:hover:not(:disabled) { border-color: var(--accent); background: var(--ground); }
-  .section-rail button:disabled { opacity: .28; cursor: default; }
+  /* .28 opacity was effectively invisible on this ground - a disabled control has to
+     read as present-and-refusing, not as missing. */
+  .section-rail button:disabled { color: var(--ink-dim); opacity: .45; cursor: default; }
   .section-rail button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-  .section-rail .rail-pos {
-    font-family: var(--mono); font-size: .58rem; letter-spacing: .08em;
-    color: var(--ink-dim); writing-mode: vertical-rl; text-orientation: mixed;
-    padding: .15rem 0; user-select: none;
+
+  /* The track is what the old rail was missing. Thirteen sections used to be a number
+     you had to stop and read; now the shape of the list is visible at a glance and each
+     tick is a destination, so the arrows are a convenience rather than the only way in. */
+  .rail-track {
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+    padding: .3rem 0; position: relative;
   }
+  .rail-track::before {
+    content: ""; position: absolute; top: 0; bottom: 0; left: 50%; width: 1px;
+    background: var(--line); transform: translateX(-50%);
+  }
+  .rail-tick {
+    width: 9px; height: 3px; padding: 0; border: 0; background: var(--line);
+    cursor: pointer; transform: skewX(-20deg);
+    transition: width .16s ease, background .16s ease, box-shadow .16s ease;
+  }
+  .rail-tick:hover { width: 13px; background: var(--ink-dim); }
+  .rail-tick:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+  .rail-tick.on { width: 17px; background: var(--accent); box-shadow: 0 0 7px rgba(255, 42, 50, .45); }
+
+  /* Horizontal, tabular and zero-padded. The old readout was set in writing-mode:
+     vertical-rl, which turned a two-character number into something you tilt your head
+     for. Nothing else in this kit is set sideways. */
+  .rail-pos {
+    font-family: var(--mono); font-size: .55rem; letter-spacing: .06em;
+    font-variant-numeric: tabular-nums; color: var(--ink-dim); padding-top: .1rem;
+  }
+  .rail-pos b { color: var(--accent); font-weight: 600; }
   .section-rail[hidden] { display: none; }
   .modal-foot {
     display: flex; align-items: center; justify-content: space-between; gap: 1rem;
@@ -851,8 +900,9 @@
     <div class="modal">
       <div class="section-rail" id="sectionRail" hidden>
         <button id="railUp" aria-label="Previous section">&#9650;</button>
-        <span class="rail-pos" id="railPos">1/1</span>
+        <div class="rail-track" id="railTrack"></div>
         <button id="railDown" aria-label="Next section">&#9660;</button>
+        <span class="rail-pos" id="railPos"><b>01</b>/01</span>
       </div>
       <div class="modal-head">
         <h2>Settings</h2>
@@ -2819,9 +2869,9 @@
     if (btn) selectSettingsTab(btn.dataset.tab)
   })
 
-  // The section rail: the scrollbar is hidden, so these arrows are how the modal says
-  // "there is more" and how you step through it - one .tool section per press, smooth,
-  // with a position readout. The wheel still scrolls; the rail follows along.
+  // The section rail: the scrollbar is hidden, so the rail is how the modal says "there
+  // is more", shows where in it you are, and carries you there. Three ways in - the
+  // arrows step, a tick jumps, the wheel still scrolls and the rail follows.
   function railSections () {
     const pane = document.querySelector('.modal-body > section.panel.pane-active')
     if (!pane) return { pane: null, sections: [] }
@@ -2829,36 +2879,82 @@
     return { pane, sections }
   }
 
+  // Current = the last section whose top has crossed the viewport top.
+  function railCurrent (body, sections) {
+    let current = 0
+    for (let i = 0; i < sections.length; i++) {
+      if (sections[i].offsetTop <= body.scrollTop + 12) current = i
+    }
+    return current
+  }
+
+  const railPad = (n) => String(n).padStart(2, '0')
+
   function updateRail () {
     const body = document.querySelector('#settingsModal .modal-body')
     const rail = $('sectionRail')
-    if (!body || !rail) return
+    const track = $('railTrack')
+    if (!body || !rail || !track) return
     const { sections } = railSections()
     const overflows = body.scrollHeight > body.clientHeight + 8
     if (sections.length < 2 || !overflows) { rail.hidden = true; return }
     rail.hidden = false
 
-    // Current = the last section whose top has crossed the viewport top.
-    let current = 0
-    for (let i = 0; i < sections.length; i++) {
-      if (sections[i].offsetTop <= body.scrollTop + 12) current = i
+    // Rebuild ticks ONLY when the shape of the list actually changed. This function runs
+    // on every scroll event; replacing the DOM under the pointer would kill :hover mid-aim
+    // and throw away focus if someone is tabbing through.
+    if (track.childElementCount !== sections.length) {
+      track.textContent = ''
+      sections.forEach((sec, i) => {
+        const tick = document.createElement('button')
+        tick.type = 'button'
+        tick.className = 'rail-tick'
+        const name = sec.querySelector('.tool-name')
+        const label = name ? name.textContent.trim() : 'Section ' + (i + 1)
+        tick.title = label
+        tick.setAttribute('aria-label', 'Go to ' + label)
+        tick.addEventListener('click', () => railGo(i))
+        track.appendChild(tick)
+      })
     }
-    $('railPos').textContent = (current + 1) + '/' + sections.length
-    $('railUp').disabled = current === 0 && body.scrollTop <= 4
-    $('railDown').disabled = current >= sections.length - 1 &&
-      body.scrollTop + body.clientHeight >= body.scrollHeight - 4
+
+    const current = railCurrent(body, sections)
+    const ticks = track.children
+    for (let i = 0; i < ticks.length; i++) ticks[i].classList.toggle('on', i === current)
+
+    // Only rewrite the readout when it actually changed - it is otherwise a DOM write on
+    // every scroll frame for text that did not move.
+    const pos = railPad(current + 1) + '/' + railPad(sections.length)
+    if (rail.dataset.pos !== pos) {
+      rail.dataset.pos = pos
+      const out = $('railPos')
+      out.textContent = ''
+      const b = document.createElement('b')
+      b.textContent = railPad(current + 1)
+      out.append(b, '/' + railPad(sections.length))
+    }
+
+    const atTop = body.scrollTop <= 4
+    const atEnd = body.scrollTop + body.clientHeight >= body.scrollHeight - 4
+    $('railUp').disabled = current === 0 && atTop
+    $('railDown').disabled = current >= sections.length - 1 && atEnd
+    rail.classList.toggle('at-top', atTop)
+    rail.classList.toggle('at-end', atEnd)
+  }
+
+  function railGo (index) {
+    const body = document.querySelector('#settingsModal .modal-body')
+    const { sections } = railSections()
+    if (!body || sections.length === 0) return
+    const i = Math.max(0, Math.min(sections.length - 1, index))
+    body.scrollTo({ top: i === 0 ? 0 : sections[i].offsetTop - 8, behavior: 'smooth' })
   }
 
   function railStep (dir) {
     const body = document.querySelector('#settingsModal .modal-body')
     const { sections } = railSections()
     if (!body || sections.length === 0) return
-    let current = 0
-    for (let i = 0; i < sections.length; i++) {
-      if (sections[i].offsetTop <= body.scrollTop + 12) current = i
-    }
-    const next = Math.max(0, Math.min(sections.length - 1, current + dir))
-    body.scrollTo({ top: next === 0 ? 0 : sections[next].offsetTop - 8, behavior: 'smooth' })
+    railGo(railCurrent(body, sections) + dir)
   }
 
   $('railUp').addEventListener('click', () => railStep(-1))
