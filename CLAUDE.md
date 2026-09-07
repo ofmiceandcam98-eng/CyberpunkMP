@@ -57,6 +57,11 @@ auto-load — read it deliberately. Cam's stream: it auto-loads; keep it current
   both layers.
 - **The helper rule**: content mods are never load-bearing — no feature depends on one,
   none gates Play/join/digest.
+- **The design language**: `docs/DESIGN-LANGUAGE.md` is what "keep it uniform" means -
+  the palette and what each colour SAYS, seven type sizes, the clipped-corner signature,
+  and the striped-vs-flat hazard rule. Pick a token; do not invent a value. The launcher is
+  the truth and that file is its rulebook.
+
 - **The map convention**: any commit touching `docs/MAP.md` gets a "map updated" post on
   the feed; the other stream re-reads before acting. Landing removes, finding adds, SAME
   commit. Write map entries in the ledger voice: tight categorized bullets, one home per
