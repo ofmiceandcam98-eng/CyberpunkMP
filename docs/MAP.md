@@ -1571,6 +1571,27 @@ compiles`) against the real 2.31 install.
   version pin, no fileId and no hashes (MANIFEST-ARCHITECTURE.md §3.3). Policy is `warn`, so it
   shipped; it CANNOT move to enforcing until those two are curated.
 
+### REBUILDING THE TEST BOX NEEDS `-p nco-authority` OR IT HALF-FAILS SILENTLY (2026-09-07)
+`docker compose up -d --build` in `/mnt/vol/projects/CyberpunkMP-authority` **builds the image,
+then refuses to create the containers** and leaves the OLD build running. The log ends on
+`Conflict. The container name "/nco-authority-tailscale" is already in use`.
+- **Why:** compose takes the project name from the DIRECTORY. The migration renamed it, so a
+  bare `docker compose` infers `cyberpunkmp-authority` while the running containers belong to
+  project `nco-authority` — and `container_name:` is pinned in the override, so both projects
+  want the same names. New project, same names, instant conflict.
+- **The command is `docker compose -p nco-authority up -d --build`.** Public is a different
+  directory and a different project; the authority compose resolves to exactly two services
+  (`tailscale`, `server`) — checked with `docker compose -p nco-authority config --services`
+  before touching anything, because the same `docker-compose.yml` also defines
+  `cyberpunkmp-server`, which IS production.
+- **The trap is that it looks like a success.** `naming to …nco-authority-server-img:latest
+  done` is in the log, the image is genuinely built, and the container is genuinely `Up` — just
+  `Up 52 minutes` on the old code. **Prove a rebuild with
+  `docker inspect nco-authority-server --format '{{.Created}}'`, not with `docker ps`.**
+- A monitor watching for compile errors and BuildKit failures did NOT catch this — a container
+  name conflict matches neither, so it sat quiet and quiet read as progress. Same lesson as the
+  stale-workload decree, one level in: **the deadline was right and the COVERAGE was wrong.**
+
 ### Post-migration leftovers (2026-09-06)
 - **THE OLD NAS IS EMPTY OF THIS PROJECT (2026-09-06). Archived, md5-verified, then deleted.**
   - Gone from that box: both deployment directories, `nco-backups`, every deploy log, the
