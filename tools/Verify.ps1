@@ -348,6 +348,50 @@ if ($wiringOk) { Pass "stores load and ticks are wired" }
 
 # ---------------------------------------------------------------------------
 if (-not $SkipTests) {
+    # -----------------------------------------------------------------------
+    #
+    # REDSCRIPT COMPILES. This gate existed and Verify did not run it.
+    #
+    # CheckScripts.ps1 has compiled the redscript half since it was written, and Ship.ps1
+    # and ShipTestBuild.ps1 both call it - so a broken .reds could never reach a release.
+    # But CLAUDE.md names Verify.ps1 as the gate, and Verify did not know about it. On
+    # 2026-09-07 that gap cost real time and a wrong answer to zeldfep twice: Verify was
+    # run, it passed, and the honest-sounding report was "the game is the only compiler,
+    # so this is unproven until it loads". The compiler was two directories away.
+    #
+    # One bad .reds aborts ALL redscript compilation and the game starts with no scripts
+    # at all - no menu entry, no chat, no HUD - while looking exactly like the mod doing
+    # nothing. That is the most expensive failure shape this project has, so it belongs in
+    # the gate that claims to cover shipping.
+    #
+    # SKIPPED, NOT FAILED, without the game. redscript can only be compiled where
+    # Cyberpunk is installed, and which machine that is has changed before. A skip says so
+    # out loud rather than passing quietly, because "Verify was green" must never again
+    # mean "nobody checked".
+    Head "redscript compiles"
+
+    $sccPath = if ($script:GameDir) { Join-Path $script:GameDir "engine\tools\scc.exe" } else { $null }
+
+    if (-not $sccPath -or -not (Test-Path $sccPath)) {
+        Write-Host "  SKIP  no scc.exe - redscript NOT compile-checked on this machine" -ForegroundColor Yellow
+        Write-Host "        where  expected at $(if ($sccPath) { $sccPath } else { '<game>\engine\tools\scc.exe' })" -ForegroundColor DarkYellow
+        Write-Host "        fix    run this on the machine with the game installed, or set GameDir in tools\Environment.ps1." -ForegroundColor DarkYellow
+        Write-Host "               Ship.ps1 and ShipTestBuild.ps1 run the same check and WILL block a release." -ForegroundColor DarkYellow
+    }
+    else {
+        & (Join-Path $PSScriptRoot "CheckScripts.ps1") | Out-Null
+
+        if ($LASTEXITCODE -ne 0) {
+            Fail -Summary "redscript does not compile" `
+                 -What "one bad .reds aborts ALL script compilation, so the game starts with NO scripts - no menu entry, no chat, no HUD - while looking exactly like the mod silently doing nothing" `
+                 -Where "run .\tools\CheckScripts.ps1 for the file:line and the scc error" `
+                 -Fix "fix the reported file. UNRESOLVED_REF is usually a renamed local or a method that does not exist on that type - scc is the oracle for the game's API, so ask it rather than guessing"
+        }
+        else {
+            Pass "redscript compiles"
+        }
+    }
+
     Head "unit tests"
 
     $vcvars = "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"

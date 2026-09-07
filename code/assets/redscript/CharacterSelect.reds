@@ -261,7 +261,7 @@ public func MpCsOpen() -> Void {
 
     MpCsText(c, 68.0, 1004.0, "IDENTITY IS A TOOL. MAKE IT YOURS.", 13, n"Regular", MpCsInkFaint());
 
-    FTLog(s"[Selector] character screen open - \(slots) slot(s), caret on \(this.m_csCursor)");
+    FTLog(s"[Selector] character screen open - \(unlocked) of \(MpCsMaxSlots()) slot(s) unlocked, caret on \(this.m_csCursor)");
 }
 
 /**
