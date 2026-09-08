@@ -488,6 +488,22 @@ private func PopulateMenuItemList() -> Void {
                 this.MpCsOpen();
             }
 
+            /*
+             * A WAY BACK TO THE SELECTOR. zeldfep, 2026-09-08: "esc worked but it removed
+             * the connect button after and replaced it with Play".
+             *
+             * That was correct and incomplete. Backing out of the screen leaves the account
+             * CONNECTED, so the menu draws its connected form - and CONNECT, the only entry
+             * that reopens the selector, exists solely in the disconnected branch. Pressing
+             * ESC therefore closed the screen for good until the game was restarted.
+             *
+             * Drawn only when the screen has actually been dismissed, so it never appears
+             * next to a selector that is already on top of it.
+             */
+            if this.m_csDismissed {
+                this.AddMenuItem("CHARACTER SELECT", n"OnMultiplayerCharacters");
+            }
+
             this.AddMenuItem("PLAY", n"OnMultiplayerContinue");
             this.AddMenuItem("CREATE NEW CHARACTER", n"OnMultiplayerNewCharacter");
 
