@@ -65,12 +65,20 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
     failure was silent for hours, and screenshots were being read as evidence about code
     that was never installed. **A manual step is not just friction, it is a place where
     "did this even ship" stops being answerable.**
-  - **The open consequence: TEST BUILDS HAVE NO LAUNCHER LANE.** They are prereleases and
-    the launcher follows `/releases/latest`, so the only way one reaches a human today is
-    by hand — which this decree forbids. Until the launcher can opt into a test channel,
-    every test build is a standing violation. See Operational debts.
-  - Corollary for either stream: **if you are about to paste a command for somebody to
-    run, the honest version is "the launcher cannot do this yet, and that is a bug."**
+  - **THE LANE ALREADY EXISTS — Tools > Test builds.** `prerelease:list` /
+    `prerelease:install` / `prerelease:restore` in main.js, bridged in preload.mjs, UI in
+    index.html beside "Join the test server's network", gated on `isAdmin()`. It lists the
+    five newest prereleases, installs the WHOLE ModPayload.zip through the same
+    `extractPayloadClean` a normal install uses (so scripts and archives land, not just the
+    DLL), verifies GitHub's sha256, keeps the first shipped DLL for Restore, and writes
+    `.nco-version`. One click, no commands.
+  - **I claimed on 2026-09-07 that this did not exist and filed it as a debt. It was
+    already built.** The mistake was grepping main.js for `releases/latest`, finding the
+    auto-updater, and concluding from its absence of prereleases that nothing handled them
+    — without searching for the feature by name. **The decree was never violated by the
+    launcher. It was violated by pasting commands instead of using what was there.**
+  - Corollary for either stream: **before saying a launcher capability is missing, grep for
+    it by name.** "The updater does not do X" is not evidence that nothing does X.
 
 - **Boot policy** (2026-08-21): the game boots STRAIGHT TO THE MENU -
   `-skipStartScreen` + Fast Launch auto-install, both halves stay (main.js).
@@ -1683,20 +1691,20 @@ then refuses to create the containers** and leaves the OLD build running. The lo
 - **`/mnt/vol/NASa` on the new box** is empty but `rmdir` reports it as non-empty. Cosmetic.
 
 ### Operational debts
-- **THE LAUNCHER HAS NO TEST CHANNEL, so every test build violates the one-click decree**
-  (found 2026-09-07). `ShipTestBuild.ps1` publishes a PRERELEASE; the launcher follows
-  `/releases/latest`, which skips prereleases by design and correctly so. The gap is that
-  there is no supported way for a human to receive a test build, so the fallback has been
-  pasting a `DevInstall.ps1` line into chat.
-  - **That fallback failed silently for five builds straight.** The command carried a
-    RELATIVE path (`.\tools\DevInstall.ps1`), and the desktop app's Run button executes
-    from this session's cwd — **the repo's PARENT** — so it resolved to `Projects\tools\`
-    and errored every time. Hours of screenshots were read as evidence about builds that
-    were never installed. **If you must hand somebody a command, make the path ABSOLUTE**,
-    and treat the absence of a "it worked" as a failure rather than as consent.
-  - **The fix is a launcher lane**, not a better command: an opt-in test channel in
-    Settings > DEV that points the updater at the newest prerelease for a named branch.
-    Until that exists, say plainly that a test build cannot be delivered the sanctioned way.
+- **TEST BUILDS SHIP THROUGH Tools > Test builds, and I did not look before saying they
+  could not** (2026-09-07). The panel has existed the whole time — see the one-click decree
+  above for what it does. What actually happened is that five test builds were delivered by
+  pasting a `DevInstall.ps1` line into chat instead of using it.
+  - **That fallback failed silently for all five.** The command carried a RELATIVE path
+    (`.\tools\DevInstall.ps1`), and the desktop app's Run button executes from this
+    session's cwd — **the repo's PARENT** — so it resolved to `Projects\tools\` and errored
+    every time. Hours of screenshots were read as evidence about builds that were never
+    installed. zeldfep had to say "I never get anything from them" before it surfaced.
+  - **Two separate lessons, and the second is the expensive one.** If you must hand
+    somebody a command, make the path ABSOLUTE — and treat the absence of a confirmation as
+    a failure rather than as consent. But the reason a command was being pasted at all is
+    that nobody checked whether the launcher already did it. **Grep the feature by name
+    before declaring it missing.**
 - **xmake install can run with a STALE FILE LIST, and it says "install ok!"** (cost a
   shipped-and-verified build on 2026-09-07). A newly `add_files`-ed archive was NOT copied
   to `distrib` on the first install after the `xmake.lua` edit; the second identical

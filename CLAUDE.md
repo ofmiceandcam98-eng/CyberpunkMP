@@ -55,11 +55,13 @@ auto-load — read it deliberately. Cam's stream: it auto-loads; keep it current
 - **The launcher is the one-click solution** (zeldfep, 2026-09-07): *"I should not have to
   run things on my end unless we're fixing some issue, the whole point of the launcher is
   one click solution."* Getting a build is Play. Handing a human a command is acceptable
-  only while diagnosing a live problem — never as how a build reaches somebody. Test builds
-  currently have NO launcher lane, so each one is a standing violation until they do; if you
-  are about to paste an install command, the honest version names that. And if you paste one
-  anyway, make the path ABSOLUTE — this session's cwd is the repo's PARENT, and a relative
-  path silently resolved to nothing for five builds straight.
+  only while diagnosing a live problem — never as how a build reaches somebody. **Test builds
+  already have a lane: Tools > Test builds**, one click, admin-gated, installs the whole
+  payload. I claimed it did not exist and filed a debt for it after grepping the auto-updater
+  and not the feature — so before saying a launcher capability is missing, grep for it BY
+  NAME. If you do paste a command, make the path ABSOLUTE (this session's cwd is the repo's
+  PARENT; a relative path silently resolved to nothing for five builds straight) and treat a
+  missing confirmation as failure, not consent.
 
 - **Boot policy**: straight to menu, both halves stay.
 - **The footprint rule**: uninstall leaves NOTHING; every write location in the footprint,
