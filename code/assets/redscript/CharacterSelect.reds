@@ -180,6 +180,10 @@ let m_csOpen: Bool;
 @addField(SingleplayerMenuGameController)
 let m_csCreateArmed: Bool;
 
+// First DEL asks, second deletes. Cleared whenever the caret moves.
+@addField(SingleplayerMenuGameController)
+let m_csDeleteArmed: Bool;
+
 /**
  * THE MENU GOES AWAY WHILE THE SELECTOR IS UP.
  *
@@ -416,12 +420,13 @@ public func MpCsOpen() -> Void {
     // what the menu underneath can do, drawn in the mockup's positions so the composition
     // is right; the presses themselves stay on menu items, which are focusable and
     // controller-navigable in a way a runtime widget is not.
-    this.MpCsStatusLine(c, 68.0, 934.0);
+    this.MpCsActions(c, 68.0, 910.0);
+    this.MpCsEnterButton(c, 1332.0, 894.0);
+    this.MpCsStatusLine(c, 68.0, 984.0);
 
     // The keys, on screen. A screen driven by keys nobody is told about is a screen that
     // does not work, and this one hid its own exit for a whole build.
-    MpCsText(c, 68.0, 1004.0, "[ UP / DOWN ]  CHOOSE          [ ESC ]  BACK TO MENU", 15,
-             n"Medium", MpCsGold());
+    MpCsText(c, 68.0, 1030.0, "[ ESC ]  BACK TO MENU", 14, n"Medium", MpCsGold());
 
     this.MpCsHideMenuList();
 
@@ -636,6 +641,11 @@ public func MpCsCard(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float,
     // Level, right-aligned by measurement rather than by anchor: the card is a canvas and
     // the number is at most four glyphs, so a fixed inset lands it in the same place every
     // time without a second layout pass.
+    if selected && this.m_csDeleteArmed {
+        MpCsText(parent, cx + 128.0, y + 58.0, "ARE YOU SURE?  [ DEL ] AGAIN TO DELETE", 14,
+                 n"Bold", MpCsRed());
+    }
+
     let level = network.GetRosterLevel(Cast<Uint32>(index));
 
     MpCsText(parent, cx + w - 84.0, y + 32.0, s"LV \(level)", 26, n"Regular",
@@ -851,6 +861,95 @@ protected cb func OnGlobalRelease(e: ref<inkPointerEvent>) -> Bool {
     // UP/DOWN walk the slots and select as they go. No confirm step: moving to a character
     // IS choosing it, which is what the caret has always meant on this screen, and it saves
     // inventing a second key nobody was told about.
+    /*
+     * DELETE, AND IT ASKS FIRST. zeldfep: "add the delete and a are you sure you want to
+     * delete prompt to it."
+     *
+     * Two presses, and the prompt is on the screen between them rather than in a popup - the
+     * card itself says ARE YOU SURE, so the thing being destroyed is what is asking. The arm
+     * clears the moment the caret moves, so arming slot 1 and stepping to slot 2 can never
+     * delete slot 1. Same shape as the chat command's guard, which is the one that saved a
+     * character this morning when clicks were falling through to the trash can.
+     *
+     * A character is hours of somebody's evening and the store retires rather than destroys,
+     * but neither is a reason to delete on one press.
+     */
+    if e.IsAction(n"delete_save") {
+        if this.MpCsRosterIndex(this.m_csCursor) < 0 {
+            this.MpCsSay("Nothing in that slot to delete.");
+            e.Handle();
+            return true;
+        }
+
+        if this.m_csDeleteArmed {
+            this.m_csDeleteArmed = false;
+            MpCsLog(s"delete confirmed for slot \(this.m_csCursor + 1)");
+
+            this.MpCsSay("Deleting...");
+
+            let data = new PauseMenuListItemData();
+            data.eventName = n"OnMultiplayerDeleteCharacter";
+
+            // The menu's own handler arms on the first call and sends on the second, so it
+            // is called twice: the confirmation already happened HERE, on the card.
+            this.HandleMenuItemActivate(data);
+            this.HandleMenuItemActivate(data);
+
+            e.Handle();
+            return true;
+        }
+
+        this.m_csDeleteArmed = true;
+        this.MpCsOpen();
+        this.MpCsSay("ARE YOU SURE? Press DEL again to delete this character.");
+        e.Handle();
+        return true;
+    }
+
+    // CREATE, on an empty slot only. Runs the game's whole creator and leaves the menu, so
+    // it is deliberately not on a key anybody presses by accident.
+    /*
+     * ENTER DOES THE OBVIOUS THING FOR WHATEVER THE CARET IS ON.
+     *
+     * zeldfep, 2026-09-08: "enter city need to work for sure" - the mockup's big gold
+     * button, and the reason the screen exists at all. A selection screen you cannot leave
+     * INTO THE GAME is a menu that wastes your time.
+     *
+     *   a character  ->  enter the world as them
+     *   an empty slot ->  run the creator and fill it
+     *
+     * One key for both, because from the player's side it is one intention: "this is who I
+     * am playing". Which of the two happens is a property of the card, not of the key, and
+     * the card says which on its face.
+     */
+    if e.IsAction(n"activate") || e.IsAction(n"one_click_confirm") {
+        if this.MpCsRosterIndex(this.m_csCursor) < 0 {
+            MpCsLog(s"create confirmed for empty slot \(this.m_csCursor + 1)");
+            this.MpCsClose();
+
+            let data = new PauseMenuListItemData();
+            data.eventName = n"OnMultiplayerNewCharacter";
+            this.HandleMenuItemActivate(data);
+
+            e.Handle();
+            return true;
+        }
+
+        MpCsLog(s"entering the city as the character in slot \(this.m_csCursor + 1)");
+        this.MpCsSay("Entering Night City...");
+        this.MpCsClose();
+
+        // The menu's own PLAY entry, not a second route into the world. It arms the join,
+        // closes the screen and loads - and going through it means there is one entry path
+        // to keep correct rather than two that can drift.
+        let play = new PauseMenuListItemData();
+        play.eventName = n"OnMultiplayerContinue";
+        this.HandleMenuItemActivate(play);
+
+        e.Handle();
+        return true;
+    }
+
     if e.IsAction(n"navigate_up") || e.IsAction(n"navigate_down") {
         let step = e.IsAction(n"navigate_down") ? 1 : -1;
 
@@ -898,6 +997,7 @@ public func MpCsStep(delta: Int32) -> Void {
 
     this.m_csCursor = next;
     this.m_csCreateArmed = false;
+    this.m_csDeleteArmed = false;
 
     MpCsLog(s"caret moved to slot \(next + 1)");
 
@@ -909,6 +1009,75 @@ public func MpCsStep(delta: Int32) -> Void {
     }
 
     this.MpCsOpen();
+}
+
+/**
+ * THE MOCKUP'S THREE ACTIONS, at its own coordinates (left 68, bottom 112).
+ *
+ * zeldfep, 2026-09-08: "select and create new and delete from mock up add them we can add
+ * the fatures later."
+ *
+ * Drawn as the mockup draws them - clipped-corner plates, uppercase, letter-spaced - with
+ * one addition it did not need: THE KEY IS ON THE BUTTON. Hand-built widgets cannot be
+ * clicked on this controller (proven across six builds), so a button with no key printed on
+ * it is decoration that lies about what it does. The label says what it does; the bracket
+ * says how.
+ *
+ * Enabled state follows what is actually possible right now, so a button never offers
+ * something the server would refuse: DELETE greys out on an empty slot, CREATE greys out on
+ * an occupied one.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsActions(parent: ref<inkCanvas>, x: Float, y: Float) -> Void {
+    let occupied = this.MpCsRosterIndex(this.m_csCursor) >= 0;
+
+    this.MpCsActionButton(parent, x, y, 236.0, "SELECT", "UP / DOWN", true);
+    this.MpCsActionButton(parent, x + 252.0, y, 300.0, "CREATE NEW", "ENTER", !occupied);
+    this.MpCsActionButton(parent, x + 568.0, y, 236.0, "DELETE", "DEL", occupied);
+}
+
+@addMethod(SingleplayerMenuGameController)
+public func MpCsActionButton(parent: ref<inkCanvas>, x: Float, y: Float, w: Float,
+                             label: String, key: String, enabled: Bool) -> Void {
+    let h = 58.0;
+    let edge = enabled ? MpCsRed() : MpCsRedDim();
+    let text = enabled ? MpCsInk() : MpCsInkFaint();
+
+    MpCsRect(parent, x, y, w, h, MpCsPlate(), enabled ? 0.72 : 0.4);
+    MpCsBorder(parent, x, y, w, h, edge, enabled ? 0.9 : 0.35);
+    MpCsNotch(parent, x + w, y, 18.0, MpCsVoid());
+    MpCsNotch(parent, x, y + h, 18.0, MpCsVoid());
+
+    MpCsText(parent, x + 18.0, y + 10.0, label, 19, n"Bold", text);
+    MpCsText(parent, x + 18.0, y + 34.0, s"[ \(key) ]", 12, n"Regular",
+             enabled ? MpCsGold() : MpCsInkFaint());
+}
+
+/**
+ * ENTER NIGHT CITY - the mockup's one filled button, bottom right.
+ *
+ * The only solid gold thing on the screen, because it is the only action that ends it. Every
+ * other control is an outline; this one is filled, which is the design language's way of
+ * saying "this is the thing you came here to press".
+ *
+ * It reads what the caret is on, so it never offers to enter the world as nobody: an empty
+ * slot turns it into CREATE, which is what ENTER actually does there.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsEnterButton(parent: ref<inkCanvas>, x: Float, y: Float) -> Void {
+    let occupied = this.MpCsRosterIndex(this.m_csCursor) >= 0;
+    let w = 520.0;
+    let h = 92.0;
+
+    MpCsRect(parent, x, y, w, h, MpCsGold(), occupied ? 1.0 : 0.28);
+    MpCsNotch(parent, x + w, y, 26.0, MpCsVoid());
+    MpCsNotch(parent, x, y + h, 26.0, MpCsVoid());
+
+    let ink = occupied ? new HDRColor(0.1, 0.08, 0.0, 1.0) : MpCsInkFaint();
+
+    MpCsText(parent, x + 34.0, y + 16.0, occupied ? "ENTER NIGHT CITY" : "CREATE CHARACTER",
+             34, n"Bold", ink);
+    MpCsText(parent, x + 34.0, y + 62.0, "[ ENTER ]", 14, n"Medium", ink);
 }
 
 // ============================================================================ detail
