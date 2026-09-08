@@ -548,6 +548,21 @@ private func PopulateMenuItemList() -> Void {
     // refreshing again the entry is in the data but never drawn, which looks exactly
     // like the hook silently doing nothing.
     this.m_menuListController.Refresh();
+
+    /*
+     * HIDE AFTER THE REFRESH, NOT BEFORE.
+     *
+     * MpCsOpen hides the menu list, and this Refresh ran afterwards and put it straight
+     * back - so the list has been visible under the selector the whole time. zeldfep's
+     * screenshot shows LOAD CHARACTER, SETTINGS and EXIT reading through the panels, which
+     * is exactly that.
+     *
+     * Same shape as the ESC bug: the thing worked and something later in the same frame
+     * undid it. Ordering, not logic, for the third time today.
+     */
+    if this.m_csOpen {
+        this.MpCsHideMenuList();
+    }
 }
 
 // NOTE THE ref<>. The game's own source declares this as `data : PauseMenuListItemData`,

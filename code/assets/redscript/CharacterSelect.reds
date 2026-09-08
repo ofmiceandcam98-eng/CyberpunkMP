@@ -470,6 +470,7 @@ public func MpCsOpen() -> Void {
     // The keys, on screen. A screen driven by keys nobody is told about is a screen that
     // does not work, and this one hid its own exit for a whole build.
     this.MpCsDrawHitRegions(c);
+    this.MpCsCalibrationTargets(c);
     this.MpCsClickMarker(c);
 
     MpCsText(c, 68.0, 1030.0, "CLICK A SLOT TO SELECT      CLICK IT AGAIN TO ENTER OR CREATE", 15,
@@ -1499,6 +1500,43 @@ public func MpCsDrawHitRegions(parent: ref<inkCanvas>) -> Void {
     // The ENTER button's region.
     MpCsBorder(parent, 1300.0, 860.0, 590.0, 160.0, cyan, 0.85);
     MpCsText(parent, 1300.0, 828.0, "HIT ENTER:  x 1300-1890   y 860-1020", 14, n"Medium", cyan);
+}
+
+/**
+ * TWO CALIBRATION TARGETS, at known points, to be clicked exactly.
+ *
+ * Every number so far came from clicking "somewhere on a card" and reporting what the
+ * crosshair said, and the readings disagree with each other - they imply a non-uniform
+ * stretch, which no single transform produces. That is not zeldfep misreporting; it is that
+ * "the middle of a card" is a 90px-tall target and the error being measured is the same
+ * order of magnitude.
+ *
+ * These are 24px crosses at authored (960, 270) and (960, 810) - dead centre horizontally,
+ * a quarter and three quarters down. Clicking exactly on each gives two unambiguous pairs,
+ * which solve scale and offset for both axes with no interpretation left over:
+ *
+ *     reported = a * authored + b,  from two known authored points
+ *
+ * Then the hit regions come from measurement rather than from a theory about monitors, and
+ * the same arithmetic can be applied to any resolution instead of calibrated to one.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsCalibrationTargets(parent: ref<inkCanvas>) -> Void {
+    let magenta = new HDRColor(1.0, 0.2, 0.75, 1.0);
+
+    this.MpCsTarget(parent, 960.0, 270.0, "A", magenta);
+    this.MpCsTarget(parent, 960.0, 810.0, "B", magenta);
+}
+
+@addMethod(SingleplayerMenuGameController)
+public func MpCsTarget(parent: ref<inkCanvas>, x: Float, y: Float, label: String,
+                       colour: HDRColor) -> Void {
+    MpCsRect(parent, x - 60.0, y - 2.0, 120.0, 4.0, colour, 1.0);
+    MpCsRect(parent, x - 2.0, y - 60.0, 4.0, 120.0, colour, 1.0);
+    MpCsBorder(parent, x - 12.0, y - 12.0, 24.0, 24.0, colour, 1.0);
+
+    MpCsText(parent, x + 20.0, y + 16.0, s"TARGET \(label)  authored \(Cast<Int32>(x)), \(Cast<Int32>(y))",
+             16, n"Bold", colour);
 }
 
 // ============================================================================ detail
