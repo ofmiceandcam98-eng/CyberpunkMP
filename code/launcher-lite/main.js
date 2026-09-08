@@ -5723,6 +5723,41 @@ ipcMain.handle('devServer:set', (_event, host, port) => {
   return { ok: true, host: cleanHost, port: cleanPort }
 })
 
+// The Atlas - the cross-project mind map, on the tailnet beside the coordination feed.
+//
+// Its address is a SETTING and never a literal in this file. This repository is public and
+// ships to every player: docs/CLAUDE-HANDOFF.md placeholders the box's name for exactly
+// that reason, and hardcoding it here would undo that in the one artefact everybody
+// downloads. An admin pastes it once; nobody else ever sees the field do anything.
+ipcMain.handle('atlas:get', () => {
+  if (!isAdmin()) return { ok: false, error: 'Not permitted' }
+  return { ok: true, url: loadSettings().atlasUrl || null }
+})
+
+ipcMain.handle('atlas:open', (_event, url) => {
+  if (!isAdmin()) return { ok: false, error: 'The Atlas is for people with the dev role.' }
+
+  const wanted = String(url || loadSettings().atlasUrl || '').trim()
+  if (!wanted) return { ok: false, error: 'No address saved yet - paste the Atlas URL first.' }
+
+  let parsed
+  try {
+    parsed = new URL(wanted)
+  } catch {
+    return { ok: false, error: `Not a URL: ${wanted}` }
+  }
+
+  // openExternal hands the string to the OS, which launches whatever is registered to the
+  // scheme. A file:// or custom scheme typed into this box would be a launch, not a browse.
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { ok: false, error: 'Only http:// and https:// addresses open here.' }
+  }
+
+  saveSettings({ atlasUrl: parsed.toString() })
+  shell.openExternal(parsed.toString())
+  return { ok: true, url: parsed.toString() }
+})
+
 // Pre-releases are how test builds travel: deliberately invisible to player launchers
 // (auto-update reads releases/latest, which skips them), one click for a dev.
 ipcMain.handle('prerelease:list', async () => {

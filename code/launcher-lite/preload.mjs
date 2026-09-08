@@ -69,6 +69,9 @@ contextBridge.exposeInMainWorld('launcher', {
 
   // Test builds: pre-releases from GitHub, invisible to player launchers. Install swaps
   // the mod DLL (keeping the shipped one); restore puts it back. Dev role required.
+  atlasGet: () => ipcRenderer.invoke('atlas:get'),
+  atlasOpen: (url) => ipcRenderer.invoke('atlas:open', url),
+
   prereleaseList: () => ipcRenderer.invoke('prerelease:list'),
   prereleaseInstall: (tag) => ipcRenderer.invoke('prerelease:install', tag),
   prereleaseRestore: () => ipcRenderer.invoke('prerelease:restore'),
