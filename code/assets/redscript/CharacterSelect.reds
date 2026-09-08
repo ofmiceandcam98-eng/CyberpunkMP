@@ -855,20 +855,35 @@ protected cb func OnMpCsCardRelease(e: ref<inkPointerEvent>) -> Bool {
 }
 
 /**
- * The action's REAL name, not a guess at it.
+ * Names the action by testing candidates. The clumsy version, restored, because it is the
+ * one that works.
  *
- * This replaces a list of fifteen candidates tested with IsAction, which was the honest
- * shape while GetActionName() had no verified path to a String - it returns an inkActionName,
- * not a CName. scc says ToString() takes it, so the guessing ends here.
+ * ToString(e.GetActionName()) COMPILES AND IS USELESS - it prints the literal string
+ * "[inkActionName]", the type rather than the value. scc accepting it is not the same as it
+ * doing anything, which is the same lesson as everything else today: compiling is not
+ * evidence, and the only proof is a line in a log from a real machine.
  *
- * It matters because the guessing was wrong. ESC does not arrive as 'back': zeldfep pressed
- * it, the handler ran, and the only names that appeared were "activate", "click" and "?".
- * Four builds bound a key by reading CDPR's own pregame menus and assuming the same action
- * reaches a wrapped handler, and all four did nothing. One line of measurement beats another
- * reading of the source.
+ * The list below is no longer guesswork. Every name here has either been OBSERVED arriving
+ * in zeldfep's logs - click, activate, back, cancel, close_popup - or is cheap to keep
+ * alongside one that was. That is why the two useful bindings on this screen exist at all.
  */
 public func MpCsActionName(e: ref<inkPointerEvent>) -> String {
-    return ToString(e.GetActionName());
+    if e.IsAction(n"back") { return "back"; }
+    if e.IsAction(n"cancel") { return "cancel"; }
+    if e.IsAction(n"close_popup") { return "close_popup"; }
+    if e.IsAction(n"click") { return "click"; }
+    if e.IsAction(n"activate") { return "activate"; }
+    if e.IsAction(n"one_click_confirm") { return "one_click_confirm"; }
+    if e.IsAction(n"delete_save") { return "delete_save"; }
+    if e.IsAction(n"navigate_up") { return "navigate_up"; }
+    if e.IsAction(n"navigate_down") { return "navigate_down"; }
+    if e.IsAction(n"navigate_left") { return "navigate_left"; }
+    if e.IsAction(n"navigate_right") { return "navigate_right"; }
+    if e.IsAction(n"mouse_move") { return "mouse_move"; }
+    if e.IsAction(n"next_menu") { return "next_menu"; }
+    if e.IsAction(n"child_menu") { return "child_menu"; }
+
+    return "?";
 }
 
 /**
