@@ -428,8 +428,20 @@ public func MpCsOpen() -> Void {
     // does not work, and this one hid its own exit for a whole build.
     MpCsText(c, 68.0, 1030.0, "[ ESC ]  BACK TO MENU", 14, n"Medium", MpCsGold());
 
-    this.MpCsHideMenuList();
-
+    /*
+     * THE MENU STAYS VISIBLE UNTIL INPUT IS PROVEN.
+     *
+     * Hiding it is right for the finished screen and wrong right now: ESC does not work,
+     * hand-built click targets do not work, so with the menu hidden there is NO way out of
+     * this screen except killing the game. That has happened to zeldfep three times today.
+     *
+     * While the menu is visible, clicking any menu item leaves - so the screen can never be
+     * a trap, whatever else is broken. The overlap looks wrong and that is the correct
+     * trade: an ugly screen you can leave beats a clean one you cannot.
+     *
+     * Re-enable by restoring this.MpCsHideMenuList() here, ONLY once a key is confirmed to
+     * close the screen on a real machine.
+     */
     MpCsLog(s"character screen open - \(unlocked) of \(MpCsMaxSlots()) slot(s) unlocked, caret on \(this.m_csCursor)");
 
     /*
@@ -823,6 +835,38 @@ protected cb func OnMpCsCardRelease(e: ref<inkPointerEvent>) -> Bool {
 }
 
 /**
+ * Names the action on an input event, by asking rather than by reading.
+ *
+ * inkInputEvent exposes GetActionName() : inkActionName, which is not a String and has no
+ * obvious way to become one - so this tests the candidates instead. Clumsy, and it is the
+ * only form that cannot fail on an API I have not verified, which matters after four
+ * separate bindings that compiled cleanly and did nothing on a real machine.
+ *
+ * The list is every action CDPR's own pregame menus use, plus the cancel spellings worth
+ * ruling out. Anything not on it comes back as "?" - which is itself an answer: it means the
+ * handler IS being reached and the name is simply not one I have tried.
+ */
+public func MpCsActionName(e: ref<inkPointerEvent>) -> String {
+    if e.IsAction(n"back") { return "back"; }
+    if e.IsAction(n"cancel") { return "cancel"; }
+    if e.IsAction(n"ui_cancel") { return "ui_cancel"; }
+    if e.IsAction(n"close_popup") { return "close_popup"; }
+    if e.IsAction(n"activate") { return "activate"; }
+    if e.IsAction(n"click") { return "click"; }
+    if e.IsAction(n"one_click_confirm") { return "one_click_confirm"; }
+    if e.IsAction(n"delete_save") { return "delete_save"; }
+    if e.IsAction(n"navigate_up") { return "navigate_up"; }
+    if e.IsAction(n"navigate_down") { return "navigate_down"; }
+    if e.IsAction(n"navigate_left") { return "navigate_left"; }
+    if e.IsAction(n"navigate_right") { return "navigate_right"; }
+    if e.IsAction(n"next_menu") { return "next_menu"; }
+    if e.IsAction(n"child_menu") { return "child_menu"; }
+    if e.IsAction(n"system_notification_confirm") { return "system_notification_confirm"; }
+
+    return "?";
+}
+
+/**
  * INPUT COMES THROUGH THE GAME'S OWN HANDLER, NOT THROUGH OUR WIDGETS.
  *
  * Hand-built rectangles with SetInteractive(true) and an OnRelease callback never once
@@ -843,7 +887,25 @@ protected cb func OnMpCsCardRelease(e: ref<inkPointerEvent>) -> Bool {
  */
 @wrapMethod(SingleplayerMenuGameController)
 protected cb func OnGlobalRelease(e: ref<inkPointerEvent>) -> Bool {
-    if !this.m_csOpen || e.IsHandled() {
+    if !this.m_csOpen {
+        return wrappedMethod(e);
+    }
+
+    /*
+     * LOG WHAT ACTUALLY ARRIVES. Three builds have now bound keys by reading CDPR's own
+     * pregame menus and assuming the same actions reach us - back, activate,
+     * one_click_confirm, delete_save, navigate_up/down - and ESC still does nothing.
+     *
+     * That is guessing. This prints the name of every action that reaches this handler, so
+     * one session in the menu turns the binding from an inference into a fact. It also
+     * answers the prior question: if NOTHING is logged, the wrap itself is not being called
+     * and the action names were never the problem.
+     *
+     * Comes out once the bindings are known - it is noisy by design.
+     */
+    MpCsLog(s"input: \(MpCsActionName(e)) handled=\(e.IsHandled())");
+
+    if e.IsHandled() {
         return wrappedMethod(e);
     }
 
