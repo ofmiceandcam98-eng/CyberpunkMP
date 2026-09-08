@@ -1356,8 +1356,13 @@ public func MpCsClickMarker(parent: ref<inkCanvas>) -> Void {
     let x = this.m_csClickX;
     let y = this.m_csClickY;
 
-    MpCsRect(parent, x - 40.0, y - 1.0, 80.0, 2.0, new HDRColor(0.24, 0.9, 0.94, 1.0), 1.0);
-    MpCsRect(parent, x - 1.0, y - 40.0, 2.0, 80.0, new HDRColor(0.24, 0.9, 0.94, 1.0), 1.0);
+    // Thick enough to see. At 2px it drew correctly and zeldfep could not find it - only
+    // the coordinate label registered - which is its own small lesson about debug output.
+    let cyan = new HDRColor(0.24, 0.9, 0.94, 1.0);
+
+    MpCsRect(parent, x - 60.0, y - 3.0, 120.0, 6.0, cyan, 1.0);
+    MpCsRect(parent, x - 3.0, y - 60.0, 6.0, 120.0, cyan, 1.0);
+    MpCsRect(parent, x - 12.0, y - 12.0, 24.0, 24.0, cyan, 1.0);
 
     MpCsText(parent, x + 12.0, y + 10.0, s"\(Cast<Int32>(x)), \(Cast<Int32>(y))", 15,
              n"Medium", new HDRColor(0.24, 0.9, 0.94, 1.0));
@@ -1450,10 +1455,22 @@ public func MpCsRow(parent: ref<inkCanvas>, x: Float, y: Float, w: Float, key: S
 
 // ============================================================================ status
 
+/**
+ * The server's answer, where the player can see it.
+ *
+ * "the server refused: Leave the world before switching characters" was written to the log
+ * and NOWHERE ELSE. zeldfep clicked an empty slot, got no creator and no explanation, and
+ * the only record of why was a warning line on a box in another room.
+ *
+ * A refusal is the answer to the thing somebody just pressed. It belongs on the screen that
+ * asked, in the colour the design language uses for "this did not happen".
+ */
 @addMethod(SingleplayerMenuGameController)
 public func MpCsStatusLine(parent: ref<inkCanvas>, x: Float, y: Float) -> Void {
     let network = GameInstance.GetNetworkWorldSystem();
     let message = "";
+
+    let refused = false;
 
     if IsDefined(network) {
         let error = network.GetCharacterError();
@@ -1461,11 +1478,31 @@ public func MpCsStatusLine(parent: ref<inkCanvas>, x: Float, y: Float) -> Void {
         // A refusal outranks everything - it is the answer to the press they just made.
         if NotEquals(error, "") {
             message = error;
+            refused = true;
         } else {
             if !network.HasCharacter() {
-                message = "No character yet - CREATE NEW CHARACTER makes one.";
+                message = "No character yet - click an empty slot to make one.";
             }
         }
+    }
+
+    /*
+     * A REFUSAL LOOKS LIKE A REFUSAL.
+     *
+     * This was gold at 19px on a screen already full of gold, and it disappeared. zeldfep
+     * clicked an empty slot, the server answered "Leave the world before switching
+     * characters", and all he saw was nothing happening - the message was on screen and
+     * indistinguishable from the hint text it replaced.
+     *
+     * Red, larger, and on its own plate. The design language reserves red for the thing
+     * that did not happen, and this is the one place on the screen that ever says so.
+     */
+    if refused {
+        MpCsRect(parent, x - 14.0, y - 12.0, 1180.0, 54.0, MpCsRed(), 0.16);
+        MpCsRect(parent, x - 14.0, y - 12.0, 5.0, 54.0, MpCsRed(), 1.0);
+
+        this.m_csStatus = MpCsText(parent, x + 8.0, y, message, 22, n"Bold", MpCsRed());
+        return;
     }
 
     this.m_csStatus = MpCsText(parent, x, y, message, 19, n"Regular", MpCsGold());
