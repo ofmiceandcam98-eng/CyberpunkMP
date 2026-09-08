@@ -992,11 +992,22 @@ protected cb func OnGlobalRelease(e: ref<inkPointerEvent>) -> Bool {
         // this line is what says so.
         MpCsLog(s"click at \(pos.X), \(pos.Y)");
 
-        this.m_csClickX = pos.X;
-        this.m_csClickY = pos.Y;
+        /*
+         * Screen pixels in, authored units out. Everything downstream - the hit regions, the
+         * crosshair, the draw map - is in authored units, so the conversion happens once here
+         * rather than being remembered at each use.
+         */
+        let perUnit = this.MpCsPixelsPerUnit();
+        let ax = pos.X / perUnit;
+        let ay = pos.Y / perUnit;
+
+        MpCsLog(s"click screen=\(pos.X),\(pos.Y)  authored=\(ax),\(ay)");
+
+        this.m_csClickX = ax;
+        this.m_csClickY = ay;
         this.m_csClicked = true;
 
-        this.MpCsClickAt(pos.X, pos.Y);
+        this.MpCsClickAt(ax, ay);
         e.Handle();
         return true;
     }
@@ -1537,6 +1548,65 @@ public func MpCsTarget(parent: ref<inkCanvas>, x: Float, y: Float, label: String
 
     MpCsText(parent, x + 20.0, y + 16.0, s"TARGET \(label)  authored \(Cast<Int32>(x)), \(Cast<Int32>(y))",
              16, n"Bold", colour);
+}
+
+/**
+ * HOW MANY SCREEN PIXELS ONE AUTHORED UNIT IS WORTH.
+ *
+ * THE BUG THIS EXISTS FOR, and it took a day to see: the menu root is a FIXED virtual space.
+ * It measures 3840x2160 on zeldfep's 1440p monitor AND on Cam's 1080p one - confirmed from
+ * both their logs - so DRAWING is identical for everybody. But GetScreenSpacePosition returns
+ * REAL DISPLAY PIXELS. On 1080p those happen to equal authored units and everything works by
+ * coincidence, which is why Cam has never seen a problem. On 1440p every click reports 1.333x
+ * too large, and the error grows with distance from the origin: a few pixels at the top card,
+ * over a hundred by the bottom one.
+ *
+ * So the composition is right, the click is right, and the two are in different units.
+ *
+ * The game knows its own resolution, so ASK IT rather than calibrating per person. Anything
+ * unreadable falls back to 1.0, which is exactly today's behaviour - correct on 1080p and
+ * wrong elsewhere - so a failure here cannot be worse than what already ships.
+ *
+ * The raw string is logged. scc accepts both ConfigVarListString and ConfigVarListName casts,
+ * and accepting a cast is not the same as the cast succeeding - the ToString(inkActionName)
+ * lesson from earlier today, which compiled cleanly and printed the type name.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsPixelsPerUnit() -> Float {
+    let settings = GameInstance.GetSettingsSystem(GetGameInstance());
+
+    if !IsDefined(settings) {
+        return 1.0;
+    }
+
+    let variable = settings.GetVar(n"/video/display", n"Resolution") as ConfigVarListString;
+
+    if !IsDefined(variable) {
+        MpCsLog(s"resolution: not a ConfigVarListString - falling back to 1:1");
+        return 1.0;
+    }
+
+    let text = variable.GetValue();
+    let parts = StrSplit(text, "x");
+
+    if ArraySize(parts) < 2 {
+        MpCsLog(s"resolution: '\(text)' does not parse - falling back to 1:1");
+        return 1.0;
+    }
+
+    let height = StringToInt(parts[1]);
+
+    if height < 240 {
+        MpCsLog(s"resolution: '\(text)' gave height \(height) - falling back to 1:1");
+        return 1.0;
+    }
+
+    // 1080 is the height the composition is authored in, not a magic number: MpCsRect and
+    // every coordinate on this screen are in 1920x1080 units.
+    let ratio = Cast<Float>(height) / 1080.0;
+
+    MpCsLog(s"resolution: '\(text)' -> \(height)px tall, \(ratio) screen pixels per authored unit");
+    return ratio;
 }
 
 // ============================================================================ detail
