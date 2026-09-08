@@ -5729,9 +5729,38 @@ ipcMain.handle('devServer:set', (_event, host, port) => {
 // ships to every player: docs/CLAUDE-HANDOFF.md placeholders the box's name for exactly
 // that reason, and hardcoding it here would undo that in the one artefact everybody
 // downloads. An admin pastes it once; nobody else ever sees the field do anything.
-ipcMain.handle('atlas:get', () => {
+ipcMain.handle('atlas:get', async () => {
   if (!isAdmin()) return { ok: false, error: 'Not permitted' }
-  return { ok: true, url: loadSettings().atlasUrl || null }
+
+  const saved = loadSettings().atlasUrl
+  if (saved) return { ok: true, url: saved }
+
+  // Nothing saved: ask the coordination API, which verifies the Discord dev role and is
+  // the same route the dev key already travels. A dev never types the address, and it
+  // never appears anywhere a player can read - not in this repo, not in server.json.
+  const token = loadToken()
+  if (!token) return { ok: true, url: null }
+
+  const published = await fetchPublishedServer()
+  const host = published?.coordHost || loadSettings().serverHost || published?.host
+  const port = published?.coordPort || 11780
+  if (!host) return { ok: true, url: null }
+
+  try {
+    const response = await axios.post(
+      `http://${host}:${port}/v1/atlas`,
+      { discordToken: token },
+      { timeout: 8000, validateStatus: () => true })
+
+    if (response.status !== 200 || !response.data?.url) return { ok: true, url: null }
+
+    saveSettings({ atlasUrl: response.data.url })
+    return { ok: true, url: response.data.url, discovered: true }
+  } catch {
+    // Reachable only over Tailscale, and this is a convenience - the field still works
+    // by hand, so a failure here is not worth a red banner.
+    return { ok: true, url: null }
+  }
 })
 
 ipcMain.handle('atlas:open', (_event, url) => {

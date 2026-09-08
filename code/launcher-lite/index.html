@@ -1392,8 +1392,8 @@
               <div class="tool-name">The Atlas</div>
               <div class="tool-desc">
                 The mind map across every project - what is open, blocked, parked or just
-                thought of, on the same board both assistants write to. Paste the address
-                once and it is remembered.
+                thought of, on the same board both assistants write to. The address fills
+                itself in from your dev role; the box is there for overriding it.
               </div>
               <input type="text" id="atlasUrl" style="margin-top:8px"
                      placeholder="http://host:11782" spellcheck="false" autocomplete="off">
@@ -2787,7 +2787,10 @@
   // half-typed address that was never accepted cannot look like the stored one.
   async function refreshAtlas () {
     const result = await window.launcher.atlasGet()
-    if (result.ok && result.url) $('atlasUrl').value = result.url
+    if (!result.ok || !result.url) return
+    $('atlasUrl').value = result.url
+    // Only on the first discovery - saying it every time the pane opens is noise.
+    if (result.discovered) setSettingsStatus('Atlas address found from your dev role.', 'good')
   }
 
   $('atlasOpen').addEventListener('click', async () => {

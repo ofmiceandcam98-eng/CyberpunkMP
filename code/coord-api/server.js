@@ -484,6 +484,97 @@ function withinRate (id, limit = 60, windowMs = 60_000) {
  * guild, and checks those against the role map the game server publishes. Same source of
  * truth as the in-game permissions, so the two cannot disagree about who is a dev.
  */
+/**
+ * Does this Discord sign-in belong to somebody with the dev role?
+ *
+ * Shared by /v1/dev-key and /v1/atlas, deliberately: a second copy of a role check is a
+ * second place for it to be wrong, and these two hand out different things to the same
+ * set of people.
+ *
+ * Resolves { ok: true, identity } or { ok: false, status, error } - the caller sends it,
+ * because the refusal wording differs by what was being asked for.
+ */
+async function verifyDevRole (token) {
+  // The role map the game server writes. No map means nothing to verify against, and
+  // answering on that basis would defeat the point of asking.
+  let roleMap
+  try {
+    roleMap = JSON.parse(fs.readFileSync(path.join(PUBLISH_DIR, 'roles.json'), 'utf8'))
+  } catch {
+    return { ok: false, status: 503, error: 'The role map is not available yet. Start the game server once.' }
+  }
+
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    'User-Agent': 'CyberpunkMP-Coord (https://github.com/ofmiceandcam98-eng/CyberpunkMP, 1.0)'
+  }
+
+  let identity
+  try {
+    const me = await fetch('https://discord.com/api/v10/users/@me', { headers })
+    if (!me.ok) return { ok: false, status: 401, error: 'That Discord sign-in is not valid.' }
+    identity = await me.json()
+  } catch {
+    return { ok: false, status: 503, error: 'Could not reach Discord.' }
+  }
+
+  // The owner always qualifies, whatever the roles say.
+  if (roleMap.owner && roleMap.owner === identity.id) return { ok: true, identity }
+
+  try {
+    const member = await fetch(
+      `https://discord.com/api/v10/users/@me/guilds/${roleMap.guildId}/member`, { headers })
+
+    if (member.status === 404) return { ok: false, status: 403, error: 'You are not in the Discord.' }
+    if (!member.ok) return { ok: false, status: 401, error: 'That Discord sign-in is not valid.' }
+
+    const held = (await member.json()).roles || []
+    const granting = (roleMap.roles || [])
+      .filter((role) => role.level === 'admin' || role.level === 'owner')
+      .map((role) => role.id)
+
+    if (held.some((id) => granting.includes(id))) return { ok: true, identity }
+  } catch {
+    return { ok: false, status: 503, error: 'Could not reach Discord.' }
+  }
+
+  return { ok: false, status: 403, notDev: true, error: 'That account does not have the dev role.' }
+}
+
+// Where the Atlas lives. From the environment, never a literal: this repository is public
+// and docs/CLAUDE-HANDOFF.md placeholders the box's name for that reason. Set it in the
+// deployment's .env, and only somebody with the dev role is ever told the answer.
+const ATLAS_URL = process.env.NCO_ATLAS_URL || ''
+
+async function handleAtlas (req, res) {
+  let body
+  try {
+    body = await readBody(req)
+  } catch (error) {
+    return send(res, 400, { error: error.message })
+  }
+
+  const token = String(body.discordToken || '').trim()
+  if (!token) return send(res, 400, { error: 'A Discord token is required.' })
+
+  const verdict = await verifyDevRole(token)
+  if (!verdict.ok) {
+    return send(res, verdict.status, {
+      error: verdict.notDev ? 'The Atlas is for people with the dev role.' : verdict.error
+    })
+  }
+
+  if (!ATLAS_URL) {
+    return send(res, 503, {
+      error: 'No Atlas address is configured on this deployment.',
+      fix: 'set NCO_ATLAS_URL in the deployment .env and restart the coord service'
+    })
+  }
+
+  console.log(`[atlas-url] told ${verdict.identity.username || verdict.identity.id}`)
+  return send(res, 200, { ok: true, url: ATLAS_URL })
+}
+
 async function handleDevKey (req, res) {
   let body
   try {
@@ -495,54 +586,13 @@ async function handleDevKey (req, res) {
   const token = String(body.discordToken || '').trim()
   if (!token) return send(res, 400, { error: 'A Discord token is required.' })
 
-  // The role map the game server writes. No map means nothing to verify against, and
-  // handing out a key on that basis would defeat the point of asking.
-  let roleMap
-  try {
-    roleMap = JSON.parse(fs.readFileSync(path.join(PUBLISH_DIR, 'roles.json'), 'utf8'))
-  } catch {
-    return send(res, 503, { error: 'The role map is not available yet. Start the game server once.' })
+  const verdict = await verifyDevRole(token)
+  if (!verdict.ok) {
+    return send(res, verdict.status, {
+      error: verdict.notDev ? 'The dev key is for people with the dev role. Ask Cam.' : verdict.error
+    })
   }
-
-  const headers = {
-    Authorization: `Bearer ${token}`,
-    'User-Agent': 'CyberpunkMP-Coord (https://github.com/ofmiceandcam98-eng/CyberpunkMP, 1.0)'
-  }
-
-  let identity
-  try {
-    const me = await fetch('https://discord.com/api/v10/users/@me', { headers })
-    if (!me.ok) return send(res, 401, { error: 'That Discord sign-in is not valid.' })
-    identity = await me.json()
-  } catch {
-    return send(res, 503, { error: 'Could not reach Discord.' })
-  }
-
-  // The owner always qualifies, whatever the roles say.
-  let qualifies = roleMap.owner && roleMap.owner === identity.id
-
-  if (!qualifies) {
-    try {
-      const member = await fetch(
-        `https://discord.com/api/v10/users/@me/guilds/${roleMap.guildId}/member`, { headers })
-
-      if (member.status === 404) return send(res, 403, { error: 'You are not in the Discord.' })
-      if (!member.ok) return send(res, 401, { error: 'That Discord sign-in is not valid.' })
-
-      const held = (await member.json()).roles || []
-      const granting = (roleMap.roles || [])
-        .filter((role) => role.level === 'admin' || role.level === 'owner')
-        .map((role) => role.id)
-
-      qualifies = held.some((id) => granting.includes(id))
-    } catch {
-      return send(res, 503, { error: 'Could not reach Discord.' })
-    }
-  }
-
-  if (!qualifies) {
-    return send(res, 403, { error: 'The dev key is for people with the dev role. Ask Cam.' })
-  }
+  const identity = verdict.identity
 
   const participant = loadParticipants().find((p) => !p.revoked && p.id === DEV_PARTICIPANT_ID)
   if (!participant) {
@@ -666,7 +716,9 @@ const ENDPOINTS = [
   'GET  /v1/participants',
   'GET  /v1/updates?limit=&since=&from=&kind=',
   'POST /v1/updates   {"title","body","kind","refs"}',
-  'POST /v1/publish'
+  'POST /v1/publish',
+  'POST /v1/dev-key   {"discordToken"}  - dev role only',
+  'POST /v1/atlas     {"discordToken"}  - dev role only, returns the Atlas address'
 ]
 
 async function handleAdmin (req, res, url) {
@@ -732,6 +784,10 @@ const server = http.createServer(async (req, res) => {
 
     // Before the key check below, because this is how a dev gets a key in the first place.
     if (url.pathname === '/v1/dev-key' && req.method === 'POST') return handleDevKey(req, res)
+
+    // Same reason: the launcher asks this before it has anything but a Discord sign-in,
+    // and the answer is an address a player has no business learning.
+    if (url.pathname === '/v1/atlas' && req.method === 'POST') return handleAtlas(req, res)
 
     if (url.pathname.startsWith('/admin/')) return handleAdmin(req, res, url)
     if (url.pathname.startsWith('/v1/')) return handleApi(req, res, url)

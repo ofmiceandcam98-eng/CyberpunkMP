@@ -115,6 +115,10 @@ services:
       # State kept outside the source mount, so the source can stay read-only and the
       # keys and history are one obvious directory to back up.
       NCO_COORD_DATA: /data
+      # Where the Atlas lives, handed only to callers who prove the Discord dev role
+      # (POST /v1/atlas). Empty here and set in the deployment's .env: this file is
+      # public, and the address is not something a player should be able to read.
+      NCO_ATLAS_URL: ${NCO_ATLAS_URL:-}
       # What the service TELLS people to connect to.
       #
       # It discovers this by scanning local interfaces for a 100.64/10 address. That
