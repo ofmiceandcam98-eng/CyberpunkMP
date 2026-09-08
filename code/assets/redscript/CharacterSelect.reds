@@ -461,6 +461,7 @@ public func MpCsOpen() -> Void {
 
     // The keys, on screen. A screen driven by keys nobody is told about is a screen that
     // does not work, and this one hid its own exit for a whole build.
+    this.MpCsDrawHitRegions(c);
     this.MpCsClickMarker(c);
 
     MpCsText(c, 68.0, 1030.0, "CLICK A SLOT TO SELECT      CLICK IT AGAIN TO ENTER OR CREATE", 15,
@@ -1410,6 +1411,52 @@ public func MpCsClickMarker(parent: ref<inkCanvas>) -> Void {
 
     MpCsText(parent, x + 12.0, y + 10.0, s"\(Cast<Int32>(x)), \(Cast<Int32>(y))", 15,
              n"Medium", new HDRColor(0.24, 0.9, 0.94, 1.0));
+}
+
+/**
+ * THE HIT REGIONS, DRAWN.
+ *
+ * zeldfep, 2026-09-08: "how about you let me draw where the buttons are instead of
+ * guessing." Fair. Three builds of mine inferred these from click samples and a reported
+ * feel, which is a slow way to learn a number somebody can just read off the screen.
+ *
+ * Every region this screen tests is outlined in cyan with its own label and coordinates. The
+ * gap between an outline and the thing it is supposed to cover IS the correction, visible at
+ * a glance instead of derived from three data points and an assumption about bias.
+ *
+ * Nothing here changes behaviour - it draws exactly what MpCsClickAt tests, so what you see
+ * is what is live. If an outline sits in the right place and clicking still misses, the
+ * regions were never the problem.
+ *
+ * Comes out once the geometry is agreed.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsDrawHitRegions(parent: ref<inkCanvas>) -> Void {
+    let cyan = new HDRColor(0.24, 0.9, 0.94, 1.0);
+
+    // The card column, exactly as MpCsClickAt bounds it.
+    let first = 322.0;
+    let pitch = 99.0;
+    let height = 90.0;
+    let slot = 0;
+
+    while slot < MpCsMaxSlots() {
+        let top = first + Cast<Float>(slot) * pitch;
+
+        MpCsBorder(parent, 40.0, top, 660.0, height, cyan, 0.85);
+        MpCsText(parent, 706.0, top + 4.0, s"HIT \(slot + 1):  y \(Cast<Int32>(top)) - \(Cast<Int32>(top + height))",
+                 14, n"Medium", cyan);
+
+        // The centre this slot competes on under nearest-wins.
+        let centre = top + height / 2.0;
+        MpCsRect(parent, 40.0, centre - 1.0, 660.0, 2.0, cyan, 0.5);
+
+        slot += 1;
+    }
+
+    // The ENTER button's region.
+    MpCsBorder(parent, 1300.0, 860.0, 590.0, 160.0, cyan, 0.85);
+    MpCsText(parent, 1300.0, 828.0, "HIT ENTER:  x 1300-1890   y 860-1020", 14, n"Medium", cyan);
 }
 
 // ============================================================================ detail
