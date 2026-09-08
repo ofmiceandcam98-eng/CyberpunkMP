@@ -1241,30 +1241,74 @@ public func MpCsEnterButton(parent: ref<inkCanvas>, x: Float, y: Float) -> Void 
  */
 @addMethod(SingleplayerMenuGameController)
 public func MpCsClickAt(x: Float, y: Float) -> Void {
-    // The ENTER button first - it overlaps nothing and is the most consequential.
-    if x >= 1332.0 && x <= 1852.0 && y >= 894.0 && y <= 986.0 {
+    // The ENTER button first, with a generous margin. It overlaps nothing, so being loose
+    // here costs nothing and being tight costs a press that appears to do nothing.
+    if x >= 1300.0 && x <= 1890.0 && y >= 860.0 && y <= 1020.0 {
         this.MpCsAct();
         return;
     }
 
+    /*
+     * NEAREST CARD WINS, rather than strict bands.
+     *
+     * zeldfep's three measurements all landed in the LOWER half of their card:
+     *
+     *   372 -> slot 1 (band 322-412, centre 367)
+     *   590 -> slot 3 (band 520-610, centre 565)
+     *   653 -> slot 4 (band 619-709, centre 664)
+     *
+     * Consistent with a downward bias of roughly 40px between where the cursor looks and
+     * where the click reports - which is exactly his "I have to click a little above where
+     * the button actually is", and why "slot 2 is hard to get": it is the one card bracketed
+     * on both sides, so the bias pushes a centred aim into slot 3.
+     *
+     * Measuring that bias and subtracting a constant would work until it was wrong - a
+     * different resolution, a different UI scale, and it is off again with nobody knowing
+     * why. Nearest-centre is correct for ANY offset smaller than half the 99px pitch, and it
+     * degrades gently rather than snapping to the wrong card at a boundary. It also removes
+     * the dead gaps between cards, where a click previously did nothing at all.
+     *
+     * The x range stays a plain bound: horizontally there is only one column, so there is
+     * nothing to be nearest TO.
+     */
+    if x < 40.0 || x > 700.0 {
+        return;
+    }
+
+    let first = 322.0;
+    let pitch = 99.0;
+    let height = 90.0;
+
+    // Outside the roster block entirely, with a card's worth of slack at each end so a click
+    // just above the first or below the last still reads as aiming at it.
+    if y < first - height || y > first + Cast<Float>(MpCsMaxSlots() - 1) * pitch + height * 2.0 {
+        return;
+    }
+
+    let best = -1;
+    let bestDistance = 99999.0;
     let slot = 0;
 
     while slot < MpCsMaxSlots() {
-        let top = 322.0 + Cast<Float>(slot) * 99.0;
+        let centre = first + Cast<Float>(slot) * pitch + height / 2.0;
+        let distance = AbsF(y - centre);
 
-        // The selected card sits 14px right; accept from the un-offset edge so the hit area
-        // does not move under the cursor when the caret lands on it.
-        if x >= 68.0 && x <= 650.0 && y >= top && y <= top + 90.0 {
-            if this.m_csCursor == slot {
-                this.MpCsAct();
-            } else {
-                this.MpCsSelect(slot);
-            }
-
-            return;
+        if distance < bestDistance {
+            bestDistance = distance;
+            best = slot;
         }
 
         slot += 1;
+    }
+
+    if best < 0 {
+        return;
+    }
+
+    if this.m_csCursor == best {
+        this.MpCsAct();
+    } else {
+        this.MpCsSelect(best);
     }
 }
 
