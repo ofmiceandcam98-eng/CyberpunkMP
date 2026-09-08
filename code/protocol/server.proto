@@ -12,6 +12,19 @@ message Settings {
     uint32 interest_radius = 5;
 }
 
+// Declared BEFORE anything that uses it, and that is load-bearing rather than tidy.
+//
+// The netpack generator emits C++ in FILE ORDER. With Attribute defined further down, adding
+// 'repeated Attribute' to CharacterSummary produced a getter for a member it had never
+// declared: server.gen.cpp(473): error C2065: 'attributes': undeclared identifier. Real
+// protobuf does not care about ordering; this generator does.
+//
+// So: a message must appear above every message that references it.
+message Attribute {
+    uint32 type = 1;
+    int32 value = 2;
+}
+
 // Enough to draw one row of a character selector, and deliberately no more.
 //
 // Not the whole record: the appearance blob is 9KB and nothing on a selection screen needs
@@ -120,10 +133,6 @@ message AuthenticationResponse {
     int32 character_slots = 7;
 }
 
-message Attribute {
-    uint32 type = 1;
-    int32 value = 2;
-}
 
 message Perk {
     uint32 type = 1;
