@@ -80,6 +80,28 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   - Corollary for either stream: **before saying a launcher capability is missing, grep for
     it by name.** "The updater does not do X" is not evidence that nothing does X.
 
+- **FOUND IT? FLAG IT ON THE ATLAS, THEN CARRY ON** (zeldfep, 2026-09-08): *"Hard rule to
+  ledger when we find new issues flag them on atlas so we can come back to 'what we find'
+  instead of 'WHAT WE ARE WORKING ON'."* Anything noticed that is NOT the task in hand gets
+  an Atlas branch the moment it is noticed - not at the end of the session, not "if it still
+  matters later".
+  - **The distinction the rule protects.** A session has one thing it is working on and
+    produces a dozen things it found. The first is remembered because somebody is holding
+    it; the second evaporates when the session ends. The Atlas is where the second kind
+    lives, so returning to this project means reading a list of findings rather than trying
+    to reconstruct what was in somebody's head.
+  - **It is cheap and the alternative is not.** A branch is one POST. 2026-09-08 produced,
+    among others: a HUD widget spawned on the menu root swallows all input; a DelayCallback
+    written to make silence impossible was itself silent; test builds were deleted and the
+    numbering silently reset so two builds can share a name. Every one of those would have
+    been lost, and two of them had already cost a day each.
+  - **Write it for the person who was not here.** what / why / next, in the branch's own
+    fields, naming the commit or file. A finding nobody can act on without asking you is
+    a note, not a record.
+  - **Address**: the Atlas is at `NCO_ATLAS_URL` (dev role only, via `POST /v1/atlas` on the
+    coord service). `POST /v1/branches` with `"as": "<name>"`; `area` must be one of its
+    known list or it refuses.
+
 - **Boot policy** (2026-08-21): the game boots STRAIGHT TO THE MENU -
   `-skipStartScreen` + Fast Launch auto-install, both halves stay (main.js).
 

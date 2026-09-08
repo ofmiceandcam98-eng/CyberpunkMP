@@ -63,6 +63,13 @@ auto-load — read it deliberately. Cam's stream: it auto-loads; keep it current
   PARENT; a relative path silently resolved to nothing for five builds straight) and treat a
   missing confirmation as failure, not consent.
 
+- **Found it? Flag it on the Atlas, then carry on** (zeldfep, 2026-09-08): *"when we find
+  new issues flag them on atlas so we can come back to 'what we find' instead of 'WHAT WE ARE
+  WORKING ON'."* Anything you notice that is NOT the task in hand gets an Atlas branch the
+  moment you notice it - one POST, with what/why/next written for somebody who was not here.
+  A session remembers what it is working on and forgets everything it found; the Atlas is
+  where the second kind lives.
+
 - **Boot policy**: straight to menu, both halves stay.
 - **The footprint rule**: uninstall leaves NOTHING; every write location in the footprint,
   both layers.
