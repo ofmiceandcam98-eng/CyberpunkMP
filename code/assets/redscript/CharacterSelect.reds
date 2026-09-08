@@ -346,6 +346,137 @@ public func MpCsOpen() -> Void {
     MpCsText(c, 68.0, 1004.0, "IDENTITY IS A TOOL. MAKE IT YOURS.", 13, n"Regular", MpCsInkFaint());
 
     MpCsLog(s"character screen open - \(unlocked) of \(MpCsMaxSlots()) slot(s) unlocked, caret on \(this.m_csCursor)");
+
+    /*
+     * PIPELINE PROBE - answers one question and then comes out.
+     *
+     * Can a widget library authored entirely from the command line be loaded by the game?
+     * character_select.inkwidget was built by serialising an existing library to JSON,
+     * keeping Root plus one item, renaming it, and deserialising - never opened in the
+     * WolvenKit GUI. Everything the authored screen depends on rests on the answer, so it
+     * is asked before the layout is generated rather than after.
+     *
+     * It is asked HERE, in a build somebody plays, because the offline checks cannot
+     * answer it: the file round-trips and re-reads perfectly and could still be refused by
+     * the game. The round trip is known to be lossy - multiplayer_ui.inkwidget came back
+     * 53 bytes smaller with no edits - which is exactly why this library is a NEW file and
+     * not an edit of the one holding chat, emotes and the job list.
+     *
+     * Nothing is attached to the screen either way. The spawned widget is logged and
+     * dropped; the screen you are looking at is still the runtime-built one.
+     */
+    /*
+     * TWO ASKS, ONE OF THEM A CONTROL.
+     *
+     * test.26 asked only for the authored library and got SILENCE - no spawned callback and
+     * no failed callback, because an unresolvable resource never calls back at all. That is
+     * a third outcome the probe did not have a branch for, so it proved nothing: it could
+     * not tell "my library is bad" from "this controller cannot async-spawn anything".
+     *
+     * So the same call is made against a library that is KNOWN to work - multiplayer_ui,
+     * which Death.reds and the whole HUD spawn from every session. The pair separates the
+     * two:
+     *
+     *   control answers, mine silent  -> the authored library is the problem
+     *   both silent                   -> the menu controller cannot spawn, library is fine
+     *   both answer                   -> the authored path works, look elsewhere
+     */
+    this.m_csProbeControl = false;
+    this.m_csProbeAuthored = false;
+
+    this.AsyncSpawnFromExternal(this.m_csRoot,
+                                r"mods\\cyberpunkmp\\multiplayer_ui.inkwidget",
+                                n"server_list", this, n"OnMpCsProbeControl");
+
+    this.AsyncSpawnFromExternal(this.m_csRoot,
+                                r"nightcityonline\\character_select.inkwidget",
+                                n"character_select", this, n"OnMpCsProbeAuthored");
+
+    MpCsLog(s"probe: asked for BOTH libraries - a verdict line follows in 3s");
+
+    // SILENCE HAS TO REPORT ITSELF. Waiting on a callback that never comes is exactly the
+    // shape that made test.26 worthless, and it is the same lesson as the stale-workload
+    // decree: a wait needs a deadline and a failure branch, or it cannot be told from
+    // still-working.
+    let verdict = new MpCsProbeVerdict();
+    verdict.controller = this;
+
+    GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(verdict, 3.0, false);
+}
+
+/**
+ * Reads the probe out three seconds after both asks. See MpCsOpen for the experiment.
+ *
+ * A DelayCallback rather than trusting the callbacks to arrive, because the whole point is
+ * that they might not - and a probe whose failure mode is "nothing is written anywhere" is
+ * not a probe.
+ */
+public class MpCsProbeVerdict extends DelayCallback {
+    public let controller: wref<SingleplayerMenuGameController>;
+
+    public func Call() -> Void {
+        if !IsDefined(this.controller) {
+            return;
+        }
+
+        this.controller.MpCsProbeReport();
+    }
+}
+
+@addMethod(SingleplayerMenuGameController)
+public func MpCsProbeReport() -> Void {
+    let control = this.m_csProbeControl;
+    let authored = this.m_csProbeAuthored;
+
+    if control && authored {
+        MpCsLog(s"probe VERDICT: both spawned - the authored library WORKS, build the real screen on it");
+        return;
+    }
+
+    if control && !authored {
+        MpCsLog(s"probe VERDICT: control spawned, authored did NOT - the library I built is the problem, not the call");
+        return;
+    }
+
+    if !control && !authored {
+        MpCsLog(s"probe VERDICT: NEITHER spawned - this controller cannot async-spawn here; my library is not implicated");
+        return;
+    }
+
+    MpCsLog(s"probe VERDICT: authored spawned but the control did not - unexpected, treat the control as suspect");
+}
+
+@addField(SingleplayerMenuGameController)
+let m_csProbeControl: Bool;
+
+@addField(SingleplayerMenuGameController)
+let m_csProbeAuthored: Bool;
+
+// The known-good library. If this one does not arrive, nothing about the authored file is
+// proven either way - which is exactly the hole test.26 fell into.
+@addMethod(SingleplayerMenuGameController)
+protected cb func OnMpCsProbeControl(widget: ref<inkWidget>, userData: ref<IScriptable>) -> Bool {
+    this.m_csProbeControl = IsDefined(widget);
+
+    if IsDefined(widget) {
+        widget.SetVisible(false);
+    }
+
+    MpCsLog(s"probe: control callback fired, widget=\(IsDefined(widget))");
+    return true;
+}
+
+// The library authored entirely from the command line. This is the one under test.
+@addMethod(SingleplayerMenuGameController)
+protected cb func OnMpCsProbeAuthored(widget: ref<inkWidget>, userData: ref<IScriptable>) -> Bool {
+    this.m_csProbeAuthored = IsDefined(widget);
+
+    if IsDefined(widget) {
+        widget.SetVisible(false);
+    }
+
+    MpCsLog(s"probe: authored callback fired, widget=\(IsDefined(widget))");
+    return true;
 }
 
 /**
