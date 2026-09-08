@@ -409,11 +409,37 @@ public func MpCsOpen() -> Void {
     this.m_csProbeControl = false;
     this.m_csProbeAuthored = false;
 
-    this.AsyncSpawnFromExternal(this.m_csRoot,
+    /*
+     * THE PROBE SPAWNS INTO A SEALED HOLDER, and this is the fix for the input lock.
+     *
+     * The control asks for server_list - a HUD widget with its own controller, built to sit
+     * in gameplay. Spawned straight onto the menu root it arrives VISIBLE and INTERACTIVE,
+     * and if its callback has not run yet there is nothing to hide it, so it sits over the
+     * main menu eating every click and key. test.26 had no control probe and no lock;
+     * test.27 added one and locked; test.28 kept it and stayed locked even with the canvas
+     * itself made non-interactive. That is the sequence pointing here.
+     *
+     * A zero-size, invisible, non-interactive holder means whatever a probe produces cannot
+     * be seen or touched no matter what its own flags say, and no matter whether the
+     * callback ever runs. The experiment still answers - spawning either succeeds or it
+     * does not, and that is all it was ever asking.
+     */
+    let holder = new inkCanvas();
+    holder.SetName(n"mp_cs_probe_holder");
+    holder.SetAnchor(inkEAnchor.TopLeft);
+    holder.SetAnchorPoint(new Vector2(0.0, 0.0));
+    holder.SetMargin(new inkMargin(0.0, 0.0, 0.0, 0.0));
+    holder.SetSize(new Vector2(0.0, 0.0));
+    holder.SetInteractive(false);
+    holder.SetVisible(false);
+    holder.SetOpacity(0.0);
+    holder.Reparent(c);
+
+    this.AsyncSpawnFromExternal(holder,
                                 r"mods\\cyberpunkmp\\multiplayer_ui.inkwidget",
                                 n"server_list", this, n"OnMpCsProbeControl");
 
-    this.AsyncSpawnFromExternal(this.m_csRoot,
+    this.AsyncSpawnFromExternal(holder,
                                 r"nightcityonline\\character_select.inkwidget",
                                 n"character_select", this, n"OnMpCsProbeAuthored");
 
