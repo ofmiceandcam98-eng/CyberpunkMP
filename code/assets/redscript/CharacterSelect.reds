@@ -426,22 +426,20 @@ public func MpCsOpen() -> Void {
 
     // The keys, on screen. A screen driven by keys nobody is told about is a screen that
     // does not work, and this one hid its own exit for a whole build.
-    MpCsText(c, 68.0, 1030.0, "[ ESC ]  BACK TO MENU", 14, n"Medium", MpCsGold());
+    MpCsText(c, 68.0, 1030.0, "CLICK A SLOT TO SELECT      CLICK IT AGAIN TO ENTER OR CREATE", 15,
+             n"Medium", MpCsGold());
 
     /*
-     * THE MENU STAYS VISIBLE UNTIL INPUT IS PROVEN.
+     * THE MENU GOES AWAY. zeldfep, 2026-09-08: "still acting as an overlay the buttons
+     * behind this screen should not be able to be touched".
      *
-     * Hiding it is right for the finished screen and wrong right now: ESC does not work,
-     * hand-built click targets do not work, so with the menu hidden there is NO way out of
-     * this screen except killing the game. That has happened to zeldfep three times today.
-     *
-     * While the menu is visible, clicking any menu item leaves - so the screen can never be
-     * a trap, whatever else is broken. The overlap looks wrong and that is the correct
-     * trade: an ugly screen you can leave beats a clean one you cannot.
-     *
-     * Re-enable by restoring this.MpCsHideMenuList() here, ONLY once a key is confirmed to
-     * close the screen on a real machine.
+     * Safe to do now in a way it was not an hour ago: ENTER is CONFIRMED to arrive and to
+     * work, measured in his own log - "input: activate" followed by "entering the city".
+     * So the screen always has a way off it even though ESC is still unidentified. That was
+     * the missing piece every previous time this was hidden and became a trap.
      */
+    this.MpCsHideMenuList();
+
     MpCsLog(s"character screen open - \(unlocked) of \(MpCsMaxSlots()) slot(s) unlocked, caret on \(this.m_csCursor)");
 
     /*
@@ -997,6 +995,61 @@ protected cb func OnGlobalRelease(e: ref<inkPointerEvent>) -> Bool {
         return true;
     }
 
+    /*
+     * CLICK WALKS THE SLOTS, because click is one of the two actions MEASURED to arrive.
+     *
+     * zeldfep: "the 4 empty slots should all point to new character". They already do - what
+     * they were missing was any way to REACH them. navigate_up/navigate_down were bound from
+     * reading CDPR's pregame menus and never arrive here, so the caret could not move and
+     * three of the four slots were unreachable no matter what they offered.
+     *
+     * His logs name exactly two actions that reach this handler: "click" and "activate".
+     * Building on those two is the difference between a screen that works today and a fifth
+     * guess at a key name. Click cycles, Enter acts on what the caret is on - which is a
+     * complete interaction with nothing unproven in it.
+     *
+     * navigate_up/down stay bound underneath. They cost nothing, and if they ever do arrive
+     * on some other input device the screen gets arrow keys for free.
+     */
+    /*
+     * ONE MOUSE CLICK ARRIVES AS BOTH "click" AND "activate", measured in zeldfep's log:
+     *
+     *   input: click    handled=false
+     *   input: activate handled=false
+     *   entering the city as the character in slot 1
+     *
+     * So they are not two inputs to bind separately - they are one gesture reported twice,
+     * and "ENTER NIGHT CITY working" was a CLICK, not the Enter key. Any design that treats
+     * them as distinct (click cycles, Enter confirms) would cycle and immediately act on the
+     * slot it had just moved to.
+     *
+     * WHERE the cursor is turns one gesture into a whole screen. GetScreenSpacePosition() is
+     * on the base input event, so the click can be hit-tested against the coordinates this
+     * screen was drawn from - no widget interactivity, no hit rects, none of the machinery
+     * that has failed on every build since test.27. The screen already knows where it put
+     * everything; it just never asked where the mouse was.
+     *
+     * activate is consumed without acting, so the pair cannot fire twice.
+     */
+    if e.IsAction(n"click") {
+        let pos = e.GetScreenSpacePosition();
+
+        // Logged so the coordinate space can be checked against where things were drawn
+        // rather than assumed. Authored units are 1920x1080; if screen space is not that,
+        // this line is what says so.
+        MpCsLog(s"click at \(pos.X), \(pos.Y)");
+
+        this.MpCsClickAt(pos.X, pos.Y);
+        e.Handle();
+        return true;
+    }
+
+    // Consumed deliberately: it is the second half of the click above, not a separate press.
+    if e.IsAction(n"activate") || e.IsAction(n"one_click_confirm") {
+        e.Handle();
+        return true;
+    }
+
     if e.IsAction(n"navigate_up") || e.IsAction(n"navigate_down") {
         let step = e.IsAction(n"navigate_down") ? 1 : -1;
 
@@ -1078,7 +1131,7 @@ public func MpCsStep(delta: Int32) -> Void {
 public func MpCsActions(parent: ref<inkCanvas>, x: Float, y: Float) -> Void {
     let occupied = this.MpCsRosterIndex(this.m_csCursor) >= 0;
 
-    this.MpCsActionButton(parent, x, y, 236.0, "SELECT", "UP / DOWN", true);
+    this.MpCsActionButton(parent, x, y, 236.0, "SELECT", "CLICK", true);
     this.MpCsActionButton(parent, x + 252.0, y, 300.0, "CREATE NEW", "ENTER", !occupied);
     this.MpCsActionButton(parent, x + 568.0, y, 236.0, "DELETE", "DEL", occupied);
 }
@@ -1125,6 +1178,117 @@ public func MpCsEnterButton(parent: ref<inkCanvas>, x: Float, y: Float) -> Void 
     MpCsText(parent, x + 34.0, y + 16.0, occupied ? "ENTER NIGHT CITY" : "CREATE CHARACTER",
              34, n"Bold", ink);
     MpCsText(parent, x + 34.0, y + 62.0, "[ ENTER ]", 14, n"Medium", ink);
+}
+
+/**
+ * Turns a cursor position into an action, by asking where the screen drew things.
+ *
+ * The composition is authored in 1920x1080 units and the canvas is scaled to the root, so a
+ * screen-space pixel maps straight onto an authored coordinate on a 1080p display. The
+ * logged click position is what confirms that on any other resolution.
+ *
+ * Hit regions, in the order they are tested:
+ *
+ *   the four cards       select that slot; a second click on the SAME card acts on it
+ *   ENTER NIGHT CITY     act on whatever the caret is on
+ *
+ * Acting means the obvious thing for the slot: enter the world as a character, or run the
+ * creator on an empty one. That is why all four empty slots "point to new character" - each
+ * one is a create target in its own right, which zeldfep asked for and which was already
+ * true in the drawing and simply unreachable.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsClickAt(x: Float, y: Float) -> Void {
+    // The ENTER button first - it overlaps nothing and is the most consequential.
+    if x >= 1332.0 && x <= 1852.0 && y >= 894.0 && y <= 986.0 {
+        this.MpCsAct();
+        return;
+    }
+
+    let slot = 0;
+
+    while slot < MpCsMaxSlots() {
+        let top = 322.0 + Cast<Float>(slot) * 99.0;
+
+        // The selected card sits 14px right; accept from the un-offset edge so the hit area
+        // does not move under the cursor when the caret lands on it.
+        if x >= 68.0 && x <= 650.0 && y >= top && y <= top + 90.0 {
+            if this.m_csCursor == slot {
+                this.MpCsAct();
+            } else {
+                this.MpCsSelect(slot);
+            }
+
+            return;
+        }
+
+        slot += 1;
+    }
+}
+
+/**
+ * Do the obvious thing for the slot the caret is on.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsAct() -> Void {
+    let network = GameInstance.GetNetworkWorldSystem();
+
+    if !IsDefined(network) || !network.IsConnected() {
+        return;
+    }
+
+    if this.MpCsRosterIndex(this.m_csCursor) < 0 {
+        MpCsLog(s"create in empty slot \(this.m_csCursor + 1)");
+        this.MpCsClose();
+
+        let data = new PauseMenuListItemData();
+        data.eventName = n"OnMultiplayerNewCharacter";
+        this.HandleMenuItemActivate(data);
+        return;
+    }
+
+    MpCsLog(s"entering the city as the character in slot \(this.m_csCursor + 1)");
+    this.MpCsSay("Entering Night City...");
+    this.MpCsClose();
+
+    let play = new PauseMenuListItemData();
+    play.eventName = n"OnMultiplayerContinue";
+    this.HandleMenuItemActivate(play);
+}
+
+/**
+ * Move the caret to a specific slot, refusing locked ones.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsSelect(slot: Int32) -> Void {
+    let network = GameInstance.GetNetworkWorldSystem();
+
+    if !IsDefined(network) {
+        return;
+    }
+
+    let unlocked = network.GetCharacterSlots();
+
+    if unlocked > MpCsMaxSlots() {
+        unlocked = MpCsMaxSlots();
+    }
+
+    if slot < 0 || slot >= unlocked {
+        this.MpCsSay("That slot is locked.");
+        return;
+    }
+
+    this.m_csCursor = slot;
+    this.m_csCreateArmed = false;
+    this.m_csDeleteArmed = false;
+
+    MpCsLog(s"caret set to slot \(slot + 1)");
+
+    if this.MpCsRosterIndex(slot) >= 0 {
+        network.SelectCharacterSlot(slot);
+    }
+
+    this.MpCsOpen();
 }
 
 // ============================================================================ detail
