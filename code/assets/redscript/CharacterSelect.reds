@@ -174,6 +174,50 @@ let m_csStatus: wref<inkText>;
 @addField(SingleplayerMenuGameController)
 let m_csOpen: Bool;
 
+/**
+ * THE MENU GOES AWAY WHILE THE SELECTOR IS UP.
+ *
+ * This is what turns an overlay into a screen, and after 2026-09-08 it is a CORRECTNESS fix
+ * rather than a cosmetic one. zeldfep on test.30: "3rd slot is broken its allowing me to hit
+ * the buttons behind the overaly" - PLAY, CREATE NEW CHARACTER and DELETE sit directly under
+ * the cards, so a click that misses a hit rect lands on a menu item nobody aimed at. Hiding
+ * the list removes the whole class of that.
+ *
+ * It is also the ONLY lever available. A real screen would be its own menu SCENARIO, the way
+ * Settings is - but the menu NAME a scenario opens is engine-side registration with no
+ * moddable resource anywhere in the archives, so a new scenario would have nothing to open.
+ *
+ * RESTORE IS UNCONDITIONAL AND HAPPENS FIRST. PopulateMenuItemList calls Show before it
+ * decides anything, so every path through the menu puts the list back whether or not the
+ * selector was open and whether or not Close ran. A hidden list with no way to un-hide it is
+ * a main menu nobody can use - a worse bug than the one being fixed.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsHideMenuList() -> Void {
+    if !IsDefined(this.m_menuListController) {
+        return;
+    }
+
+    let root = this.m_menuListController.GetRootWidget();
+
+    if IsDefined(root) {
+        root.SetVisible(false);
+    }
+}
+
+@addMethod(SingleplayerMenuGameController)
+public func MpCsShowMenuList() -> Void {
+    if !IsDefined(this.m_menuListController) {
+        return;
+    }
+
+    let root = this.m_menuListController.GetRootWidget();
+
+    if IsDefined(root) {
+        root.SetVisible(true);
+    }
+}
+
 // ============================================================================ build
 
 /**
@@ -370,6 +414,8 @@ public func MpCsOpen() -> Void {
 
     MpCsText(c, 68.0, 1004.0, "IDENTITY IS A TOOL. MAKE IT YOURS.", 13, n"Regular", MpCsInkFaint());
 
+    this.MpCsHideMenuList();
+
     MpCsLog(s"character screen open - \(unlocked) of \(MpCsMaxSlots()) slot(s) unlocked, caret on \(this.m_csCursor)");
 
     /*
@@ -421,6 +467,7 @@ public func MpCsClose() -> Void {
         this.m_csRoot.SetInteractive(false);
     }
 
+    this.MpCsShowMenuList();
     this.m_csOpen = false;
 }
 
@@ -535,6 +582,7 @@ public func MpCsCard(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float,
                  selected ? "READY - CREATE NEW CHARACTER" : "SELECT TO CREATE HERE", 13,
                  n"Regular", selected ? MpCsGold() : MpCsInkFaint());
 
+        this.MpCsArm(parent, slot, cx, y, w, h);
         return;
     }
 
@@ -566,6 +614,7 @@ public func MpCsCard(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float,
     MpCsText(parent, cx + w - 84.0, y + 32.0, s"LV \(level)", 26, n"Regular",
              selected ? MpCsGold() : MpCsInkDim());
 
+    this.MpCsArm(parent, slot, cx, y, w, h);
 }
 
 /**
@@ -577,19 +626,14 @@ public func MpCsCard(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float,
  * of references in step with a roster that changes shape.
  */
 /*
- * DELIBERATELY NOT CALLED RIGHT NOW - zero call sites, and that is not a bug.
+ * BACK IN USE as of test.31. test.30 answered the question it was parked for: with nothing
+ * of ours interactive the menu was usable, so the lock WAS ours - and since the probe was
+ * deleted in the same build, the hit rects are no longer the suspect they were.
  *
- * The main menu locked up across test.27, .28 and .29 and the cause was never isolated. Two
- * suspects remained: the probe (now deleted) and these hit rects. Rather than ship a fourth
- * build that might still take the menu away, EVERYTHING of mine that can claim input is off,
- * so the next build answers a clean question: with nothing of ours interactive, is the menu
- * usable?
- *
- *   menu fine  -> the lock was ours; wire this back one piece at a time and watch
- *   still bad  -> the lock is not from input at all, and the search moves elsewhere
- *
- * The logic below is correct and was working before the lock; it is parked, not abandoned.
- * Re-wire by restoring the MpCsArm calls at the end of MpCsCard's two branches.
+ * They come back with the menu list hidden underneath them, which is the part that was
+ * missing. zeldfep on test.30: "3rd slot is broken its allowing me to hit the buttons behind
+ * the overaly" - with no hit rect to catch it, a click on a card fell through to whatever
+ * menu item happened to sit at that spot.
  */
 @addMethod(SingleplayerMenuGameController)
 public func MpCsArm(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float, w: Float,
