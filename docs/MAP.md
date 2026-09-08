@@ -1429,6 +1429,26 @@ is **local and unpushed** — per Cam, nothing ships before the server swap.
   own preview for a plain member — four destinations, nothing else. 11780 is included because
   the launcher lets dev-role users fetch their key from it, and that endpoint is bearer-key
   gated on its own.
+- **THIRD GRANT ADDED 2026-09-08 (zeldfep stream): Cam, by name, on the server HOST.**
+  `"nco-atlas"` is a new hosts entry for the box itself — not the game sidecar, which is what
+  `nco-live` points at — and the grant is `ofmiceandcam98-eng@github → nco-atlas, ip ["*"]`.
+  It buys two things at once: the Atlas (the internal mind map, 11782) and ordinary admin
+  work on the box over SSH. Validated against `acl/validate` and applied with `If-Match` on
+  the ETag; the two existing grants are byte-identical afterwards, and all three services
+  answered 200 after.
+  - **IT NAMES CAM AND MUST NOT BE WIDENED TO `autogroup:shared`.** Every player is in that
+    autogroup — the wide 11778/11780 rule above is wide *because the game is meant to be
+    public to players* — so widening this one the same way hands eight people the internal
+    board and a route to the host.
+  - **Deliberately NOT `autogroup:admin`**, which is `dst ["*"]` and includes every member's
+    personal machine. Closing that is why this policy exists.
+  - **Reachability is not an account.** SSH on the box is key auth against a unix user, so
+    the grant lets Cam's packets arrive and nothing more until his public key is installed
+    there. That step is outstanding — it needs his key, which nobody here has.
+  - Why it was needed: the Atlas was deployed and announced as reachable by both streams
+    when it was not. Cam is a shared user, so he sat in the 11778/11780 bucket with the
+    players; his coordination key authenticated fine and the packets never arrived. **Check
+    the grant, not just the auth, before calling a new service cross-stream.**
 - **Hosts are named, not raw IPs, in the policy** (`nco-live`, `nco-test`) so a re-registered
   sidecar is a one-line edit rather than a hunt.
 - **Rollback is off-tailnet**: `api.tailscale.com` and the admin console are public, so a bad
