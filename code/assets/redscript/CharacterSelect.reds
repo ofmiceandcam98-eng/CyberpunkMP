@@ -964,6 +964,21 @@ protected cb func OnGlobalRelease(e: ref<inkPointerEvent>) -> Bool {
         MpCsLog(s"click screen=\(pos.X),\(pos.Y)  authored=\(ax),\(ay)");
 
         this.MpCsClickAt(ax, ay);
+
+        /*
+         * EVERY click is consumed while this screen is up, not just the ones that hit
+         * something.
+         *
+         * zeldfep's screenshot shows CHARACTER SELECTION, CREATE NEW, LOAD CHARACTER,
+         * SETTINGS and EXIT still readable behind the panels - so SetVisible(false) on the
+         * list root is not hiding what actually draws, and a click landing between two cards
+         * would reach a menu item nobody aimed at. That is how DELETE got armed twice this
+         * morning.
+         *
+         * Consuming unconditionally makes the menu unreachable whether or not the hide
+         * works, which decouples "you cannot touch it" from "you cannot see it". The first
+         * is correctness and is settled here; the second is cosmetic and still owed.
+         */
         e.Handle();
         return true;
     }
