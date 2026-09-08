@@ -438,6 +438,7 @@ public func MpCsOpen() -> Void {
     }
 
     // ---------------------------------------------------------------- detail
+    this.MpCsScanRings(c);
     this.MpCsDetail(c, 1232.0, 196.0);
 
     // ---------------------------------------------------------------- actions
@@ -1497,6 +1498,91 @@ public func MpCsPixelsPerUnit() -> Float {
 
     MpCsLog(s"resolution: '\(text)' -> \(height)px tall, \(ratio) screen pixels per authored unit");
     return ratio;
+}
+
+/**
+ * THE IDENTITY SCAN - the mockup's rings, between the roster and the dossier.
+ *
+ * ink has no circle, so a ring is drawn as short tangential segments placed around a centre:
+ * each one rotated to match its own angle, so the run of them reads as a curve rather than a
+ * polygon of visible corners. Three rings at different radii, densities and opacities, which
+ * is what makes it look like an instrument rather than a shape.
+ *
+ * The mockup animates two of them in opposite directions. These do not move: every widget
+ * here is rebuilt whenever anything changes, so an animation would restart on every click
+ * and read worse than stillness. Motion is worth having and wants the screen to stop
+ * rebuilding wholesale first - noted rather than faked.
+ *
+ * Centre is the mockup's own: scan block at x 690 + ring origin 235, y 196 + 280.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsScanRings(parent: ref<inkCanvas>) -> Void {
+    let cx = 925.0;
+    let cy = 476.0;
+
+    let index = this.MpCsRosterIndex(this.m_csCursor);
+    let occupied = index >= 0;
+
+    // Gold for a character, dim red for an empty slot: the ring answers the same question
+    // the card does, so it must not claim somebody is there when nobody is.
+    let colour = occupied ? MpCsGold() : MpCsRedDim();
+
+    this.MpCsRing(parent, cx, cy, 210.0, 48, 18.0, 3.0, colour, 0.85);
+    this.MpCsRing(parent, cx, cy, 168.0, 24, 26.0, 2.0, colour, 0.45);
+    this.MpCsRing(parent, cx, cy, 128.0, 72, 6.0, 2.0, colour, 0.30);
+
+    // The subject, under the rings, in the mockup's sizes.
+    let network = GameInstance.GetNetworkWorldSystem();
+
+    if occupied && IsDefined(network) {
+        let name = network.GetRosterName(Cast<Uint32>(index));
+        let shown = NotEquals(name, "") ? name : "unnamed";
+        let lifepath = network.GetRosterLifepath(Cast<Uint32>(index));
+
+        MpCsText(parent, cx - 200.0, cy + 250.0, shown, 44, n"Bold", MpCsInk());
+
+        if NotEquals(lifepath, "") {
+            MpCsText(parent, cx - 200.0, cy + 306.0, lifepath, 14, n"Medium", MpCsGold());
+        }
+    } else {
+        MpCsText(parent, cx - 200.0, cy + 250.0, "NO SIGNAL", 44, n"Bold", MpCsInkFaint());
+        MpCsText(parent, cx - 200.0, cy + 306.0, "SLOT EMPTY", 14, n"Medium", MpCsInkFaint());
+    }
+}
+
+/**
+ * One ring of tangential segments.
+ *
+ * Each segment is rotated to its own angle so the ring curves. Rotation is about the
+ * widget's anchor POINT, which is why that is centred here and top-left everywhere else on
+ * this screen - a segment rotated about its corner would swing off the ring entirely.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsRing(parent: ref<inkCanvas>, cx: Float, cy: Float, radius: Float, count: Int32,
+                     length: Float, thickness: Float, colour: HDRColor, opacity: Float) -> Void {
+    let i = 0;
+
+    while i < count {
+        let degrees = 360.0 * Cast<Float>(i) / Cast<Float>(count);
+        let radians = degrees * 3.14159265 / 180.0;
+
+        let x = cx + radius * CosF(radians);
+        let y = cy + radius * SinF(radians);
+
+        let segment = new inkRectangle();
+        segment.SetAnchor(inkEAnchor.TopLeft);
+        segment.SetAnchorPoint(new Vector2(0.5, 0.5));
+        segment.SetMargin(new inkMargin(x, y, 0.0, 0.0));
+        segment.SetSize(new Vector2(length, thickness));
+        segment.SetTintColor(colour);
+        segment.SetOpacity(opacity);
+
+        // Tangent, not radius: +90 degrees so the segment lies along the circle.
+        segment.SetRotation(degrees + 90.0);
+        segment.Reparent(parent);
+
+        i += 1;
+    }
 }
 
 // ============================================================================ detail
