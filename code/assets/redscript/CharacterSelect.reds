@@ -196,26 +196,9 @@ let m_csOpen: Bool;
 @addField(SingleplayerMenuGameController)
 let m_csDismissed: Bool;
 
-// Where the game says the last click landed, in the composition's own units. Drawn as a
-// crosshair so the offset between "where I clicked" and "where it registered" is visible
-// rather than inferred - zeldfep, 2026-09-08: "I have to click a little above where the
-// button actually is i think calibration is in order".
-@addField(SingleplayerMenuGameController)
-let m_csClickX: Float;
-
-@addField(SingleplayerMenuGameController)
-let m_csClickY: Float;
-
-@addField(SingleplayerMenuGameController)
-let m_csClicked: Bool;
-
-// The window-space reading of the same click, drawn beside the screen-space one so the two
-// can be compared against where the cursor actually was.
-@addField(SingleplayerMenuGameController)
-let m_csWinX: Float;
-
-@addField(SingleplayerMenuGameController)
-let m_csWinY: Float;
+// GetWindowSpacePosition() returned 0,0 on every single click - measured, not assumed - so
+// screen space is the only reading this event actually carries. Recorded here because the
+// next person to look for a second coordinate source should not have to find that out again.
 
 // Second press on an already-selected empty slot is what actually starts the creator.
 // Cleared whenever the caret moves, so arming one slot and clicking another never creates
@@ -469,10 +452,6 @@ public func MpCsOpen() -> Void {
 
     // The keys, on screen. A screen driven by keys nobody is told about is a screen that
     // does not work, and this one hid its own exit for a whole build.
-    this.MpCsDrawHitRegions(c);
-    this.MpCsCalibrationTargets(c);
-    this.MpCsClickMarker(c);
-
     MpCsText(c, 68.0, 1030.0, "CLICK A SLOT TO SELECT      CLICK IT AGAIN TO ENTER OR CREATE", 15,
              n"Medium", MpCsGold());
 
@@ -965,32 +944,13 @@ protected cb func OnGlobalRelease(e: ref<inkPointerEvent>) -> Bool {
      */
     if e.IsAction(n"click") {
         /*
-         * TWO SPACES, AND ONLY ONE OF THEM IS OURS.
+         * Screen pixels in, authored units out.
          *
-         * zeldfep, 2026-09-08: "your draw box is correct the selection is wayyyy off". The
-         * outlines sit exactly over the cards, so the composition and the visuals agree - it
-         * is the incoming CLICK that is in a different space. And the error grows with y:
-         * +5 at the first card, +110 at the fourth, which is a scale difference rather than
-         * an offset, so no constant can fix it.
-         *
-         * inkPointerEvent exposes GetScreenSpacePosition AND GetWindowSpacePosition. Every
-         * build so far has used the first without ever asking whether the second was the one
-         * that matched. Both are logged and both are drawn, in different colours, so one
-         * glance says which lands under the cursor - the same "measure it rather than derive
-         * it" that ended the action-name guessing.
+         * GetWindowSpacePosition() was tried alongside this and returned 0,0 on every click -
+         * measured, not assumed - so screen space is the only reading the event carries.
          */
         let pos = e.GetScreenSpacePosition();
-        let win = e.GetWindowSpacePosition();
 
-        MpCsLog(s"click screen=\(pos.X),\(pos.Y)  window=\(win.X),\(win.Y)");
-
-        this.m_csWinX = win.X;
-        this.m_csWinY = win.Y;
-
-        // Logged so the coordinate space can be checked against where things were drawn
-        // rather than assumed. Authored units are 1920x1080; if screen space is not that,
-        // this line is what says so.
-        MpCsLog(s"click at \(pos.X), \(pos.Y)");
 
         /*
          * Screen pixels in, authored units out. Everything downstream - the hit regions, the
@@ -1002,10 +962,6 @@ protected cb func OnGlobalRelease(e: ref<inkPointerEvent>) -> Bool {
         let ay = pos.Y / perUnit;
 
         MpCsLog(s"click screen=\(pos.X),\(pos.Y)  authored=\(ax),\(ay)");
-
-        this.m_csClickX = ax;
-        this.m_csClickY = ay;
-        this.m_csClicked = true;
 
         this.MpCsClickAt(ax, ay);
         e.Handle();
@@ -1419,136 +1375,8 @@ public func MpCsSelect(slot: Int32) -> Void {
     this.MpCsOpen();
 }
 
-/**
- * A crosshair where the last click registered.
- *
- * CALIBRATION YOU CAN SEE. The hit regions are the coordinates this screen drew at, and a
- * click is tested against them directly - which is only correct if screen space and the
- * composition share an origin. zeldfep reports having to click ABOVE a button to hit it, so
- * they do not, and the offset needs measuring rather than assuming.
- *
- * One click now shows both halves at once: the cursor is where he pressed, the crosshair is
- * where the game says he pressed, and the gap between them IS the correction. Guessing a
- * number and shipping it would be the fifth time today I fixed something by inference.
- *
- * Comes out once the offset is known.
- */
-@addMethod(SingleplayerMenuGameController)
-public func MpCsClickMarker(parent: ref<inkCanvas>) -> Void {
-    if !this.m_csClicked {
-        return;
-    }
 
-    let x = this.m_csClickX;
-    let y = this.m_csClickY;
 
-    // Thick enough to see. At 2px it drew correctly and zeldfep could not find it - only
-    // the coordinate label registered - which is its own small lesson about debug output.
-    let cyan = new HDRColor(0.24, 0.9, 0.94, 1.0);
-
-    MpCsRect(parent, x - 60.0, y - 3.0, 120.0, 6.0, cyan, 1.0);
-    MpCsRect(parent, x - 3.0, y - 60.0, 6.0, 120.0, cyan, 1.0);
-    MpCsRect(parent, x - 12.0, y - 12.0, 24.0, 24.0, cyan, 1.0);
-
-    MpCsText(parent, x + 12.0, y + 10.0, s"SCREEN \(Cast<Int32>(x)), \(Cast<Int32>(y))", 15,
-             n"Medium", cyan);
-
-    // The same click in window space, in gold. Whichever cross sits under the cursor is the
-    // accessor this screen should be hit-testing with.
-    let gx = this.m_csWinX;
-    let gy = this.m_csWinY;
-    let gold = MpCsGold();
-
-    MpCsRect(parent, gx - 60.0, gy - 3.0, 120.0, 6.0, gold, 1.0);
-    MpCsRect(parent, gx - 3.0, gy - 60.0, 6.0, 120.0, gold, 1.0);
-    MpCsRect(parent, gx - 12.0, gy - 12.0, 24.0, 24.0, gold, 1.0);
-
-    MpCsText(parent, gx + 12.0, gy - 34.0, s"WINDOW \(Cast<Int32>(gx)), \(Cast<Int32>(gy))", 15,
-             n"Medium", gold);
-}
-
-/**
- * THE HIT REGIONS, DRAWN.
- *
- * zeldfep, 2026-09-08: "how about you let me draw where the buttons are instead of
- * guessing." Fair. Three builds of mine inferred these from click samples and a reported
- * feel, which is a slow way to learn a number somebody can just read off the screen.
- *
- * Every region this screen tests is outlined in cyan with its own label and coordinates. The
- * gap between an outline and the thing it is supposed to cover IS the correction, visible at
- * a glance instead of derived from three data points and an assumption about bias.
- *
- * Nothing here changes behaviour - it draws exactly what MpCsClickAt tests, so what you see
- * is what is live. If an outline sits in the right place and clicking still misses, the
- * regions were never the problem.
- *
- * Comes out once the geometry is agreed.
- */
-@addMethod(SingleplayerMenuGameController)
-public func MpCsDrawHitRegions(parent: ref<inkCanvas>) -> Void {
-    let cyan = new HDRColor(0.24, 0.9, 0.94, 1.0);
-
-    // The card column, exactly as MpCsClickAt bounds it.
-    let first = 322.0;
-    let pitch = 99.0;
-    let height = 90.0;
-    let slot = 0;
-
-    while slot < MpCsMaxSlots() {
-        let top = first + Cast<Float>(slot) * pitch;
-
-        MpCsBorder(parent, 40.0, top, 660.0, height, cyan, 0.85);
-        MpCsText(parent, 706.0, top + 4.0, s"HIT \(slot + 1):  y \(Cast<Int32>(top)) - \(Cast<Int32>(top + height))",
-                 14, n"Medium", cyan);
-
-        // The centre this slot competes on under nearest-wins.
-        let centre = top + height / 2.0;
-        MpCsRect(parent, 40.0, centre - 1.0, 660.0, 2.0, cyan, 0.5);
-
-        slot += 1;
-    }
-
-    // The ENTER button's region.
-    MpCsBorder(parent, 1300.0, 860.0, 590.0, 160.0, cyan, 0.85);
-    MpCsText(parent, 1300.0, 828.0, "HIT ENTER:  x 1300-1890   y 860-1020", 14, n"Medium", cyan);
-}
-
-/**
- * TWO CALIBRATION TARGETS, at known points, to be clicked exactly.
- *
- * Every number so far came from clicking "somewhere on a card" and reporting what the
- * crosshair said, and the readings disagree with each other - they imply a non-uniform
- * stretch, which no single transform produces. That is not zeldfep misreporting; it is that
- * "the middle of a card" is a 90px-tall target and the error being measured is the same
- * order of magnitude.
- *
- * These are 24px crosses at authored (960, 270) and (960, 810) - dead centre horizontally,
- * a quarter and three quarters down. Clicking exactly on each gives two unambiguous pairs,
- * which solve scale and offset for both axes with no interpretation left over:
- *
- *     reported = a * authored + b,  from two known authored points
- *
- * Then the hit regions come from measurement rather than from a theory about monitors, and
- * the same arithmetic can be applied to any resolution instead of calibrated to one.
- */
-@addMethod(SingleplayerMenuGameController)
-public func MpCsCalibrationTargets(parent: ref<inkCanvas>) -> Void {
-    let magenta = new HDRColor(1.0, 0.2, 0.75, 1.0);
-
-    this.MpCsTarget(parent, 960.0, 270.0, "A", magenta);
-    this.MpCsTarget(parent, 960.0, 810.0, "B", magenta);
-}
-
-@addMethod(SingleplayerMenuGameController)
-public func MpCsTarget(parent: ref<inkCanvas>, x: Float, y: Float, label: String,
-                       colour: HDRColor) -> Void {
-    MpCsRect(parent, x - 60.0, y - 2.0, 120.0, 4.0, colour, 1.0);
-    MpCsRect(parent, x - 2.0, y - 60.0, 4.0, 120.0, colour, 1.0);
-    MpCsBorder(parent, x - 12.0, y - 12.0, 24.0, 24.0, colour, 1.0);
-
-    MpCsText(parent, x + 20.0, y + 16.0, s"TARGET \(label)  authored \(Cast<Int32>(x)), \(Cast<Int32>(y))",
-             16, n"Bold", colour);
-}
 
 /**
  * HOW MANY SCREEN PIXELS ONE AUTHORED UNIT IS WORTH.
