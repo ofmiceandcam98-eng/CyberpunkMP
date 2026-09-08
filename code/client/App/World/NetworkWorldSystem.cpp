@@ -1606,7 +1606,25 @@ void NetworkWorldSystem::SaveCharacterAppearance(bool aAutomatic)
     // crashes the game, so the instance is what gets checked.
     if (!stateHandle || !stateHandle->instance)
     {
-        spdlog::error("[Character] no customization state to save");
+        // AN AUTOMATIC SAVE FINDING NO STATE IS THE NORMAL CASE, NOT A FAILURE.
+        //
+        // The instance exists only while the creator or a mirror is open - the comment above
+        // says so and the timer does not care. So the periodic save attempted it every ~90
+        // seconds all session and logged an ERROR every time: 40-odd lines per session
+        // claiming something was wrong when nothing was.
+        //
+        // That is worse than noise. On 2026-09-08 these were the only errors in the log
+        // while a real bug was being chased, and they cost time being ruled out - and a
+        // genuine capture failure would have looked exactly like them. An error that fires
+        // constantly during correct operation trains everyone to ignore the one that matters.
+        //
+        // A DELIBERATE save still reports loudly, because there the state's absence means
+        // the thing the player just asked for did not happen.
+        if (aAutomatic)
+            spdlog::debug("[Character] no customization state - normal outside the creator");
+        else
+            spdlog::error("[Character] no customization state to save");
+
         return;
     }
 
