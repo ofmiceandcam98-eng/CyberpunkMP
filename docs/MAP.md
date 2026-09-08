@@ -1449,6 +1449,17 @@ is **local and unpushed** — per Cam, nothing ships before the server swap.
     when it was not. Cam is a shared user, so he sat in the 11778/11780 bucket with the
     players; his coordination key authenticated fine and the packets never arrived. **Check
     the grant, not just the auth, before calling a new service cross-stream.**
+  - **AND THE GRANT ALONE IS STILL NOT ENOUGH FOR A SHARED USER.** An ACL rule says what
+    traffic is *permitted*; it does not put a device in somebody's tailnet. A shared user
+    sees only the devices explicitly SHARED with them, and on 2026-09-08
+    `officialcutstudios01` had **no device shares at all** — every existing share is on
+    `nco-server` / `nco-test-server`, the game sidecars. So the new grant permitted traffic
+    to a host Cam could not see. Fixed by creating a multi-use device invite on the host
+    (`POST /api/v2/device/<id>/device-invites`, **body is an ARRAY**, same trap as the
+    player invites). **Two things are needed to reach a new box: a share so the device
+    exists for them, and a grant so the ports open. Neither implies the other**, and the
+    ACL preview cannot show you the first because shared-in users are not in this tailnet's
+    user list.
 - **Hosts are named, not raw IPs, in the policy** (`nco-live`, `nco-test`) so a re-registered
   sidecar is a one-line edit rather than a hunt.
 - **Rollback is off-tailnet**: `api.tailscale.com` and the admin console are public, so a bad
