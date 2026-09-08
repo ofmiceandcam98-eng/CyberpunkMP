@@ -925,6 +925,32 @@ protected cb func OnGlobalRelease(e: ref<inkPointerEvent>) -> Bool {
      */
     MpCsLog(s"input: \(MpCsActionName(e)) handled=\(e.IsHandled())");
 
+    /*
+     * THE CLICK IS TESTED BEFORE THE HANDLED GUARD, and that is not a style choice.
+     *
+     * zeldfep's logs show clicks arriving BOTH ways - "input: click handled=false" and
+     * "input: click handled=true". Something upstream marks some of them handled, and with
+     * the guard first those were skipped entirely: only the activate half of the gesture ran,
+     * so a click anywhere entered the world and no "click at" line was ever written. That is
+     * exactly the report - "the whole window acts like a button for enter the city".
+     *
+     * Reading a position out of an already-handled event costs nothing and changes nothing
+     * for anyone else; this screen covers the whole surface while it is open, so there is no
+     * other consumer whose click we could be stealing.
+     */
+    if e.IsAction(n"click") {
+        let pos = e.GetScreenSpacePosition();
+
+        // Logged so the coordinate space can be checked against where things were drawn
+        // rather than assumed. Authored units are 1920x1080; if screen space is not that,
+        // this line is what says so.
+        MpCsLog(s"click at \(pos.X), \(pos.Y)");
+
+        this.MpCsClickAt(pos.X, pos.Y);
+        e.Handle();
+        return true;
+    }
+
     if e.IsHandled() {
         return wrappedMethod(e);
     }
@@ -992,46 +1018,17 @@ protected cb func OnGlobalRelease(e: ref<inkPointerEvent>) -> Bool {
     // CREATE, on an empty slot only. Runs the game's whole creator and leaves the menu, so
     // it is deliberately not on a key anybody presses by accident.
     /*
-     * ENTER DOES THE OBVIOUS THING FOR WHATEVER THE CARET IS ON.
+     * THE OLD "activate ENTERS THE CITY" BRANCH LIVED HERE AND IS GONE.
      *
-     * zeldfep, 2026-09-08: "enter city need to work for sure" - the mockup's big gold
-     * button, and the reason the screen exists at all. A selection screen you cannot leave
-     * INTO THE GAME is a menu that wastes your time.
+     * zeldfep: "the whole window acts like a button for enter the city". Exactly right, and
+     * this was why. A mouse click arrives as click AND activate, so once clicks were
+     * hit-tested by position this branch still fired on the activate half - from anywhere on
+     * the screen, ignoring where the cursor actually was.
      *
-     *   a character  ->  enter the world as them
-     *   an empty slot ->  run the creator and fill it
-     *
-     * One key for both, because from the player's side it is one intention: "this is who I
-     * am playing". Which of the two happens is a property of the card, not of the key, and
-     * the card says which on its face.
+     * I added a consume-only activate branch further down when the hit-testing went in and
+     * never removed this one, so the consume was unreachable and every click entered the
+     * world. Position now decides everything; activate is only swallowed.
      */
-    if e.IsAction(n"activate") || e.IsAction(n"one_click_confirm") {
-        if this.MpCsRosterIndex(this.m_csCursor) < 0 {
-            MpCsLog(s"create confirmed for empty slot \(this.m_csCursor + 1)");
-            this.MpCsClose();
-
-            let data = new PauseMenuListItemData();
-            data.eventName = n"OnMultiplayerNewCharacter";
-            this.HandleMenuItemActivate(data);
-
-            e.Handle();
-            return true;
-        }
-
-        MpCsLog(s"entering the city as the character in slot \(this.m_csCursor + 1)");
-        this.MpCsSay("Entering Night City...");
-        this.MpCsClose();
-
-        // The menu's own PLAY entry, not a second route into the world. It arms the join,
-        // closes the screen and loads - and going through it means there is one entry path
-        // to keep correct rather than two that can drift.
-        let play = new PauseMenuListItemData();
-        play.eventName = n"OnMultiplayerContinue";
-        this.HandleMenuItemActivate(play);
-
-        e.Handle();
-        return true;
-    }
 
     /*
      * CLICK WALKS THE SLOTS, because click is one of the two actions MEASURED to arrive.
@@ -1069,18 +1066,6 @@ protected cb func OnGlobalRelease(e: ref<inkPointerEvent>) -> Bool {
      *
      * activate is consumed without acting, so the pair cannot fire twice.
      */
-    if e.IsAction(n"click") {
-        let pos = e.GetScreenSpacePosition();
-
-        // Logged so the coordinate space can be checked against where things were drawn
-        // rather than assumed. Authored units are 1920x1080; if screen space is not that,
-        // this line is what says so.
-        MpCsLog(s"click at \(pos.X), \(pos.Y)");
-
-        this.MpCsClickAt(pos.X, pos.Y);
-        e.Handle();
-        return true;
-    }
 
     // Consumed deliberately: it is the second half of the click above, not a separate press.
     if e.IsAction(n"activate") || e.IsAction(n"one_click_confirm") {
