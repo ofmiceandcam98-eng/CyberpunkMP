@@ -969,15 +969,18 @@ protected cb func OnGlobalRelease(e: ref<inkPointerEvent>) -> Bool {
          * EVERY click is consumed while this screen is up, not just the ones that hit
          * something.
          *
-         * zeldfep's screenshot shows CHARACTER SELECTION, CREATE NEW, LOAD CHARACTER,
-         * SETTINGS and EXIT still readable behind the panels - so SetVisible(false) on the
-         * list root is not hiding what actually draws, and a click landing between two cards
-         * would reach a menu item nobody aimed at. That is how DELETE got armed twice this
-         * morning.
+         * NOT because the menu is visible - it is not. I read CHARACTER SELECTION, CREATE
+         * NEW, LOAD CHARACTER, SETTINGS and EXIT in zeldfep's screenshot and called the hide
+         * broken; that blue text is PART OF THE BACKDROP RENDER, which has mock UI painted
+         * into it. zeldfep: "thats part of the backround", "the blue one". The hide works.
          *
-         * Consuming unconditionally makes the menu unreachable whether or not the hide
-         * works, which decouples "you cannot touch it" from "you cannot see it". The first
-         * is correctness and is settled here; the second is cosmetic and still owed.
+         * The guard is kept anyway, on its own merit: a click landing in a gap between cards
+         * should stop at this screen rather than reaching anything underneath, whatever
+         * happens to be there. That is how DELETE got armed twice this morning, back when
+         * the cards had no hit regions at all.
+         *
+         * Left as a marker: I have now twice diagnosed a bug from a screenshot without
+         * checking whether the pixels were ours. The backdrop is a photograph of a UI.
          */
         e.Handle();
         return true;
