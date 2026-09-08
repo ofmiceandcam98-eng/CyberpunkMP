@@ -205,8 +205,36 @@ public func MpCsOpen() -> Void {
     } else {
         let canvas = new inkCanvas();
         canvas.SetName(n"mp_character_select");
-        canvas.SetAnchor(inkEAnchor.Fill);
-        canvas.SetInteractive(true);
+
+        /*
+         * TOP-LEFT ANCHOR AND PIVOT, because this canvas gets SCALED and scaling happens
+         * around the pivot.
+         *
+         * This was inkEAnchor.Fill, and with the x2 scale below that threw the whole
+         * composition up and to the left off the screen: a Fill widget pivots at its
+         * centre, so doubling it grows in every direction instead of down and right.
+         * zeldfep's screenshot showed the result exactly - a black screen with the BOTTOM
+         * edge of the dossier panel stranded at the very top.
+         *
+         * Anchored top-left with an anchor point of (0,0), the scale grows the way the
+         * coordinates were authored: origin stays put, everything extends right and down.
+         */
+        canvas.SetAnchor(inkEAnchor.TopLeft);
+        canvas.SetAnchorPoint(new Vector2(0.0, 0.0));
+        canvas.SetMargin(new inkMargin(0.0, 0.0, 0.0, 0.0));
+
+        /*
+         * NOT INTERACTIVE. This is the soft-lock that shipped in test.27.
+         *
+         * A full-screen interactive canvas swallows every click and key press, and there is
+         * nothing behind it that can still be reached - so the menu became unusable with no
+         * way out but killing the game. Interactivity belongs on the CARD HIT RECTS and
+         * nowhere else; each of those sets it for itself in MpCsArm.
+         *
+         * DO NOT set this true. If something on this screen needs input, give that widget
+         * its own hit rect rather than arming the whole canvas.
+         */
+        canvas.SetInteractive(false);
         canvas.Reparent(root);
 
         this.m_csRoot = canvas;
@@ -265,13 +293,10 @@ public func MpCsOpen() -> Void {
     // reports zero and the scale falls back to 1:1, the composition is wrong but the screen
     // is still BLACK behind it rather than half-covered over the game's own menu - which is
     // the difference between something that looks unfinished and something that looks broken.
-    let bed = new inkRectangle();
-    bed.SetName(n"mp_cs_bed");
-    bed.SetAnchor(inkEAnchor.Fill);
-    bed.SetMargin(new inkMargin(0.0, 0.0, 0.0, 0.0));
-    bed.SetTintColor(MpCsVoid());
-    bed.SetOpacity(1.0);
-    bed.Reparent(c);
+    // Sized rather than Fill-anchored, for the same reason the canvas is: inside a scaled
+    // canvas a Fill child covers the canvas's own box, which the scale has already moved.
+    // 1920x1080 in authored units is exactly the screen once the scale is applied.
+    MpCsRect(c, 0.0, 0.0, 1920.0, 1080.0, MpCsVoid(), 1.0);
 
     let backdrop = new inkImage();
     backdrop.SetName(n"mp_cs_backdrop");
