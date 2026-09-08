@@ -209,6 +209,14 @@ let m_csClickY: Float;
 @addField(SingleplayerMenuGameController)
 let m_csClicked: Bool;
 
+// The window-space reading of the same click, drawn beside the screen-space one so the two
+// can be compared against where the cursor actually was.
+@addField(SingleplayerMenuGameController)
+let m_csWinX: Float;
+
+@addField(SingleplayerMenuGameController)
+let m_csWinY: Float;
+
 // Second press on an already-selected empty slot is what actually starts the creator.
 // Cleared whenever the caret moves, so arming one slot and clicking another never creates
 // in a slot nobody was looking at.
@@ -955,7 +963,28 @@ protected cb func OnGlobalRelease(e: ref<inkPointerEvent>) -> Bool {
      * other consumer whose click we could be stealing.
      */
     if e.IsAction(n"click") {
+        /*
+         * TWO SPACES, AND ONLY ONE OF THEM IS OURS.
+         *
+         * zeldfep, 2026-09-08: "your draw box is correct the selection is wayyyy off". The
+         * outlines sit exactly over the cards, so the composition and the visuals agree - it
+         * is the incoming CLICK that is in a different space. And the error grows with y:
+         * +5 at the first card, +110 at the fourth, which is a scale difference rather than
+         * an offset, so no constant can fix it.
+         *
+         * inkPointerEvent exposes GetScreenSpacePosition AND GetWindowSpacePosition. Every
+         * build so far has used the first without ever asking whether the second was the one
+         * that matched. Both are logged and both are drawn, in different colours, so one
+         * glance says which lands under the cursor - the same "measure it rather than derive
+         * it" that ended the action-name guessing.
+         */
         let pos = e.GetScreenSpacePosition();
+        let win = e.GetWindowSpacePosition();
+
+        MpCsLog(s"click screen=\(pos.X),\(pos.Y)  window=\(win.X),\(win.Y)");
+
+        this.m_csWinX = win.X;
+        this.m_csWinY = win.Y;
 
         // Logged so the coordinate space can be checked against where things were drawn
         // rather than assumed. Authored units are 1920x1080; if screen space is not that,
@@ -1409,8 +1438,21 @@ public func MpCsClickMarker(parent: ref<inkCanvas>) -> Void {
     MpCsRect(parent, x - 3.0, y - 60.0, 6.0, 120.0, cyan, 1.0);
     MpCsRect(parent, x - 12.0, y - 12.0, 24.0, 24.0, cyan, 1.0);
 
-    MpCsText(parent, x + 12.0, y + 10.0, s"\(Cast<Int32>(x)), \(Cast<Int32>(y))", 15,
-             n"Medium", new HDRColor(0.24, 0.9, 0.94, 1.0));
+    MpCsText(parent, x + 12.0, y + 10.0, s"SCREEN \(Cast<Int32>(x)), \(Cast<Int32>(y))", 15,
+             n"Medium", cyan);
+
+    // The same click in window space, in gold. Whichever cross sits under the cursor is the
+    // accessor this screen should be hit-testing with.
+    let gx = this.m_csWinX;
+    let gy = this.m_csWinY;
+    let gold = MpCsGold();
+
+    MpCsRect(parent, gx - 60.0, gy - 3.0, 120.0, 6.0, gold, 1.0);
+    MpCsRect(parent, gx - 3.0, gy - 60.0, 6.0, 120.0, gold, 1.0);
+    MpCsRect(parent, gx - 12.0, gy - 12.0, 24.0, 24.0, gold, 1.0);
+
+    MpCsText(parent, gx + 12.0, gy - 34.0, s"WINDOW \(Cast<Int32>(gx)), \(Cast<Int32>(gy))", 15,
+             n"Medium", gold);
 }
 
 /**
