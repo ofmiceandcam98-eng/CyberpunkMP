@@ -835,35 +835,20 @@ protected cb func OnMpCsCardRelease(e: ref<inkPointerEvent>) -> Bool {
 }
 
 /**
- * Names the action on an input event, by asking rather than by reading.
+ * The action's REAL name, not a guess at it.
  *
- * inkInputEvent exposes GetActionName() : inkActionName, which is not a String and has no
- * obvious way to become one - so this tests the candidates instead. Clumsy, and it is the
- * only form that cannot fail on an API I have not verified, which matters after four
- * separate bindings that compiled cleanly and did nothing on a real machine.
+ * This replaces a list of fifteen candidates tested with IsAction, which was the honest
+ * shape while GetActionName() had no verified path to a String - it returns an inkActionName,
+ * not a CName. scc says ToString() takes it, so the guessing ends here.
  *
- * The list is every action CDPR's own pregame menus use, plus the cancel spellings worth
- * ruling out. Anything not on it comes back as "?" - which is itself an answer: it means the
- * handler IS being reached and the name is simply not one I have tried.
+ * It matters because the guessing was wrong. ESC does not arrive as 'back': zeldfep pressed
+ * it, the handler ran, and the only names that appeared were "activate", "click" and "?".
+ * Four builds bound a key by reading CDPR's own pregame menus and assuming the same action
+ * reaches a wrapped handler, and all four did nothing. One line of measurement beats another
+ * reading of the source.
  */
 public func MpCsActionName(e: ref<inkPointerEvent>) -> String {
-    if e.IsAction(n"back") { return "back"; }
-    if e.IsAction(n"cancel") { return "cancel"; }
-    if e.IsAction(n"ui_cancel") { return "ui_cancel"; }
-    if e.IsAction(n"close_popup") { return "close_popup"; }
-    if e.IsAction(n"activate") { return "activate"; }
-    if e.IsAction(n"click") { return "click"; }
-    if e.IsAction(n"one_click_confirm") { return "one_click_confirm"; }
-    if e.IsAction(n"delete_save") { return "delete_save"; }
-    if e.IsAction(n"navigate_up") { return "navigate_up"; }
-    if e.IsAction(n"navigate_down") { return "navigate_down"; }
-    if e.IsAction(n"navigate_left") { return "navigate_left"; }
-    if e.IsAction(n"navigate_right") { return "navigate_right"; }
-    if e.IsAction(n"next_menu") { return "next_menu"; }
-    if e.IsAction(n"child_menu") { return "child_menu"; }
-    if e.IsAction(n"system_notification_confirm") { return "system_notification_confirm"; }
-
-    return "?";
+    return ToString(e.GetActionName());
 }
 
 /**
