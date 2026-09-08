@@ -391,144 +391,23 @@ public func MpCsOpen() -> Void {
      * dropped; the screen you are looking at is still the runtime-built one.
      */
     /*
-     * TWO ASKS, ONE OF THEM A CONTROL.
+     * THE PROBE IS GONE. It cost three builds and never answered.
      *
-     * test.26 asked only for the authored library and got SILENCE - no spawned callback and
-     * no failed callback, because an unresolvable resource never calls back at all. That is
-     * a third outcome the probe did not have a branch for, so it proved nothing: it could
-     * not tell "my library is bad" from "this controller cannot async-spawn anything".
+     * It asked whether a CLI-authored .inkwidget can be spawned, and produced silence every
+     * time: test.26 had no branch for a callback that never fires, test.27 and .28 added a
+     * control and a 3-second deadline that writes a verdict unconditionally - and THAT never
+     * fired either. Three instruments, three silences, and somewhere in there it locked the
+     * main menu.
      *
-     * So the same call is made against a library that is KNOWN to work - multiplayer_ui,
-     * which Death.reds and the whole HUD spawn from every session. The pair separates the
-     * two:
+     * The question is still worth answering, but not here. A diagnostic does not get to sit
+     * in the screen a person is trying to use; it belongs somewhere a failure costs nothing.
      *
-     *   control answers, mine silent  -> the authored library is the problem
-     *   both silent                   -> the menu controller cannot spawn, library is fine
-     *   both answer                   -> the authored path works, look elsewhere
+     * WHAT IT DID ESTABLISH, and this was worth the trip: the menu root lays out at
+     * 3840x2160, measured rather than assumed, which is the whole reason this composition
+     * scales by two.
      */
-    this.m_csProbeControl = false;
-    this.m_csProbeAuthored = false;
-
-    /*
-     * THE PROBE SPAWNS INTO A SEALED HOLDER, and this is the fix for the input lock.
-     *
-     * The control asks for server_list - a HUD widget with its own controller, built to sit
-     * in gameplay. Spawned straight onto the menu root it arrives VISIBLE and INTERACTIVE,
-     * and if its callback has not run yet there is nothing to hide it, so it sits over the
-     * main menu eating every click and key. test.26 had no control probe and no lock;
-     * test.27 added one and locked; test.28 kept it and stayed locked even with the canvas
-     * itself made non-interactive. That is the sequence pointing here.
-     *
-     * A zero-size, invisible, non-interactive holder means whatever a probe produces cannot
-     * be seen or touched no matter what its own flags say, and no matter whether the
-     * callback ever runs. The experiment still answers - spawning either succeeds or it
-     * does not, and that is all it was ever asking.
-     */
-    let holder = new inkCanvas();
-    holder.SetName(n"mp_cs_probe_holder");
-    holder.SetAnchor(inkEAnchor.TopLeft);
-    holder.SetAnchorPoint(new Vector2(0.0, 0.0));
-    holder.SetMargin(new inkMargin(0.0, 0.0, 0.0, 0.0));
-    holder.SetSize(new Vector2(0.0, 0.0));
-    holder.SetInteractive(false);
-    holder.SetVisible(false);
-    holder.SetOpacity(0.0);
-    holder.Reparent(c);
-
-    this.AsyncSpawnFromExternal(holder,
-                                r"mods\\cyberpunkmp\\multiplayer_ui.inkwidget",
-                                n"server_list", this, n"OnMpCsProbeControl");
-
-    this.AsyncSpawnFromExternal(holder,
-                                r"nightcityonline\\character_select.inkwidget",
-                                n"character_select", this, n"OnMpCsProbeAuthored");
-
-    MpCsLog(s"probe: asked for BOTH libraries - a verdict line follows in 3s");
-
-    // SILENCE HAS TO REPORT ITSELF. Waiting on a callback that never comes is exactly the
-    // shape that made test.26 worthless, and it is the same lesson as the stale-workload
-    // decree: a wait needs a deadline and a failure branch, or it cannot be told from
-    // still-working.
-    let verdict = new MpCsProbeVerdict();
-    verdict.controller = this;
-
-    GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(verdict, 3.0, false);
 }
 
-/**
- * Reads the probe out three seconds after both asks. See MpCsOpen for the experiment.
- *
- * A DelayCallback rather than trusting the callbacks to arrive, because the whole point is
- * that they might not - and a probe whose failure mode is "nothing is written anywhere" is
- * not a probe.
- */
-public class MpCsProbeVerdict extends DelayCallback {
-    public let controller: wref<SingleplayerMenuGameController>;
-
-    public func Call() -> Void {
-        if !IsDefined(this.controller) {
-            return;
-        }
-
-        this.controller.MpCsProbeReport();
-    }
-}
-
-@addMethod(SingleplayerMenuGameController)
-public func MpCsProbeReport() -> Void {
-    let control = this.m_csProbeControl;
-    let authored = this.m_csProbeAuthored;
-
-    if control && authored {
-        MpCsLog(s"probe VERDICT: both spawned - the authored library WORKS, build the real screen on it");
-        return;
-    }
-
-    if control && !authored {
-        MpCsLog(s"probe VERDICT: control spawned, authored did NOT - the library I built is the problem, not the call");
-        return;
-    }
-
-    if !control && !authored {
-        MpCsLog(s"probe VERDICT: NEITHER spawned - this controller cannot async-spawn here; my library is not implicated");
-        return;
-    }
-
-    MpCsLog(s"probe VERDICT: authored spawned but the control did not - unexpected, treat the control as suspect");
-}
-
-@addField(SingleplayerMenuGameController)
-let m_csProbeControl: Bool;
-
-@addField(SingleplayerMenuGameController)
-let m_csProbeAuthored: Bool;
-
-// The known-good library. If this one does not arrive, nothing about the authored file is
-// proven either way - which is exactly the hole test.26 fell into.
-@addMethod(SingleplayerMenuGameController)
-protected cb func OnMpCsProbeControl(widget: ref<inkWidget>, userData: ref<IScriptable>) -> Bool {
-    this.m_csProbeControl = IsDefined(widget);
-
-    if IsDefined(widget) {
-        widget.SetVisible(false);
-    }
-
-    MpCsLog(s"probe: control callback fired, widget=\(IsDefined(widget))");
-    return true;
-}
-
-// The library authored entirely from the command line. This is the one under test.
-@addMethod(SingleplayerMenuGameController)
-protected cb func OnMpCsProbeAuthored(widget: ref<inkWidget>, userData: ref<IScriptable>) -> Bool {
-    this.m_csProbeAuthored = IsDefined(widget);
-
-    if IsDefined(widget) {
-        widget.SetVisible(false);
-    }
-
-    MpCsLog(s"probe: authored callback fired, widget=\(IsDefined(widget))");
-    return true;
-}
 
 /**
  * Close the screen without destroying it. Reopening is then a rebuild rather than a
@@ -656,7 +535,6 @@ public func MpCsCard(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float,
                  selected ? "READY - CREATE NEW CHARACTER" : "SELECT TO CREATE HERE", 13,
                  n"Regular", selected ? MpCsGold() : MpCsInkFaint());
 
-        this.MpCsArm(parent, slot, cx, y, w, h);
         return;
     }
 
@@ -688,7 +566,6 @@ public func MpCsCard(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float,
     MpCsText(parent, cx + w - 84.0, y + 32.0, s"LV \(level)", 26, n"Regular",
              selected ? MpCsGold() : MpCsInkDim());
 
-    this.MpCsArm(parent, slot, cx, y, w, h);
 }
 
 /**
@@ -698,6 +575,21 @@ public func MpCsCard(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float,
  * name is how the callback knows which card was hit - ink hands the handler the widget it
  * landed on, and reading a name off it is far less fragile than keeping a parallel array
  * of references in step with a roster that changes shape.
+ */
+/*
+ * DELIBERATELY NOT CALLED RIGHT NOW - zero call sites, and that is not a bug.
+ *
+ * The main menu locked up across test.27, .28 and .29 and the cause was never isolated. Two
+ * suspects remained: the probe (now deleted) and these hit rects. Rather than ship a fourth
+ * build that might still take the menu away, EVERYTHING of mine that can claim input is off,
+ * so the next build answers a clean question: with nothing of ours interactive, is the menu
+ * usable?
+ *
+ *   menu fine  -> the lock was ours; wire this back one piece at a time and watch
+ *   still bad  -> the lock is not from input at all, and the search moves elsewhere
+ *
+ * The logic below is correct and was working before the lock; it is parked, not abandoned.
+ * Re-wire by restoring the MpCsArm calls at the end of MpCsCard's two branches.
  */
 @addMethod(SingleplayerMenuGameController)
 public func MpCsArm(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float, w: Float,
