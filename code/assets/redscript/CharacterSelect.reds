@@ -418,7 +418,10 @@ public func MpCsOpen() -> Void {
     // controller-navigable in a way a runtime widget is not.
     this.MpCsStatusLine(c, 68.0, 934.0);
 
-    MpCsText(c, 68.0, 1004.0, "IDENTITY IS A TOOL. MAKE IT YOURS.", 13, n"Regular", MpCsInkFaint());
+    // The keys, on screen. A screen driven by keys nobody is told about is a screen that
+    // does not work, and this one hid its own exit for a whole build.
+    MpCsText(c, 68.0, 1004.0, "[ UP / DOWN ]  CHOOSE          [ ESC ]  BACK TO MENU", 15,
+             n"Medium", MpCsGold());
 
     this.MpCsHideMenuList();
 
@@ -607,7 +610,6 @@ public func MpCsCard(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float,
         MpCsText(parent, cx + 128.0, y + 62.0, prompt, 13, n"Regular",
                  selected ? MpCsGold() : MpCsInkFaint());
 
-        this.MpCsArm(parent, slot, cx, y, w, h);
         return;
     }
 
@@ -639,7 +641,6 @@ public func MpCsCard(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float,
     MpCsText(parent, cx + w - 84.0, y + 32.0, s"LV \(level)", 26, n"Regular",
              selected ? MpCsGold() : MpCsInkDim());
 
-    this.MpCsArm(parent, slot, cx, y, w, h);
 }
 
 /**
@@ -809,6 +810,105 @@ protected cb func OnMpCsCardRelease(e: ref<inkPointerEvent>) -> Bool {
 
     GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(poll, 0.25, false);
     return true;
+}
+
+/**
+ * INPUT COMES THROUGH THE GAME'S OWN HANDLER, NOT THROUGH OUR WIDGETS.
+ *
+ * Hand-built rectangles with SetInteractive(true) and an OnRelease callback never once
+ * received a click across test.27 through test.2 - they either did nothing or took the whole
+ * menu down with them. Cam's comment in MainMenu.reds called this years before I proved it:
+ * "a hand-built clickable button would need its own input handling and hover states", and
+ * menu ITEMS are used everywhere in this codebase precisely because they are the surface
+ * that reliably works.
+ *
+ * OnGlobalRelease is the controller's own event (singleplayerMenu.script:870). It receives
+ * actions globally - no hit-testing, no widget tree, no interactivity flags - which is why
+ * it works when nothing else did. The game drives its own menu from exactly these actions.
+ *
+ * BACK IS THE IMPORTANT ONE. zeldfep, 2026-09-08: "need a back button for sure" - said while
+ * stuck on a screen with the menu hidden behind it and no way out but killing the game.
+ * Escape now closes the selector and puts the menu back, and it is handled BEFORE anything
+ * else so it cannot be swallowed.
+ */
+@wrapMethod(SingleplayerMenuGameController)
+protected cb func OnGlobalRelease(e: ref<inkPointerEvent>) -> Bool {
+    if !this.m_csOpen || e.IsHandled() {
+        return wrappedMethod(e);
+    }
+
+    // BACK: close the screen, restore the menu, stop here. Handling the event keeps the
+    // game's own OnBack from also firing and dropping the player out of the menu entirely.
+    if e.IsAction(n"back") {
+        MpCsLog(s"back pressed - closing the screen");
+        this.MpCsClose();
+        this.MpCsShowMenuList();
+        this.MpRefreshMenu();
+        e.Handle();
+        return true;
+    }
+
+    // UP/DOWN walk the slots and select as they go. No confirm step: moving to a character
+    // IS choosing it, which is what the caret has always meant on this screen, and it saves
+    // inventing a second key nobody was told about.
+    if e.IsAction(n"navigate_up") || e.IsAction(n"navigate_down") {
+        let step = e.IsAction(n"navigate_down") ? 1 : -1;
+
+        this.MpCsStep(step);
+        e.Handle();
+        return true;
+    }
+
+    return wrappedMethod(e);
+}
+
+/**
+ * Move the caret by one, wrapping, and tell the server where it landed.
+ *
+ * Only over slots this account may use - a caret that stops on a locked slot would be
+ * offering something that cannot be picked.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsStep(delta: Int32) -> Void {
+    let network = GameInstance.GetNetworkWorldSystem();
+
+    if !IsDefined(network) {
+        return;
+    }
+
+    let unlocked = network.GetCharacterSlots();
+
+    if unlocked > MpCsMaxSlots() {
+        unlocked = MpCsMaxSlots();
+    }
+
+    if unlocked < 1 {
+        return;
+    }
+
+    let next = this.m_csCursor + delta;
+
+    if next < 0 {
+        next = unlocked - 1;
+    }
+
+    if next >= unlocked {
+        next = 0;
+    }
+
+    this.m_csCursor = next;
+    this.m_csCreateArmed = false;
+
+    MpCsLog(s"caret moved to slot \(next + 1)");
+
+    // Only ask the server for slots that hold somebody. Selecting an empty one is how
+    // creation is aimed, and that should be a deliberate press rather than a side effect of
+    // scrolling past it.
+    if this.MpCsRosterIndex(next) >= 0 {
+        network.SelectCharacterSlot(next);
+    }
+
+    this.MpCsOpen();
 }
 
 // ============================================================================ detail
