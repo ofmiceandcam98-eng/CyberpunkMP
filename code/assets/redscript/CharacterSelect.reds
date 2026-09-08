@@ -196,6 +196,19 @@ let m_csOpen: Bool;
 @addField(SingleplayerMenuGameController)
 let m_csDismissed: Bool;
 
+// Where the game says the last click landed, in the composition's own units. Drawn as a
+// crosshair so the offset between "where I clicked" and "where it registered" is visible
+// rather than inferred - zeldfep, 2026-09-08: "I have to click a little above where the
+// button actually is i think calibration is in order".
+@addField(SingleplayerMenuGameController)
+let m_csClickX: Float;
+
+@addField(SingleplayerMenuGameController)
+let m_csClickY: Float;
+
+@addField(SingleplayerMenuGameController)
+let m_csClicked: Bool;
+
 // Second press on an already-selected empty slot is what actually starts the creator.
 // Cleared whenever the caret moves, so arming one slot and clicking another never creates
 // in a slot nobody was looking at.
@@ -448,6 +461,8 @@ public func MpCsOpen() -> Void {
 
     // The keys, on screen. A screen driven by keys nobody is told about is a screen that
     // does not work, and this one hid its own exit for a whole build.
+    this.MpCsClickMarker(c);
+
     MpCsText(c, 68.0, 1030.0, "CLICK A SLOT TO SELECT      CLICK IT AGAIN TO ENTER OR CREATE", 15,
              n"Medium", MpCsGold());
 
@@ -946,6 +961,10 @@ protected cb func OnGlobalRelease(e: ref<inkPointerEvent>) -> Bool {
         // this line is what says so.
         MpCsLog(s"click at \(pos.X), \(pos.Y)");
 
+        this.m_csClickX = pos.X;
+        this.m_csClickY = pos.Y;
+        this.m_csClicked = true;
+
         this.MpCsClickAt(pos.X, pos.Y);
         e.Handle();
         return true;
@@ -1312,6 +1331,36 @@ public func MpCsSelect(slot: Int32) -> Void {
     }
 
     this.MpCsOpen();
+}
+
+/**
+ * A crosshair where the last click registered.
+ *
+ * CALIBRATION YOU CAN SEE. The hit regions are the coordinates this screen drew at, and a
+ * click is tested against them directly - which is only correct if screen space and the
+ * composition share an origin. zeldfep reports having to click ABOVE a button to hit it, so
+ * they do not, and the offset needs measuring rather than assuming.
+ *
+ * One click now shows both halves at once: the cursor is where he pressed, the crosshair is
+ * where the game says he pressed, and the gap between them IS the correction. Guessing a
+ * number and shipping it would be the fifth time today I fixed something by inference.
+ *
+ * Comes out once the offset is known.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsClickMarker(parent: ref<inkCanvas>) -> Void {
+    if !this.m_csClicked {
+        return;
+    }
+
+    let x = this.m_csClickX;
+    let y = this.m_csClickY;
+
+    MpCsRect(parent, x - 40.0, y - 1.0, 80.0, 2.0, new HDRColor(0.24, 0.9, 0.94, 1.0), 1.0);
+    MpCsRect(parent, x - 1.0, y - 40.0, 2.0, 80.0, new HDRColor(0.24, 0.9, 0.94, 1.0), 1.0);
+
+    MpCsText(parent, x + 12.0, y + 10.0, s"\(Cast<Int32>(x)), \(Cast<Int32>(y))", 15,
+             n"Medium", new HDRColor(0.24, 0.9, 0.94, 1.0));
 }
 
 // ============================================================================ detail
