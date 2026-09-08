@@ -147,6 +147,22 @@ void ChatSystem::SendCharacterList(const PlayerComponent& acPlayer, const std::s
                 summary.set_spawned_before(character.SpawnedBefore);
                 summary.set_lifepath(character.Lifepath.c_str());
 
+                // The five attributes, sent as stored. See server.proto - this is the flag day
+                // that lets the selector show who somebody is rather than only what they are
+                // called.
+                Vector<server::Attribute> attributes;
+
+                for (const auto& attribute : character.Attributes)
+                {
+                    server::Attribute wire;
+                    wire.set_type(attribute.Type);
+                    wire.set_value(attribute.Value);
+                    attributes.push_back(wire);
+                }
+
+                summary.set_attributes(attributes);
+
+
                 // The slot is for DRAWING, never for identity. Slots are not contiguous -
                 // retiring the character in slot 1 of three leaves 0 and 2 occupied - so the
                 // client draws holes where the gaps are rather than renumbering. Anything

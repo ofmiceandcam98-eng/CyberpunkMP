@@ -47,6 +47,25 @@ message CharacterSummary {
     // the server sends a string and the UI prints it. A client that understood lifepaths
     // would need updating the day one is added.
     string lifepath = 7;
+
+    // The five attributes, so the selector can show who somebody IS rather than only what
+    // they are called.
+    //
+    // A FLAG DAY, and deliberately taken: this changes the protocol hash, so every client
+    // must ship with the server. Cam is locked out of the test server until he installs the
+    // matching build - the public server is on another branch and is untouched.
+    //
+    // Attribute already exists for the spawn payload, so this reuses it rather than
+    // inventing a parallel shape. Sent as stored - the enum's own numeric type and a value,
+    // uninterpreted - for the same reason the record stores them that way: the server does
+    // not need to know what Reflexes IS to remember you have twelve of it, and one that did
+    // would need updating every patch.
+    //
+    // Attributes, not Proficiencies. They are different enums (gamedataStatType vs
+    // gamedataProficiencyType) and CharacterRecord keeps them apart on purpose, because a
+    // single untagged list lets a perk id be read back as an attribute the first time
+    // anybody reorders one.
+    repeated Attribute attributes = 8;
 }
 
 message AuthenticationResponse {

@@ -1164,6 +1164,22 @@ void GameServer::AdmitPlayer(const ConnectionId aConnectionId, const std::string
             // has none, and that is a normal row rather than a broken one.
             summary.set_lifepath(pCharacter->Lifepath.c_str());
 
+            // The five attributes, sent as stored. See server.proto - this is the flag day
+            // that lets the selector show who somebody is rather than only what they are
+            // called.
+            Vector<server::Attribute> attributes;
+
+            for (const auto& attribute : pCharacter->Attributes)
+            {
+                server::Attribute wire;
+                wire.set_type(attribute.Type);
+                wire.set_value(attribute.Value);
+                attributes.push_back(wire);
+            }
+
+            summary.set_attributes(attributes);
+
+
             // The record's own Level field, not a search through Proficiencies. Both hold
             // it - the note in CharacterRecord explains why the overlap was kept - and
             // this is the one the spawn path applies, so a selector that read the other

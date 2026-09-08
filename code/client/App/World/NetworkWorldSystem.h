@@ -151,6 +151,13 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
 
     void ScriptLog(const Red::CString& acText) const;
 
+    // The selected character's attributes, addressed the same way the rest of the roster is:
+    // by index, one value per call. Verbose on purpose - it is the shape every other roster
+    // accessor already uses, and a shape redscript can consume without a struct binding.
+    uint32_t GetRosterAttributeCount(uint32_t aIndex) const;
+    uint32_t GetRosterAttributeType(uint32_t aIndex, uint32_t aAttribute) const;
+    int32_t GetRosterAttributeValue(uint32_t aIndex, uint32_t aAttribute) const;
+
     // Applying what the server sent back. Mirrors the capture side: native holds the data
     // that came off the wire, script does the work, and only scalars cross between them.
     uint32_t GetRestoreCount() const;
@@ -558,6 +565,17 @@ protected:
         // Held as the server's own string and never parsed. See the note on
         // CharacterSummary.lifepath - the client's job is to print it, not to know it.
         std::string Lifepath;
+
+        // The five attributes, as the server sent them: the enum's own numeric type and a
+        // value, uninterpreted. The selector draws a bar per entry and names it from the
+        // type; nothing here decides what Reflexes means.
+        struct Attribute
+        {
+            uint32_t Type{0};
+            int32_t Value{0};
+        };
+
+        std::vector<Attribute> Attributes;
     };
 
     std::vector<RosterEntry> m_roster;
@@ -912,6 +930,9 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(IsModLocalPuppetFemale);
     RTTI_METHOD(GetLocalPuppetRecord);
     RTTI_METHOD(ScriptLog);
+    RTTI_METHOD(GetRosterAttributeCount);
+    RTTI_METHOD(GetRosterAttributeType);
+    RTTI_METHOD(GetRosterAttributeValue);
     RTTI_METHOD(GetRestoreCount);
     RTTI_METHOD(GetRestoreId);
     RTTI_METHOD(GetRestoreQuantity);

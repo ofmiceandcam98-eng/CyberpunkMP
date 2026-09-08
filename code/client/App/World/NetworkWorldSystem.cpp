@@ -788,6 +788,38 @@ void NetworkWorldSystem::ScriptLog(const Red::CString& acText) const
     spdlog::info("[script] {}", acText.c_str());
 }
 
+/**
+ * The attributes on one roster entry.
+ *
+ * Bounds-checked rather than trusted: the index comes from redscript, which reads it from a
+ * roster that can change between the draw and the click. Out of range answers zero, which
+ * the selector renders as an empty bar - a character with no attributes recorded looks
+ * unremarkable rather than crashing the menu.
+ */
+uint32_t NetworkWorldSystem::GetRosterAttributeCount(uint32_t aIndex) const
+{
+    if (aIndex >= m_roster.size())
+        return 0;
+
+    return static_cast<uint32_t>(m_roster[aIndex].Attributes.size());
+}
+
+uint32_t NetworkWorldSystem::GetRosterAttributeType(uint32_t aIndex, uint32_t aAttribute) const
+{
+    if (aIndex >= m_roster.size() || aAttribute >= m_roster[aIndex].Attributes.size())
+        return 0;
+
+    return m_roster[aIndex].Attributes[aAttribute].Type;
+}
+
+int32_t NetworkWorldSystem::GetRosterAttributeValue(uint32_t aIndex, uint32_t aAttribute) const
+{
+    if (aIndex >= m_roster.size() || aAttribute >= m_roster[aIndex].Attributes.size())
+        return 0;
+
+    return m_roster[aIndex].Attributes[aAttribute].Value;
+}
+
 void NetworkWorldSystem::AddProficiency(uint32_t aType, int32_t aLevel)
 {
     // Level 0 is the game's default for a proficiency nobody has touched. Storing it is
@@ -1731,6 +1763,14 @@ void NetworkWorldSystem::AdoptRoster(const Vector<server::CharacterSummary>& acC
         entry.SpawnedBefore = summary.get_spawned_before();
         entry.Active = summary.get_is_active();
         entry.Lifepath = summary.get_lifepath().c_str();
+
+        for (const auto& attribute : summary.get_attributes())
+        {
+            RosterEntry::Attribute held;
+            held.Type = attribute.get_type();
+            held.Value = attribute.get_value();
+            entry.Attributes.push_back(held);
+        }
 
         m_roster.push_back(std::move(entry));
     }

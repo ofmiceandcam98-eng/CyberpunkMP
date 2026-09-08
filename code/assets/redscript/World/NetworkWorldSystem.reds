@@ -136,6 +136,13 @@ public native class NetworkWorldSystem extends IGameSystem {
     // send it, and a character created before the field existed has none. Draw the row
     // without it rather than hiding the row.
     public native func GetRosterLifepath(index: Uint32) -> String;
+
+    // The five attributes on one roster entry, addressed by index like everything else here.
+    // Type is the game's own gamedataStatType number, uninterpreted - the selector names it
+    // for display and nothing on this side decides what it means.
+    public native func GetRosterAttributeCount(index: Uint32) -> Uint32;
+    public native func GetRosterAttributeType(index: Uint32, attribute: Uint32) -> Uint32;
+    public native func GetRosterAttributeValue(index: Uint32, attribute: Uint32) -> Int32;
     public native func GetRosterLevel(index: Uint32) -> Int32;
 
     // -1 for a bad index, never 0: zero is a REAL slot, and a caller reading it as one

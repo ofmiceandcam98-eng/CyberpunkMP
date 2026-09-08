@@ -1657,9 +1657,21 @@ public func MpCsDetail(parent: ref<inkCanvas>, x: Float, y: Float) -> Void {
     this.MpCsRow(parent, x, rowY + 138.0, w, "IN PLAY",
                  network.IsRosterActive(u) ? "yes - this is you" : "no");
 
-    MpCsText(parent, x + 26.0, y + h - 92.0, "PLAY ENTERS THE WORLD AS THIS", 14, n"Medium",
-             MpCsGold());
-    MpCsText(parent, x + 26.0, y + h - 62.0, "CHARACTER.", 14, n"Medium", MpCsGold());
+    this.MpCsAttributes(parent, x + 26.0, rowY + 186.0, index);
+
+    // Log the raw types once per draw, so the enum values can be learned from evidence
+    // rather than guessed. Comes out with MpCsAttributeName's fallback.
+    let logged = 0u;
+    let seen = "";
+
+    while logged < network.GetRosterAttributeCount(u) && logged < 8u {
+        seen += s"\(network.GetRosterAttributeType(u, logged))=\(network.GetRosterAttributeValue(u, logged)) ";
+        logged += 1u;
+    }
+
+    if NotEquals(seen, "") {
+        MpCsLog(s"attributes for slot \(this.m_csCursor + 1): \(seen)");
+    }
 }
 
 @addMethod(SingleplayerMenuGameController)
@@ -1733,6 +1745,90 @@ public func MpCsSay(message: String) -> Void {
     if IsDefined(this.m_csStatus) {
         this.m_csStatus.SetText(message);
     }
+}
+
+/**
+ * THE ATTRIBUTE BARS, from the mockup's dossier.
+ *
+ * The flag day that carries them: CharacterSummary gained a repeated Attribute so the
+ * selector can show who somebody IS, not only what they are called.
+ *
+ * Drawn as skewed segments the way the mockup does - a filled run against an unfilled
+ * remainder - because a bar made of parts reads as a rating where a solid fill reads as a
+ * progress meter. Twenty segments, which is the game's own attribute ceiling.
+ *
+ * THE TYPE IS NOT INTERPRETED HERE. It arrives as the game's own gamedataStatType number
+ * and the names for those are not written down anywhere I can check, so a row is labelled
+ * from MpCsAttributeName and falls back to the raw number. Guessing five enum values and
+ * shipping them as labels is how somebody ends up reading their Reflexes as their Cool -
+ * the types are logged instead, so the next build can name them from evidence.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsAttributes(parent: ref<inkCanvas>, x: Float, y: Float, index: Int32) -> Void {
+    let network = GameInstance.GetNetworkWorldSystem();
+
+    if !IsDefined(network) || index < 0 {
+        return;
+    }
+
+    let u = Cast<Uint32>(index);
+    let count = network.GetRosterAttributeCount(u);
+
+    MpCsText(parent, x, y, "ATTRIBUTES", 13, n"Regular", MpCsInkFaint());
+    MpCsRect(parent, x + 130.0, y + 8.0, 430.0, 1.0, MpCsRedDim(), 0.7);
+
+    if count == 0u {
+        MpCsText(parent, x, y + 28.0, "none recorded for this character", 15, n"Regular",
+                 MpCsInkFaint());
+        return;
+    }
+
+    let i = 0u;
+
+    while i < count && i < 6u {
+        let type = network.GetRosterAttributeType(u, i);
+        let value = network.GetRosterAttributeValue(u, i);
+        let rowY = y + 30.0 + Cast<Float>(i) * 30.0;
+
+        MpCsText(parent, x, rowY, MpCsAttributeName(type), 14, n"Regular", MpCsInkDim());
+
+        // Twenty segments, skewed, filled to the value. Skew is what makes it the game's
+        // own bar rather than a generic one.
+        let segment = 0;
+
+        while segment < 20 {
+            let filled = segment < value;
+            let sx = x + 150.0 + Cast<Float>(segment) * 19.0;
+
+            let bar = new inkRectangle();
+            bar.SetAnchor(inkEAnchor.TopLeft);
+            bar.SetAnchorPoint(new Vector2(0.5, 0.5));
+            bar.SetMargin(new inkMargin(sx, rowY + 8.0, 0.0, 0.0));
+            bar.SetSize(new Vector2(13.0, 14.0));
+            bar.SetTintColor(filled ? MpCsGold() : MpCsInk());
+            bar.SetOpacity(filled ? 0.95 : 0.10);
+            bar.SetRotation(-18.0);
+            bar.Reparent(parent);
+
+            segment += 1;
+        }
+
+        MpCsText(parent, x + 552.0, rowY - 2.0, s"\(value)", 18, n"Medium", MpCsInk());
+
+        i += 1u;
+    }
+}
+
+/**
+ * A name for an attribute type, or the raw number.
+ *
+ * The five attributes are gamedataStatType entries and their numeric values are not
+ * recorded anywhere this side can check. Rather than invent five, every unknown type prints
+ * itself - which is useless on screen for exactly one build and then becomes the evidence
+ * that fills this in.
+ */
+public func MpCsAttributeName(type: Uint32) -> String {
+    return s"ATTR \(type)";
 }
 
 // ============================================================================ roster
