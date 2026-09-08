@@ -452,7 +452,7 @@ public func MpCsOpen() -> Void {
 
     // The keys, on screen. A screen driven by keys nobody is told about is a screen that
     // does not work, and this one hid its own exit for a whole build.
-    MpCsText(c, 68.0, 1030.0, "CLICK A SLOT TO SELECT      CLICK IT AGAIN TO ENTER OR CREATE", 15,
+    MpCsText(c, 68.0, 1030.0, "CLICK A SLOT TO SELECT      THEN CONFIRM ON THE RIGHT", 15,
              n"Medium", MpCsGold());
 
     /*
@@ -1189,9 +1189,18 @@ public func MpCsStep(delta: Int32) -> Void {
 public func MpCsActions(parent: ref<inkCanvas>, x: Float, y: Float) -> Void {
     let occupied = this.MpCsRosterIndex(this.m_csCursor) >= 0;
 
+    /*
+     * CREATE NEW IS GONE. zeldfep, 2026-09-08: "I think the create new button at the bottom
+     * is redundant".
+     *
+     * It was: clicking an empty slot already runs the creator, in THAT slot, which is the
+     * behaviour he asked for. A separate button was a second route to the same thing, and a
+     * worse one - it could not say which slot it would fill, so it had to guess the lowest
+     * free one. Two ways to do something, one of which cannot express the choice, is a way
+     * to pick the wrong slot.
+     */
     this.MpCsActionButton(parent, x, y, 236.0, "SELECT", "CLICK", true);
-    this.MpCsActionButton(parent, x + 252.0, y, 300.0, "CREATE NEW", "ENTER", !occupied);
-    this.MpCsActionButton(parent, x + 568.0, y, 236.0, "DELETE", "DEL", occupied);
+    this.MpCsActionButton(parent, x + 252.0, y, 236.0, "DELETE", "DEL", occupied);
 }
 
 @addMethod(SingleplayerMenuGameController)
@@ -1223,19 +1232,54 @@ public func MpCsActionButton(parent: ref<inkCanvas>, x: Float, y: Float, w: Floa
  */
 @addMethod(SingleplayerMenuGameController)
 public func MpCsEnterButton(parent: ref<inkCanvas>, x: Float, y: Float) -> Void {
-    let occupied = this.MpCsRosterIndex(this.m_csCursor) >= 0;
+    let network = GameInstance.GetNetworkWorldSystem();
+    let index = this.MpCsRosterIndex(this.m_csCursor);
+    let occupied = index >= 0;
     let w = 520.0;
     let h = 92.0;
 
-    MpCsRect(parent, x, y, w, h, MpCsGold(), occupied ? 1.0 : 0.28);
+    /*
+     * THE CONFIRMATION, AND IT NAMES WHO. zeldfep: "select should have a confirmation box on
+     * it so its actionable 'yes I want to pick this character'".
+     *
+     * "Click the card again" was a confirmation nobody could see - the same gesture as
+     * selecting, distinguished only by being the second one. This says what will happen and
+     * to whom, so the press is a decision rather than a repetition:
+     *
+     *   a character  ->  YES - PLAY AS <NAME>
+     *   an empty slot ->  YES - CREATE IN SLOT N
+     *
+     * The name is the point. With four slots and a roster that changes, "enter the world" is
+     * not enough to be sure which person you are about to be - and being the wrong one is
+     * exactly what this screen exists to prevent.
+     */
+    let label = "SELECT A SLOT";
+    let sub = "CLICK A CARD ON THE LEFT";
+    let armed = false;
+
+    if occupied && IsDefined(network) {
+        let name = network.GetRosterName(Cast<Uint32>(index));
+        let shown = NotEquals(name, "") ? name : "unnamed";
+
+        label = s"YES - PLAY AS \(shown)";
+        sub = "CLICK HERE, OR THE CARD AGAIN";
+        armed = true;
+    } else {
+        if this.m_csCursor >= 0 {
+            label = s"YES - CREATE IN SLOT 0\(this.m_csCursor + 1)";
+            sub = "RUNS THE CHARACTER CREATOR";
+            armed = true;
+        }
+    }
+
+    MpCsRect(parent, x, y, w, h, MpCsGold(), armed ? 1.0 : 0.24);
     MpCsNotch(parent, x + w, y, 26.0, MpCsVoid());
     MpCsNotch(parent, x, y + h, 26.0, MpCsVoid());
 
-    let ink = occupied ? new HDRColor(0.1, 0.08, 0.0, 1.0) : MpCsInkFaint();
+    let ink = armed ? new HDRColor(0.1, 0.08, 0.0, 1.0) : MpCsInkFaint();
 
-    MpCsText(parent, x + 34.0, y + 16.0, occupied ? "ENTER NIGHT CITY" : "CREATE CHARACTER",
-             34, n"Bold", ink);
-    MpCsText(parent, x + 34.0, y + 62.0, "[ ENTER ]", 14, n"Medium", ink);
+    MpCsText(parent, x + 30.0, y + 14.0, label, 30, n"Bold", ink);
+    MpCsText(parent, x + 30.0, y + 60.0, sub, 13, n"Medium", ink);
 }
 
 /**
