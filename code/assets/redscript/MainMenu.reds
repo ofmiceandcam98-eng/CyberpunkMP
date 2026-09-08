@@ -79,7 +79,7 @@ public class MpSelectorPoll extends DelayCallback {
         this.attempts += 1;
 
         if this.attempts >= 10 {
-            FTLogError(s"[CyberpunkMP] the server never said what character this account has");
+            MpCsLog(s"the server never said what character this account has");
 
             if !this.enterWhenKnown {
                 /*
@@ -158,7 +158,7 @@ public class MpDeletePoll extends DelayCallback {
         this.attempts += 1;
 
         if this.attempts >= 10 {
-            FTLogError(s"[Selector] the server never answered the delete");
+            MpCsLog(s"the server never answered the delete");
             return;
         }
 
@@ -225,7 +225,7 @@ public func MpEnterWithCharacter() -> Void {
     this.MpCsClose();
 
     if network.HasCharacter() {
-        FTLog(s"[CyberpunkMP] playing as '\(network.GetCharacterName())' (level \(network.GetCharacterLevel()))");
+        MpCsLog(s"playing as '\(network.GetCharacterName())' (level \(network.GetCharacterLevel()))");
 
         // Arm the in-world half. The world still has to be loaded to have somewhere to
         // stand; what changed is that the server already knows who is arriving.
@@ -251,7 +251,7 @@ public func MpEnterWithCharacter() -> Void {
     // Routed through the game's own New Game flow for the reason spelled out below: the
     // customization system is native-only and cannot be opened on demand, so New Game is
     // the only real character creation that exists.
-    FTLog(s"[CyberpunkMP] this account has no character - starting creation");
+    MpCsLog(s"this account has no character - starting creation");
 
     network.RequestJoin();
     network.MarkNewCharacter();
@@ -298,7 +298,7 @@ public func MpBuildPanel() -> Void {
 
     let root = this.GetRootCompoundWidget();
     if !IsDefined(root) {
-        FTLogWarning(s"[Selector] no root widget to hang the character panel on");
+        MpCsLog(s"no root widget to hang the character panel on");
         return;
     }
 
@@ -334,7 +334,7 @@ public func MpBuildPanel() -> Void {
     this.m_mpPanel = panel;
     this.m_mpDetail = detail;
 
-    FTLog(s"[Selector] status line built");
+    MpCsLog(s"status line built");
 }
 
 @addMethod(SingleplayerMenuGameController)
@@ -542,11 +542,11 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
     // server replaces the position on arrival with wherever you actually were. That is
     // what makes this "continue from the server" rather than "continue singleplayer".
     if Equals(data.eventName, n"OnMultiplayerContinue") {
-        FTLog(s"[CyberpunkMP] MULTIPLAYER selected from the main menu");
+        MpCsLog(s"MULTIPLAYER selected from the main menu");
 
         let network = GameInstance.GetNetworkWorldSystem();
         if !IsDefined(network) {
-            FTLogError(s"[CyberpunkMP] No NetworkWorldSystem in the menu - cannot arm the join");
+            MpCsLog(s"No NetworkWorldSystem in the menu - cannot arm the join");
             return true;
         }
 
@@ -632,7 +632,7 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
         let network = GameInstance.GetNetworkWorldSystem();
 
         if !IsDefined(network) || !network.IsConnected() {
-            FTLogError(s"[Selector] delete pressed with no connection");
+            MpCsLog(s"delete pressed with no connection");
             return true;
         }
 
@@ -643,13 +643,13 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
                 this.m_mpDetail.SetText("Press DELETE again to confirm");
             }
 
-            FTLog(s"[Selector] delete armed - waiting for a second press");
+            MpCsLog(s"delete armed - waiting for a second press");
             return true;
         }
 
         this.m_mpDeleteArmed = false;
 
-        FTLog(s"[Selector] delete confirmed - asking the server");
+        MpCsLog(s"delete confirmed - asking the server");
         network.DeleteCharacter();
 
         if IsDefined(this.m_mpDetail) {
@@ -668,7 +668,7 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
     }
 
     if Equals(data.eventName, n"OnMultiplayerNewCharacter") {
-        FTLog(s"[CyberpunkMP] MULTIPLAYER - NEW CHARACTER selected from the main menu");
+        MpCsLog(s"MULTIPLAYER - NEW CHARACTER selected from the main menu");
 
 
         let network = GameInstance.GetNetworkWorldSystem();
@@ -707,10 +707,10 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
                 let free = this.MpCsFirstFreeSlot();
 
                 if free >= 0 {
-                    FTLog(s"[Selector] new character will be created in slot \(free + 1)");
+                    MpCsLog(s"new character will be created in slot \(free + 1)");
                     network.SelectCharacterSlot(free);
                 } else {
-                    FTLogWarning(s"[Selector] every unlocked slot is full - creation not armed");
+                    MpCsLog(s"every unlocked slot is full - creation not armed");
                     this.MpCsSay("Every slot you have is full. Delete one first.");
                     return true;
                 }
@@ -721,7 +721,7 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
             // creator and had the result silently discarded.
             network.MarkNewCharacter();
         } else {
-            FTLogError(s"[CyberpunkMP] No NetworkWorldSystem in the menu - cannot arm the join");
+            MpCsLog(s"No NetworkWorldSystem in the menu - cannot arm the join");
         }
 
         // Handed to the game's own New Game entry rather than starting one ourselves.

@@ -42,6 +42,32 @@ public func MpCsVoid() -> HDRColor = new HDRColor(0.016, 0.016, 0.031, 1.0)
 public func MpCsFont() -> String = "base\\gameplay\\gui\\fonts\\raj\\raj.inkfontfamily"
 
 /**
+ * THE ONLY LOGGING ON THIS SCREEN THAT ANYBODY WILL EVER READ.
+ *
+ * FTLog reaches NO COLLECTED FILE. It goes to the game's own log; the redscript log beside
+ * it is scc.exe's COMPILE output and scc exits before the game runs, so nothing is left in
+ * the process to capture runtime script output. LogChannel needs CET, which is not one of
+ * our prerequisites. Measured 2026-09-07 on a live box: five redscript logs, zero
+ * [Selector] lines in any of them.
+ *
+ * ScriptLog is native and lands in CyberpunkMP.log, which the launcher has uploaded for
+ * weeks. That is the difference between "which menu branch ran" being answerable from the
+ * server and being guessed at - and it was guessed at for a whole evening, expensively.
+ *
+ * FTLog is called TOO, deliberately. It costs nothing, and it is still the fastest thing to
+ * read when the game is on the same machine as the person debugging.
+ */
+public func MpCsLog(text: String) -> Void {
+    FTLog(s"[Selector] \(text)");
+
+    let network = GameInstance.GetNetworkWorldSystem();
+
+    if IsDefined(network) {
+        network.ScriptLog(s"[Selector] \(text)");
+    }
+}
+
+/**
  * How many slots exist at all, locked or not.
  *
  * MUST MATCH PlayerStore::kMaxSlots. The two are separate constants in separate languages
@@ -164,7 +190,7 @@ public func MpCsOpen() -> Void {
     let root = this.GetRootCompoundWidget();
 
     if !IsDefined(root) {
-        FTLogError(s"[Selector] no root widget - cannot open the character screen");
+        MpCsLog(s"no root widget - cannot open the character screen");
         return;
     }
 
@@ -214,7 +240,7 @@ public func MpCsOpen() -> Void {
 
     this.m_csRoot.SetScale(new Vector2(scale, scale));
 
-    FTLog(s"[Selector] root is \(rootSize.X)x\(rootSize.Y) - composition scaled by \(scale)");
+    MpCsLog(s"root is \(rootSize.X)x\(rootSize.Y) - composition scaled by \(scale)");
 
     this.m_csOpen = true;
     this.m_csRoot.SetVisible(true);
@@ -319,7 +345,7 @@ public func MpCsOpen() -> Void {
 
     MpCsText(c, 68.0, 1004.0, "IDENTITY IS A TOOL. MAKE IT YOURS.", 13, n"Regular", MpCsInkFaint());
 
-    FTLog(s"[Selector] character screen open - \(unlocked) of \(MpCsMaxSlots()) slot(s) unlocked, caret on \(this.m_csCursor)");
+    MpCsLog(s"character screen open - \(unlocked) of \(MpCsMaxSlots()) slot(s) unlocked, caret on \(this.m_csCursor)");
 }
 
 /**
@@ -578,7 +604,7 @@ protected cb func OnMpCsCardRelease(e: ref<inkPointerEvent>) -> Bool {
     let network = GameInstance.GetNetworkWorldSystem();
 
     if !IsDefined(network) || !network.IsConnected() {
-        FTLogError(s"[Selector] card pressed with no connection");
+        MpCsLog(s"card pressed with no connection");
         this.MpCsOpen();
         return true;
     }
