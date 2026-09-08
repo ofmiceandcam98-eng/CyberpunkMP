@@ -704,7 +704,22 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
              * because they have no room is the behaviour being removed, not a fallback.
              */
             if network.IsConnected() {
-                let free = this.MpCsFirstFreeSlot();
+                /*
+                 * THE SLOT YOU CLICKED IS THE SLOT YOU GET. zeldfep, 2026-09-08: "the main
+                 * thing is 'empty slot' adds new character per slot".
+                 *
+                 * If the account is ALREADY pointed at an empty slot, leave it alone. That
+                 * is the case where somebody clicked a specific empty card on the selector,
+                 * and re-picking here would silently move their character to the lowest free
+                 * slot instead - click slot 3 with slot 2 free and the character appears in
+                 * slot 2, which is not what anybody asked for.
+                 *
+                 * Auto-picking still covers the other entry: pressing CREATE NEW CHARACTER
+                 * from the menu without choosing a card first, where there is no intent to
+                 * honour and the lowest free slot is the sensible answer.
+                 */
+                let current = this.MpCsCursorSlot();
+                let free = this.MpCsRosterIndex(current) < 0 ? current : this.MpCsFirstFreeSlot();
 
                 if free >= 0 {
                     MpCsLog(s"new character will be created in slot \(free + 1)");

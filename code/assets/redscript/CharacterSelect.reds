@@ -174,6 +174,12 @@ let m_csStatus: wref<inkText>;
 @addField(SingleplayerMenuGameController)
 let m_csOpen: Bool;
 
+// Second press on an already-selected empty slot is what actually starts the creator.
+// Cleared whenever the caret moves, so arming one slot and clicking another never creates
+// in a slot nobody was looking at.
+@addField(SingleplayerMenuGameController)
+let m_csCreateArmed: Bool;
+
 /**
  * THE MENU GOES AWAY WHILE THE SELECTOR IS UP.
  *
@@ -578,9 +584,28 @@ public func MpCsCard(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float,
         // An empty slot is a DESTINATION now, not a dead row. Selecting it points the
         // account at it, and the creator's save lands there - which is what makes a second
         // character an addition rather than a replacement.
-        MpCsText(parent, cx + 128.0, y + 62.0,
-                 selected ? "READY - CREATE NEW CHARACTER" : "SELECT TO CREATE HERE", 13,
-                 n"Regular", selected ? MpCsGold() : MpCsInkFaint());
+        /*
+         * AN EMPTY SLOT ASKS FOR A CHARACTER. zeldfep, 2026-09-08: "the empty slots should
+         * prompt add new character".
+         *
+         * Three states rather than two, and the third is a deliberate speed bump. Creation
+         * runs the game's whole character creator and leaves the menu, so a single stray
+         * click should not start it - the same reasoning as the two-press DELETE, and the
+         * same reasoning that just saved a character when clicks were falling through to
+         * the trash can.
+         *
+         *   not selected  ->  + ADD NEW CHARACTER
+         *   selected      ->  CLICK AGAIN TO CREATE
+         *   armed         ->  the next click runs the creator
+         */
+        let prompt = "+  ADD NEW CHARACTER";
+
+        if selected {
+            prompt = this.m_csCreateArmed ? "CREATING..." : "CLICK AGAIN TO CREATE";
+        }
+
+        MpCsText(parent, cx + 128.0, y + 62.0, prompt, 13, n"Regular",
+                 selected ? MpCsGold() : MpCsInkFaint());
 
         this.MpCsArm(parent, slot, cx, y, w, h);
         return;
@@ -717,6 +742,14 @@ protected cb func OnMpCsCardRelease(e: ref<inkPointerEvent>) -> Bool {
         return false;
     }
 
+    // Read BEFORE the caret moves: "was this already the selected slot" is the whole
+    // difference between a first click and a confirming second one.
+    let wasSelected = this.m_csCursor == slot;
+
+    if !wasSelected {
+        this.m_csCreateArmed = false;
+    }
+
     this.m_csCursor = slot;
 
     let network = GameInstance.GetNetworkWorldSystem();
@@ -729,13 +762,43 @@ protected cb func OnMpCsCardRelease(e: ref<inkPointerEvent>) -> Bool {
 
     let empty = this.MpCsRosterIndex(slot) < 0;
 
-    // The same call either way. The server accepts an empty slot as a destination - that is
-    // how a new character gets somewhere to go - so there is no special case here beyond
-    // what the screen says while it waits.
+    if empty {
+        /*
+         * FIRST CLICK SELECTS AND ASKS. SECOND CLICK CREATES.
+         *
+         * Arming is per-caret: moving to a different slot clears it, so a click on slot 2
+         * followed by a click on slot 3 can never create in slot 2. Walking away from the
+         * screen clears it too, because the flag lives on the controller and the controller
+         * does not survive leaving the menu - the same property the DELETE arm relies on.
+         */
+        if wasSelected && this.m_csCreateArmed {
+            this.m_csCreateArmed = false;
+            MpCsLog(s"empty slot \(slot + 1) confirmed - running the creator");
+
+            this.MpCsSay("Starting the character creator...");
+            this.MpCsClose();
+
+            // The menu's own entry does the rest: it points the account at a free slot,
+            // arms the appearance capture and runs the game's New Game flow. Going through
+            // it rather than round it means one creation path, not two.
+            let data = new PauseMenuListItemData();
+            data.eventName = n"OnMultiplayerNewCharacter";
+            this.HandleMenuItemActivate(data);
+            return true;
+        }
+
+        this.m_csCreateArmed = true;
+        network.SelectCharacterSlot(slot);
+        this.MpCsOpen();
+        this.MpCsSay("Click that slot again to make a character in it.");
+        return true;
+    }
+
+    this.m_csCreateArmed = false;
+
     network.SelectCharacterSlot(slot);
     this.MpCsOpen();
-    this.MpCsSay(empty ? "Slot armed - press CREATE NEW CHARACTER."
-                       : "switching...");
+    this.MpCsSay("switching...");
 
     // The answer comes back as a fresh roster, so poll for it rather than assuming the
     // switch took. SelectCharacterSlot only says the request was sent.
@@ -893,6 +956,33 @@ public func MpCsRosterIndex(slot: Int32) -> Int32 {
     }
 
     return -1;
+}
+
+/**
+ * Where the caret is, clamped to a slot this account may actually use.
+ *
+ * The create path asks this to find out whether somebody has already chosen an empty slot
+ * to fill. A caret sitting on a locked slot is not a choice, so it reads as "no choice".
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsCursorSlot() -> Int32 {
+    let network = GameInstance.GetNetworkWorldSystem();
+
+    if !IsDefined(network) {
+        return -1;
+    }
+
+    let unlocked = network.GetCharacterSlots();
+
+    if unlocked > MpCsMaxSlots() {
+        unlocked = MpCsMaxSlots();
+    }
+
+    if this.m_csCursor < 0 || this.m_csCursor >= unlocked {
+        return -1;
+    }
+
+    return this.m_csCursor;
 }
 
 /**
