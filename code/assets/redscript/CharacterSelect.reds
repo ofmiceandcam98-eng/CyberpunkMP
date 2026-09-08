@@ -174,6 +174,28 @@ let m_csStatus: wref<inkText>;
 @addField(SingleplayerMenuGameController)
 let m_csOpen: Bool;
 
+/*
+ * BACKED OUT ON PURPOSE - do not reopen.
+ *
+ * ESC worked from the moment it was bound. It closed the screen and the screen came
+ * straight back, because closing refreshes the menu, refreshing runs
+ * PopulateMenuItemList, and that opens the selector whenever the account is connected.
+ * Measured in zeldfep's log, all in the same millisecond:
+ *
+ *   input: back handled=false
+ *   back pressed - closing the screen
+ *   character screen open - 4 of 4 slot(s) unlocked
+ *
+ * Three builds of "ESC does not work" were ESC working perfectly and being undone one line
+ * later. This flag is the difference between "not open" and "closed deliberately", which
+ * the rebuild had no way to tell apart.
+ *
+ * Cleared by pressing CONNECT, which is the one gesture that unambiguously asks for the
+ * screen back.
+ */
+@addField(SingleplayerMenuGameController)
+let m_csDismissed: Bool;
+
 // Second press on an already-selected empty slot is what actually starts the creator.
 // Cleared whenever the caret moves, so arming one slot and clicking another never creates
 // in a slot nobody was looking at.
@@ -894,8 +916,9 @@ protected cb func OnGlobalRelease(e: ref<inkPointerEvent>) -> Bool {
 
     // BACK: close the screen, restore the menu, stop here. Handling the event keeps the
     // game's own OnBack from also firing and dropping the player out of the menu entirely.
-    if e.IsAction(n"back") {
-        MpCsLog(s"back pressed - closing the screen");
+    if e.IsAction(n"back") || e.IsAction(n"cancel") {
+        MpCsLog(s"back pressed - closing the screen and staying closed");
+        this.m_csDismissed = true;
         this.MpCsClose();
         this.MpCsShowMenuList();
         this.MpRefreshMenu();

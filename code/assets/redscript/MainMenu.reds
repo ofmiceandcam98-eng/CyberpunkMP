@@ -481,7 +481,12 @@ private func PopulateMenuItemList() -> Void {
              * the game's own list. The screen draws the verbs in the mockup's positions so
              * the composition still reads.
              */
-            this.MpCsOpen();
+            // Not if they backed out. PopulateMenuItemList runs on every menu rebuild,
+            // including the one ESC itself triggers, so without this the screen reopens in
+            // the same frame it closes and ESC looks broken.
+            if !this.m_csDismissed {
+                this.MpCsOpen();
+            }
 
             this.AddMenuItem("PLAY", n"OnMultiplayerContinue");
             this.AddMenuItem("CREATE NEW CHARACTER", n"OnMultiplayerNewCharacter");
@@ -609,6 +614,9 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
     // A deliberate press rather than something the menu does by itself: connecting is not
     // free, and most visits to this screen are somebody loading a singleplayer save.
     if Equals(data.eventName, n"OnMultiplayerCharacters") {
+        // Asking for the roster is asking for the screen, so this is what un-dismisses it.
+        this.m_csDismissed = false;
+
         let network = GameInstance.GetNetworkWorldSystem();
 
         if !IsDefined(network) {
