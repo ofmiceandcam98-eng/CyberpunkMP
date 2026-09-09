@@ -2853,13 +2853,54 @@
     }
 
     for (const release of result.prereleases) {
+      // A build is a DISCLOSURE ROW, not a line of text.
+      //
+      // The title is one ellipsised line in a narrow panel, so everything a tester needs -
+      // what to look for, what is knowingly broken, whether it needs a rebuilt server - had
+      // nowhere to go. zeldfep, 2026-09-08: "the txt doesent fit in the launcher can we have
+      // it be a pop up text identifier", then pointed at a diff-style expander.
+      //
+      // Expanding in place rather than opening a dialog: the notes are ABOUT the row, and a
+      // modal would cover the list you are choosing from.
+      const item = document.createElement('div')
+
       const row = document.createElement('div')
       row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 0'
+
+      const body = document.createElement('pre')
+      body.hidden = true
+      // textContent, never innerHTML: a release body comes from GitHub.
+      body.textContent = release.notes || ''
+      body.style.cssText = 'white-space:pre-wrap;word-break:break-word;margin:2px 0 10px 22px;' +
+        'padding:10px 12px;border-left:2px solid var(--line,#2a1418);font-family:inherit;' +
+        'font-size:12.5px;line-height:1.5;opacity:.85'
+
+      const twisty = document.createElement('button')
+      twisty.className = 'action ghost'
+      twisty.style.cssText = 'flex:none;width:26px;padding:2px 0;line-height:1'
+      twisty.textContent = release.notes ? '›' : ' '
+      twisty.disabled = !release.notes
+      twisty.setAttribute('aria-expanded', 'false')
+      if (release.notes) twisty.title = 'What is this build for?'
+
+      twisty.addEventListener('click', () => {
+        const open = body.hidden
+        body.hidden = !open
+        twisty.textContent = open ? '⌄' : '›'
+        twisty.setAttribute('aria-expanded', String(open))
+      })
+
+      row.appendChild(twisty)
 
       const label = document.createElement('span')
       label.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'
       label.textContent = release.name
       if (release.active) label.textContent += '  (installed)'
+      // The whole label opens it too - the twisty is small and the row is the obvious target.
+      if (release.notes) {
+        label.style.cursor = 'pointer'
+        label.addEventListener('click', () => twisty.click())
+      }
       row.appendChild(label)
 
       // The installed build's button becomes Uninstall - testing builds one at a time
@@ -2912,7 +2953,22 @@
       })
 
       row.appendChild(button)
-      list.appendChild(row)
+
+      // The body is capped at 4000 characters in main, so the full page stays one click
+      // away. Passes the TAG, not a URL - links:open is an allow-list and this respects it.
+      const more = document.createElement('button')
+      more.className = 'action ghost'
+      more.textContent = 'Open the full notes on GitHub'
+      more.style.cssText = 'margin:0 0 10px 22px'
+      more.hidden = true
+      more.addEventListener('click', () => window.launcher.prereleaseOpenNotes(release.tag))
+
+      twisty.addEventListener('click', () => { more.hidden = body.hidden })
+
+      item.appendChild(row)
+      item.appendChild(body)
+      if (release.notes) item.appendChild(more)
+      list.appendChild(item)
     }
   }
 

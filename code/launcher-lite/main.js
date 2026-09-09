@@ -5817,6 +5817,17 @@ ipcMain.handle('prerelease:list', async () => {
         // saying no DLL was attached. Correct once, wrong now, and it hid a build that
         // would have installed perfectly.
         installable: (r.assets || []).some((a) => a.name === 'ModPayload.zip' || a.name === 'CyberpunkMP.dll'),
+
+        // The release body, for the details popup.
+        //
+        // The title is one line in a narrow row and gets ellipsised, so everything a tester
+        // needs to know - what to look for, what is knowingly broken, whether it needs a
+        // rebuilt server - had nowhere to go. zeldfep, 2026-09-08: "the txt doesent fit in
+        // the launcher can we have it be a pop up text identifier".
+        //
+        // Capped: a release body is unbounded and this is a dev panel, not a reader. The
+        // full text is always one click away at notesUrl.
+        notes: String(r.body || '').slice(0, 4000),
         notesUrl: r.html_url,
         active: r.tag_name === activeTag
       }))
@@ -5840,6 +5851,28 @@ ipcMain.handle('prerelease:list', async () => {
   } catch (err) {
     return { ok: false, error: err.message }
   }
+})
+
+/**
+ * Open one pre-release's page on GitHub.
+ *
+ * Takes a TAG, not a URL, and builds the address here. links:open is an allow-list for
+ * exactly this reason - the renderer never hands the main process something to open - and
+ * a "just this once" URL parameter is how an allow-list stops being one.
+ *
+ * The tag is pattern-checked as well as interpolated: it reaches this from a GitHub API
+ * response, which is not the same as being safe to paste into a URL.
+ */
+ipcMain.handle('prerelease:open-notes', async (_event, tag) => {
+  if (!isAdmin()) return { ok: false, error: 'Test builds are for people with the dev role.' }
+
+  const clean = String(tag || '')
+  if (!/^[A-Za-z0-9._+-]{1,80}$/.test(clean)) {
+    return { ok: false, error: 'That does not look like a release tag.' }
+  }
+
+  shell.openExternal(`https://github.com/${GITHUB_REPO}/releases/tag/${encodeURIComponent(clean)}`)
+  return { ok: true }
 })
 
 ipcMain.handle('prerelease:install', async (_event, tag) => {

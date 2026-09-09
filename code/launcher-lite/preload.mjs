@@ -75,6 +75,7 @@ contextBridge.exposeInMainWorld('launcher', {
   prereleaseList: () => ipcRenderer.invoke('prerelease:list'),
   prereleaseInstall: (tag) => ipcRenderer.invoke('prerelease:install', tag),
   prereleaseRestore: () => ipcRenderer.invoke('prerelease:restore'),
+  prereleaseOpenNotes: (tag) => ipcRenderer.invoke('prerelease:open-notes', tag),
 
   // The coordination service itself - started alongside the game server, controllable
   // on its own. Host machine only.
