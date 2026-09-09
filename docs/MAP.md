@@ -1987,6 +1987,42 @@ scripts will take effect"*, naming exactly those twelve files.
   because the launcher compares the ASSET ID, not the version string, but `.nco-version` reads
   the same number for all three - which will mislead the first bug report that quotes it.
 
+### A FAILED CLEAN WAS INVISIBLE, SO EIGHT UPDATES FAILED IN SILENCE (found + fixed 2026-09-09)
+
+- **What happened.** After the manifest fix above, Update ran eight times on zeldfep's box
+  and refused every time with *"The mod folder does not match what was just installed, so the
+  install was NOT recorded."* The trail logged eight `payload verified against manifest
+  2026.09.09.02 before install` lines and NOTHING about the refusal, so the diagnosis started
+  from a screenshot instead of from a log that already had the answer.
+- **The actual blocker:** one leftover, `assets/Archives/zz_NightCityOnline_Selector.archive`,
+  put there by `DevInstall.ps1` on 2026-09-08 and no longer shipped by the corrected v0.3.120
+  payload. `auditPayloadInstall` counts any unknown file inside a payload-owned directory
+  (`assets`, `Rpc`) as an orphan and refuses to stamp the install. Correct behaviour. Deleting
+  that one file cleared it - the archive is tracked at
+  `code/assets/Archives/packed/archive/pc/mod/`, so removing it from a game folder is free.
+- **The defect:** `extractPayloadClean` deletes every payload-owned directory before
+  extracting, inside `try { rmSync(...) } catch { }` - an EMPTY catch whose comment claimed
+  "the extract's error says so louder". It does not: a clean that fails does not stop the
+  extract from succeeding, so the leftovers survive, the audit fails, and the player is told
+  to remove and reinstall the whole mod. Eight refusals, zero evidence.
+- **Fixed:** `extractPayloadClean` now returns the failures with their error codes,
+  `applyUpdate` logs each one, and the audit failure itself writes a trail line naming the
+  missing and left-over FILES, not just counts. When a clean failed first, the thrown message
+  blames that cause and says what to close, instead of sending the player to Remove+reinstall.
+- **STILL UNEXPLAINED, and now instrumented for next time:** on that box the clean *should*
+  have removed the orphan. The installed build's `extractPayloadClean` is byte-identical to
+  source, the separators are forward slashes so `shippedDirs` was `{assets, Rpc}`, the ACL is
+  `BUILTIN@Users FullControl`, and the file deleted without elevation on the first try. So the
+  rmSync failed for a reason nobody can name yet - the new log line is what will name it.
+  Do NOT close this out as "leftover file, deleted" - the cause is still open.
+- **Traps this session re-proved:** mod-folder mtimes are the ZIP's stored times (AdmZip
+  restores them), so they date the BUILD, never the install - do not infer "the extract never
+  ran" from them. And `DevInstall` leftovers become orphans the moment a payload stops
+  shipping a file, which is a standing hazard for both dev boxes, not a one-off.
+- **Testability gap:** `extractPayloadClean` and `auditPayloadInstall` live in `main.js` and
+  need Electron, so `manifest.selftest.mjs` cannot reach them. They are pure `fs`/`path`
+  helpers and belong in `manifest.js`, where Verify would cover them. Not moved - flagged.
+
 ### A RE-PUBLISHED RELEASE LOOKS LIKE A TAMPERED DOWNLOAD FOR TEN MINUTES (found + fixed 2026-09-09)
 
 - **What happened.** v0.3.120 shipped, the payload was found to carry a stray archive, and it

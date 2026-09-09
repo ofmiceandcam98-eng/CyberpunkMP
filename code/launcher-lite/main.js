@@ -2072,10 +2072,28 @@ function extractPayloadClean (aModDir, aZip) {
     const name = entry.entryName
     if (name.includes('/')) shippedDirs.add(name.split('/')[0])
   }
+  // A failed clean is NOT cosmetic, and the empty catch that used to be here said it was.
+  //
+  // Every file the payload no longer ships survives the extract, the audit below then
+  // refuses to record the install, and the player is told to remove and reinstall the
+  // whole mod. Measured 2026-09-09: one leftover archive from a DevInstall failed eight
+  // consecutive updates and the trail recorded NOTHING about why. The old comment's
+  // promise that "the extract's error says so louder" is simply false - a clean that
+  // fails does not stop the extract from succeeding.
+  //
+  // So name the reason and hand it to the caller, which can then blame the cause instead
+  // of the symptom. force:true already makes "not there" a success, so anything thrown
+  // here is real.
+  const cleanFailures = []
   for (const dir of shippedDirs) {
-    try { rmSync(path.join(aModDir, dir), { recursive: true, force: true }) } catch { /* locked - the extract's own error says so louder */ }
+    try {
+      rmSync(path.join(aModDir, dir), { recursive: true, force: true })
+    } catch (err) {
+      cleanFailures.push({ dir, message: err.code ? `${err.code}: ${err.message}` : String(err.message || err) })
+    }
   }
   aZip.extractAllTo(aModDir, true)
+  return cleanFailures
 }
 
 async function applyUpdate () {
@@ -2145,7 +2163,10 @@ async function applyUpdate () {
   }
 
   const zip = new AdmZip(buffer)
-  extractPayloadClean(modDir, zip)
+  const cleanFailures = extractPayloadClean(modDir, zip)
+  for (const failure of cleanFailures) {
+    launcherLog(`payload clean FAILED for ${failure.dir} - ${failure.message} - anything it still holds will fail the audit`)
+  }
 
   // Prove it, then record it. Stamping the settings BEFORE checking is how a failed
   // install starts reporting itself as up to date, and the up-to-date gate then refuses
@@ -2158,10 +2179,26 @@ async function applyUpdate () {
         ? '\n' + label + ' (' + list.length + '): ' +
           list.slice(0, 8).join(', ') + (list.length > 8 ? ', and more' : '')
         : ''
+    // The trail has to carry this too. Eight refusals in a row on 2026-09-09 left not one
+    // line explaining them, so the diagnosis started from a screenshot instead of from a
+    // log that already knew the answer. Names, not just counts - the filename IS the
+    // diagnosis.
+    launcherLog(`install NOT recorded: ${audit.missing.length} missing, ${audit.orphans.length} left over` +
+                (audit.missing.length ? ` | missing: ${audit.missing.slice(0, 8).join(', ')}` : '') +
+                (audit.orphans.length ? ` | left over: ${audit.orphans.slice(0, 8).join(', ')}` : '') +
+                (cleanFailures.length ? ` | clean had already failed for: ${cleanFailures.map(f => f.dir).join(', ')}` : ''))
+
     throw new Error(
       'The mod folder does not match what was just installed, so the install was NOT recorded.' +
       say('Missing', audit.missing) +
       say('Left over from an older install', audit.orphans) +
+      (cleanFailures.length
+        ? '\n\nThe cause is upstream of the leftovers: clearing ' +
+          cleanFailures.map(f => f.dir).join(', ') + ' failed first (' +
+          cleanFailures.map(f => f.message).join('; ') + '), so nothing could be replaced ' +
+          'cleanly. Close whatever is holding those files - the game, an open Explorer ' +
+          'window, an antivirus scan - and press Update again.'
+        : '') +
       '\n\nLeftover scripts are the serious half: two definitions of one class make the ' +
       'game refuse to compile the whole mod. Use Settings > Remove > "Remove the mod", then ' +
       'install again.'
