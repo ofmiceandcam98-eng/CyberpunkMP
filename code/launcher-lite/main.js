@@ -1478,10 +1478,28 @@ async function checkForUpdates () {
   // plus size changes whenever a new payload is uploaded.
   const remoteStamp = `${asset.id}:${asset.size}`
   const localStamp = loadSettings().installedStamp
+  const testBuildTag = loadSettings().testBuildTag || null
 
+  // A TEST BUILD IS NOT AN OUT-OF-DATE RELEASE. Treating it as one cost a night of play.
+  //
+  // prerelease:install records testBuildTag and stamps .nco-version, but it never touches
+  // installedStamp - which still describes the RELEASE payload. A test build's payload is a
+  // different asset, so `localStamp === remoteStamp` can never be true again while one is
+  // installed. That leaves "Your mod is out of date - press Update" on screen permanently,
+  // and that string is a BLOCKER: it greys out JACK IN. With JACK IN disabled the only way
+  // into the game is Steam, and a launch that does not come from the launcher carries no
+  // server address and no token - so the player lands in a plain singleplayer session being
+  // told to /connect, with no server spawn, because nothing ever told the game there was a
+  // server. Measured on zeldfep's box 2026-09-09; it had been happening since the first
+  // selector test build the night before, and the only remedy the UI offered was Update -
+  // which replaces the test build with the release. That is why the selector kept vanishing.
+  //
+  // On a test build the mod is CURRENT. The tag rides along so the UI can name the build
+  // instead of implying a stale one; Update and Restore both still clear it.
   return {
     installed: true,
-    upToDate: localStamp === remoteStamp,
+    upToDate: testBuildTag ? true : localStamp === remoteStamp,
+    testBuildTag,
     version: release.tag_name,
     published: release.published_at,
     notes: release.body || '',
