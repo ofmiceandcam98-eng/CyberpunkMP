@@ -26,8 +26,10 @@
 
 [CmdletBinding()]
 param(
-    # Shown in the dev panel next to the tag. Say what to LOOK for, not what changed
-    # internally - "remote players MOVE" is the right shape.
+    # Shown in the dev panel next to the tag, and it is the ONLY thing shown there. Say what
+    # to LOOK for, not what changed internally - "remote players MOVE" is the right shape,
+    # "worldstate" is not. Four builds shipped as "test.N - worldstate" before anybody could
+    # tell them apart; there is a warning below that catches that shape now.
     [Parameter(Mandatory = $true)]
     [string]$Name,
 
@@ -112,6 +114,26 @@ if (-not $Tag) {
 Step "Test build"
 Write-Host "  tag  : $Tag"
 Write-Host "  name : $Name"
+
+# THE NAME IS THE ONLY THING THE LAUNCHER SHOWS, so a bad one costs a person a guess.
+#
+# The parameter has always said "say what to LOOK for, not what changed internally". It was
+# still passed as "worldstate" - the BRANCH name - on four consecutive builds, which put four
+# rows called "test.N - worldstate" in the dev panel with nothing to tell them apart.
+# zeldfep, 2026-09-08: "can we make it into 1 fill test, the test should say what we are
+# working on".
+#
+# A warning rather than a refusal: a bad label is a bad label, not a reason to lose a build at
+# the end of a long ship. It is loud enough to fix next time.
+$branch = (& git rev-parse --abbrev-ref HEAD 2>$null)
+
+if ($Name -eq $branch -or $Name -eq ($branch -replace '.*/', '') -or $Name -notmatch '\s') {
+    Write-Host ""
+    Write-Host "  !!  '$Name' reads like a branch or a keyword, not something to look for." -ForegroundColor Yellow
+    Write-Host "      The dev panel shows ONLY this. Prefer 'remote players MOVE' or" -ForegroundColor DarkYellow
+    Write-Host "      'character selector: click to pick, confirm by name'." -ForegroundColor DarkYellow
+    Write-Host ""
+}
 
 # ---------------------------------------------------------------------------
 # Build
