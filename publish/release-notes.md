@@ -6,6 +6,35 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.121
+
+- **The launcher could refuse a perfectly good update.** It keeps the signed manifest in
+  memory for ten minutes. If a release had its files replaced during that window — which
+  happened to v0.3.120 — the launcher compared the new download against the older manifest,
+  decided the two disagreed and refused to install, saying the download did not match what
+  the manifest approved. The download was fine every time. A mismatch now costs a fresh
+  check of the manifest before it is allowed to fail, so the safety check keeps all of its
+  teeth against a genuinely bad file without crying wolf over a stale note to itself.
+- **Installs that quietly did nothing now say why.** Before extracting an update the launcher
+  clears out the folders the mod owns. If that clearing failed, nothing recorded it — the
+  update went on to fail its own check, the install was not recorded, and you were told to
+  remove and reinstall the whole mod with no way to find out what was actually wrong. The
+  failure is now written to the launcher log with the reason, the refused install names the
+  exact files involved, and when the clearing was the cause the message says so and tells
+  you what to close.
+- **Dev-role only: a test build no longer reads as an out-of-date mod.** Installing one left
+  the launcher permanently insisting the mod was out of date, which greyed out JACK IN — so
+  the only way into the game was to start it outside the launcher, which meant no server
+  address and no sign-in and a single-player session asking you to /connect by hand. A test
+  build now counts as current, the status line names the build you are on instead of a
+  release you are not, and Update stays available as the way back.
+- **Smaller things in Settings.** The section rail down the right-hand side now lights the
+  last section when you scroll to the bottom — its number used to lead nowhere — and it
+  keeps up when a tab grows past the room the rail has, showing the ends and the part you
+  are in. The expand arrow on test-build rows sits centred instead of drifting.
+
+Nothing in the game itself changed in this release. The mod is rebuilt from the same code as
+v0.3.120 and behaves identically — this is a launcher-only update.
 ## What changed — v0.3.120
 
 - **Test builds now say what they are for.** If you have the dev role, the Test builds list in
