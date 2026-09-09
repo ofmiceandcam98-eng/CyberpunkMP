@@ -1883,6 +1883,38 @@ scripts will take effect"*, naming exactly those twelve files.
   because the launcher compares the ASSET ID, not the version string, but `.nco-version` reads
   the same number for all three - which will mislead the first bug report that quotes it.
 
+### A RE-PUBLISHED RELEASE LOOKS LIKE A TAMPERED DOWNLOAD FOR TEN MINUTES (found + fixed 2026-09-09)
+
+- **What happened.** v0.3.120 shipped, the payload was found to carry a stray archive, and it
+  was replaced with `Ship.ps1 -Mod -NoBump -NoAnnounce`. That re-ran the manifest correctly:
+  `2026.09.09.02` pins the corrected `ModPayload.zip` (`a8b6127...`, 3,163,977) and the public
+  URLs the launcher actually fetches serve that matching pair. Nothing on GitHub was wrong.
+- **Why the launcher refused anyway.** `refreshManifestState()` memoizes for
+  `MANIFEST_TTL_MS` (10 min). zeldfep's launcher read `2026.09.09.01` at 04:56:47, which pins
+  the payload that was replaced minutes later, and pressed Update at 05:02:15 — inside the
+  TTL. `applyUpdate` compared the fresh download to the memoized pin and threw
+  "does not match what the manifest approved".
+  Trail: `update refused: payload sha256 a8b612710c67 != manifest 48bbf4fcd0b9`.
+- **The trap in the guard.** Re-publishing assets bumps the manifest version but NOT the tag,
+  so `manifest.release === info.version` still passes and a superseded pin gets full authority
+  to fail a good file. The comment above it — "a cached older manifest knows nothing about a
+  newer payload and must not fail it" — described exactly the case it did not actually cover.
+- **The fix** (`main.js`, `applyUpdate`): a mismatch now buys a FORCED `refreshManifestState(true)`
+  and is only fatal if the re-fetched manifest still disagrees. The check keeps its teeth
+  against a real bad download; a stale memo stops impersonating an attack. Costs one extra
+  fetch only on the failing path.
+- **Operational note while old launchers are in the field.** Any launcher build before this
+  fix has the same 10-minute window. If a release's assets are ever replaced after publish,
+  say so — the cure is to fully quit the launcher (it has a tray icon; closing the window is
+  not quitting) and reopen, which drops the memo.
+- **Still open, same class:** `installPrereqs` verifies each bundled zip against
+  `usableManifest()` from the same memo and throws `"<name> does not match what the manifest
+  approved"` with no re-fetch. Same stale-memo failure, on the install path rather than the
+  update path. Not yet fixed.
+- **Process lesson:** replacing an asset under a live tag is legitimate and the tooling handles
+  it, but it is a flag for clients holding a cached manifest. Prefer bumping the version when
+  the payload changes after publish.
+
 ## 2. CODE MAP — where things live, and the gotcha that bites there
 
 | Area | Path | What lives there | Load-bearing gotcha |
