@@ -2111,16 +2111,37 @@ async function applyUpdate () {
   // downloaded - a cached older manifest knows nothing about a newer payload and must
   // not fail it. This runs BEFORE extraction; a working install is never shredded to
   // find out a download was bad.
-  await refreshManifestState().catch(() => null)
-  const manifest = usableManifest()
-  if (manifest && manifest.release === info.version && manifest.client?.payload?.archive?.sha256) {
-    const got = ManifestKit.sha256Hex(buffer)
-    if (got !== manifest.client.payload.archive.sha256) {
-      launcherLog(`update refused: payload sha256 ${got.slice(0, 12)} != manifest ${manifest.client.payload.archive.sha256.slice(0, 12)}`)
+  // The manifest state is memoized for MANIFEST_TTL_MS, so the copy in hand can be OLDER
+  // than the payload just downloaded: re-publishing a release's assets bumps the manifest
+  // version but NOT the tag, so `manifest.release === info.version` still passes and a
+  // superseded pin fails a perfectly good download. Measured on v0.3.120, 2026-09-09:
+  // manifest 2026.09.09.01 was read at 04:56:47, the payload it pinned was replaced
+  // minutes later by 2026.09.09.02, and Update at 05:02:15 - inside the TTL - refused
+  // the correct file as tampered. So a mismatch buys a FORCED re-fetch before it is
+  // allowed to be fatal: the check keeps every bit of its teeth against a real bad
+  // download, and a stale memo stops impersonating an attack.
+  const payloadPin = async (force) => {
+    await refreshManifestState(force).catch(() => null)
+    const m = usableManifest()
+    // No manifest, or one that does not describe THIS release, means there is nothing to
+    // check against - the same "cannot judge" case the original guard skipped.
+    if (!m || m.release !== info.version || !m.client?.payload?.archive?.sha256) return null
+    return { manifest: m, sha256: m.client.payload.archive.sha256 }
+  }
+
+  const got = ManifestKit.sha256Hex(buffer)
+  let pin = await payloadPin(false)
+  if (pin && got !== pin.sha256) {
+    launcherLog(`payload sha256 ${got.slice(0, 12)} != manifest ${pin.sha256.slice(0, 12)} (${pin.manifest.manifestVersion}) - re-fetching the manifest before refusing`)
+    pin = await payloadPin(true)
+  }
+  if (pin) {
+    if (got !== pin.sha256) {
+      launcherLog(`update refused: payload sha256 ${got.slice(0, 12)} != manifest ${pin.sha256.slice(0, 12)} (${pin.manifest.manifestVersion}, re-fetched)`)
       throw new Error('The downloaded update does not match what the manifest approved - ' +
                       'install left alone. Try again in a minute; report it if it repeats.')
     }
-    launcherLog(`payload verified against manifest ${manifest.manifestVersion} before install`)
+    launcherLog(`payload verified against manifest ${pin.manifest.manifestVersion} before install`)
   }
 
   const zip = new AdmZip(buffer)
