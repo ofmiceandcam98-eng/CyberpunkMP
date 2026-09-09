@@ -3,6 +3,16 @@
 Reference for work reverted on 2026-08-20. Everything here was tried and did **not** fix it.
 Kept so the next attempt starts from the end of this one rather than the beginning.
 
+**The code itself is in [`songbird-attempt-backup/`](songbird-attempt-backup/)** - the hang
+watchdog, the Present bounds guard, the time-dilation pass-through, the ClearState
+experiment and the `Quests.reds` hooks, as they stood at the revert. That folder had no
+inbound reference from anywhere until now, which would have cost the next attempt the
+very head start it was saved to provide.
+
+**What ships today is a mitigation, not a fix:** `MpSilenceStoryHolocalls` (called from
+`MultiplayerGameController.reds`, defined in `Quests.reds`) keeps Songbird from reaching
+a character at all. The hang below is unfixed and would return if that gate came out.
+
 ## The bug
 
 Creating a NEW character and receiving Songbird's opening holocall freezes the game.

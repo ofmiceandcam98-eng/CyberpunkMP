@@ -2026,8 +2026,15 @@ cannot carry, both verified by a real clone). What the sweep actually found:
     Deleting it is a merge-surface call against upstream, not a tidy-up.
   - `.claude/worktrees/optimistic-liskov-2b7ca0` - a live worktree on
     `claude/optimistic-liskov-2b7ca0`. May belong to the other stream; not removed.
-  - `docs/songbird-attempt-backup/` - 8 files, no inbound references, but it is the archive
-    behind a reverted decision. Redundant with git history; deleting it is a judgement call.
+  - ~~`docs/songbird-attempt-backup/`~~ **RESOLVED - KEEP** (zeldfep, 2026-09-09). Not stale
+    and not the Phantom Liberty prologue skip, which is a separate live thing
+    (`zz_NightCityOnline_CleanStart.archive`). This is the code from EIGHT failed attempts
+    at the Songbird holocall hang, reverted 2026-08-20, kept so a future attempt starts
+    from the end. Docs-only: never built, never shipped, no code references it. **The hang
+    is MITIGATED, NOT FIXED** - `MpSilenceStoryHolocalls` (the Songbird gate, a do-not-undo
+    block) keeps Songbird from reaching a character at all, and the freeze returns if that
+    gate comes out. Fixed while here: `songbird-holocall-hang.md` never named the folder,
+    so the archive was unreachable from the doc written to lead people to it.
   - `publish/TODO.md` still says "current as of 2026-09-04 (v0.3.113)" at v0.3.120. The
     stamp is stale; whether the CONTENT is still true needs the person who wrote it.
 
