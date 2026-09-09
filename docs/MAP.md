@@ -1703,7 +1703,7 @@ then refuses to create the containers** and leaves the OLD build running. The lo
   published outside the repo needs the same pass the repo got** — a scrub scoped to `git
   ls-files` is not a scrub.
 
-- **OLD BUILD ARCHIVED, and the old box is not to be touched. `/mnt/vol/projects/_OLD-BUILD-nas-2026-09-06/`
+- **OLD BUILD ARCHIVED, and the old box is not to be touched. `/mnt/vol/backups/OLD-BUILD-nas-2026-09-06/`
   on the new server** (zeldfep's call: "archive this on new server as (old build), just reference
   it if needed but other than that dont touch it").
   - `CyberpunkMP-live.tar.gz` (git `171b04b`) and `CyberpunkMP-test.tar.gz` (git `2bef193`) -
@@ -1986,6 +1986,50 @@ scripts will take effect"*, naming exactly those twelve files.
   exist under the tag `v0.3.113` (28 Aug, and two on 30 Aug). Players still update correctly
   because the launcher compares the ASSET ID, not the version string, but `.nco-version` reads
   the same number for all three - which will mislead the first bug report that quotes it.
+
+### SWEEP AUDIT 2026-09-09 - the repo is clean, and here is the proof
+
+zeldfep asked for a full sweep of unused code, features and stale lines. Backed up first to
+`/mnt/vol/backups/pre-sweep-2026-09-09/` (all-refs bundle + the uncommitted WIP a bundle
+cannot carry, both verified by a real clone). What the sweep actually found:
+
+- **Provenance first, because it bounds everything else.** Of 770 tracked files, 421 are
+  PURE UPSTREAM (never touched by Cameron/zeldfep/ofmiceandcam98-eng/Felipe/Claude), 105 are
+  mixed, 244 are ours. Cleaning upstream files buys nothing and costs merge conflicts, so the
+  sweep surface is the 244. Recompute with `git log --no-merges --format=@@%an --name-only`
+  and bucket by author before any future sweep.
+- **REMOVED - the abandoned hit-rect cluster in `CharacterSelect.reds`** (169 lines):
+  `MpCsArm`, `MpCsHitName`, `MpCsSlotFromHit`, `OnMpCsCardRelease`. A closed cluster whose
+  only entry point was `MpCsArm`, and `f0e8556` deleted both of its call sites when input
+  moved to `OnGlobalRelease` + `MpCsClickAt`. Its comment still claimed "BACK IN USE as of
+  test.31" - that claim was 24 hours stale and is exactly why a name-grep alone is not
+  evidence: the comment said live, the call graph said dead, and the commit that removed the
+  callers settled it.
+- **KEPT, and the do-not-undo block that guards it UPDATED, not deleted.** The
+  `SetInteractive(false)` rationale (the test.27 soft-lock) pointed at the hit rects by name.
+  The RULE outlived the mechanism, so the rule stands and the cross-reference now names
+  `OnGlobalRelease`/`MpCsClickAt`. Never delete a decision because its example rotted.
+- **Verified clean, do not re-audit without cause:** all 66 launcher IPC handlers are
+  invoked; all 76 preload bridges are called (`startServer`/`stopServer`/`restartServer`
+  looked dead only because `index.html:2034` dispatches them through a loop over ids - the
+  "grep by name" trap again); all 6 launcher deps are imported; 0 dead member functions
+  across the 44 C++ files we own; no references to addresses that died in the migration
+  except deliberate ones (a redaction test vector, and `NODE-TO-NODE-VERDICT.md`, which
+  `ADDRESSES.example.md` says is left unsanitised on purpose).
+- **Names that lie, checked and kept:** `tools/netpack-scratch` is a live enum regression
+  harness referenced by `code/netpack/main.cpp`; `tools/netlab` has its own CI workflow and
+  is referenced from `Settings.cpp` and `InterpolationSystem.cpp`. Do not delete either on
+  the strength of its name.
+- **OPEN, needs a human decision (NOT swept):**
+  - `code/launcher/` - 33 files, 100% upstream, untouched since 2024-12-11, superseded by
+    `launcher-lite`, still wired into `xmake.lua:116` and `.github/workflows/windows.yml`.
+    Deleting it is a merge-surface call against upstream, not a tidy-up.
+  - `.claude/worktrees/optimistic-liskov-2b7ca0` - a live worktree on
+    `claude/optimistic-liskov-2b7ca0`. May belong to the other stream; not removed.
+  - `docs/songbird-attempt-backup/` - 8 files, no inbound references, but it is the archive
+    behind a reverted decision. Redundant with git history; deleting it is a judgement call.
+  - `publish/TODO.md` still says "current as of 2026-09-04 (v0.3.113)" at v0.3.120. The
+    stamp is stale; whether the CONTENT is still true needs the person who wrote it.
 
 ### A FAILED CLEAN WAS INVISIBLE, SO EIGHT UPDATES FAILED IN SILENCE (found + fixed 2026-09-09)
 

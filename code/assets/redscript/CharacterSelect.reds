@@ -351,11 +351,16 @@ public func MpCsOpen() -> Void {
          *
          * A full-screen interactive canvas swallows every click and key press, and there is
          * nothing behind it that can still be reached - so the menu became unusable with no
-         * way out but killing the game. Interactivity belongs on the CARD HIT RECTS and
-         * nowhere else; each of those sets it for itself in MpCsArm.
+         * way out but killing the game.
          *
-         * DO NOT set this true. If something on this screen needs input, give that widget
-         * its own hit rect rather than arming the whole canvas.
+         * DO NOT set this true. The rule outlived the mechanism it was written for: the
+         * card hit rects it used to name were removed in f0e8556 in favour of
+         * OnGlobalRelease - the controller's own event - with MpCsClickAt resolving the
+         * click coordinates to a card. Nothing on this screen is interactive now, and
+         * nothing needs to be, which is exactly why the screen works.
+         *
+         * If something here ever does need input, give THAT widget its own hit rect.
+         * Never arm the whole canvas.
          */
         canvas.SetInteractive(false);
         canvas.Reparent(root);
@@ -737,175 +742,6 @@ public func MpCsCard(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float,
     MpCsText(parent, cx + w - 84.0, y + 32.0, s"LV \(level)", 26, n"Regular",
              selected ? MpCsGold() : MpCsInkDim());
 
-}
-
-/**
- * Make a card pressable.
- *
- * A transparent interactive rectangle laid over the whole card, named for its slot. The
- * name is how the callback knows which card was hit - ink hands the handler the widget it
- * landed on, and reading a name off it is far less fragile than keeping a parallel array
- * of references in step with a roster that changes shape.
- */
-/*
- * BACK IN USE as of test.31. test.30 answered the question it was parked for: with nothing
- * of ours interactive the menu was usable, so the lock WAS ours - and since the probe was
- * deleted in the same build, the hit rects are no longer the suspect they were.
- *
- * They come back with the menu list hidden underneath them, which is the part that was
- * missing. zeldfep on test.30: "3rd slot is broken its allowing me to hit the buttons behind
- * the overaly" - with no hit rect to catch it, a click on a card fell through to whatever
- * menu item happened to sit at that spot.
- */
-@addMethod(SingleplayerMenuGameController)
-public func MpCsArm(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float, w: Float,
-                    h: Float) -> Void {
-    let hit = new inkRectangle();
-    hit.SetName(this.MpCsHitName(slot));
-    hit.SetAnchor(inkEAnchor.TopLeft);
-    hit.SetAnchorPoint(new Vector2(0.0, 0.0));
-    hit.SetMargin(new inkMargin(x, y, 0.0, 0.0));
-    hit.SetSize(new Vector2(w, h));
-    hit.SetOpacity(0.0);
-    hit.SetInteractive(true);
-    hit.Reparent(parent);
-
-    hit.RegisterToCallback(n"OnRelease", this, n"OnMpCsCardRelease");
-}
-
-@addMethod(SingleplayerMenuGameController)
-public func MpCsHitName(slot: Int32) -> CName {
-    if slot == 0 {
-        return n"mp_cs_hit_0";
-    }
-
-    if slot == 1 {
-        return n"mp_cs_hit_1";
-    }
-
-    if slot == 2 {
-        return n"mp_cs_hit_2";
-    }
-
-    return n"mp_cs_hit_3";
-}
-
-@addMethod(SingleplayerMenuGameController)
-public func MpCsSlotFromHit(name: CName) -> Int32 {
-    if Equals(name, n"mp_cs_hit_0") {
-        return 0;
-    }
-
-    if Equals(name, n"mp_cs_hit_1") {
-        return 1;
-    }
-
-    if Equals(name, n"mp_cs_hit_2") {
-        return 2;
-    }
-
-    if Equals(name, n"mp_cs_hit_3") {
-        return 3;
-    }
-
-    return -1;
-}
-
-/**
- * A card was clicked.
- *
- * Moves the caret and redraws immediately, then asks the server. Answering the press on
- * the frame it happens is the whole difference between a screen that feels built and one
- * that feels broken - the old panel's only feedback for a press was a load or nothing.
- *
- * Empty slots move the caret and say what fills them, and send NOTHING. The server's reply
- * to "select an empty slot" is a refusal nobody asked for.
- */
-@addMethod(SingleplayerMenuGameController)
-protected cb func OnMpCsCardRelease(e: ref<inkPointerEvent>) -> Bool {
-    if !e.IsAction(n"click") {
-        return false;
-    }
-
-    let target = e.GetTarget();
-
-    if !IsDefined(target) {
-        return false;
-    }
-
-    let slot = this.MpCsSlotFromHit(target.GetName());
-
-    if slot < 0 {
-        return false;
-    }
-
-    // Read BEFORE the caret moves: "was this already the selected slot" is the whole
-    // difference between a first click and a confirming second one.
-    let wasSelected = this.m_csCursor == slot;
-
-    if !wasSelected {
-        this.m_csCreateArmed = false;
-    }
-
-    this.m_csCursor = slot;
-
-    let network = GameInstance.GetNetworkWorldSystem();
-
-    if !IsDefined(network) || !network.IsConnected() {
-        MpCsLog(s"card pressed with no connection");
-        this.MpCsOpen();
-        return true;
-    }
-
-    let empty = this.MpCsRosterIndex(slot) < 0;
-
-    if empty {
-        /*
-         * FIRST CLICK SELECTS AND ASKS. SECOND CLICK CREATES.
-         *
-         * Arming is per-caret: moving to a different slot clears it, so a click on slot 2
-         * followed by a click on slot 3 can never create in slot 2. Walking away from the
-         * screen clears it too, because the flag lives on the controller and the controller
-         * does not survive leaving the menu - the same property the DELETE arm relies on.
-         */
-        if wasSelected && this.m_csCreateArmed {
-            this.m_csCreateArmed = false;
-            MpCsLog(s"empty slot \(slot + 1) confirmed - running the creator");
-
-            this.MpCsSay("Starting the character creator...");
-            this.MpCsClose();
-
-            // The menu's own entry does the rest: it points the account at a free slot,
-            // arms the appearance capture and runs the game's New Game flow. Going through
-            // it rather than round it means one creation path, not two.
-            let data = new PauseMenuListItemData();
-            data.eventName = n"OnMultiplayerNewCharacter";
-            this.HandleMenuItemActivate(data);
-            return true;
-        }
-
-        this.m_csCreateArmed = true;
-        network.SelectCharacterSlot(slot);
-        this.MpCsOpen();
-        this.MpCsSay("Click that slot again to make a character in it.");
-        return true;
-    }
-
-    this.m_csCreateArmed = false;
-
-    network.SelectCharacterSlot(slot);
-    this.MpCsOpen();
-    this.MpCsSay("switching...");
-
-    // The answer comes back as a fresh roster, so poll for it rather than assuming the
-    // switch took. SelectCharacterSlot only says the request was sent.
-    let poll = new MpSelectorPoll();
-    poll.controller = this;
-    poll.attempts = 0;
-    poll.enterWhenKnown = false;
-
-    GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(poll, 0.25, false);
-    return true;
 }
 
 /**
