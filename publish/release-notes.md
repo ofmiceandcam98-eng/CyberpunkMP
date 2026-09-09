@@ -6,6 +6,18 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.120
+
+- **Test builds now say what they are for.** If you have the dev role, the Test builds list in
+  Tools used to show one truncated line per build — four rows that all read the same, with no
+  way to tell which was which. Each row now opens: click it and you get what the build is
+  for, what to look for, and anything knowingly broken in it, with a link to the full notes.
+  Nothing changes for anyone without the dev role; players never see that list.
+
+Nothing in the game itself changed in this release. The mod is rebuilt from the same code as
+v0.3.119 and behaves identically — this is a launcher-only update, and it is safe to skip if
+you do not use test builds.
+
 ## What changed — v0.3.119
 
 - **The phone stops ringing when you answer.** A call you picked up, dealt with and hung up
