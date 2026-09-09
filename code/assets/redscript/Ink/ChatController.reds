@@ -24,6 +24,10 @@ public class ChatController extends inkHUDGameController {
     // chat input already is, and all of it took real debugging to get working. A separate
     // prompt would be a second copy of that, able to break on its own.
     private let m_namePromptOpen: Bool;
+    // The trade overlay's runtime canvas, built onto this controller's root. See
+    // TradeScreen.reds for the render; kept here because the overlay lives on this HUD
+    // controller and only a real field on the class can hold it (annotations cannot).
+    private let m_trRoot: wref<inkCanvas>;
     private let m_nameLabel: wref<inkText>;
 
     protected cb func OnInitialize() -> Bool {
@@ -367,8 +371,75 @@ public class ChatController extends inkHUDGameController {
         this.UpdateInputHints();
     }
 
+    // ------------------------------------------------------------------ trade overlay
+    //
+    // Runtime-built, hung on this controller's root compound widget and scaled by
+    // rootWidth/1920, exactly as the selector builds onto the menu root. The render is
+    // MpTrBuild in TradeScreen.reds; this owns the canvas and the open/close state.
+    public final func MpTrOpen() -> Void {
+        let root = this.GetRootCompoundWidget();
+        if !IsDefined(root) {
+            FTLog(s"[TradeScreen] no root compound widget - cannot open");
+            return;
+        }
+
+        if IsDefined(this.m_trRoot) {
+            this.m_trRoot.RemoveAllChildren();
+        } else {
+            let canvas = new inkCanvas();
+            canvas.SetName(n"mp_trade_overlay");
+            // Top-left anchor AND pivot: scaling happens around the pivot, and a centre-
+            // pivoted (Fill) canvas throws the composition off-screen when scaled - the
+            // exact selector bug (CharacterSelect.MpCsOpen).
+            canvas.SetAnchor(inkEAnchor.TopLeft);
+            canvas.SetAnchorPoint(new Vector2(0.0, 0.0));
+            canvas.SetMargin(new inkMargin(0.0, 0.0, 0.0, 0.0));
+            // NOT interactive: a full-screen interactive canvas swallows input and soft-locks
+            // the game (selector test.27). The shell takes no input; buttons get their own hit
+            // rects when input is wired with the data.
+            canvas.SetInteractive(false);
+            canvas.Reparent(root);
+            this.m_trRoot = canvas;
+        }
+
+        // Scale to whatever the root actually measures; a not-yet-laid-out root reports zero,
+        // so fall back to 1:1 rather than scaling the composition to nothing.
+        let rootSize = root.GetSize();
+        let scale = 1.0;
+        if rootSize.X > 1.0 {
+            scale = rootSize.X / 1920.0;
+        }
+        this.m_trRoot.SetScale(new Vector2(scale, scale));
+
+        MpTrBuild(this.m_trRoot);
+        this.m_trRoot.SetVisible(true);
+        FTLog(s"[TradeScreen] opened - root \(rootSize.X)x\(rootSize.Y), scaled \(scale)");
+    }
+
+    public final func MpTrClose() -> Void {
+        if IsDefined(this.m_trRoot) {
+            this.m_trRoot.RemoveAllChildren();
+            this.m_trRoot.SetVisible(false);
+        }
+        FTLog(s"[TradeScreen] closed");
+    }
+
     private final func SendChat() -> Void {
         let textEntered: String = this.m_input.GetText();
+
+        // Client-side commands, handled here and NOT sent on: the trade overlay's shell
+        // trigger. "/tradeui" opens it with mock data, "/tradeoff" closes it. This is a
+        // scaffold - the real overlay opens when a NotifyTrade arrives (flag-day A).
+        if Equals(textEntered, "/tradeui") {
+            this.m_input.SetText("");
+            this.MpTrOpen();
+            return;
+        }
+        if Equals(textEntered, "/tradeoff") {
+            this.m_input.SetText("");
+            this.MpTrClose();
+            return;
+        }
         if NotEquals(textEntered, "") {
             FTLog(s"[ChatController] SendChat \"\(textEntered)\"");
 
