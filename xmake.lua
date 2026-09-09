@@ -113,7 +113,6 @@ option("rpcdir")
 if is_plat("windows") then
     includes("code/assets")
     includes("code/client")
-    includes("code/launcher")
     includes("code/loader")
     includes("vendor/")
 

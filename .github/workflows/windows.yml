@@ -111,8 +111,8 @@ jobs:
           node-version: 20
           cache: 'pnpm'
           cache-dependency-path: |
-            code/launcher/pnpm-lock.yaml
-            code/launcher/electron/pnpm-lock.yaml
+            code/server/admin/pnpm-lock.yaml
+            code/server/scripting/EmoteSystem/Admin/pnpm-lock.yaml
 
       - name: 'Generate build'
         run: xmake install -o distrib

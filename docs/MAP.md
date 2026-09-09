@@ -2021,9 +2021,17 @@ cannot carry, both verified by a real clone). What the sweep actually found:
   is referenced from `Settings.cpp` and `InterpolationSystem.cpp`. Do not delete either on
   the strength of its name.
 - **OPEN, needs a human decision (NOT swept):**
-  - `code/launcher/` - 33 files, 100% upstream, untouched since 2024-12-11, superseded by
-    `launcher-lite`, still wired into `xmake.lua:116` and `.github/workflows/windows.yml`.
-    Deleting it is a merge-surface call against upstream, not a tidy-up.
+  - ~~`code/launcher/`~~ **DELETED 2026-09-09 (zeldfep's call).** 33 files, 100% upstream,
+    superseded by `launcher-lite`. It was not merely unused - CI's `xmake install -o distrib`
+    passes no target, so its phony `Launcher` target ran TWO `pnpm install`s and an Electron
+    build on every push, producing an artifact nothing consumed (`Ship.ps1` only ever takes
+    `distrib\launcher\mod\*`). The merge-surface worry did not survive contact: the last
+    commit by any upstream author here is 2024-12-11, every merge in our history is from our
+    own fork branches, and no `upstream` remote is configured. Removal needed THREE edits -
+    the directory, `includes("code/launcher")` in `xmake.lua`, and the CI pnpm cache paths.
+    **Do NOT also strip `setup-node`/pnpm from CI**: `code/server/admin/xmake.lua` uses pnpm
+    and sits under the unconditional `includes("code/server")`, so the cache was re-pointed
+    at the admin lockfiles rather than dropped. Verify green after.
   - `.claude/worktrees/optimistic-liskov-2b7ca0` - a live worktree on
     `claude/optimistic-liskov-2b7ca0`. May belong to the other stream; not removed.
   - ~~`docs/songbird-attempt-backup/`~~ **RESOLVED - KEEP** (zeldfep, 2026-09-09). Not stale
