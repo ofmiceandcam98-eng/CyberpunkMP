@@ -17,7 +17,21 @@ other Claude is documented in `docs/LLM-COMMS.md`.
 
 1. **`docs/MAP.md`** — the ledger. Open items, standing decrees, code geography, the
    gotcha that bites in each area. If something feels missed, it should already be there.
-2. **The coordination feed** — where both streams announce ships, flag-days, pulls,
+2. **The Atlas — THE SOURCE OF TRUTH FOR STATE** (zeldfep, 2026-09-09: *"tell his feed that
+   atlas is the new source of thruth"*). What is open, broken, parked or in flight is read
+   from the Atlas, not remembered and not reconstructed from this repo. If the Atlas and
+   anything else disagree about the STATE of the work, the Atlas wins. Findings still go
+   there the moment they are noticed.
+   - **This does not demote the map.** `docs/MAP.md` is the PUBLIC ledger and the tiebreaker
+     for FACTS about the code — geography, decrees, the gotcha in each area. The Atlas is
+     dev-role only and on the tailnet, so it can never be what a public contributor is
+     pointed at; README and CONTRIBUTING point at the map for exactly that reason. State
+     lives in the Atlas, facts and law live in the map, events live on the feed.
+   - **`publish/TODO.md` is gone** (`50dfe81`), with `tools/UpdateTodoList.ps1`: the Discord
+     channel it fed did not survive the revamp.
+   - Address: `POST /v1/atlas` on the coord service with a Discord token, dev role only.
+
+3. **The coordination feed** — where both streams announce ships, flag-days, pulls,
    diagnoses, and map changes. Check it before shipping or deploying; post to it when you
    do any of those.
    - **Address**: `http://<live-server>:11780` (tailnet). **MOVED 2026-09-06** — it used to

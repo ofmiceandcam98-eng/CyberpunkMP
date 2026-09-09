@@ -36,6 +36,21 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
 ## 1. THE LEDGER
 
 ### Standing decrees (law, not open items - violating one is a bug by definition)
+- **The Atlas is the source of truth for STATE** (zeldfep, 2026-09-09): *"tell his feed that
+  atlas is the new source of thruth"*. What is open, broken, parked or in flight is read from
+  the Atlas. If the Atlas and anything else disagree about the state of the work, the Atlas
+  wins. Announced to the other stream on the feed the same day (20260909082400928-6c8f6b).
+  - **Three surfaces, three jobs, and they do not overlap.** The Atlas is STATE. This file is
+    FACTS and LAW - code geography, decrees, the gotcha that bites in each area - and it is
+    PUBLIC, which the Atlas can never be: the Atlas is dev-role only and lives on the tailnet,
+    so README and CONTRIBUTING point here, not there. The feed is EVENTS: ships, deploys,
+    flag days, diagnoses, anything time-ordered.
+  - **What it replaced:** `publish/TODO.md` and `tools/UpdateTodoList.ps1` are deleted
+    (`50dfe81`) - the Discord channel they fed did not survive the revamp.
+  - **A rule announced only on the feed does not bind.** That is why this decree is written
+    here and in CLAUDE.md as well as posted - the feed scrolls, and the other stream reads
+    law from the rulebook.
+
 - **Read the type doc BEFORE turning a mockup into code** (zeldfep, 2026-09-09): *"server
   side we have a font doc i need you review that when pushing things from mockups"*. The doc
   is `/mnt/vol/projects/_internal-docs/type-scale.html` - INTERNAL, on the server, per the
