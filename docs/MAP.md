@@ -2043,8 +2043,12 @@ cannot carry, both verified by a real clone). What the sweep actually found:
     block) keeps Songbird from reaching a character at all, and the freeze returns if that
     gate comes out. Fixed while here: `songbird-holocall-hang.md` never named the folder,
     so the archive was unreachable from the doc written to lead people to it.
-  - `publish/TODO.md` still says "current as of 2026-09-04 (v0.3.113)" at v0.3.120. The
-    stamp is stale; whether the CONTENT is still true needs the person who wrote it.
+  - ~~`publish/TODO.md`~~ **DELETED 2026-09-09 (zeldfep).** The Discord was revamped and the
+    `#to-do-list` channel it fed no longer exists - *"we are working off atlas moving
+    forward"*. `tools/UpdateTodoList.ps1` went with it, since syncing a channel that is gone
+    is its only purpose. **README and CONTRIBUTING both linked it** and now point at THIS
+    file instead: the Atlas is dev-role-only on the tailnet, so it cannot be what a public
+    contributor is sent to. The map is the public ledger; the Atlas is the internal one.
 
 ### A FAILED CLEAN WAS INVISIBLE, SO EIGHT UPDATES FAILED IN SILENCE (found + fixed 2026-09-09)
 

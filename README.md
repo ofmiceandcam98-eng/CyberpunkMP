@@ -20,10 +20,11 @@ Browsing instead: [all releases](https://github.com/ofmiceandcam98-eng/Cyberpunk
 
 **Contribute:** read [CONTRIBUTING.md](CONTRIBUTING.md) first — the build has version pins
 that are load-bearing and a clean checkout of upstream does not compile. What is currently
-broken is tracked in [publish/TODO.md](publish/TODO.md).
+broken is tracked in [docs/MAP.md](docs/MAP.md) — the engineering ledger: open items,
+known bugs, and what shipped.
 
 This is a **beta**. It works well enough for a group to play together and there are still
-rough edges; the to-do list is honest about which.
+rough edges; the ledger is honest about which.
 
 ---
 

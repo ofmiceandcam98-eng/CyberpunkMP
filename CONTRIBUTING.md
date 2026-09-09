@@ -241,7 +241,8 @@ something has already been tried.
 
 ## What is currently broken
 
-Kept current in [`publish/TODO.md`](publish/TODO.md), which is also posted to the Discord.
+Kept current in [`docs/MAP.md`](docs/MAP.md) — the engineering ledger. Ask in the
+[Discord](https://discord.gg/M9NSWsndC7) if you want a steer on what is worth picking up.
 
 The two that need real work rather than a patch:
 
