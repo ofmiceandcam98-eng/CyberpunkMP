@@ -727,6 +727,8 @@
     transition: opacity .14s ease, color .14s ease;
   }
   .rail-num:hover { opacity: 1; color: var(--hazard); }
+  /* A skipped run. Not a control: no pointer, no hover, hidden from a screen reader. */
+  .rail-gap { opacity: .3; cursor: default; pointer-events: none; }
   .rail-num:focus-visible { outline: 1px solid var(--hazard); outline-offset: 1px; }
   .rail-num.on {
     opacity: 1; color: #140406; font-weight: 700;
@@ -2240,11 +2242,22 @@
       // a launcher that showed no version of its own - so it read as the launcher's.
       // The manifest suffix says which APPROVED ENVIRONMENT that version was verified
       // against - the number the server checks at the door.
-      text.textContent = 'Mod up to date' + (updateState.version ? ' - ' + updateState.version : '') +
-        (manifestSummary ? ' · ' + manifestSummary : '')
-      // Nothing to do, so the button is not shown at all. A permanently disabled
-      // "Update" button invites people to keep pressing it wondering what is broken.
-      updateBtn.style.display = 'none'
+      // A test build is CURRENT, but it is not the release - say which, or this row
+      // claims the player is on v0.3.120 while they are running something else entirely.
+      // Update stays visible here on purpose: on a test build it is the way BACK to the
+      // release, not a nag, and hiding it would strand somebody on a broken test build.
+      if (updateState.testBuildTag) {
+        text.textContent = 'Test build - ' + updateState.testBuildTag +
+          (manifestSummary ? ' · ' + manifestSummary : '')
+        updateBtn.style.display = 'inline-block'
+        updateBtn.disabled = false
+      } else {
+        text.textContent = 'Mod up to date' + (updateState.version ? ' - ' + updateState.version : '') +
+          (manifestSummary ? ' · ' + manifestSummary : '')
+        // Nothing to do, so the button is not shown at all. A permanently disabled
+        // "Update" button invites people to keep pressing it wondering what is broken.
+        updateBtn.style.display = 'none'
+      }
     } else {
       dot.className = 'dot'
       text.textContent = 'Mod update required' + (updateState.version ? ' - ' + updateState.version : '')
@@ -2837,7 +2850,11 @@
 
       const twisty = document.createElement('button')
       twisty.className = 'action ghost'
-      twisty.style.cssText = 'flex:none;width:26px;padding:2px 0;line-height:1'
+      // Centred by the box, not by the glyph's own metrics: the collapsed and expanded
+      // characters are different shapes with different bearings, so padding plus
+      // line-height put them in two different places. A fixed square that centres its
+      // content lands both identically.
+      twisty.style.cssText = 'flex:none;display:flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;line-height:1'
       twisty.textContent = release.notes ? '›' : ' '
       twisty.disabled = !release.notes
       twisty.setAttribute('aria-expanded', 'false')
@@ -3008,8 +3025,18 @@
     return { pane, sections: [...pane.querySelectorAll('.tool')].filter(visible) }
   }
 
-  // Current = the last section whose top has crossed the viewport top.
+  // Current = the last section whose top has crossed the viewport top - EXCEPT at the
+  // bottom of the scroll, where the last section is current by definition.
+  //
+  // Without that exception a final section sitting near the bottom can never have its top
+  // reach the viewport top, because scrollTo clamps at max scroll. Its number then never
+  // lights and pressing it looks like it does nothing at all - zeldfep, 2026-09-09, on the
+  // Tools tab: "this on tools has a 4 that leads to nothing". The rail was advertising a
+  // position the pane could not physically reach.
   function railCurrent (body, sections) {
+    if (sections.length === 0) return 0
+    if (body.scrollTop + body.clientHeight >= body.scrollHeight - 4) return sections.length - 1
+
     let current = 0
     for (let i = 0; i < sections.length; i++) {
       if (sections[i].offsetTop <= body.scrollTop + 12) current = i
@@ -3018,6 +3045,36 @@
   }
 
   const railPad = (n) => String(n).padStart(2, '0')
+
+  // Which section numbers the rail can actually show, given its height.
+  //
+  // Returns indices in order, with null wherever a run was skipped. Always keeps the first,
+  // the last and the current one, then widens outwards from current until it runs out of
+  // room - so the numbers nearest where you are stay visible, which is what makes it TRACK
+  // rather than merely fit.
+  function railPlan (count, current, track) {
+    const probe = track.querySelector('.rail-num')
+    const tickH = probe ? Math.max(12, probe.getBoundingClientRect().height + 1) : 18
+    const avail = track.clientHeight || (track.parentElement ? track.parentElement.clientHeight : 0)
+    const max = Math.max(3, Math.floor(avail / tickH))
+    if (count <= max) return Array.from({ length: count }, (_, i) => i)
+
+    const keep = new Set([0, count - 1, current])
+    for (let radius = 1; keep.size + 2 < max; radius += 1) {
+      const before = keep.size
+      if (current - radius > 0) keep.add(current - radius)
+      if (current + radius < count - 1) keep.add(current + radius)
+      if (keep.size === before) break
+    }
+
+    const idx = [...keep].sort((a, b) => a - b)
+    const out = []
+    idx.forEach((v, i) => {
+      if (i > 0 && v !== idx[i - 1] + 1) out.push(null)
+      out.push(v)
+    })
+    return out
+  }
 
   function updateRail () {
     const body = document.querySelector('#settingsModal .modal-body')
@@ -3029,15 +3086,39 @@
     if (sections.length < 2 || !overflows) { rail.hidden = true; return }
     rail.hidden = false
 
-    // Rebuild ticks ONLY when the shape of the list actually changed. This function runs
-    // on every scroll event; replacing the DOM under the pointer would kill :hover mid-aim
-    // and throw away focus if someone is tabbing through.
-    if (track.childElementCount !== sections.length) {
+    const current = railCurrent(body, sections)
+
+    // The rail tracks however many sections exist, instead of assuming they all fit.
+    //
+    // One tick per section works while there are four; it silently overflows the rail once
+    // there are a dozen, and Tools had thirteen stops before the groups existed. So measure
+    // what fits and, when there are more, keep the ends, keep a window around where you are,
+    // and mark the gaps - the position readout underneath still names the true index, so
+    // nothing is lost by not drawing every number.
+    const plan = railPlan(sections.length, current, track)
+
+    // Rebuild ONLY when the visible set actually changes. This runs on every scroll event;
+    // replacing the DOM under the pointer would kill :hover mid-aim and throw away focus if
+    // someone is tabbing through. The signature covers the window shifting, not just the
+    // count changing.
+    const sig = plan.join(',')
+    if (track.dataset.railSig !== sig) {
+      track.dataset.railSig = sig
       track.textContent = ''
-      sections.forEach((sec, i) => {
+      plan.forEach((i) => {
+        if (i === null) {
+          const gap = document.createElement('span')
+          gap.className = 'rail-num rail-gap'
+          gap.textContent = '·'
+          gap.setAttribute('aria-hidden', 'true')
+          track.appendChild(gap)
+          return
+        }
+        const sec = sections[i]
         const mark = document.createElement('button')
         mark.type = 'button'
         mark.className = 'rail-num'
+        mark.dataset.index = String(i)
         mark.textContent = railPad(i + 1)
         const name = sec.classList.contains('rail-group') ? sec : sec.querySelector('.tool-name')
         const label = name ? name.textContent.trim() : 'Section ' + (i + 1)
@@ -3050,9 +3131,10 @@
       })
     }
 
-    const current = railCurrent(body, sections)
-    const marks = track.children
-    for (let i = 0; i < marks.length; i++) marks[i].classList.toggle('on', i === current)
+    for (const mark of track.children) {
+      if (mark.dataset.index === undefined) continue
+      mark.classList.toggle('on', Number(mark.dataset.index) === current)
+    }
 
     // Only rewrite the readout when it actually changed - it is otherwise a DOM write on
     // every scroll frame for text that did not move.
