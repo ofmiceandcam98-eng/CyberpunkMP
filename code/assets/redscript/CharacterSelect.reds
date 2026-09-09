@@ -27,7 +27,16 @@ import CyberpunkMP.World.*
  * deliberate - ink treats it as emission, which is what makes gold on a dark plate read as
  * lit rather than painted.
  */
-public func MpCsGold() -> HDRColor = new HDRColor(2.0, 1.68, 0.24, 1.0)
+// Hazard yellow, and it has to stay READABLE, not merely correct.
+//
+// DESIGN-LANGUAGE's token is #f3c50f = (0.95, 0.77, 0.06). This was (2.0, 1.68, 0.24) -
+// more than DOUBLE the token on two channels. That is emissive bloom, and it looked fine
+// against the launcher's --ground #0d0e11 while being illegible over this screen's bright
+// city backdrop. zeldfep, 2026-09-09: "the text fields are illegible for yellow text make
+// it a bit darker". Now just above the token, so it still reads as emissive without
+// blowing out. A token is where you START - it still has to be read against what is
+// actually behind it.
+public func MpCsGold() -> HDRColor = new HDRColor(1.12, 0.92, 0.13, 1.0)
 public func MpCsGoldDim() -> HDRColor = new HDRColor(0.49, 0.42, 0.11, 1.0)
 public func MpCsRed() -> HDRColor = new HDRColor(1.0, 0.18, 0.27, 1.0)
 public func MpCsRedDim() -> HDRColor = new HDRColor(0.49, 0.11, 0.16, 1.0)
@@ -1660,7 +1669,7 @@ public func MpCsAttributes(parent: ref<inkCanvas>, x: Float, y: Float, index: In
     let count = network.GetRosterAttributeCount(u);
 
     MpCsText(parent, x, y, "ATTRIBUTES", 13, n"Regular", MpCsInkFaint());
-    MpCsRect(parent, x + 130.0, y + 8.0, 430.0, 1.0, MpCsRedDim(), 0.7);
+    MpCsRect(parent, x + 130.0, y + 8.0, 400.0, 1.0, MpCsRedDim(), 0.7);
 
     if count == 0u {
         MpCsText(parent, x, y + 28.0, "none recorded for this character", 15, n"Regular",
@@ -1670,10 +1679,16 @@ public func MpCsAttributes(parent: ref<inkCanvas>, x: Float, y: Float, index: In
 
     let i = 0u;
 
-    while i < count && i < 6u {
+    // The panel is 460 tall and this block starts 308 into it, so 152 remain. The header
+    // takes 26, leaving 126 - which is FIVE rows at a 26 pitch with room for the bar height.
+    // It was a 30 pitch capped at six: six rows need 180 and even five needed 164, so the
+    // bottom row was drawn 13px BELOW the panel's own border. Cyberpunk has exactly five
+    // attributes, so the sixth slot was never real - and drawing it is what pushed the
+    // block out of the frame.
+    while i < count && i < 5u {
         let type = network.GetRosterAttributeType(u, i);
         let value = network.GetRosterAttributeValue(u, i);
-        let rowY = y + 30.0 + Cast<Float>(i) * 30.0;
+        let rowY = y + 26.0 + Cast<Float>(i) * 26.0;
 
         MpCsText(parent, x, rowY, MpCsAttributeName(type), 14, n"Regular", MpCsInkDim());
 
@@ -1683,7 +1698,7 @@ public func MpCsAttributes(parent: ref<inkCanvas>, x: Float, y: Float, index: In
 
         while segment < 20 {
             let filled = segment < value;
-            let sx = x + 150.0 + Cast<Float>(segment) * 19.0;
+            let sx = x + 150.0 + Cast<Float>(segment) * 18.0;
 
             let bar = new inkRectangle();
             bar.SetAnchor(inkEAnchor.TopLeft);
@@ -1698,7 +1713,10 @@ public func MpCsAttributes(parent: ref<inkCanvas>, x: Float, y: Float, index: In
             segment += 1;
         }
 
-        MpCsText(parent, x + 552.0, rowY - 2.0, s"\(value)", 18, n"Medium", MpCsInk());
+        // Inside the panel, with the same 26 inset the left edge uses. This column sat
+        // at 552 and a two-digit value ran to about 574, past the panel's inner edge at
+        // 568 - which is why the numbers were drawn sitting on the border.
+        MpCsText(parent, x + 516.0, rowY - 2.0, s"\(value)", 18, n"Medium", MpCsInk());
 
         i += 1u;
     }

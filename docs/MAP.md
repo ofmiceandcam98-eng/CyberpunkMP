@@ -36,6 +36,24 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
 ## 1. THE LEDGER
 
 ### Standing decrees (law, not open items - violating one is a bug by definition)
+- **Read the type doc BEFORE turning a mockup into code** (zeldfep, 2026-09-09): *"server
+  side we have a font doc i need you review that when pushing things from mockups"*. The doc
+  is `/mnt/vol/projects/_internal-docs/type-scale.html` - INTERNAL, on the server, per the
+  working-checklists decree - and it exists because the launcher had grown 24 distinct font
+  sizes in one window (.54, .55, .58, .6, .62 ... nine rules agreeing on .72 and fifteen
+  sizes used once or twice each). It collapses them onto SEVEN steps: `--fs-micro .58`,
+  `--fs-label .68`, `--fs-small .74`, `--fs-body .84`, `--fs-lead 1.02`, `--fs-head 1.15`,
+  `--fs-icon 1.2`. Same typefaces, same weights, same colours - only sizes move.
+  - **The trigger is the MOCKUP, not the launcher.** The character selector is redscript and
+    the rule still binds; implementing a mockup without reading the doc reintroduces exactly
+    the drift it was written to kill. This decree exists because the selector was built from
+    an approved mockup without anyone reading it.
+  - **A token is a starting point, not a finished decision.** Hazard yellow (`#f3c50f`) is a
+    launcher token and is still illegible as body text over the selector's bright city
+    backdrop. Pick the token, then READ it against what actually sits behind it - the
+    launcher's tokens were chosen against `--ground #0d0e11`, and nothing in the game menu
+    is that dark.
+
 - **The server must be portable, and git is how it moves** (Cam, restated 2026-09-04
   ahead of the weekend migration): *"server build should be able to be transferred and
   build should be on git for quick deployment."* A deployment stands up by cloning the

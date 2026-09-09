@@ -98,6 +98,14 @@ auto-load — read it deliberately. Cam's stream: it auto-loads; keep it current
   the palette and what each colour SAYS, seven type sizes, the clipped-corner signature,
   and the striped-vs-flat hazard rule. Pick a token; do not invent a value. The launcher is
   the truth and that file is its rulebook.
+  **Building from a mockup? Read the type doc on the server FIRST** (zeldfep, 2026-09-09:
+  *"server side we have a font doc i need you review that when pushing things from
+  mockups"*). It is `/mnt/vol/projects/_internal-docs/type-scale.html`, it is INTERNAL, and
+  it carries the seven steps plus the sizes they replace - a mockup implemented without it
+  reintroduces exactly the drift it was written to kill. The trigger is turning a mockup
+  into code, not touching the launcher: the character selector is redscript and the rule
+  still applies. Colour goes with it - hazard yellow on a bright backdrop is illegible, so
+  a token is a starting point that still has to be READ against what sits behind it.
 
 - **The map convention**: any commit touching `docs/MAP.md` gets a "map updated" post on
   the feed; the other stream re-reads before acting. Landing removes, finding adds, SAME
