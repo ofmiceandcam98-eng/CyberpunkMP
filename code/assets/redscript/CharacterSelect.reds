@@ -120,6 +120,49 @@ public func MpCsText(parent: ref<inkCompoundWidget>, x: Float, y: Float, text: S
 }
 
 /**
+ * LETTER-SPACING, BY HAND, because ink does not have it.
+ *
+ * SetLetterSpacing does not exist on inkText - probed, it does not resolve. The mockup leans
+ * on it heavily: .42em on the eyebrow, .34em on the subtitle, .16em on every button. At
+ * these sizes that effect IS a space between characters, so inserting one is not a hack
+ * standing in for the real thing; it is the same result by the only available route.
+ *
+ * Only for SHORT labels. Every character becomes two, so a long string doubles in width and
+ * wraps - which is why names, lifepaths and anything server-sent never go through here.
+ */
+public func MpCsSpaced(text: String) -> String {
+    let out = "";
+    let i = 0;
+    let n = StrLen(text);
+
+    while i < n {
+        out += StrMid(text, i, 1);
+
+        if i < n - 1 {
+            out += " ";
+        }
+
+        i += 1;
+    }
+
+    return out;
+}
+
+/**
+ * Text with a coloured ghost behind it, which is how the mockup's title reads as lit.
+ *
+ * The CSS is a red glow plus a red and a cyan offset - chromatic aberration, the signature
+ * the whole design language is built on. ink has no text shadow, so the same text is drawn
+ * three times: cyan left, red right, the real one on top.
+ */
+public func MpCsGlowText(parent: ref<inkCompoundWidget>, x: Float, y: Float, text: String,
+                         size: Int32, style: CName, colour: HDRColor) -> Void {
+    MpCsText(parent, x - 3.0, y, text, size, style, new HDRColor(0.47, 0.86, 1.0, 1.0));
+    MpCsText(parent, x + 3.0, y, text, size, style, MpCsRed());
+    MpCsText(parent, x, y, text, size, style, colour);
+}
+
+/**
  * THE CLIPPED CORNER, which is the signature of this whole design language.
  *
  * ink has no polygon clipping, so the notch is drawn rather than cut: a square the colour
@@ -399,9 +442,9 @@ public func MpCsOpen() -> Void {
     this.MpCsRegistration(c);
 
     // ---------------------------------------------------------------- title
-    MpCsText(c, 68.0, 96.0, "NIGHT CITY ONLINE", 14, n"Medium", MpCsGold());
-    MpCsText(c, 68.0, 122.0, "SELECT IDENTITY", 76, n"Bold", MpCsInk());
-    MpCsText(c, 68.0, 214.0, "WHO ARE YOU TONIGHT", 15, n"Regular", MpCsInkFaint());
+    MpCsText(c, 68.0, 96.0, MpCsSpaced("NIGHT CITY ONLINE"), 14, n"Medium", MpCsGold());
+    MpCsGlowText(c, 68.0, 122.0, "SELECT IDENTITY", 76, n"Bold", MpCsInk());
+    MpCsText(c, 68.0, 214.0, MpCsSpaced("WHO ARE YOU TONIGHT"), 15, n"Regular", MpCsInkFaint());
     MpCsRect(c, 68.0, 248.0, 540.0, 1.0, MpCsRed(), 0.9);
 
     // ---------------------------------------------------------------- roster
@@ -453,8 +496,8 @@ public func MpCsOpen() -> Void {
 
     // The keys, on screen. A screen driven by keys nobody is told about is a screen that
     // does not work, and this one hid its own exit for a whole build.
-    MpCsText(c, 68.0, 1030.0, "CLICK A SLOT TO SELECT      THEN CONFIRM ON THE RIGHT", 15,
-             n"Medium", MpCsGold());
+    MpCsText(c, 68.0, 1030.0, MpCsSpaced("CLICK A SLOT, THEN CONFIRM"), 13, n"Medium",
+             MpCsGold());
 
     /*
      * THE MENU GOES AWAY. zeldfep, 2026-09-08: "still acting as an overlay the buttons
@@ -595,6 +638,12 @@ public func MpCsCard(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float,
     let edge = selected ? MpCsGold() : MpCsRedDim();
     let edgeAlpha = selected ? 1.0 : 0.85;
 
+    // The mockup's glow on the active card - 34px of gold bleed. Drawn as a larger plate
+    // behind rather than a shadow, which ink does not have.
+    if selected {
+        MpCsRect(parent, cx - 10.0, y - 10.0, w + 20.0, h + 20.0, MpCsGold(), 0.10);
+    }
+
     MpCsRect(parent, cx, y, w, h, plate, plateAlpha);
     MpCsBorder(parent, cx, y, w, h, edge, edgeAlpha);
 
@@ -673,7 +722,7 @@ public func MpCsCard(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float,
         meta += "  -  NEVER PLAYED";
     }
 
-    MpCsText(parent, cx + 128.0, y + 58.0, meta, 14, n"Regular", MpCsInkFaint());
+    MpCsText(parent, cx + 128.0, y + 58.0, StrUpper(meta), 14, n"Regular", MpCsInkFaint());
 
     // Level, right-aligned by measurement rather than by anchor: the card is a canvas and
     // the number is at most four glyphs, so a fixed inset lands it in the same place every
@@ -1216,7 +1265,7 @@ public func MpCsActionButton(parent: ref<inkCanvas>, x: Float, y: Float, w: Floa
     MpCsNotch(parent, x + w, y, 18.0, MpCsVoid());
     MpCsNotch(parent, x, y + h, 18.0, MpCsVoid());
 
-    MpCsText(parent, x + 18.0, y + 10.0, label, 19, n"Bold", text);
+    MpCsText(parent, x + 18.0, y + 10.0, MpCsSpaced(label), 17, n"Bold", text);
     MpCsText(parent, x + 18.0, y + 34.0, s"[ \(key) ]", 12, n"Regular",
              enabled ? MpCsGold() : MpCsInkFaint());
 }
