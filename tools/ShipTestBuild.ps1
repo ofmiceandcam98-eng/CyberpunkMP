@@ -60,13 +60,25 @@ Set-Location $Repo
 $version = (Get-Content (Join-Path $LauncherDir "package.json") -Raw | ConvertFrom-Json).version
 
 if (-not $Tag) {
-    # Next number in the sequence, read from what is actually published rather than
-    # guessed - two test builds sharing a tag is a silent overwrite.
-    # Asked of GitHub rather than of a remote name: $GhRepo is "owner/name", which
-    # ls-remote does not accept, and which remote points where varies by checkout.
-    $existing = & gh release list --repo $GhRepo --limit 60 2>$null
-
+    # THE SEQUENCE MUST NEVER GO BACKWARDS, and reading only what is published lets it.
+    #
+    # This asked GitHub for the highest published number and added one. Correct while builds
+    # accumulate, and wrong the moment any are deleted: on 2026-09-08 a cleanup removed every
+    # prerelease, so the next ship found none and restarted at 1. The sequence went test.29,
+    # test.30, test.1 - and two different builds can now share a name, which makes "which
+    # build was that" unanswerable for anything before that point.
+    #
+    # So the number is the MAXIMUM of three sources, and the counter is written back. Any one
+    # of them surviving is enough to stop the sequence rewinding:
+    #
+    #   published releases   authoritative while they exist, and the only cross-machine source
+    #   local git tags       survive a release being deleted on GitHub
+    #   a counter file       survives both, and is machine-local (gitignored) rather than
+    #                        committed, because a tracked counter is a merge conflict on
+    #                        every parallel ship
     $highest = 0
+
+    $existing = & gh release list --repo $GhRepo --limit 100 2>$null
     foreach ($line in ($existing -split "`n")) {
         if ($line -match 'worldstate-test\.(\d+)') {
             $n = [int]$Matches[1]
@@ -74,7 +86,27 @@ if (-not $Tag) {
         }
     }
 
+    foreach ($line in (& git tag --list "*worldstate-test*" 2>$null)) {
+        if ($line -match 'worldstate-test\.(\d+)') {
+            $n = [int]$Matches[1]
+            if ($n -gt $highest) { $highest = $n }
+        }
+    }
+
+    $counterFile = Join-Path $PSScriptRoot ".test-build-counter"
+    if (Test-Path $counterFile) {
+        $saved = 0
+        if ([int]::TryParse((Get-Content $counterFile -Raw).Trim(), [ref]$saved)) {
+            if ($saved -gt $highest) { $highest = $saved }
+        }
+    }
+
     $Tag = "v$version-worldstate-test.$($highest + 1)"
+
+    # Written before the build, not after: a ship that dies half way must still burn its
+    # number, or the next attempt reuses it and clobbers whatever the first one managed to
+    # publish.
+    Set-Content -Path $counterFile -Value ($highest + 1) -Encoding ascii
 }
 
 Step "Test build"
@@ -197,7 +229,17 @@ the shipped one. Restore puts the current release back.
 # right there in the release; it just never reached the one screen where the choice is
 # actually made.
 $shortNum = if ($Tag -match 'test\.(\d+)') { $Matches[1] } else { '?' }
-$title = "test.$shortNum - $Name"
+# THE COMMIT IS IN THE TITLE, so a build stays identifiable even if a number is ever
+# reused. Numbering is now monotonic, but that depends on a counter file that a fresh
+# checkout does not have - the sha does not depend on anything.
+#
+# A dirty tree is marked. On 2026-09-08 test.18 was published from uncommitted changes, so
+# the artifact matched no commit for several minutes; saying so on the release is cheaper
+# than refusing to ship and is honest about what was built.
+$sha = (& git rev-parse --short HEAD 2>$null)
+$dirty = if ((& git status --porcelain 2>$null)) { "+dirty" } else { "" }
+
+$title = "test.$shortNum - $Name ($sha$dirty)"
 
 # UPDATE an existing tag rather than failing on it.
 #

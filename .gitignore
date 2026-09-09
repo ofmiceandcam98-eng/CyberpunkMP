@@ -82,3 +82,8 @@ backups/
 # Real infrastructure addresses. The repo is public; see
 # docs/deploy/ADDRESSES.example.md for the template.
 docs/deploy/ADDRESSES.local.md
+
+# Machine-local: the highest test build number ever cut here. Stops the sequence rewinding
+# when published releases are deleted. Not tracked - a committed counter is a merge conflict
+# on every parallel ship.
+tools/.test-build-counter
