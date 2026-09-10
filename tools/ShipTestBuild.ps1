@@ -325,4 +325,50 @@ else {
 
     Ok "published $Tag"
 }
+
+# ---------------------------------------------------------------------------
+# Prune superseded test builds
+# ---------------------------------------------------------------------------
+#
+# The ship ADDS a numbered prerelease and, until this, never removed the last one - so the
+# launcher's Test builds list grew a stale row on every ship and somebody cleared it by hand
+# (zeldfep, 2026-09-10, asking twice: "why do we keep leaving stale test builds on launcher").
+# There is only ever ONE test build to install - the one just shipped - so every other
+# worldstate-test prerelease is superseded the moment this one publishes.
+#
+# The RELEASE is deleted; the git TAG is kept. The tag is one of the three sources the number
+# sequence takes its max from (see Tag, above), so deleting it could rewind the count - keeping
+# it costs nothing and keeps the sequence monotonic. Only prereleases matching the test pattern
+# are touched, never the Latest release. A failed prune WARNS rather than Dies: the build has
+# already published, and a leftover row is a nuisance, not a reason to fail a good ship.
+#
+# The ledger half of the policy (zeldfep, 2026-09-10: "consolidate test builds if mostly or
+# fully tested otherwise clear it from launcher") is a human step - a validated build's changes
+# graduate into docs/MAP.md before the row goes. This only enforces the "clear from launcher"
+# half, which is the part that was being forgotten.
+Step "Prune superseded test builds"
+
+if ($WhatIf) {
+    Write-Host "  (WhatIf) would delete every worldstate-test prerelease except $Tag" -ForegroundColor DarkGray
+}
+else {
+    $releases = gh release list --repo $GhRepo --limit 100 --json tagName,isPrerelease | ConvertFrom-Json
+    $stale = @($releases | Where-Object { $_.isPrerelease -and $_.tagName -match 'worldstate-test\.\d+' -and $_.tagName -ne $Tag })
+
+    if ($stale.Count -eq 0) {
+        Ok "no superseded test builds to clear"
+    }
+    else {
+        foreach ($r in $stale) {
+            & gh release delete $r.tagName --repo $GhRepo --yes 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                Ok "cleared $($r.tagName) from the launcher (git tag kept)"
+            }
+            else {
+                Warn "could not clear $($r.tagName) - remove it by hand if it lingers"
+            }
+        }
+    }
+}
+
 Write-Host "`nInstall it from Settings > DEV > Test builds." -ForegroundColor Green
