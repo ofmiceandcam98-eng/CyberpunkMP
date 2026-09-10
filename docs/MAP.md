@@ -113,6 +113,18 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   - Corollary for either stream: **before saying a launcher capability is missing, grep for
     it by name.** "The updater does not do X" is not evidence that nothing does X.
 
+- **TEST BUILD LIFECYCLE: consolidate if tested, else clear from the launcher** (zeldfep,
+  2026-09-10, after clearing stale launcher rows twice in one session: *"why do we keep
+  leaving stale test builds on launcher"* / *"consolidate test builds if mostly or fully
+  tested otherwise clear it from launcher"*). There is only ever ONE test build to install.
+  When a build's changes are mostly or fully validated, its fixes GRADUATE into this ledger
+  (landing removes, finding adds, same commit) and then the launcher row goes; when they are
+  not, the row is just cleared. **The "clear from launcher" half is now automatic** -
+  `ShipTestBuild.ps1` deletes every superseded `worldstate-test` prerelease on each ship
+  (RELEASE deleted, git TAG kept so the number sequence never rewinds), so the list can no
+  longer grow a stale row (`2bcdc5b`). The "consolidate on the ledger" half stays a human
+  step - deciding a build is validated is a judgement, not a file check.
+
 - **FOUND IT? FLAG IT ON THE ATLAS, THEN CARRY ON** (zeldfep, 2026-09-08): *"Hard rule to
   ledger when we find new issues flag them on atlas so we can come back to 'what we find'
   instead of 'WHAT WE ARE WORKING ON'."* Anything noticed that is NOT the task in hand gets
