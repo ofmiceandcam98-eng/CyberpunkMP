@@ -46,7 +46,7 @@
 
   "version": 1,
   "game": "cyberpunk2077",
-  "updated": "2026-08-18",
+  "updated": "2026-09-08",
 
   "mods": [
     {
@@ -63,11 +63,6 @@
       "note": "Cam: lock this to devs."
     },
     {
-      "nexusModId": 22114,
-      "required": false,
-      "note": "Cam: good for police and prison RP. NAME UNCONFIRMED - not guessed."
-    },
-    {
       "nexusModId": 21528,
       "name": "DLC Call Off",
       "required": false,
@@ -76,6 +71,25 @@
   ],
 
   "_pulled": [
+    "22114 - PULLED 2026-09-08, identity CONFIRMED by reading the Nexus page: 'YOU ARE",
+    "UNDER ARREST' by ABCdb111, v1.0.4 (17 Aug 2025) - an arrest mechanic plus CDPR's",
+    "cut prison restored. Cam's 'good for police and prison RP' described it exactly;",
+    "it is pulled for what it NEEDS, not for what it is. Its Nexus requirements are",
+    "ArchiveXL, Codeware, TweakXL and CYBER ENGINE TWEAKS. The first three are pinned",
+    "prerequisites already in FullInstall.zip. CET is the one component our own",
+    "INSTALL.txt tells every player to disable before playing, because CET alongside",
+    "this mod caused a full GPU hard-lock needing a power cycle. So the entry could",
+    "only ever resolve two ways: the player follows INSTALL.txt and this mod silently",
+    "does nothing, or they install CET to make it work and take the hard-lock risk.",
+    "Neither is a recommendation this list can defend. Corroborating: found on Cam's",
+    "disk 2026-08-22 as Arrest/ at the GAME ROOT, extracted one level too deep, so it",
+    "had never loaded for anybody anyway (ASSISTANTS_COMMUNICATION.md, 2026-08-23).",
+    "NOT ESTABLISHED, and the only thing that would reopen this: ImGuiService.cpp:20-41",
+    "means a release client with the overlay OFF builds no ImGui context at all, which",
+    "is the mitigation for precisely this clash - but nobody has re-tested CET against",
+    "a shipped build since. If someone does and it comes back clean, this is a live",
+    "candidate again and INSTALL.txt's CET step needs rewording in the same pass.",
+    "",
     "4198 - PULLED 2026-08-23, identity CONFIRMED as ArchiveXL: its install lands exactly",
     "27 files, the same count as the pinned ArchiveXL-1.26.0 prerequisite it overwrites",
     "(fingerprinted from a live install record; TweakXL is 4197, same author). The entry",

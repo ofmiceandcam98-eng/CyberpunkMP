@@ -1190,11 +1190,33 @@ is **local and unpushed** — per Cam, nothing ships before the server swap.
   applied, and which is which is not recorded. Check `git log` on that function before
   changing it either direction - one of the two claims is stale.
 
-- **Mod 22114 (70 files, still unnamed) verify-flip churn**: reinstalled 4x with
-  IDENTICAL archive hashes yet verification keeps flipping back to broken on Cam's
-  machine - something on disk rewrites or removes its files after install. Identify the
-  mod first (tools/hackid.py will not help - it is a Nexus id; check the page when
-  Cloudflare allows, or Cam names it), then diff which recorded files fail.
+- **Mod 22114 verify-flip churn — IDENTIFIED, and the mod is now pulled (2026-09-08).**
+  It is "YOU ARE UNDER ARREST" (see Modlist debts); it required CET and is off the list,
+  so the churn itself is moot and is not worth further digging.
+  **The churn's mechanism was never pinned down and is now unfalsifiable** — say so
+  rather than leaving a guess to harden: the `Arrest/` copy found on Cam's disk
+  2026-08-22 was one level too deep (`Arrest/archive/pc/mod/*.archive`), but
+  `mods-installed.json` was `{}` at the time, so nothing records whether the launcher
+  or a hand-extraction put it there, and the quarantine removed the evidence.
+  What DID come out of chasing it is a separate, confirmed launcher bug — see the
+  wrapper-folder entry — found by reading the installer, not by inferring from this.
+  (`tools/hackid.py` never applied here — 22114 is a Nexus id, not a hack id. WebFetch
+  gets a Cloudflare 403 on Nexus; a real browser reads the page fine.)
+
+- **The installer strips no wrapper folder — a whole class of Nexus archive installs
+  one level too deep and silently does nothing (CONFIRMED by code read, 2026-09-08).**
+  `main.js:6410-6421` writes every zip entry verbatim to `path.join(gameDir, relative)`.
+  The only guard is `..` path-climbing; there is no common-prefix strip and no check
+  that an entry lands in a real mod surface (`archive/pc/mod`, `r6/scripts`,
+  `red4ext/plugins`, `bin/x64/plugins`). So an archive shaped
+  `ModName/archive/pc/mod/x.archive` — a common way authors zip their work — installs
+  to `<game>/ModName/archive/pc/mod/x.archive`, which the game never reads.
+  **The nasty part is that verify agrees with it**: the record lists the files it wrote,
+  the files are there, per-file hashes match, so verification PASSES while the mod does
+  nothing at all. Nobody gets an error to chase. Fix direction: detect a single top-level
+  directory that contains a known surface and strip it at install, and/or refuse an
+  archive whose entries land in no known surface — refusing loudly beats installing a
+  no-op. Affects any current list entry whose upstream re-zips with a wrapper.
 
 - **Death-respawn loop for creator-flow players** (ashencorridor 17, rimtek 59 respawns).
   Mechanism: immortality blocks death but not damage; the health floor fires "downed",
@@ -1453,8 +1475,17 @@ is **local and unpushed** — per Cam, nothing ships before the server swap.
   emptied folders are pruned. Re-add conditions in modlist.json `_pulled`:
   verify their RED4ext/Codeware needs against our pins (RED4ext 1.29.1 / Codeware
   1.18.0) on a TEST install, and encode 12001→14139 in `requires`.
-- **Unconfirmed ids**: 22114 (police/prison RP, unnamed). Confirm on Nexus before
-  naming. (4198 is CONFIRMED ArchiveXL and pulled — see modlist `_pulled`.)
+- **Unconfirmed ids: NONE LEFT (2026-09-08).** Every entry on the list now carries a
+  name somebody has read off the Nexus page. 22114 was the last one: it is **"YOU ARE
+  UNDER ARREST"** by ABCdb111, v1.0.4 — an arrest mechanic plus CDPR's cut prison,
+  so Cam's "police and prison RP" was right — and it is **PULLED**, because its Nexus
+  requirements include **Cyber Engine Tweaks**, the one thing our own `INSTALL.txt`
+  tells every player to disable (GPU hard-lock). Follow the installer and the mod does
+  nothing; install CET to make it work and you take the hard-lock. Full reasoning in
+  modlist `_pulled`. (4198 is CONFIRMED ArchiveXL and pulled the same way.)
+  Reopens only if someone re-tests CET against a release client with the overlay off —
+  `ImGuiService.cpp:20-41` builds no ImGui context there, which is the mitigation for
+  exactly this clash and has never been re-tested. That is its own open question.
 
 ### Migration (server + Claude, weekend of 2026-09-05)
 - **`docs/MIGRATION.md` is the checklist** - written 2026-09-04 from a survey of the live
