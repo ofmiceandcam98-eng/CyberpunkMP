@@ -24,7 +24,25 @@ const REDACTIONS = [
   [/\b100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}\b/g, '<tailnet-address redacted>'],
   [/\b10\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, '<private-address redacted>'],
   [/\b192\.168\.\d{1,3}\.\d{1,3}\b/g, '<private-address redacted>'],
-  [/\b172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}\b/g, '<private-address redacted>']
+  [/\b172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}\b/g, '<private-address redacted>'],
+
+  // MagicDNS HOSTNAMES. The IP rules above miss the NAMES, and the docs treat those names as
+  // not-for-publication - docs/CLAUDE-HANDOFF.md placeholders them as <server-host> /
+  // <live-server>. But a post that said "officialcutstudios01:11782" or
+  // "nco-test-server-1.tail1de33b.ts.net" reached the public asset intact until this was
+  // added (found 2026-09-08 while writing an Atlas announcement that would have leaked it).
+  //
+  // The node set is small and known, so bare names are an EXPLICIT list, never a pattern -
+  // a hostname-shaped pattern would scrub half the English in a post body. The one pattern
+  // is the FQDN, because nothing but a real MagicDNS name is shaped like `<anything>.ts.net`,
+  // and it runs FIRST so a fully-qualified name is taken whole before the bare-name rule can
+  // leave a dangling `.tailXXXX.ts.net`.
+  //
+  // Deliberately NOT listed: `stream`. It is the word both assistant streams use for
+  // themselves in nearly every post; redacting it bare would scrub the feed to noise. Its
+  // FQDN form (`stream.tailXXXX.ts.net`) is still caught by the rule above it.
+  [/\b[a-z0-9.-]+\.ts\.net\b/gi, '<tailnet-host redacted>'],
+  [/\b(?:nco-test-server-1|nco-server-1|nco-test-server|nco-server|officialcutstudios01|desktop-jebd9rn|zeldfep-pc)\b/gi, '<tailnet-host redacted>']
 ]
 
 /**
