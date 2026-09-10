@@ -1659,6 +1659,22 @@ async function installEverything (onProgress = () => {}) {
   const running = await isProcessRunning('Cyberpunk2077.exe')
   if (running) throw new Error('Close Cyberpunk 2077 first.')
 
+  // Same refusal as applyUpdate, same measured trap (2026-09-10): "Install everything"
+  // is the RELEASE, and pressing it while a test build is installed silently swaps the
+  // dev off the build that matches the test server. Remove mod clears the tag, so the
+  // recovery path (Remove, then Install everything) is untouched by this.
+  const activeTestTag = loadSettings().testBuildTag
+  if (activeTestTag) {
+    launcherLog(`install everything refused: test build ${activeTestTag} is installed`)
+    throw new Error(
+      `You are on test build ${activeTestTag}. Install everything puts the public release ` +
+      'on, which cannot connect to the test server - so nothing was changed.\n\n' +
+      'To move to a newer test build: Tools > Test builds > Install.\n' +
+      'To deliberately return to the public release: Tools > Test builds > Restore.\n' +
+      'To rebuild from scratch: Settings > Remove mod, then Install everything.'
+    )
+  }
+
   onProgress('Downloading...')
 
   // /releases/latest/download/ is a permanent URL that always resolves to the newest
@@ -2105,7 +2121,11 @@ function extractPayloadClean (aModDir, aZip) {
   const cleanFailures = []
   for (const dir of shippedDirs) {
     try {
-      rmSync(path.join(aModDir, dir), { recursive: true, force: true })
+      // maxRetries makes a transient hold (an antivirus scan, an Explorer window mid-
+      // enumeration) survivable instead of a failed install: rmSync retries EBUSY /
+      // EPERM / ENOTEMPTY with a pause between attempts. A hard lock still fails and
+      // is still reported - this widens nothing about what counts as success.
+      rmSync(path.join(aModDir, dir), { recursive: true, force: true, maxRetries: 3, retryDelay: 120 })
     } catch (err) {
       cleanFailures.push({ dir, message: err.code ? `${err.code}: ${err.message}` : String(err.message || err) })
     }
@@ -2117,6 +2137,24 @@ function extractPayloadClean (aModDir, aZip) {
 async function applyUpdate () {
   const modDir = findModDir()
   if (!modDir) throw new Error('The mod is not installed - install it once first.')
+
+  // A test build is not "out of date" - it is a different rail, and Update here would
+  // silently reinstall the public RELEASE over it. Measured 2026-09-10: a dev on a test
+  // build pressed the big Update button, got the release (whose protocol cannot
+  // handshake the test server), and the only symptom was a bare "can't connect" that
+  // read as a server fault. The deliberate ways off a test build are Tools > Test
+  // builds (to move between test builds) and Restore (to return to the release) - both
+  // say what they are doing. Update must not be a third, silent one.
+  const activeTestTag = loadSettings().testBuildTag
+  if (activeTestTag) {
+    launcherLog(`update refused: test build ${activeTestTag} is installed - Update would replace it with the release`)
+    throw new Error(
+      `You are on test build ${activeTestTag}. Update installs the public release, ` +
+      'which cannot connect to the test server - so nothing was changed.\n\n' +
+      'To move to a newer test build: Tools > Test builds > Install.\n' +
+      'To deliberately return to the public release: Tools > Test builds > Restore.'
+    )
+  }
 
   // The game holds CyberpunkMP.dll open, so extracting over it fails with a
   // permission error that reads like a broken download. Say what it actually is.
@@ -2190,7 +2228,32 @@ async function applyUpdate () {
   // install starts reporting itself as up to date, and the up-to-date gate then refuses
   // to fix it: "Your game files are out of date" never fires, so the player launches
   // stale code forever with a green launcher.
-  const audit = auditPayloadInstall(modDir, zip)
+  let audit = auditPayloadInstall(modDir, zip)
+
+  // Orphans get one cleanup attempt before they are allowed to fail the install.
+  //
+  // An orphan is, by definition, a file inside a directory the payload OWNS that the
+  // payload no longer ships - exactly what extractPayloadClean's directory wipe was
+  // supposed to remove and (for reasons still open on the payload-clean branch)
+  // sometimes does not. Deleting each one by name is strictly less destructive than
+  // the wholesale wipe that already ran, and it is what breaks the loop measured
+  // 2026-09-10: leftover test-build files failed the release audit -> "install NOT
+  // recorded" -> the stamp never saved -> "update required" -> the same press, the
+  // same failure, forever. Missing files stay fatal - nothing can conjure those.
+  if (audit.orphans.length && !audit.missing.length) {
+    const stuck = []
+    for (const rel of audit.orphans) {
+      try {
+        rmSync(path.join(modDir, rel.split('/').join(path.sep)), { force: true })
+      } catch (err) {
+        stuck.push(`${rel} (${err.code || err.message})`)
+      }
+    }
+    launcherLog(`cleared ${audit.orphans.length - stuck.length} of ${audit.orphans.length} leftover file(s) the payload no longer ships` +
+                (stuck.length ? ` | still stuck: ${stuck.slice(0, 4).join(', ')}` : ''))
+    audit = auditPayloadInstall(modDir, zip)
+  }
+
   if (audit.missing.length || audit.orphans.length) {
     const say = (label, list) =>
       list.length
@@ -2299,7 +2362,12 @@ async function uninstallMod () {
   }
 
   rmSync(modDir, { recursive: true, force: true })
-  saveSettings({ installedStamp: null, installedVersion: null })
+
+  // The test-build tag goes with the folder it described. Leaving it set made the
+  // launcher keep reporting a test build that no longer exists on disk - and it would
+  // wrongly trip the are-you-on-a-test-build refusal in installEverything on the very
+  // reinstall this Remove exists to enable.
+  saveSettings({ installedStamp: null, installedVersion: null, testBuildTag: undefined })
 
   return { removed: true, modDir }
 }
