@@ -1563,20 +1563,6 @@ public func MpCsDetail(parent: ref<inkCanvas>, x: Float, y: Float) -> Void {
                  network.IsRosterActive(u) ? "yes - this is you" : "no");
 
     this.MpCsAttributes(parent, x + 26.0, rowY + 186.0, index);
-
-    // Log the raw types once per draw, so the enum values can be learned from evidence
-    // rather than guessed. Comes out with MpCsAttributeName's fallback.
-    let logged = 0u;
-    let seen = "";
-
-    while logged < network.GetRosterAttributeCount(u) && logged < 8u {
-        seen += s"\(network.GetRosterAttributeType(u, logged))=\(network.GetRosterAttributeValue(u, logged)) ";
-        logged += 1u;
-    }
-
-    if NotEquals(seen, "") {
-        MpCsLog(s"attributes for slot \(this.m_csCursor + 1): \(seen)");
-    }
 }
 
 @addMethod(SingleplayerMenuGameController)
@@ -1740,8 +1726,23 @@ public func MpCsAttributes(parent: ref<inkCanvas>, x: Float, y: Float, index: In
  * recorded anywhere this side can check. Rather than invent five, every unknown type prints
  * itself - which is useless on screen for exactly one build and then becomes the evidence
  * that fills this in.
+ *
+ * Named 2026-09-10, and no number is hardcoded to do it: the capture side sends
+ * Cast<Uint32>(EnumInt(gamedataStatType.X)) for exactly these five (Inventory.reds, the
+ * attrs list), so comparing against the same expression here is symmetric by construction
+ * and survives the enum renumbering across a game patch. The live evidence agreed before
+ * this landed: the dossier showed 1518 and 1275, which are Strength and Reflexes.
+ * Labels are the mockup's (character-select.html): the game calls Strength "Body" on
+ * every player-facing surface, and the mockup abbreviates TechnicalAbility to "Tech".
  */
 public func MpCsAttributeName(type: Uint32) -> String {
+    if type == Cast<Uint32>(EnumInt(gamedataStatType.Strength)) { return "BODY"; }
+    if type == Cast<Uint32>(EnumInt(gamedataStatType.Reflexes)) { return "REFLEXES"; }
+    if type == Cast<Uint32>(EnumInt(gamedataStatType.Intelligence)) { return "INTELLIGENCE"; }
+    if type == Cast<Uint32>(EnumInt(gamedataStatType.TechnicalAbility)) { return "TECH"; }
+    if type == Cast<Uint32>(EnumInt(gamedataStatType.Cool)) { return "COOL"; }
+
+    // An unknown type still prints itself - a wrong label is worse than a raw number.
     return s"ATTR \(type)";
 }
 
