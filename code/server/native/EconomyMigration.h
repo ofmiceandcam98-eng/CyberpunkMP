@@ -37,15 +37,21 @@
  * shutdown. It exists, it is tested, and crossing the boundary is a separate deliberate act.
  *
  * The reason for that is worth keeping: while HandleSaveCharacterRequest still accepts a
- * client-declared balance, stamping MigratedAt would be a lie. The mark would say "the
+ * client-declared balance, stamping MoneyMigratedAt would be a lie. The mark would say "the
  * server owns this now" while the client could still rewrite it on the next save. The
  * migration and the authority cutover have to happen together, and until then this stays
  * inert.
  */
 
+#include <algorithm>   // std::find, in InspectLegacyMetadata
 #include <cstdint>
 #include <string>
+#include <utility>     // std::move, in InspectLegacyMetadata - MSVC supplies it
+                       // transitively and GCC does not, which is the whole point of
+                       // tools\CheckIncludes.ps1
 #include <vector>
+
+#include <nlohmann/json.hpp>   // InspectLegacyMetadata reads the raw document
 
 #include "CharacterRecord.h"
 
@@ -64,10 +70,10 @@ inline constexpr int64_t kMaxPlausibleMoney = 1'000'000'000;
 
 enum class State
 {
-    // MigratedAt == 0 && EconomyRevision == 0. The normal starting state.
+    // MoneyMigratedAt == 0 && MoneyRevision == 0. The normal starting state.
     Unmigrated,
 
-    // MigratedAt > 0 && EconomyRevision >= 1. Already done; must not be touched again.
+    // MoneyMigratedAt > 0 && MoneyRevision >= 1. Already done; must not be touched again.
     Migrated,
 
     /**
@@ -101,20 +107,123 @@ struct Classification
 };
 
 /**
+ * Legacy metadata found in a persisted file, from before the stage 6 rename.
+ *
+ * WHY THIS EXISTS AT ALL, when the rename is supposed to be free.
+ *
+ * `EconomyRevision` / `MigratedAt` became `MoneyRevision` / `MoneyMigratedAt` because money
+ * and inventory stopped crossing the authority boundary together. The rename is safe for
+ * every record that exists, and safe for a precise reason rather than a hopeful one: no
+ * migration has ever run, so every persisted value is 0, and a record carrying only the old
+ * keys loads with the new ones defaulted to 0 - not migrated, which is exactly correct.
+ *
+ * A NONZERO old key breaks that reasoning. It would mean a record crossed a boundary under
+ * the OLD meaning, where the mark claimed money AND inventory. Reading that as
+ * `MoneyMigratedAt` would silently narrow what it asserted; reading it as both would claim
+ * inventory authority the server does not have. Neither is knowable from the number.
+ *
+ * So it is NOT reinterpreted, in either direction. It is detected and reported, and
+ * migration refuses the record until a human decides what it meant. Production is expected
+ * to contain none of these - this exists so that expectation is TESTABLE rather than
+ * assumed, and so the day it is wrong is a loud day rather than a quiet one.
+ */
+struct LegacyMetadata
+{
+    // Old keys present at all - normal for any file written before the rename, and harmless
+    // on its own.
+    bool Present{false};
+
+    // Old keys present AND nonzero. This is the case nothing may guess at.
+    bool Nonzero{false};
+
+    // CharacterIds carrying nonzero legacy metadata, so a human knows where to look.
+    std::vector<std::string> Characters;
+};
+
+/**
+ * Scan a parsed players.json for pre-rename metadata.
+ *
+ * Takes the RAW JSON rather than a CharacterRecord on purpose: deserialization drops keys
+ * the struct no longer declares, so by the time a record exists the evidence is gone. This
+ * has to look at the file as written.
+ *
+ * Pure: reads, changes nothing, and is safe on a malformed document - anything that is not
+ * shaped like a player array is simply not scanned, because reporting a parse opinion is
+ * PlayerStore's job and not this function's.
+ */
+inline LegacyMetadata InspectLegacyMetadata(const nlohmann::json& acDocument)
+{
+    LegacyMetadata found;
+
+    if (!acDocument.is_array())
+        return found;
+
+    for (const auto& player : acDocument)
+    {
+        if (!player.is_object() || !player.contains("Characters"))
+            continue;
+
+        const auto& characters = player["Characters"];
+        if (!characters.is_array())
+            continue;
+
+        for (const auto& character : characters)
+        {
+            if (!character.is_object())
+                continue;
+
+            // Both old names, checked independently: an inconsistent record (one set, one
+            // not) is exactly the shape that most needs a human, so neither is treated as
+            // implying the other.
+            for (const char* legacy : {"EconomyRevision", "MigratedAt"})
+            {
+                if (!character.contains(legacy))
+                    continue;
+
+                found.Present = true;
+
+                const auto& value = character[legacy];
+                if (!value.is_number())
+                    continue;
+
+                // Compared as a double so one branch covers both the unsigned revision and
+                // the signed timestamp without caring which key this is.
+                if (value.get<double>() != 0.0)
+                {
+                    found.Nonzero = true;
+
+                    auto id = character.contains("CharacterId") && character["CharacterId"].is_string()
+                                  ? character["CharacterId"].get<std::string>()
+                                  : std::string{"(unnamed)"};
+
+                    if (std::find(found.Characters.begin(), found.Characters.end(), id) ==
+                        found.Characters.end())
+                    {
+                        found.Characters.push_back(std::move(id));
+                    }
+                }
+            }
+        }
+    }
+
+    return found;
+}
+
+/**
  * What state is this record in, and can it be migrated?
  *
  * Pure: reads the record, changes nothing.
  */
 inline Classification Classify(const CharacterRecord& acRecord)
 {
-    const bool stamped = acRecord.MigratedAt > 0;
-    const bool revised = acRecord.EconomyRevision >= 1;
+    const bool stamped = acRecord.MoneyMigratedAt > 0;
+    const bool revised = acRecord.MoneyRevision >= 1;
 
     if (stamped != revised)
     {
         return {State::Inconsistent,
-                stamped ? "MigratedAt is set but EconomyRevision is 0"
-                        : "EconomyRevision is set but MigratedAt is 0"};
+                stamped ? "MoneyMigratedAt is set but MoneyRevision is 0"
+                        : "MoneyRevision is set but MoneyMigratedAt is 0"};
     }
 
     if (stamped)
@@ -160,8 +269,8 @@ inline bool Apply(CharacterRecord& aRecord, int64_t aNowSeconds)
     if (Classify(aRecord).Result != State::Unmigrated)
         return false;
 
-    aRecord.MigratedAt = aNowSeconds;
-    aRecord.EconomyRevision = 1;
+    aRecord.MoneyMigratedAt = aNowSeconds;
+    aRecord.MoneyRevision = 1;
 
     return true;
 }

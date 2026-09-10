@@ -24,7 +24,7 @@
  * received less than we said" is a support ticket nobody can reconstruct.
  *
  * WHY IT EXISTS BEFORE THE AUTHORITY CUTOVER. Every legitimate mutation routed through here
- * is one that can later increment EconomyRevision in ONE place, be audited in one place, and
+ * is one that can later increment MoneyRevision in ONE place, be audited in one place, and
  * be reasoned about in one place. Scattering that logic across call sites and then trying to
  * add revisions to it afterwards is the version of this that does not work.
  */
@@ -257,31 +257,48 @@ inline Result RemoveItem(CharacterRecord& aRecord, uint64_t aItemId, uint32_t aQ
 }
 
 // ---------------------------------------------------------------------------------------
-// Revision - Phase 5 stage 5
+// Revision - Phase 5 stage 5, narrowed to MONEY in stage 6
 //
-// THE ONE RULE: revision the TRANSACTION, not the primitive.
+// TWO RULES NOW, and the second was added because the first was not enough.
 //
-// Nothing above this line touches EconomyRevision, and that is deliberate rather than an
-// omission. Debit, Credit, AddItem and RemoveItem are components - a starter kit is four
-// AddItems and a Credit, a trade is a Transfer and several item moves - so a revision inside
-// them would advance a character four or five times for one thing that happened. A version
-// number that counts function calls instead of state changes is not a version number.
+// 1. REVISION THE TRANSACTION, NOT THE PRIMITIVE.
 //
-// The transaction boundary owns it: validate headroom for every participant, mutate the
-// candidates, advance each affected participant exactly once, then commit.
+//    Nothing above this line touches MoneyRevision, and that is deliberate rather than an
+//    omission. Debit, Credit, AddItem and RemoveItem are components - a starter kit is four
+//    AddItems and a Credit, a trade is a Transfer and several item moves - so a revision
+//    inside them would advance a character four or five times for one thing that happened.
+//    A version number that counts function calls is not a version number.
+//
+// 2. ADVANCE ONLY WHEN MONEY CHANGES.
+//
+//    The field was EconomyRevision and covered "money or inventory". It is MoneyRevision
+//    now, because the Stage 6B audit split the two: money and inventory migrate at
+//    different times, so one number cannot honestly version both.
+//
+//    So an ITEM-ONLY TRADE MUST NOT ADVANCE IT. Neither does a starter kit that grants no
+//    eddies. The test suite covers item-only trades explicitly - zero money is a valid
+//    trade - and under the old rule those advanced a number that now claims to describe
+//    money. That would be a lie in the one direction that matters: a client comparing
+//    revisions would think the balance had moved when it had not.
+//
+// The transaction boundary owns both rules: validate headroom for every participant,
+// mutate the candidates, then advance exactly once per participant WHOSE MONEY CHANGED.
 // ---------------------------------------------------------------------------------------
 
 /**
- * Is this record's revision meaningful?
+ * Is this record's money authoritative?
  *
- * Only a MIGRATED record has an authoritative economy, so only a migrated record has a
+ * Only a MIGRATED record has a server-owned balance, so only a migrated record has a
  * revision worth advancing. The Stage 3 invariant is the definition, and there is
  * deliberately no third state: an unmigrated record is (0, 0) and stays that way through
  * every trade, payment, sale and save until migration itself moves it to revision 1.
+ *
+ * Says nothing about inventory. Inventory remains client-declared for every record,
+ * migrated or not, until its own workstream reaches a cutover.
  */
 inline bool IsMigrated(const CharacterRecord& acRecord)
 {
-    return acRecord.MigratedAt > 0 && acRecord.EconomyRevision >= 1;
+    return acRecord.MoneyMigratedAt > 0 && acRecord.MoneyRevision >= 1;
 }
 
 /**
@@ -301,7 +318,7 @@ inline Result CanAdvanceRevision(const CharacterRecord& acRecord)
     if (!IsMigrated(acRecord))
         return Result::Success;
 
-    if (acRecord.EconomyRevision == std::numeric_limits<uint64_t>::max())
+    if (acRecord.MoneyRevision == std::numeric_limits<uint64_t>::max())
         return Result::RevisionExhausted;
 
     return Result::Success;
@@ -326,10 +343,10 @@ inline Result AdvanceRevision(CharacterRecord& aRecord)
     if (!IsMigrated(aRecord))
         return Result::Success;
 
-    if (aRecord.EconomyRevision == std::numeric_limits<uint64_t>::max())
+    if (aRecord.MoneyRevision == std::numeric_limits<uint64_t>::max())
         return Result::RevisionExhausted;
 
-    ++aRecord.EconomyRevision;
+    ++aRecord.MoneyRevision;
     return Result::Success;
 }
 
@@ -357,10 +374,10 @@ inline RevisionView ClassifyClientRevision(const CharacterRecord& acRecord, uint
     if (!IsMigrated(acRecord))
         return RevisionView::Legacy;
 
-    if (aClientRevision == acRecord.EconomyRevision)
+    if (aClientRevision == acRecord.MoneyRevision)
         return RevisionView::Match;
 
-    return aClientRevision < acRecord.EconomyRevision ? RevisionView::Stale : RevisionView::Future;
+    return aClientRevision < acRecord.MoneyRevision ? RevisionView::Stale : RevisionView::Future;
 }
 
 inline const char* Describe(RevisionView aView)

@@ -57,8 +57,8 @@ int main()
         const auto inventoryBefore = r.Inventory;
 
         Check(EconomyMigration::Apply(r, kNow), "an unmigrated record is migrated");
-        Check(r.MigratedAt == kNow, "MigratedAt is stamped with the server's time");
-        Check(r.EconomyRevision == 1, "and the opening revision is 1");
+        Check(r.MoneyMigratedAt == kNow, "MoneyMigratedAt is stamped with the server's time");
+        Check(r.MoneyRevision == 1, "and the opening revision is 1");
         Check(r.Money == moneyBefore, "MONEY IS UNCHANGED - that is the whole of trust-once");
         Check(r.Inventory.size() == inventoryBefore.size() &&
                   r.Inventory[0].Id == inventoryBefore[0].Id &&
@@ -73,19 +73,19 @@ int main()
         const bool changedAgain = EconomyMigration::Apply(r, kNow + 99999);
 
         Check(!changedAgain, "a second migration reports that it changed nothing");
-        Check(r.MigratedAt == kNow, "the ORIGINAL timestamp is kept, not replaced with T2");
-        Check(r.EconomyRevision == 1, "and the revision is not reset to a second opening balance");
+        Check(r.MoneyMigratedAt == kNow, "the ORIGINAL timestamp is kept, not replaced with T2");
+        Check(r.MoneyRevision == 1, "and the revision is not reset to a second opening balance");
         Check(r.Money == 20000, "money still untouched");
     }
 
     { // C. an already-migrated record with a later revision is left entirely alone
         auto r = Unmigrated(5000);
-        r.MigratedAt = 1786000000;
-        r.EconomyRevision = 47;      // the server has since changed its economy 46 more times
+        r.MoneyMigratedAt = 1786000000;
+        r.MoneyRevision = 47;      // the server has since changed its economy 46 more times
 
         Check(!EconomyMigration::Apply(r, kNow), "an established record is not re-migrated");
-        Check(r.EconomyRevision == 47, "its revision is NOT reset to 1");
-        Check(r.MigratedAt == 1786000000, "and its original boundary is kept");
+        Check(r.MoneyRevision == 47, "its revision is NOT reset to 1");
+        Check(r.MoneyMigratedAt == 1786000000, "and its original boundary is kept");
     }
 
     { // D + E. a mixed population: only the unmigrated are candidates
@@ -94,8 +94,8 @@ int main()
         population.push_back(Unmigrated(200, "B"));
 
         auto done = Unmigrated(300, "C");
-        done.MigratedAt = 1786000000;
-        done.EconomyRevision = 3;
+        done.MoneyMigratedAt = 1786000000;
+        done.MoneyRevision = 3;
         population.push_back(done);
 
         const auto report = EconomyMigration::Inspect(Pointers(population));
@@ -110,11 +110,11 @@ int main()
         std::vector<CharacterRecord> population;
 
         auto stampedOnly = Unmigrated(100, "STAMPED-ONLY");
-        stampedOnly.MigratedAt = kNow;      // revision still 0
+        stampedOnly.MoneyMigratedAt = kNow;      // revision still 0
         population.push_back(stampedOnly);
 
         auto revisedOnly = Unmigrated(100, "REVISED-ONLY");
-        revisedOnly.EconomyRevision = 5;    // never stamped
+        revisedOnly.MoneyRevision = 5;    // never stamped
         population.push_back(revisedOnly);
 
         const auto report = EconomyMigration::Inspect(Pointers(population));
@@ -126,7 +126,7 @@ int main()
         // and neither is silently corrected
         auto copy = stampedOnly;
         Check(!EconomyMigration::Apply(copy, kNow), "an inconsistent record is not migrated");
-        Check(copy.EconomyRevision == 0, "and is NOT quietly repaired to look consistent");
+        Check(copy.MoneyRevision == 0, "and is NOT quietly repaired to look consistent");
     }
 
     { // G. an impossible balance blocks rather than being blessed
@@ -228,7 +228,7 @@ int main()
         store.Disk = nlohmann::json(store.Live).dump();
 
         Check(store.Commit(kNow), "a clean population commits");
-        Check(store.Live[0].MigratedAt == kNow && store.Live[0].EconomyRevision == 1,
+        Check(store.Live[0].MoneyMigratedAt == kNow && store.Live[0].MoneyRevision == 1,
               "memory shows the migration");
         Check(store.Disk == nlohmann::json(store.Live).dump(),
               "and disk holds exactly the same snapshot");
@@ -243,8 +243,8 @@ int main()
         store.FailPersist = true;
 
         Check(!store.Commit(kNow), "a failed persist reports failure");
-        Check(store.Live[0].MigratedAt == 0, "and memory is NOT falsely marked migrated");
-        Check(store.Live[0].EconomyRevision == 0, "nor is its revision advanced");
+        Check(store.Live[0].MoneyMigratedAt == 0, "and memory is NOT falsely marked migrated");
+        Check(store.Live[0].MoneyRevision == 0, "nor is its revision advanced");
         Check(store.Disk == diskBefore, "and the disk state is unchanged");
     }
 
@@ -258,7 +258,7 @@ int main()
 
         store.FailPersist = false;
         Check(store.Commit(kNow), "the retry succeeds");
-        Check(store.Live[0].MigratedAt == kNow, "and migrates properly the second time");
+        Check(store.Live[0].MoneyMigratedAt == kNow, "and migrates properly the second time");
     }
 
     { // all-or-nothing: one bad record stops every good one
@@ -268,7 +268,7 @@ int main()
         store.Live.push_back(Unmigrated(300, "GOOD-2"));
 
         Check(!store.Commit(kNow), "one blocked record refuses the whole migration");
-        Check(store.Live[0].MigratedAt == 0 && store.Live[2].MigratedAt == 0,
+        Check(store.Live[0].MoneyMigratedAt == 0 && store.Live[2].MoneyMigratedAt == 0,
               "and the GOOD records are not migrated either - all or nothing");
     }
 
@@ -281,9 +281,9 @@ int main()
         const auto serialised = nlohmann::json(r).dump();
         const auto reloaded = nlohmann::json::parse(serialised).get<CharacterRecord>();
 
-        Check(reloaded.MigratedAt == 0,
+        Check(reloaded.MoneyMigratedAt == 0,
               "saving and loading a character does NOT stamp it migrated");
-        Check(reloaded.EconomyRevision == 0, "nor advance its revision");
+        Check(reloaded.MoneyRevision == 0, "nor advance its revision");
     }
 
     std::printf("\n%s\n", failures ? "FAILURES" : "all passed");

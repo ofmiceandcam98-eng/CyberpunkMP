@@ -1,13 +1,20 @@
-// EconomyRevision semantics - Phase 5 stage 5.
+// MoneyRevision semantics - Phase 5 stage 5, narrowed to money in stage 6.
 //
-// THE RULE THESE PROTECT: revision the TRANSACTION, not the primitive.
+// TWO RULES THESE PROTECT:
 //
-// A revision number is only useful if it counts committed changes to authoritative state.
-// The two ways to make it useless are both tested here:
+//   1. REVISION THE TRANSACTION, NOT THE PRIMITIVE.
+//   2. ADVANCE ONLY WHEN MONEY CHANGES.
+//
+// A revision number is only useful if it counts committed changes to the state it claims to
+// version. Three ways to make it useless, all tested here:
 //
 //   - advancing inside Debit/Credit/AddItem/RemoveItem, so one starter kit counts as five
 //     changes and the number stops meaning anything;
-//   - advancing on a transaction that FAILED, so it counts attempts instead of changes.
+//   - advancing on a transaction that FAILED, so it counts attempts instead of changes;
+//   - advancing on an ITEM-ONLY transaction, so a field called MoneyRevision moves when no
+//     money did. That one arrived with the stage 6 rename: the field used to be
+//     EconomyRevision and covered both, and money and inventory no longer cross the
+//     authority boundary together.
 //
 // The second half of the file covers stale classification, which is observation-only in this
 // stage. Stage 7 will refuse on it; it is proven now so that when the wire field finally
@@ -35,8 +42,8 @@ static CharacterRecord Migrated(int64_t aMoney = 20000, uint64_t aRevision = 1)
 {
     CharacterRecord r{};
     r.Money = aMoney;
-    r.EconomyRevision = aRevision;
-    r.MigratedAt = 1'700'000'000;
+    r.MoneyRevision = aRevision;
+    r.MoneyMigratedAt = 1'700'000'000;
     r.Inventory.push_back({0x1111, 100});
     return r;
 }
@@ -60,28 +67,28 @@ int main()
         Check(IsMigrated(Migrated()), "a migrated record is");
 
         CharacterRecord halfA{};
-        halfA.MigratedAt = 1'700'000'000;          // stamped, but revision never set
+        halfA.MoneyMigratedAt = 1'700'000'000;          // stamped, but revision never set
         Check(!IsMigrated(halfA), "a timestamp without a revision is NOT migrated");
 
         CharacterRecord halfB{};
-        halfB.EconomyRevision = 1;                 // revision, but never stamped
+        halfB.MoneyRevision = 1;                 // revision, but never stamped
         Check(!IsMigrated(halfB), "a revision without a timestamp is NOT migrated");
     }
 
     // --------------------------------------------------------------- advancing once ----
     {
         auto r = Migrated();
-        Check(AdvanceRevision(r) == Result::Success && r.EconomyRevision == 2,
+        Check(AdvanceRevision(r) == Result::Success && r.MoneyRevision == 2,
               "one advance moves the revision by exactly one");
 
         AdvanceRevision(r);
         AdvanceRevision(r);
-        Check(r.EconomyRevision == 4, "and each subsequent one by exactly one more");
+        Check(r.MoneyRevision == 4, "and each subsequent one by exactly one more");
     }
 
     { // THE POINT OF THE WHOLE STAGE: primitives do not touch the revision
         auto r = Migrated();
-        const auto before = r.EconomyRevision;
+        const auto before = r.MoneyRevision;
 
         Debit(r, 100);
         Credit(r, 100);
@@ -89,13 +96,13 @@ int main()
         RemoveItem(r, 0x2222, 5);
         Transfer(r, r, 50);
 
-        Check(r.EconomyRevision == before,
+        Check(r.MoneyRevision == before,
               "FIVE successful primitive operations advance the revision ZERO times");
     }
 
     { // a starter kit is one transaction, not five
         auto r = Migrated(0);
-        const auto before = r.EconomyRevision;
+        const auto before = r.MoneyRevision;
 
         AddItem(r, 0x1001, 1);
         AddItem(r, 0x1002, 1);
@@ -103,8 +110,87 @@ int main()
         Credit(r, 2500);
         AdvanceRevision(r);                        // the transaction boundary, once
 
-        Check(r.EconomyRevision == before + 1,
+        Check(r.MoneyRevision == before + 1,
               "a four-part starter kit advances the revision exactly once");
+    }
+
+    // ------------------------------------- STAGE 6: the money gate, at the boundary ----
+    //
+    // AdvanceRevision itself does not know whether money moved - it cannot, it sees one
+    // record and not the transaction. The gate lives at each transaction boundary, which is
+    // the same place the "once per participant" rule lives. These prove the SHAPE those
+    // boundaries must implement; trade_real_test proves the shipped ones do.
+
+    { // an item-only grant must not advance a MONEY revision
+        auto r = Migrated(20000);
+        const auto moneyBefore = r.Money;
+        const auto revisionBefore = r.MoneyRevision;
+
+        AddItem(r, 0x1001, 1);
+        AddItem(r, 0x1002, 3);
+
+        // The gate: nothing moved the balance, so nothing advances.
+        if (r.Money != moneyBefore)
+            AdvanceRevision(r);
+
+        Check(r.MoneyRevision == revisionBefore,
+              "an ITEM-ONLY transaction does NOT advance MoneyRevision");
+        Check(Held(r, 0x1002) == 3, "though the items are certainly there");
+    }
+
+    { // the same boundary, when money DID move
+        auto r = Migrated(20000);
+        const auto moneyBefore = r.Money;
+        const auto revisionBefore = r.MoneyRevision;
+
+        AddItem(r, 0x1001, 1);
+        Credit(r, 500);
+
+        if (r.Money != moneyBefore)
+            AdvanceRevision(r);
+
+        Check(r.MoneyRevision == revisionBefore + 1,
+              "a mixed money+item transaction advances exactly once");
+    }
+
+    { // a starter kit whose money happens not to change
+        //
+        // The kit sets an OPENING balance, so whether that is a money event depends on what
+        // the character had. A kit that lands on the same number did not move anything.
+        auto r = Migrated(2500);
+        const auto moneyBefore = r.Money;
+        const auto revisionBefore = r.MoneyRevision;
+
+        AddItem(r, 0x1001, 1);
+        r.Money = 0;
+        Credit(r, 2500);                           // ends exactly where it started
+
+        if (r.Money != moneyBefore)
+            AdvanceRevision(r);
+
+        Check(r.Money == moneyBefore, "the kit landed on the balance the character already had");
+        Check(r.MoneyRevision == revisionBefore,
+              "so it advances NOTHING - compared, not assumed");
+    }
+
+    { // equal offers both ways still moved both balances
+        //
+        // A trade of 500 each way nets to zero but is a debit and a credit on each side. The
+        // boundary decides on whether money was OFFERED, not on the net, because both
+        // balances genuinely changed on the way through.
+        auto a = Migrated(20000);
+        auto b = Migrated(20000);
+        const auto beforeA = a.MoneyRevision;
+
+        Transfer(a, b, 500);
+        Transfer(b, a, 500);
+
+        const bool moneyOffered = true;            // both sides offered
+        if (moneyOffered)
+            AdvanceRevision(a);
+
+        Check(a.Money == 20000, "the net effect is zero");
+        Check(a.MoneyRevision == beforeA + 1, "but the revision still advanced - money moved");
     }
 
     { // legacy records are left alone entirely
@@ -112,30 +198,30 @@ int main()
 
         Check(AdvanceRevision(r) == Result::Success,
               "advancing an unmigrated record SUCCEEDS - its transaction really happened");
-        Check(r.EconomyRevision == 0 && r.MigratedAt == 0,
+        Check(r.MoneyRevision == 0 && r.MoneyMigratedAt == 0,
               "but leaves it at (0, 0) - it does not accidentally migrate anything");
 
         for (int i = 0; i < 50; ++i)
             AdvanceRevision(r);
 
-        Check(r.EconomyRevision == 0, "and fifty more advances still leave it at zero");
+        Check(r.MoneyRevision == 0, "and fifty more advances still leave it at zero");
     }
 
     // ------------------------------------------------------------------- exhaustion ----
     {
         auto r = Migrated();
-        r.EconomyRevision = std::numeric_limits<uint64_t>::max();
+        r.MoneyRevision = std::numeric_limits<uint64_t>::max();
 
         Check(CanAdvanceRevision(r) == Result::RevisionExhausted,
               "an exhausted record reports it BEFORE anything is mutated");
         Check(AdvanceRevision(r) == Result::RevisionExhausted, "and refuses to advance");
-        Check(r.EconomyRevision == std::numeric_limits<uint64_t>::max(),
+        Check(r.MoneyRevision == std::numeric_limits<uint64_t>::max(),
               "STUCK, NOT WRAPPED - a wrap would make every stale client compare as current");
     }
 
     {
         auto r = Migrated();
-        r.EconomyRevision = std::numeric_limits<uint64_t>::max() - 1;
+        r.MoneyRevision = std::numeric_limits<uint64_t>::max() - 1;
 
         Check(CanAdvanceRevision(r) == Result::Success, "one below the ceiling still has room");
         Check(AdvanceRevision(r) == Result::Success, "and takes it");
@@ -144,7 +230,7 @@ int main()
 
     { // an unmigrated record can never be exhausted - it never counts
         auto r = Legacy();
-        r.EconomyRevision = std::numeric_limits<uint64_t>::max();   // nonsense, but survivable
+        r.MoneyRevision = std::numeric_limits<uint64_t>::max();   // nonsense, but survivable
 
         Check(CanAdvanceRevision(r) == Result::Success,
               "an unmigrated record is never refused for exhaustion");
@@ -157,7 +243,7 @@ int main()
     {
         auto payer = Migrated(20000);
         auto payee = Migrated(5000);
-        payee.EconomyRevision = std::numeric_limits<uint64_t>::max();
+        payee.MoneyRevision = std::numeric_limits<uint64_t>::max();
 
         const bool headroom = CanAdvanceRevision(payer) == Result::Success &&
                               CanAdvanceRevision(payee) == Result::Success;
@@ -224,7 +310,7 @@ int main()
         auto r = Migrated(1234, 42);
 
         const auto restored = nlohmann::json(r).get<CharacterRecord>();
-        Check(restored.EconomyRevision == 42 && restored.MigratedAt == r.MigratedAt,
+        Check(restored.MoneyRevision == 42 && restored.MoneyMigratedAt == r.MoneyMigratedAt,
               "revision and migration stamp survive a JSON round trip");
         Check(IsMigrated(restored), "and the record is still migrated on the other side");
     }
@@ -233,7 +319,7 @@ int main()
         auto legacy = nlohmann::json::parse(R"({"CharacterId":"OLD","Name":"Old","Money":900})");
         const auto restored = legacy.get<CharacterRecord>();
 
-        Check(restored.EconomyRevision == 0 && restored.MigratedAt == 0,
+        Check(restored.MoneyRevision == 0 && restored.MoneyMigratedAt == 0,
               "a pre-Stage-2 record loads with no revision");
         Check(!IsMigrated(restored), "so it is legacy, which is what every live character is");
     }
