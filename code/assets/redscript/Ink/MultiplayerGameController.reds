@@ -52,6 +52,9 @@ public class MultiplayerGameController extends inkGameController {
 
     // The "you are talking" indicator. Built on first transmission, not at startup.
     private let m_voiceIndicator: wref<inkText>;
+    // The persistent TALK button on the HUD bar (megaphone + Y hint). Built once after the
+    // authored bar spawns, relit whenever the mic opens. Render is in TalkButton.reds.
+    private let m_talkButton: wref<inkCanvas>;
 
     // Who ELSE is talking right now - built on first sighting of a remote speaker, not at
     // startup. Separate widget from m_voiceIndicator: your own state and everyone else's
@@ -265,6 +268,30 @@ public class MultiplayerGameController extends inkGameController {
     protected cb func OnPositionAnimationFinish(anim: ref<inkAnimProxy>) -> Bool {
         this.m_startupAnimProxy.UnregisterFromAllCallbacks(inkanimEventType.OnFinish);
         this.m_phoneIconWidget.SetVisible(true);
+        // The bar exists and is laid out now, so this is the moment to add the talk button.
+        this.MpBuildTalkButton();
+    }
+
+    // Build the persistent talk button once and hang it on the HUD root, the same place the
+    // voice indicator places itself. Position is a first guess (the authored bar's button
+    // coordinates are not in script) - sits at the bottom-left under the stats button.
+    private func MpBuildTalkButton() -> Void {
+        if IsDefined(this.m_talkButton) {
+            return;
+        }
+        let root = this.GetRootCompoundWidget();
+        if !IsDefined(root) {
+            return;
+        }
+        let canvas = new inkCanvas();
+        canvas.SetName(n"mp_talk_button");
+        canvas.SetAnchor(inkEAnchor.BottomLeft);
+        canvas.SetAnchorPoint(new Vector2(0.0, 1.0));
+        canvas.SetMargin(new inkMargin(40.0, 0.0, 0.0, 140.0));
+        canvas.SetInteractive(false);
+        canvas.Reparent(root);
+        this.m_talkButton = canvas;
+        MpTalkButtonRender(canvas, this.m_voiceTransmitting);
     }
 
     private cb func OnActivatePhoneElements(element: Uint32) -> Bool {
@@ -1240,6 +1267,11 @@ public class MultiplayerGameController extends inkGameController {
      * and a widget nobody sees should not cost anything to have.
      */
     private func MpVoiceUpdateIndicator() -> Void {
+        // Keep the persistent talk button in step with the mic (runs before the early return
+        // below, so it relights on the way DOWN too).
+        if IsDefined(this.m_talkButton) {
+            MpTalkButtonRender(this.m_talkButton, this.m_voiceTransmitting);
+        }
         if !this.m_voiceTransmitting {
             if IsDefined(this.m_voiceIndicator) {
                 this.m_voiceIndicator.SetVisible(false);
