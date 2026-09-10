@@ -29,6 +29,7 @@ function check (name, actual, expected) {
 
 const TN = '<tailnet-address redacted>'
 const PV = '<private-address redacted>'
+const HN = '<tailnet-host redacted>'
 
 // --- the addresses this project actually uses -------------------------------
 check('live server', redact('game at 100.109.52.23:11778'), `game at ${TN}:11778`)
@@ -55,6 +56,21 @@ check('rfc1918 192', redact('192.168.1.5'), PV)
 check('rfc1918 172 in', redact('172.20.0.4'), PV)
 check('172.15 is public', redact('172.15.0.1'), '172.15.0.1')
 check('172.32 is public', redact('172.32.0.1'), '172.32.0.1')
+
+// --- MagicDNS HOSTNAMES: the names the IP rules miss, which the docs placeholder ----
+check('bare host with port', redact('ship on officialcutstudios01:11782'), `ship on ${HN}:11782`)
+check('fqdn taken whole', redact('nco-test-server-1.tail1de33b.ts.net'), HN)
+check('two node names', redact('nco-server-1 and nco-test-server-1'), `${HN} and ${HN}`)
+check('longest-first: bare nco-server', redact('nco-server retired'), `${HN} retired`)
+check('desktop node', redact('desktop-jebd9rn is Cam'), `${HN} is Cam`)
+check('workstation node', redact('build box zeldfep-pc'), `build box ${HN}`)
+// 'stream' is the word both assistant streams use for themselves - it MUST survive bare,
+// or the redactor scrubs half of every post. Only its FQDN form is an address.
+check('stream word survives', redact('the other stream re-reads before acting'), 'the other stream re-reads before acting')
+check('stream fqdn redacted', redact('reach it at stream.tail1de33b.ts.net'), `reach it at ${HN}`)
+check('host + ip together',
+  redact('officialcutstudios01 is 100.74.122.79'),
+  `${HN} is ${TN}`)
 
 // --- several in one string, which is what a real post body looks like -------
 check('multiple in one body',
