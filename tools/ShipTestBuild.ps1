@@ -206,12 +206,17 @@ if (-not $WhatIf) {
     # input XML came from distrib (last written by a world-state ship that never had the
     # change) instead of from source. Anything a payload ships from source must be force-
     # copied from source; distrib is a build cache, not the truth.
+    # NOT xmake.lua. Each source asset dir carries an xmake.lua build file, and copying '*'
+    # dragged it into the payload - assets/Inputs/xmake.lua and assets/Tweaks/xmake.lua then
+    # showed up as install-audit ORPHANS on 2026-09-10 (they are not in the release manifest),
+    # which is noise a payload should never carry. Ship only the asset the game reads.
     foreach ($sub in @('Inputs', 'Tweaks')) {
         $src = Join-Path $Repo "code\assets\$sub"
         if (Test-Path $src) {
             $dst = Join-Path $modDir "assets\$sub"
             New-Item -ItemType Directory -Force -Path $dst | Out-Null
-            Copy-Item (Join-Path $src '*') $dst -Recurse -Force
+            Get-ChildItem $src -File | Where-Object { $_.Name -ne 'xmake.lua' } |
+                ForEach-Object { Copy-Item $_.FullName $dst -Force }
         }
     }
     Ok "inputs and tweaks force-copied from source"
