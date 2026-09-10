@@ -199,6 +199,23 @@ if (-not $WhatIf) {
     Copy-Item (Join-Path $Repo "code\assets\redscript\*") $assetsDst -Recurse -Force
     Ok "redscript force-copied from source"
 
+    # INPUTS and TWEAKS too, for the exact same reason - and this one shipped a bug.
+    # Only redscript was force-copied here, so an edited input XML or tweak took its value
+    # from whatever stale copy distrib already held. Measured 2026-09-10: the voice->T
+    # rebind (IK_V -> IK_T) was committed and the payload STILL carried IK_V, because the
+    # input XML came from distrib (last written by a world-state ship that never had the
+    # change) instead of from source. Anything a payload ships from source must be force-
+    # copied from source; distrib is a build cache, not the truth.
+    foreach ($sub in @('Inputs', 'Tweaks')) {
+        $src = Join-Path $Repo "code\assets\$sub"
+        if (Test-Path $src) {
+            $dst = Join-Path $modDir "assets\$sub"
+            New-Item -ItemType Directory -Force -Path $dst | Out-Null
+            Copy-Item (Join-Path $src '*') $dst -Recurse -Force
+        }
+    }
+    Ok "inputs and tweaks force-copied from source"
+
     $stage = Join-Path $env:TEMP "nco-testbuild"
     if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
     New-Item -ItemType Directory -Force -Path $stage | Out-Null
