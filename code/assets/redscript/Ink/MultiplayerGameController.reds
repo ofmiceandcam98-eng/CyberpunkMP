@@ -181,6 +181,26 @@ public class MultiplayerGameController extends inkGameController {
             if network.IsConnected() {
                 FTLog(s"[MultiplayerGameController] Already signed in - entering the world");
                 network.EnterWorld();
+
+                // AND FLIP THIS CONTROLLER INTO ITS CONNECTED STATE, because otherwise
+                // nothing does. The native OnConnected() that sets
+                // UIMultiplayerConnectedToServer fired back on the main menu, when the
+                // selector dialled in - before this controller existed to hear it. The
+                // listener registered in OnInitialize only fires on a CHANGE, and the value
+                // is already true, so m_connectedToServer stays false: the HUD keeps offering
+                // "hold / to connect", the chat box never spawns, and the player has to hold
+                // the connect key to force a full reconnect just to sync the UI to a session
+                // they are already in. That is zeldfep's test.21 report - PLAY took him to the
+                // server but did not auto-connect.
+                //
+                // Driving the transition here is what makes PLAY one click: EnterWorld() above
+                // sent the held spawn, and this wires up the UI. It reaches the SAME end state
+                // as the hold-to-connect path (Connect() -> OnConnected() -> this callback)
+                // WITHOUT the socket abort/redial that path incurs - Connect() closes the live
+                // connection before dialling again, which is exactly why the branch above sends
+                // the held spawn instead of reconnecting. Calling the transition directly keeps
+                // that decision intact while still ending up connected in one press.
+                this.OnConnectedToServer(true);
             } else {
                 FTLog(s"[MultiplayerGameController] Joining - requested from the main menu");
                 network.Connect();
