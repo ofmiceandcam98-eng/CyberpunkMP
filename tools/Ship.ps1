@@ -58,7 +58,12 @@ param(
     # machine without a signing key warns loudly and ships manifest-less (which every
     # launcher treats as the legacy state) rather than blocking the other contributor's
     # ships. Flip to always-on once both owners hold keys.
-    [switch]$RequireManifest
+    [switch]$RequireManifest,
+
+    # Skip the Verify.ps1 gate. An escape hatch, not a habit - it exists so a genuine false
+    # positive cannot block a release at midnight, and every use of it is a bug in Verify
+    # that should be fixed rather than routed around.
+    [switch]$SkipVerify
 )
 
 $ErrorActionPreference = 'Stop'
@@ -335,22 +340,116 @@ if ($Mod) {
             Ok "redscript compiles"
         }
 
+        # Then everything a compiler cannot see. Cam's rule, 2026-09-03: run this before
+        # shipping anything.
+        #
+        # GATED RATHER THAN REMEMBERED, because remembering is what failed. /call shipped as
+        # dead code - two dispatches, the older matching first and returning - and it
+        # compiled perfectly, was reported as working, and would have gone to players.
+        # Verify catches that class: duplicate dispatch, natives with no RTTI behind them
+        # (which fail at LOAD and take every script down), unhandled requests, BOMs, and the
+        # unit tests.
+        #
+        # This script already refuses to publish anything that failed a check. This is one
+        # more check, on the release path where the cost of being wrong is highest.
+        if ($SkipVerify) {
+            Warn "verification SKIPPED by -SkipVerify"
+        } else {
+            & (Join-Path $PSScriptRoot "Verify.ps1") | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host ""
+                & (Join-Path $PSScriptRoot "Verify.ps1")
+                Die "verification failed - nothing was deployed. Fix it, or pass -SkipVerify if you are certain"
+            }
+            Ok "verified"
+        }
+
         # NOW deploy. `xmake install` refreshes the DLL but was caught leaving edited .reds
         # files at their previous contents, which is the worst kind of failure: the build
         # succeeds, the version moves, the DLL is new, and the script half of the mod is
         # silently whatever it was last time. That looks exactly like a redscript change
         # that "did not work" and sends you debugging code the game never received.
-        Copy-Item "code\assets\redscript\*" -Destination "distrib\launcher\mod\assets\redscript\" -Recurse -Force
+        # MIRROR, NOT MERGE. Copy-Item -Force adds and overwrites but never REMOVES, and
+        # distrib/ is gitignored, so anything the repo stops shipping stays there forever.
+        # Twelve Ink controllers moved from assets/redscript/ into assets/redscript/Ink/
+        # and their old flat copies sat in distrib for weeks. Every payload since carried
+        # BOTH, so redscript saw twelve duplicate class definitions and refused to compile
+        # any of them - "The game will start but no scripts will take effect", naming
+        # exactly those twelve files. The check below passed the whole time because it only
+        # asked "is every repo file shipped correctly?" and never "is anything shipped that
+        # the repo does not have?".
+        $shippedRoot = "distrib\launcher\mod\assets\redscript"
+        if (Test-Path $shippedRoot) { Remove-Item $shippedRoot -Recurse -Force }
+        New-Item -ItemType Directory -Path $shippedRoot -Force | Out-Null
+        Copy-Item "code\assets\redscript\*" -Destination "$shippedRoot\" -Recurse -Force
 
         $stale = @()
         Get-ChildItem "code\assets\redscript" -Recurse -Filter *.reds | ForEach-Object {
             $relative = $_.FullName.Substring((Resolve-Path "code\assets\redscript").Path.Length + 1)
-            $shipped = "distrib\launcher\mod\assets\redscript\$relative"
+            $shipped = "$shippedRoot\$relative"
             if (-not (Test-Path $shipped)) { $stale += "$relative (missing)" }
             elseif ((Get-FileHash $_.FullName).Hash -ne (Get-FileHash $shipped).Hash) { $stale += $relative }
         }
         if ($stale.Count -gt 0) { Die "scripts did not ship: $($stale -join ', ')" }
-        Ok "scripts deployed and match source"
+
+        # And the other direction, which is the one that actually bit. A file the repo no
+        # longer has is not a harmless leftover in redscript: two definitions of one class
+        # is a compile error for the WHOLE mod, not just for that file.
+        $sourceRel = @{}
+        Get-ChildItem "code\assets\redscript" -Recurse -Filter *.reds | ForEach-Object {
+            $sourceRel[$_.FullName.Substring((Resolve-Path "code\assets\redscript").Path.Length + 1)] = $true
+        }
+        $orphans = @()
+        Get-ChildItem $shippedRoot -Recurse -Filter *.reds | ForEach-Object {
+            $relative = $_.FullName.Substring((Resolve-Path $shippedRoot).Path.Length + 1)
+            if (-not $sourceRel.ContainsKey($relative)) { $orphans += $relative }
+        }
+        if ($orphans.Count -gt 0) {
+            Die ("shipped scripts the repo does not have: $($orphans -join ', '). " +
+                 "Duplicate class definitions stop the ENTIRE mod compiling - delete $shippedRoot and re-run.")
+        }
+        Ok "scripts deployed, match source, and nothing extra"
+
+        # THE DURABLE GATE, and it is Cam's idea rather than mine: refuse to publish if any
+        # class, struct or enum is DEFINED IN MORE THAN ONE .reds. The mirror above removes
+        # the cause we found; this catches the whole class of bug regardless of cause, which
+        # is the difference between fixing an incident and closing it.
+        #
+        # Redscript refuses the ENTIRE mod on a duplicate definition - not the file, the mod
+        # - so the game starts and no script takes effect. Every player who updated to
+        # v0.3.115, .116 or .117 got that, and nothing in the pipeline noticed for three
+        # releases, because everything we check compiles the REPO and the repo was fine.
+        $definitions = @{}
+        Get-ChildItem $shippedRoot -Recurse -Filter *.reds | ForEach-Object {
+            $file = $_.FullName.Substring((Resolve-Path $shippedRoot).Path.Length + 1)
+            foreach ($line in (Get-Content $_.FullName)) {
+                # Deliberately loose: any leading modifiers, then the keyword and the name.
+                # A false positive here costs a re-run; a false negative costs every player.
+                if ($line -match '^\s*(?:public\s+|private\s+|protected\s+|native\s+|abstract\s+|final\s+|importonly\s+|persistent\s+)*(class|struct|enum)\s+([A-Za-z_][A-Za-z0-9_]*)') {
+                    $key = "$($Matches[1]) $($Matches[2])"
+                    if (-not $definitions.ContainsKey($key)) { $definitions[$key] = @() }
+                    $definitions[$key] += $file
+                }
+            }
+        }
+
+        $dupes = $definitions.GetEnumerator() |
+                 Where-Object { ($_.Value | Sort-Object -Unique).Count -gt 1 } |
+                 Sort-Object Name
+
+        if ($dupes) {
+            $lines = $dupes | ForEach-Object { "    $($_.Name)  ->  $(($_.Value | Sort-Object -Unique) -join ', ')" }
+            Die (@"
+DUPLICATE REDSCRIPT DEFINITIONS in the staged payload - publishing this would ship a mod
+that cannot compile, and redscript takes the WHOLE mod down over it, not just these files:
+
+$($lines -join "`n")
+
+Delete $shippedRoot and re-run. If two files legitimately need the same name, they cannot
+both ship - redscript has one flat namespace.
+"@)
+        }
+        Ok "no duplicate redscript definitions in the payload"
 
         # The same check for the assets that are NOT redscript.
         #
@@ -663,6 +762,54 @@ foreach ($side in $sideFiles) {
         Die "missing $($side.Path) - every launcher would fall back to 127.0.0.1 and report the server offline"
     } else {
         Warn "no $($side.Path) - that feature will be inert for everyone"
+    }
+}
+
+# ---------------------------------------------------------------------------
+# THE ADDRESS EVERY PLAYER DIALS IS DECIDED ON main AND SHIPPED FROM ANYWHERE.
+#
+# v0.3.115 was cut from feat/world-state, whose copy of server.json predated the server
+# migration. This step duly published it, and every launcher went back to dialling a node
+# that had been retired the day before. Both servers ran normally the entire time; the
+# launcher's Checkup named the fault precisely ("Server target - <dead>:11778 - the
+# published server") and it still took an hour, because valid JSON pointing at a dead host
+# passes the notes gate, Verify and the manifest without a murmur.
+#
+# So it gets checked here, where the file is actually published, for the same reason the
+# completeness check above exists: nothing about that ship was wrong except what it carried.
+# ---------------------------------------------------------------------------
+
+$serverJson = Join-Path $Repo "publish\server.json"
+$shipBranch = (& git -C $Repo rev-parse --abbrev-ref HEAD 2>$null)
+
+if ((Test-Path $serverJson) -and $shipBranch -and $shipBranch -ne "main") {
+    $mainCopy = & git -C $Repo show origin/main:publish/server.json 2>$null
+
+    if ($LASTEXITCODE -ne 0 -or -not $mainCopy) {
+        Warn "cannot read publish\server.json from origin/main - fetch main, then compare by hand before trusting this ship"
+    }
+    else {
+        $here  = ((Get-Content $serverJson -Raw) -replace "`r`n", "`n").TrimEnd()
+        $there = (($mainCopy -join "`n") -replace "`r`n", "`n").TrimEnd()
+
+        if ($here -ne $there) {
+            Die @"
+publish\server.json differs from origin/main, and this ship publishes THIS copy.
+
+  shipping from: $shipBranch
+
+That file is canonical on main. A stale copy on a feature branch silently repoints every
+launcher at whatever address the branch remembers - which is exactly how v0.3.115 sent the
+whole player base to a retired node while both servers were running fine.
+
+  Fix:  git checkout origin/main -- publish/server.json
+
+then re-run. If the difference here is deliberate, land it on main first - the workflow
+that republishes this asset only watches main, so anything else is a change that survives
+one ship and then silently reverts on the next one cut from a different branch.
+"@
+        }
+        Ok "server address matches origin/main"
     }
 }
 

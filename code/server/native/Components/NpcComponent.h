@@ -1,4 +1,5 @@
 #pragma once
+#include <string>
 
 // A server-declared character: an NPC an admin placed in the world, identical for every
 // client, persistent across restarts (config/npcs.json). The record names WHO they are

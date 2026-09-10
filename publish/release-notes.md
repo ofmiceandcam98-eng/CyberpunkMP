@@ -1,8 +1,123 @@
 Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) for **Cyberpunk 2077 patch 2.31**, plus the fixes needed to make it run on that patch. Upstream targets 2.2 and will not start on current game versions.
 
+**⬇ Download:** [NightCityOnline-Setup.exe](https://github.com/ofmiceandcam98-eng/CyberpunkMP/releases/latest/download/NightCityOnline-Setup.exe) — one click, always the newest; the launcher handles the rest.
+
 **Discord — Night City Online:** https://discord.gg/M9NSWsndC7
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
+
+## What changed — v0.3.119
+
+- **The phone stops ringing when you answer.** A call you picked up, dealt with and hung up
+  kept its ringtone playing underneath everything. The call panel came down correctly, which
+  is why it looked like the phone was haunted rather than broken: the ringtone is a separate
+  system from the on-screen call, and only one of the two was ever being told the call had
+  ended. It now goes quiet on answering, on hanging up, and on the other person giving up.
+- **A failed install can no longer report itself as a success.** The launcher now checks the
+  mod folder against what it just installed, and refuses to record the install if anything is
+  missing or left over from an older one. This is the fix for the worst kind of night: a green
+  launcher, the right version on screen, and the game quietly running files from three
+  releases ago. If it ever happens again it now says so, names the files, and tells you to
+  remove and reinstall.
+
+**If your game has been behaving strangely and reinstalling fixed it**, that is what this was.
+The launcher could not tell the difference between "installed" and "downloaded".
+
+If you hit a crash, send the log — `tools\CollectCrash.ps1` gathers it in one step. Run it
+**before** relaunching; relaunching overwrites the evidence.
+
+## What changed — v0.3.118
+
+**If the game was crashing on launch or starting with nothing working, this is the one to get.**
+
+- **The mod can no longer take the game down over a startup setting.** Everything the
+  launcher passes at launch — your voice keys, the server address, your name — has a working
+  default, so none of it is essential. Reading one of them could still kill the whole process
+  before the mod had written a single line of its log, which is why some crashes left nothing
+  to send. Now a bad value gets logged and skipped, and you get into the game.
+- **Crashes leave evidence again.** The mod writes its first log line the moment it starts, so
+  an empty log file is no longer possible. If it does fall over, the last line says how far it
+  got. Several crash reports this week arrived as 0-byte files, which is the same as no report.
+- **The launcher stops claiming it sent a log when there was nothing to send.** If the mod
+  crashed before writing anything, the message now says so instead of pointing at an empty
+  file on your Desktop.
+- **Two release-pipeline guards, so this class of breakage cannot reach you again.** A build
+  is now refused if it contains a script the source does not have, or if any two scripts
+  define the same thing. That is what broke v0.3.115 through v0.3.117: a duplicated set of
+  interface scripts made the game refuse to compile ANY of the mod, so it started with nothing
+  working. Fixed in the payload, and now impossible to publish.
+
+**If you were on v0.3.115, .116 or .117, you were running a mod that could not load.** That is
+what the "REDScript compilation has failed" box was, and why the game looked like the mod did
+nothing. Update and it is gone.
+
+If you hit a crash, send the log — `tools\CollectCrash.ps1` gathers it in one step. Run it
+**before** relaunching; relaunching overwrites the evidence.
+
+## What changed — v0.3.117
+
+**Install verification starts working. Nothing you can see, and worth knowing about.**
+
+- **The launcher can now prove your install matches what the server expects.** Every release
+  ships a signed list of what a correct installation contains; the launcher checks your files
+  against it and the server can check that you checked. That has been shipping since v0.3.114
+  and has not actually been running — one entry in the list was missing the fingerprint the
+  check needs, so both halves quietly turned themselves off rather than guessing. It is fixed,
+  and this is the first release where the check can genuinely run.
+- **What this buys you:** a half-finished update or a mod folder that got edited by hand stops
+  being something you find out about through strange behaviour hours later. It becomes a
+  message at the door telling you to press Verify.
+- **It is not switched on at the servers yet.** When it is, you will need to be on the current
+  build to join — so relaunch the launcher and let it update before your next session. There
+  will be a heads-up in Discord before that happens.
+
+**No gameplay or interface changes in this build.** The settings rail and the visual pass went
+out in v0.3.116, and the character, world and money fixes in v0.3.115; both notes are below.
+
+If you hit a crash, send the log — `tools\CollectCrash.ps1` gathers it in one step. Run it
+**before** relaunching; relaunching overwrites the evidence.
+
+## What changed — v0.3.116
+
+**A settings panel you can actually cross, and a pass over everything that looked slightly off.**
+
+- **Settings navigate by section now, not by row.** The rail on the right used to step through
+  every individual setting — Tools was thirteen stops and crossing it meant thirteen presses.
+  Tools is now four sections (Connection, Install, This PC, Repair and remove) and Voice is
+  three (Devices, Keys and mode, Levels). Click a number to jump straight there, hover it to
+  see where it goes. The arrows still step and the wheel still scrolls.
+- **The rail reads as part of the game's interface.** Numbered readout with the current
+  section marked in hazard yellow, and striped caps at the top and bottom that light up when
+  there is nothing further in that direction — so "I am at the end" is something you can see
+  rather than something you have to work out.
+- **One row moved:** *Uninstall launcher* was sitting in the middle of the maintenance tools,
+  between *Launcher folder* and *Verify game files*. It is now last, at the bottom of *Repair
+  and remove*, where you would look for it.
+- **Text sizes are consistent.** The launcher had twenty-four different font sizes in one
+  window, most of them used once. There are seven now. Almost all of it you will not notice;
+  what you may notice is that the gear and the close button are finally the same size, and the
+  Settings title matches the app title.
+
+**Nothing about gameplay changed in this build.** The character, world and money fixes went out
+in v0.3.115 — if you have not played since then, that release note is below and still applies.
+
+If you hit a crash, send the log — `tools\CollectCrash.ps1` gathers it in one step. Run it
+**before** relaunching; relaunching overwrites the evidence.
+
+## What changed — v0.3.115
+
+**Three things that could make a new character unplayable are fixed.**
+
+- **You no longer get stuck in a featureless box when you make a character.** This was the worst one. A new character was placed into the world before the ground under them finished loading, so they fell through it — and the game's own out-of-bounds recovery dropped them into a holding room with nothing in it. Nothing put them back, so it repeated: fall, recover, fall. The only escape was quitting and rejoining until the timing happened to work. The mod now checks a moment after placing you and puts you back if you have fallen, a few times over, before giving up.
+- **Every session now starts in the same world.** The mod needs somewhere to stand while the server tells it who you are, and it used to pick whichever of your Cyberpunk saves was newest — which could be another character, an old test save, or a session from months ago. That is why the world sometimes looked wrong or oddly empty, and why it was different for different people. It now always loads the multiplayer world, every time.
+- **The settings panel has arrows instead of a scrollbar.** Sections move one at a time with the buttons on the right; the mouse wheel still works.
+
+**Still being worked on, so you know rather than wonder:**
+
+- **Your face and body may still not be the character you made.** The world the mod loads brings its own character with it, and the server's copy of your appearance has to be applied over the top. When that fails you look like somebody else. Your inventory, money and equipment are unaffected — it is specifically the body.
+- **Money does not stick yet, and we now know exactly why.** New characters are granted eddies that never actually reach the game, so the next save writes back what you really have and the grant vanishes. Measured this week rather than guessed at. It is not that your money fails to save — the save is honest, the grant was not. The fix belongs with work already underway.
+
+If you hit a crash, send the log — `tools\CollectCrash.ps1` gathers it in one step. Run it **before** relaunching; relaunching overwrites the evidence.
 
 ## What changed — v0.3.113
 
@@ -52,6 +167,34 @@ Launcher only — no game or server changes.
 
 - **Fixed the machine-specific fallback path.** The launcher no longer assumes Cam's Windows profile when no saved install path is present. It now resolves the local repo/build layout generically, so it works on any machine and no longer silently points at the wrong server/game folder.
 - **Portable startup path is now reliable.** The fallback logic checks repo/build candidates before using any default, which prevents a broken install when the launcher is opened on a second PC or a fresh checkout.
+
+## What changed — v0.3.114
+
+**Update required.** The protocol moved (new character and phone messages), so older
+builds see "YOUR MOD IS BUILT AGAINST A DIFFERENT PROTOCOL" at the door until they take
+this update — the launcher does it in one click.
+
+- **Connecting works again.** A world-consistency check added at the end of August was
+  refusing every connection ever since. If the server looked permanently unreachable
+  lately, this was why — not your setup.
+- **Pick who you are.** Character slots with a selector: keep several characters, choose
+  at connect, retire one without losing the rest (soft delete). `/character new` still
+  asks before retiring anyone.
+- **Your phone makes real calls.** Player-to-player calls ring inside the game's own
+  phone — `/call`, `/answer`, `/decline`, `/hangup` — and the `/call` command actually
+  connects now (an old stub was eating it). Story calls stay blocked; only player calls
+  come through.
+- **A cleaner main menu.** CONNECT, then choose your character, then PLAY — the
+  singleplayer entries are gone from the multiplayer menu, and the pause menu no longer
+  pauses the world (it can't — other people are in it) or offers Save/Load.
+- **Voice actually captures now** if you'd picked the "Communications" device in
+  settings — that choice used to silently record nothing.
+- **Money can no longer be confiscated by a respawn.** Earned eddies stopped being
+  stripped on spawn; whether they *save* reliably is still being instrumented.
+- **Launcher: the mod folder finds itself.** The moment your game is found, Settings
+  shows exactly where the mod installs — no more "not installed" with a Browse button.
+  Installs and removals are also fully logged now, so a failed install can be diagnosed
+  from its own record instead of guesswork.
 
 ## What changed — v0.3.108
 

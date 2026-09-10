@@ -1144,6 +1144,26 @@ function gameExecutable () {
 
 // Finds the installed mod folder. Named zzzCyberpunkMP by convention, but RED4ext
 // loads any subfolder, so look for the DLL rather than trusting the name.
+// Where the mod WILL live, the moment the game is found - created on the spot
+// (zeldfep, 2026-09-04: "launcher needs to make mods folder automatically on where it
+// finds the game"). findModDir below stays the "is it INSTALLED" answer (null until
+// CyberpunkMP.dll exists), so nothing that gates on installed-ness changes; this is the
+// destination answer, so Settings can show a real path with "installs here" instead of
+// sending someone browsing for a folder that does not exist yet. An empty plugin folder
+// is inert to RED4ext (it loads DLLs, not directories). A hand-picked modDir override
+// wins here too - the two answers must never disagree about WHERE.
+function modInstallDestination () {
+  const chosen = loadSettings().modDir
+  if (chosen && isSafeModDir(chosen)) return chosen
+
+  const gameDir = findGameDir()
+  if (!gameDir) return null
+
+  const destination = path.join(gameDir, 'red4ext', 'plugins', 'zzzCyberpunkMP')
+  try { mkdirSync(destination, { recursive: true }) } catch { /* read-only game dir - the path is still the answer */ }
+  return destination
+}
+
 function findModDir () {
   // A folder the player pointed at themselves wins over anything found automatically.
   //
@@ -1458,10 +1478,28 @@ async function checkForUpdates () {
   // plus size changes whenever a new payload is uploaded.
   const remoteStamp = `${asset.id}:${asset.size}`
   const localStamp = loadSettings().installedStamp
+  const testBuildTag = loadSettings().testBuildTag || null
 
+  // A TEST BUILD IS NOT AN OUT-OF-DATE RELEASE. Treating it as one cost a night of play.
+  //
+  // prerelease:install records testBuildTag and stamps .nco-version, but it never touches
+  // installedStamp - which still describes the RELEASE payload. A test build's payload is a
+  // different asset, so `localStamp === remoteStamp` can never be true again while one is
+  // installed. That leaves "Your mod is out of date - press Update" on screen permanently,
+  // and that string is a BLOCKER: it greys out JACK IN. With JACK IN disabled the only way
+  // into the game is Steam, and a launch that does not come from the launcher carries no
+  // server address and no token - so the player lands in a plain singleplayer session being
+  // told to /connect, with no server spawn, because nothing ever told the game there was a
+  // server. Measured on zeldfep's box 2026-09-09; it had been happening since the first
+  // selector test build the night before, and the only remedy the UI offered was Update -
+  // which replaces the test build with the release. That is why the selector kept vanishing.
+  //
+  // On a test build the mod is CURRENT. The tag rides along so the UI can name the build
+  // instead of implying a stale one; Update and Restore both still clear it.
   return {
     installed: true,
-    upToDate: localStamp === remoteStamp,
+    upToDate: testBuildTag ? true : localStamp === remoteStamp,
+    testBuildTag,
     version: release.tag_name,
     published: release.published_at,
     notes: release.body || '',
@@ -1620,6 +1658,22 @@ async function installEverything (onProgress = () => {}) {
 
   const running = await isProcessRunning('Cyberpunk2077.exe')
   if (running) throw new Error('Close Cyberpunk 2077 first.')
+
+  // Same refusal as applyUpdate, same measured trap (2026-09-10): "Install everything"
+  // is the RELEASE, and pressing it while a test build is installed silently swaps the
+  // dev off the build that matches the test server. Remove mod clears the tag, so the
+  // recovery path (Remove, then Install everything) is untouched by this.
+  const activeTestTag = loadSettings().testBuildTag
+  if (activeTestTag) {
+    launcherLog(`install everything refused: test build ${activeTestTag} is installed`)
+    throw new Error(
+      `You are on test build ${activeTestTag}. Install everything puts the public release ` +
+      'on, which cannot connect to the test server - so nothing was changed.\n\n' +
+      'To move to a newer test build: Tools > Test builds > Install.\n' +
+      'To deliberately return to the public release: Tools > Test builds > Restore.\n' +
+      'To rebuild from scratch: Settings > Remove mod, then Install everything.'
+    )
+  }
 
   onProgress('Downloading...')
 
@@ -1919,9 +1973,20 @@ function handleGameCrash (exitCode) {
     const logDir = path.join(modDir || '', 'logs')
 
     if (modDir && existsSync(logDir)) {
+      // EMPTY LOGS ARE NOT EVIDENCE, and handing one over is worse than handing over
+      // nothing: it looks like the log was collected. A crash early enough that the mod
+      // never flushed leaves a 0-byte file - 2026-09-07, exit 0x80000003 two minutes in,
+      // 0 bytes on the Desktop and a dialog saying it had been sent. shipClientLogs
+      // already skips these (size > 0); this did not, so the two disagreed about whether
+      // there was anything to hand over.
       const newest = readdirSync(logDir)
         .filter((f) => f.startsWith('CyberpunkMP_') && f.endsWith('.log'))
-        .map((f) => ({ name: f, full: path.join(logDir, f), time: statSync(path.join(logDir, f)).mtimeMs }))
+        .map((f) => {
+          const full = path.join(logDir, f)
+          const stat = statSync(full)
+          return { name: f, full, time: stat.mtimeMs, size: stat.size }
+        })
+        .filter((f) => f.size > 0)
         .sort((a, b) => b.time - a.time)[0]
 
       if (newest) {
@@ -1942,11 +2007,15 @@ function handleGameCrash (exitCode) {
     mainWindow.focus()
   }
 
+  // Say which of the two actually happened. Claiming a shipment that did not occur is
+  // how a crash gets closed as "we have the log" when nobody has anything.
   const detail = savedTo
     ? `Your log was sent to the dev server automatically, and a copy is on your Desktop:\n\n${savedTo}\n\n` +
       'The path is on your clipboard in case anyone asks for the file directly.'
-    : 'The log could not be found automatically. Look in:\n\n' +
-      `${modDir ? path.join(modDir, 'logs') : 'your mod folder'}\n\nand send the newest file.`
+    : 'The mod did not write a log for this session - it crashed before it could, so '
+      + 'there was nothing to send and nothing to put on your Desktop. That is itself '
+      + 'worth reporting.\n\nSay when it happened and what you were doing. The '
+      + "launcher's own trail WAS uploaded and is the only record of this one."
 
   dialog.showMessageBox(mainWindow, {
     type: 'warning',
@@ -1980,21 +2049,112 @@ function isProcessRunning (imageName) {
 // comment) knew this all along; the payload paths now do too. Every top-level DIRECTORY
 // the archive ships is deleted before extracting - top-level files (the DLL) are simply
 // overwritten, and logs/config/.nco-version survive because no payload ships them.
+/**
+ * Did the extract actually land? Asked of the disk, not of the extractor.
+ *
+ * zeldfep's install on 2026-09-07 held THREE generations of payload at once: the twelve
+ * Ink controllers at both the top level and under Ink/ (twelve duplicate class
+ * definitions, which makes redscript refuse the ENTIRE mod), plus two World scripts that
+ * only ever shipped in test.19. Every update in between reported success.
+ *
+ * extractPayloadClean wipes the top-level directories the zip carries before extracting,
+ * so that state should have been impossible - which is exactly why it needs checking
+ * rather than assuming. An installer that cannot prove what it wrote is an installer that
+ * reports success and leaves the player to find out through a compile dialog three
+ * releases later.
+ *
+ * Two questions, and the second is the one that was never asked: is everything the zip
+ * carried on disk, and is anything ELSE in the directories the zip owns?
+ */
+function auditPayloadInstall (aModDir, aZip) {
+  const shipped = new Set()
+  const ownedDirs = new Set()
+
+  for (const entry of aZip.getEntries()) {
+    if (entry.isDirectory) continue
+    const rel = entry.entryName.split('\\').join('/')
+    shipped.add(rel)
+    if (rel.includes('/')) ownedDirs.add(rel.split('/')[0])
+  }
+
+  const missing = []
+  for (const rel of shipped) {
+    if (!existsSync(path.join(aModDir, rel.split('/').join(path.sep)))) missing.push(rel)
+  }
+
+  // Only inside directories the payload owns. The mod folder legitimately holds things
+  // the zip never carried - logs/, .nco-version, config written at runtime - and calling
+  // those orphans would make the check cry wolf on every healthy install.
+  const orphans = []
+  const walk = (dir, prefix) => {
+    let entries
+    try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const e of entries) {
+      const rel = prefix ? prefix + '/' + e.name : e.name
+      if (e.isDirectory()) walk(path.join(dir, e.name), rel)
+      else if (!shipped.has(rel)) orphans.push(rel)
+    }
+  }
+  for (const dir of ownedDirs) walk(path.join(aModDir, dir), dir)
+
+  return { missing, orphans }
+}
+
 function extractPayloadClean (aModDir, aZip) {
   const shippedDirs = new Set()
   for (const entry of aZip.getEntries()) {
     const name = entry.entryName
     if (name.includes('/')) shippedDirs.add(name.split('/')[0])
   }
+  // A failed clean is NOT cosmetic, and the empty catch that used to be here said it was.
+  //
+  // Every file the payload no longer ships survives the extract, the audit below then
+  // refuses to record the install, and the player is told to remove and reinstall the
+  // whole mod. Measured 2026-09-09: one leftover archive from a DevInstall failed eight
+  // consecutive updates and the trail recorded NOTHING about why. The old comment's
+  // promise that "the extract's error says so louder" is simply false - a clean that
+  // fails does not stop the extract from succeeding.
+  //
+  // So name the reason and hand it to the caller, which can then blame the cause instead
+  // of the symptom. force:true already makes "not there" a success, so anything thrown
+  // here is real.
+  const cleanFailures = []
   for (const dir of shippedDirs) {
-    try { rmSync(path.join(aModDir, dir), { recursive: true, force: true }) } catch { /* locked - the extract's own error says so louder */ }
+    try {
+      // maxRetries makes a transient hold (an antivirus scan, an Explorer window mid-
+      // enumeration) survivable instead of a failed install: rmSync retries EBUSY /
+      // EPERM / ENOTEMPTY with a pause between attempts. A hard lock still fails and
+      // is still reported - this widens nothing about what counts as success.
+      rmSync(path.join(aModDir, dir), { recursive: true, force: true, maxRetries: 3, retryDelay: 120 })
+    } catch (err) {
+      cleanFailures.push({ dir, message: err.code ? `${err.code}: ${err.message}` : String(err.message || err) })
+    }
   }
   aZip.extractAllTo(aModDir, true)
+  return cleanFailures
 }
 
 async function applyUpdate () {
   const modDir = findModDir()
   if (!modDir) throw new Error('The mod is not installed - install it once first.')
+
+  // A test build is not "out of date" - it is a different rail, and Update here would
+  // silently reinstall the public RELEASE over it. Measured 2026-09-10: a dev on a test
+  // build pressed the big Update button, got the release (whose protocol cannot
+  // handshake the test server), and the only symptom was a bare "can't connect" that
+  // read as a server fault. The deliberate ways off a test build are Tools > Test
+  // builds (to move between test builds) and Restore (to return to the release) - both
+  // say what they are doing. Update must not be a third, silent one.
+  const activeTestTag = loadSettings().testBuildTag
+  if (activeTestTag) {
+    launcherLog(`update refused: test build ${activeTestTag} is installed - Update would replace it with the release`)
+    throw new Error(
+      `You are on test build ${activeTestTag}. Update installs the public release, ` +
+      'which cannot connect to the test server - so nothing was changed.\n\n' +
+      'To move to a newer test build: Tools > Test builds > Install.\n' +
+      'To deliberately return to the public release: Tools > Test builds > Restore.'
+    )
+  }
 
   // The game holds CyberpunkMP.dll open, so extracting over it fails with a
   // permission error that reads like a broken download. Say what it actually is.
@@ -2025,19 +2185,106 @@ async function applyUpdate () {
   // downloaded - a cached older manifest knows nothing about a newer payload and must
   // not fail it. This runs BEFORE extraction; a working install is never shredded to
   // find out a download was bad.
-  await refreshManifestState().catch(() => null)
-  const manifest = usableManifest()
-  if (manifest && manifest.release === info.version && manifest.client?.payload?.archive?.sha256) {
-    const got = ManifestKit.sha256Hex(buffer)
-    if (got !== manifest.client.payload.archive.sha256) {
-      launcherLog(`update refused: payload sha256 ${got.slice(0, 12)} != manifest ${manifest.client.payload.archive.sha256.slice(0, 12)}`)
+  // The manifest state is memoized for MANIFEST_TTL_MS, so the copy in hand can be OLDER
+  // than the payload just downloaded: re-publishing a release's assets bumps the manifest
+  // version but NOT the tag, so `manifest.release === info.version` still passes and a
+  // superseded pin fails a perfectly good download. Measured on v0.3.120, 2026-09-09:
+  // manifest 2026.09.09.01 was read at 04:56:47, the payload it pinned was replaced
+  // minutes later by 2026.09.09.02, and Update at 05:02:15 - inside the TTL - refused
+  // the correct file as tampered. So a mismatch buys a FORCED re-fetch before it is
+  // allowed to be fatal: the check keeps every bit of its teeth against a real bad
+  // download, and a stale memo stops impersonating an attack.
+  const payloadPin = async (force) => {
+    await refreshManifestState(force).catch(() => null)
+    const m = usableManifest()
+    // No manifest, or one that does not describe THIS release, means there is nothing to
+    // check against - the same "cannot judge" case the original guard skipped.
+    if (!m || m.release !== info.version || !m.client?.payload?.archive?.sha256) return null
+    return { manifest: m, sha256: m.client.payload.archive.sha256 }
+  }
+
+  const got = ManifestKit.sha256Hex(buffer)
+  let pin = await payloadPin(false)
+  if (pin && got !== pin.sha256) {
+    launcherLog(`payload sha256 ${got.slice(0, 12)} != manifest ${pin.sha256.slice(0, 12)} (${pin.manifest.manifestVersion}) - re-fetching the manifest before refusing`)
+    pin = await payloadPin(true)
+  }
+  if (pin) {
+    if (got !== pin.sha256) {
+      launcherLog(`update refused: payload sha256 ${got.slice(0, 12)} != manifest ${pin.sha256.slice(0, 12)} (${pin.manifest.manifestVersion}, re-fetched)`)
       throw new Error('The downloaded update does not match what the manifest approved - ' +
                       'install left alone. Try again in a minute; report it if it repeats.')
     }
-    launcherLog(`payload verified against manifest ${manifest.manifestVersion} before install`)
+    launcherLog(`payload verified against manifest ${pin.manifest.manifestVersion} before install`)
   }
 
-  extractPayloadClean(modDir, new AdmZip(buffer))
+  const zip = new AdmZip(buffer)
+  const cleanFailures = extractPayloadClean(modDir, zip)
+  for (const failure of cleanFailures) {
+    launcherLog(`payload clean FAILED for ${failure.dir} - ${failure.message} - anything it still holds will fail the audit`)
+  }
+
+  // Prove it, then record it. Stamping the settings BEFORE checking is how a failed
+  // install starts reporting itself as up to date, and the up-to-date gate then refuses
+  // to fix it: "Your game files are out of date" never fires, so the player launches
+  // stale code forever with a green launcher.
+  let audit = auditPayloadInstall(modDir, zip)
+
+  // Orphans get one cleanup attempt before they are allowed to fail the install.
+  //
+  // An orphan is, by definition, a file inside a directory the payload OWNS that the
+  // payload no longer ships - exactly what extractPayloadClean's directory wipe was
+  // supposed to remove and (for reasons still open on the payload-clean branch)
+  // sometimes does not. Deleting each one by name is strictly less destructive than
+  // the wholesale wipe that already ran, and it is what breaks the loop measured
+  // 2026-09-10: leftover test-build files failed the release audit -> "install NOT
+  // recorded" -> the stamp never saved -> "update required" -> the same press, the
+  // same failure, forever. Missing files stay fatal - nothing can conjure those.
+  if (audit.orphans.length && !audit.missing.length) {
+    const stuck = []
+    for (const rel of audit.orphans) {
+      try {
+        rmSync(path.join(modDir, rel.split('/').join(path.sep)), { force: true })
+      } catch (err) {
+        stuck.push(`${rel} (${err.code || err.message})`)
+      }
+    }
+    launcherLog(`cleared ${audit.orphans.length - stuck.length} of ${audit.orphans.length} leftover file(s) the payload no longer ships` +
+                (stuck.length ? ` | still stuck: ${stuck.slice(0, 4).join(', ')}` : ''))
+    audit = auditPayloadInstall(modDir, zip)
+  }
+
+  if (audit.missing.length || audit.orphans.length) {
+    const say = (label, list) =>
+      list.length
+        ? '\n' + label + ' (' + list.length + '): ' +
+          list.slice(0, 8).join(', ') + (list.length > 8 ? ', and more' : '')
+        : ''
+    // The trail has to carry this too. Eight refusals in a row on 2026-09-09 left not one
+    // line explaining them, so the diagnosis started from a screenshot instead of from a
+    // log that already knew the answer. Names, not just counts - the filename IS the
+    // diagnosis.
+    launcherLog(`install NOT recorded: ${audit.missing.length} missing, ${audit.orphans.length} left over` +
+                (audit.missing.length ? ` | missing: ${audit.missing.slice(0, 8).join(', ')}` : '') +
+                (audit.orphans.length ? ` | left over: ${audit.orphans.slice(0, 8).join(', ')}` : '') +
+                (cleanFailures.length ? ` | clean had already failed for: ${cleanFailures.map(f => f.dir).join(', ')}` : ''))
+
+    throw new Error(
+      'The mod folder does not match what was just installed, so the install was NOT recorded.' +
+      say('Missing', audit.missing) +
+      say('Left over from an older install', audit.orphans) +
+      (cleanFailures.length
+        ? '\n\nThe cause is upstream of the leftovers: clearing ' +
+          cleanFailures.map(f => f.dir).join(', ') + ' failed first (' +
+          cleanFailures.map(f => f.message).join('; ') + '), so nothing could be replaced ' +
+          'cleanly. Close whatever is holding those files - the game, an open Explorer ' +
+          'window, an antivirus scan - and press Update again.'
+        : '') +
+      '\n\nLeftover scripts are the serious half: two definitions of one class make the ' +
+      'game refuse to compile the whole mod. Use Settings > Remove > "Remove the mod", then ' +
+      'install again.'
+    )
+  }
 
   saveSettings({ installedStamp: info.remoteStamp, installedVersion: info.version })
 
@@ -2115,7 +2362,12 @@ async function uninstallMod () {
   }
 
   rmSync(modDir, { recursive: true, force: true })
-  saveSettings({ installedStamp: null, installedVersion: null })
+
+  // The test-build tag goes with the folder it described. Leaving it set made the
+  // launcher keep reporting a test build that no longer exists on disk - and it would
+  // wrongly trip the are-you-on-a-test-build refusal in installEverything on the very
+  // reinstall this Remove exists to enable.
+  saveSettings({ installedStamp: null, installedVersion: null, testBuildTag: undefined })
 
   return { removed: true, modDir }
 }
@@ -2781,6 +3033,46 @@ async function hasOwnWorldSince (installedAt) {
  * Both the folder and the files inside it - the game sorts on one of them and which is not
  * documented, so both are set rather than guessing and being subtly wrong.
  */
+/**
+ * Put the template BACK to the bottom of the save list when the session ends.
+ *
+ * THE TRAP THIS CLOSES. stampTemplateNewest runs every launch so the multiplayer world is
+ * the newest save - OwnSave's fallback is LoadLastCheckpoint, which takes whatever is
+ * newest, and that fallback has to land on the template. Correct, and it stays.
+ *
+ * What it also did was outlive the session. The mod removes Continue / New Game / Load
+ * Game from the menu, but ONLY when launched with -online and only if its scripts loaded
+ * (MainMenu.reds, PopulateMenuItemList). Open Cyberpunk from Steam afterwards and the
+ * vanilla menu is back - and CONTINUE loads the newest save, which we had just stamped to
+ * be the multiplayer template. A bare world with no server, no character and nothing to
+ * do. zeldfep, 2026-09-07: "when we hit continue the game drops us in that empty map."
+ *
+ * So the stamp becomes a session-length thing rather than a permanent one. During play the
+ * template is newest and the fallback works; afterwards their own last save is newest
+ * again and Continue does what it has always done.
+ *
+ * Backdated a year rather than to some remembered original: the file is ours, it is
+ * replaced on every launch that needs it, and nothing anywhere reads its timestamp except
+ * the save list's ordering.
+ */
+async function unstampTemplate () {
+  const target = templateDir()
+  if (!existsSync(target)) return false
+
+  const when = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000)
+
+  try {
+    for (const entry of await fsp.readdir(target)) {
+      await fsp.utimes(path.join(target, entry), when, when)
+    }
+    await fsp.utimes(target, when, when)
+    return true
+  } catch (err) {
+    console.warn('[template] could not un-stamp:', err.message)
+    return false
+  }
+}
+
 async function stampTemplateNewest () {
   const target = templateDir()
   if (!existsSync(target)) return false
@@ -3104,10 +3396,26 @@ async function launchGame () {
     args.push(`--micvolume=${mic}`)
     args.push(`--voicevolume=${chat}`)
 
-    if (voice.voiceInputDevice && voice.voiceInputDevice !== 'default') {
+    // BOTH Chromium sentinels, not just one.
+    //
+    // enumerateDevices() labels the system defaults with the ids 'default' AND
+    // 'communications'. This filtered only the first, so a player who picked the
+    // Communications entry - which is the sensible-looking choice for voice chat - had
+    // '--voicein=communications' passed through as if it were a Windows endpoint id.
+    // It resolves to nothing, and the mod's capture side had no fallback, so the
+    // microphone silently never opened while the speakers (saved as 'default', and so
+    // filtered here) worked fine. That is the "mic NOT CAPTURING / speakers ok" in every
+    // voice log we have.
+    //
+    // The mod now reads both sentinels correctly too, so this is belt and braces - but it
+    // is worth having on this side as well, because passing a value the other end has to
+    // special-case is how the next one of these starts.
+    const isDefaultDevice = (id) => !id || id === 'default' || id === 'communications'
+
+    if (!isDefaultDevice(voice.voiceInputDevice)) {
       args.push(`--voicein=${voice.voiceInputDevice}`)
     }
-    if (voice.voiceOutputDevice && voice.voiceOutputDevice !== 'default') {
+    if (!isDefaultDevice(voice.voiceOutputDevice)) {
       args.push(`--voiceout=${voice.voiceOutputDevice}`)
     }
   }
@@ -3196,6 +3504,11 @@ async function launchGame () {
   // a file whose name they do not know.
   const onExit = (code) => {
     launcherLog(`game exited with code ${code}`)
+
+    // Before anything else, and on every exit including a crash: the multiplayer template
+    // stops being the newest save. Leaving it stamped is what makes a later launch from
+    // Steam drop the player into an empty world through vanilla CONTINUE.
+    unstampTemplate().catch(() => {})
 
     // 0 is a normal quit. 0xC0000005 (-1073741819) is an access violation - the crash
     // this project has spent days on. Anything else non-zero is also worth capturing.
@@ -4934,6 +5247,8 @@ ipcMain.handle('launcher:uninstall', async () => {
 
   if (response !== 0) return { ok: false }
 
+  launcherLog('launcher uninstall: confirmed by the user - the full sweep begins')
+
   // The mod goes first, while the settings that locate it still exist.
   let note = ''
   try {
@@ -5131,6 +5446,9 @@ ipcMain.handle('paths:get', () => {
     gameDir,
     gameWritable,
     modDir,
+    // Where an install WILL land when modDir is null - so the folder panel shows a
+    // destination instead of "not installed" with a Browse button pointing nowhere.
+    modDestination: modDir || modInstallDestination(),
     hasDll: Boolean(modDir) && existsSync(path.join(modDir, 'CyberpunkMP.dll')),
     userData: app.getPath('userData'),
     appVersion: app.getVersion()
@@ -5145,15 +5463,23 @@ ipcMain.handle('paths:open', (_event, which) => {
 })
 
 ipcMain.handle('install:everything', async () => {
+  // Trail every step. On 2026-09-04 a mod that had launched fine on the 3rd was simply
+  // GONE, the user's Install everything did not bring it back, and the trail had
+  // NOTHING - neither the disappearance nor the attempt. An install that can fail
+  // invisibly costs a remote log-read session per incident; these lines end that.
+  launcherLog('install everything: pressed')
   try {
     const result = await installEverything((step) => {
+      launcherLog(`install everything: ${typeof step === 'string' ? step : JSON.stringify(step)}`)
       // Progress goes to the renderer as it happens - a silent two-minute install
       // looks identical to a hang.
       if (mainWindow) mainWindow.webContents.send('install-progress', step)
     })
+    launcherLog(`install everything: DONE - mod at ${result?.modDir}, ${result?.prerequisites} prerequisite(s), ${result?.modFiles ?? '?'} payload file(s)`)
     lastUpdateCheck = await checkForUpdates()
     return { ok: true, ...result }
   } catch (err) {
+    launcherLog(`install everything: FAILED - ${err.message}`)
     return { ok: false, error: err.message }
   }
 })
@@ -5167,9 +5493,15 @@ ipcMain.handle('update:verify', async () => {
 })
 
 ipcMain.handle('mod:uninstall', async () => {
+  // Same story as install: a mod folder that disappears with no trail line is a
+  // mystery someone has to solve remotely. Removal is a deliberate act - record it.
+  launcherLog('remove mod: pressed')
   try {
-    return { ok: true, ...(await uninstallMod()) }
+    const result = await uninstallMod()
+    launcherLog(`remove mod: ${JSON.stringify(result)}`)
+    return { ok: true, ...result }
   } catch (err) {
+    launcherLog(`remove mod: FAILED - ${err.message}`)
     return { ok: false, error: err.message }
   }
 })
@@ -5426,6 +5758,28 @@ ipcMain.handle('tailscale:invite', async () => {
   return { ok: true }
 })
 
+/*
+ * The same thing for the TEST server, which is a separate tailnet node and therefore a
+ * separate device share - a share is bound to one device id and cannot cover both.
+ *
+ * Its button lives in the DEV panel, which is already hidden unless the published role map
+ * says this account is an admin. That is the same courtesy-not-a-wall caveat as above: the
+ * field is in a public release asset either way.
+ *
+ * Absent field is a normal state, not an error - there is not always a test deployment
+ * standing, and the message says which link is missing so it cannot be confused with the
+ * main one.
+ */
+ipcMain.handle('tailscale:test-invite', async () => {
+  const published = await fetchPublishedServer()
+  const invite = published?.tailscaleTestInvite
+
+  if (!invite) return { ok: false, error: 'No test-server invite is published yet.' }
+
+  await shell.openExternal(invite)
+  return { ok: true }
+})
+
 // ---------------------------------------------------------------------------
 // The dev key
 //
@@ -5513,6 +5867,70 @@ ipcMain.handle('devServer:set', (_event, host, port) => {
   return { ok: true, host: cleanHost, port: cleanPort }
 })
 
+// The Atlas - the cross-project mind map, on the tailnet beside the coordination feed.
+//
+// Its address is a SETTING and never a literal in this file. This repository is public and
+// ships to every player: docs/CLAUDE-HANDOFF.md placeholders the box's name for exactly
+// that reason, and hardcoding it here would undo that in the one artefact everybody
+// downloads. An admin pastes it once; nobody else ever sees the field do anything.
+ipcMain.handle('atlas:get', async () => {
+  if (!isAdmin()) return { ok: false, error: 'Not permitted' }
+
+  const saved = loadSettings().atlasUrl
+  if (saved) return { ok: true, url: saved }
+
+  // Nothing saved: ask the coordination API, which verifies the Discord dev role and is
+  // the same route the dev key already travels. A dev never types the address, and it
+  // never appears anywhere a player can read - not in this repo, not in server.json.
+  const token = loadToken()
+  if (!token) return { ok: true, url: null }
+
+  const published = await fetchPublishedServer()
+  const host = published?.coordHost || loadSettings().serverHost || published?.host
+  const port = published?.coordPort || 11780
+  if (!host) return { ok: true, url: null }
+
+  try {
+    const response = await axios.post(
+      `http://${host}:${port}/v1/atlas`,
+      { discordToken: token },
+      { timeout: 8000, validateStatus: () => true })
+
+    if (response.status !== 200 || !response.data?.url) return { ok: true, url: null }
+
+    saveSettings({ atlasUrl: response.data.url })
+    return { ok: true, url: response.data.url, discovered: true }
+  } catch {
+    // Reachable only over Tailscale, and this is a convenience - the field still works
+    // by hand, so a failure here is not worth a red banner.
+    return { ok: true, url: null }
+  }
+})
+
+ipcMain.handle('atlas:open', (_event, url) => {
+  if (!isAdmin()) return { ok: false, error: 'The Atlas is for people with the dev role.' }
+
+  const wanted = String(url || loadSettings().atlasUrl || '').trim()
+  if (!wanted) return { ok: false, error: 'No address saved yet - paste the Atlas URL first.' }
+
+  let parsed
+  try {
+    parsed = new URL(wanted)
+  } catch {
+    return { ok: false, error: `Not a URL: ${wanted}` }
+  }
+
+  // openExternal hands the string to the OS, which launches whatever is registered to the
+  // scheme. A file:// or custom scheme typed into this box would be a launch, not a browse.
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { ok: false, error: 'Only http:// and https:// addresses open here.' }
+  }
+
+  saveSettings({ atlasUrl: parsed.toString() })
+  shell.openExternal(parsed.toString())
+  return { ok: true, url: parsed.toString() }
+})
+
 // Pre-releases are how test builds travel: deliberately invisible to player launchers
 // (auto-update reads releases/latest, which skips them), one click for a dev.
 ipcMain.handle('prerelease:list', async () => {
@@ -5543,6 +5961,17 @@ ipcMain.handle('prerelease:list', async () => {
         // saying no DLL was attached. Correct once, wrong now, and it hid a build that
         // would have installed perfectly.
         installable: (r.assets || []).some((a) => a.name === 'ModPayload.zip' || a.name === 'CyberpunkMP.dll'),
+
+        // The release body, for the details popup.
+        //
+        // The title is one line in a narrow row and gets ellipsised, so everything a tester
+        // needs to know - what to look for, what is knowingly broken, whether it needs a
+        // rebuilt server - had nowhere to go. zeldfep, 2026-09-08: "the txt doesent fit in
+        // the launcher can we have it be a pop up text identifier".
+        //
+        // Capped: a release body is unbounded and this is a dev panel, not a reader. The
+        // full text is always one click away at notesUrl.
+        notes: String(r.body || '').slice(0, 4000),
         notesUrl: r.html_url,
         active: r.tag_name === activeTag
       }))
@@ -5566,6 +5995,28 @@ ipcMain.handle('prerelease:list', async () => {
   } catch (err) {
     return { ok: false, error: err.message }
   }
+})
+
+/**
+ * Open one pre-release's page on GitHub.
+ *
+ * Takes a TAG, not a URL, and builds the address here. links:open is an allow-list for
+ * exactly this reason - the renderer never hands the main process something to open - and
+ * a "just this once" URL parameter is how an allow-list stops being one.
+ *
+ * The tag is pattern-checked as well as interpolated: it reaches this from a GitHub API
+ * response, which is not the same as being safe to paste into a URL.
+ */
+ipcMain.handle('prerelease:open-notes', async (_event, tag) => {
+  if (!isAdmin()) return { ok: false, error: 'Test builds are for people with the dev role.' }
+
+  const clean = String(tag || '')
+  if (!/^[A-Za-z0-9._+-]{1,80}$/.test(clean)) {
+    return { ok: false, error: 'That does not look like a release tag.' }
+  }
+
+  shell.openExternal(`https://github.com/${GITHUB_REPO}/releases/tag/${encodeURIComponent(clean)}`)
+  return { ok: true }
 })
 
 ipcMain.handle('prerelease:install', async (_event, tag) => {
@@ -5888,6 +6339,24 @@ function initAutoUpdater () {
   })
 
   autoUpdater.checkForUpdatesAndNotify().catch(() => {})
+
+  // The check used to run ONCE, at boot - and this launcher gets left open all night.
+  // A release could ship an hour into a session and the open launcher never learned of
+  // it: by the next manual restart the update had already applied silently, so the
+  // "Restart to update" banner never got its moment (zeldfep, 2026-09-04: "id like to
+  // know there's an update instead of clicking verify every time"). Re-ask every 20
+  // minutes, and immediately when the window regains focus after being away - the
+  // moment someone alt-tabs back is exactly when "a new version shipped" is worth
+  // knowing. Throttled so focus-flapping cannot hammer GitHub.
+  setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 20 * 60 * 1000)
+
+  let lastFocusCheck = 0
+  app.on('browser-window-focus', () => {
+    const now = Date.now()
+    if (now - lastFocusCheck < 5 * 60 * 1000) return
+    lastFocusCheck = now
+    autoUpdater.checkForUpdates().catch(() => {})
+  })
 }
 
 // Restart into the new version on demand. quitAndInstall closes the app and runs the

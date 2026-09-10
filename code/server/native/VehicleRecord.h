@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <random>
+#include <cstdio>
 
 /**
  * A vehicle somebody owns, as opposed to a vehicle model somebody has unlocked.

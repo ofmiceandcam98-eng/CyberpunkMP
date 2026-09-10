@@ -91,6 +91,15 @@ void Support::SpdlogProvider::OnInitialize()
     spdlog::set_default_logger(logger);
     spdlog::set_level(spdlog::level::trace);
 
+    // FIRST LINE, ALWAYS. A 0-byte log is the one crash report nobody can act on, and we
+    // shipped one: 2026-09-07, exit 0x80000003 two minutes in, not a single line written
+    // even though this logger flushes on every message. Everything between here and the
+    // first log call in Settings::Load was an unlit room, and the crash was in it.
+    //
+    // This line costs nothing and turns "the log is empty" into "it died after THIS", so
+    // do not remove it as noise - its whole value is being unconditional and first.
+    spdlog::info("[Boot] logger up - if this is the last line, the mod died during startup");
+
     SetDefault(*this);
 }
 

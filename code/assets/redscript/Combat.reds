@@ -250,6 +250,7 @@ public class MpStatusEffectPoll extends DelayCallback {
                 }
 
                 MpApplyServerHealth(player, network);
+                MpApplyDownedState(player, network);
                 MpApplyIncomingUploads(network);
             }
         }
@@ -577,5 +578,66 @@ public func MpApplyServerHealth(player: ref<PlayerPuppet>, network: ref<NetworkW
     pools.RequestSettingStatPoolValue(id, gamedataStatPoolType.Health, target, player, false);
 
     FTLog(s"[Combat] server set our health to \(target)");
+}
+
+/**
+ * Remembers whether we were down last tick, so the state is edge-triggered.
+ *
+ * Without this the poll would re-apply Defeated four times a second for as long as somebody
+ * lay there, which stacks the effect and makes it survive the revive that removes it once.
+ */
+@addField(PlayerPuppet)
+public let m_mpWasDowned: Bool;
+
+/**
+ * Show the player being down when the server says they are down.
+ *
+ * Cam, 2026-09-04: "/kill doesnt actually down or flatline the player."
+ *
+ * THE MISSING INCH. The whole chain for this already existed and had done for weeks - the
+ * server tracks LifeState, sends it as NotifyCombatState.life_state, the DLL stores it in
+ * m_downed and exposes IsDowned() to script - and nothing anywhere ever CALLED IsDowned().
+ * Every layer reported success and the player kept standing there, which is why /kill looked
+ * like it did nothing rather than like it was half-built. MpApplyServerHealth's own comment
+ * promised this ("the server owns the fact, the client owns the presentation"); this is the
+ * presentation, finally written.
+ *
+ * WHY Defeated AND NOT DEATH. Death.reds makes the player Immortal on purpose so the
+ * FLATLINED menu can never open - that menu ends the session, which is the thing the medical
+ * system exists to replace. So being down is a status effect, not a death: BaseStatusEffect
+ * .Defeated is the game's own downed state and what the engine itself applies to a passenger
+ * in vehicles.script:825. The player collapses, cannot fight, and is revivable - and the
+ * server's bleedout timer decides what happens next.
+ *
+ * NOT BlockAllMenu. The death flow pairs Defeated with it, and RevivePlayer already has to
+ * strip it back off because anyone who kept it had a locked-out pause menu for the rest of
+ * the session. Applying it here would recreate that bug on purpose, and Cam asked for the
+ * pause menu back the same day.
+ */
+public func MpApplyDownedState(player: ref<PlayerPuppet>, network: ref<NetworkWorldSystem>) -> Void {
+    if !IsDefined(player) || !IsDefined(network) {
+        return;
+    }
+
+    let downed = network.IsDowned();
+
+    // Edge-triggered. Nothing to do on the ticks where the answer has not changed.
+    if Equals(downed, player.m_mpWasDowned) {
+        return;
+    }
+
+    player.m_mpWasDowned = downed;
+
+    if downed {
+        StatusEffectHelper.ApplyStatusEffect(player, t"BaseStatusEffect.Defeated");
+        network.ScriptLog("combat: the server put us down - Defeated applied, waiting on a medic");
+        return;
+    }
+
+    // Back up. RevivePlayer does this too for the case where it drives the recovery itself;
+    // doing it here as well covers a revive the server decided on its own, and removing an
+    // effect that is not applied is harmless.
+    StatusEffectHelper.RemoveStatusEffect(player, t"BaseStatusEffect.Defeated");
+    network.ScriptLog("combat: the server stood us back up");
 }
 

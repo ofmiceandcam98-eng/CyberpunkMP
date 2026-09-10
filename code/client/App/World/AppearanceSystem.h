@@ -58,6 +58,16 @@ private:
     Core::Map<Red::EntityID, Red::DynArray<Red::TweakDBID>> m_playerEquipment;
     Core::Map<Red::EntityID, Vector<uint8_t>> m_playerCcstate;
     Core::Map<Red::EntityID, std::string> m_playerNames;
+
+    // The face/body state ALREADY scheduled onto each entity, by hash.
+    //
+    // An appearance update carries clothing and customization together, so a jacket
+    // change re-ran the whole customization apply - and re-scheduling the engine's
+    // synchronized appearance change on a puppet that is already wearing that exact
+    // state is what killed observing clients (2026-09-04: 15 applies in 16 minutes,
+    // every one with an identical ccstate hash, the last one fatal). Remembering what
+    // was scheduled is what lets an unchanged face be left alone.
+    Core::Map<Red::EntityID, uint64_t> m_scheduledCcstate;
 };
 
 RTTI_DEFINE_CLASS(AppearanceSystem, { 

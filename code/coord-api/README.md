@@ -19,7 +19,7 @@ same thing with a double-click.
 | | |
 |---|---|
 | Key console | `http://127.0.0.1:11780/` — **this machine only** |
-| API for everyone else | `http://100.90.85.33:11780/v1/` — over Tailscale |
+| API for everyone else | `http://<nas-host>:11780/v1/` — over Tailscale |
 | Health check | `GET /health` — no key needed |
 
 ## Keys
@@ -53,7 +53,7 @@ defaults to `update`.
 ### Posting
 
 ```bash
-curl -X POST "http://100.90.85.33:11780/v1/updates" \
+curl -X POST "http://<nas-host>:11780/v1/updates" \
      -H "Authorization: Bearer <key>" \
      -H "Content-Type: application/json" \
      -d '{
@@ -68,14 +68,14 @@ curl -X POST "http://100.90.85.33:11780/v1/updates" \
 
 ```bash
 curl -H "Authorization: Bearer <key>" \
-     "http://100.90.85.33:11780/v1/updates?limit=10"
+     "http://<nas-host>:11780/v1/updates?limit=10"
 ```
 
 Polling for what is new since you last looked:
 
 ```bash
 curl -H "Authorization: Bearer <key>" \
-     "http://100.90.85.33:11780/v1/updates?since=2026-08-14T05:00:00Z"
+     "http://<nas-host>:11780/v1/updates?since=2026-08-14T05:00:00Z"
 ```
 
 ## Where updates end up

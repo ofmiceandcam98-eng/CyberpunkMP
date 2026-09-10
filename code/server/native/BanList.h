@@ -1,5 +1,10 @@
 #pragma once
 
+#include "AtomicWrite.h"
+
+#include <string>
+#include <vector>
+
 /**
  * Persistent bans, keyed on Discord id.
  *
@@ -96,11 +101,16 @@ private:
 
         try
         {
-            std::error_code ec;
-            create_directories(m_path.parent_path(), ec);
+            // Atomic - see AtomicWrite. This one matters more than most: a truncated ban
+            // list on a crash unbans everybody, silently, and nobody notices until the
+            // people it was protecting against come back.
+            std::string reason;
 
-            std::ofstream file(m_path);
-            file << std::setw(4) << nlohmann::json(m_entries);
+            if (!AtomicWrite::Replace(m_path, nlohmann::json(m_entries).dump(4), &reason))
+            {
+                spdlog::error("Could not write {}: {}. The previous ban list is intact.",
+                              m_path.string(), reason);
+            }
         }
         catch (const std::exception& e)
         {

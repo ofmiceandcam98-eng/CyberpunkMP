@@ -29,14 +29,17 @@
 		<button id="IK_Slash" />
     </mapping>
 
-	<!-- Voice push-to-talk.
-	     IK_V is a STARTING VALUE, not the key. The voice system asks whether the
-	     VoicePushToTalk action is active and never asks which key that is, so a player
-	     rebinding it changes nothing downstream.
+	<!-- Voice push-to-talk, default Y.
+	     This is only the DEFAULT - the player remaps it in the launcher, so it just needs to
+	     not collide out of the box. Three keys collided before Y: V is the native
+	     summon-vehicle key (voice there ate the car spawn), T is the phone bind, and X is the
+	     item/interaction key (zeldfep, 2026-09-10, walking it V -> T -> X -> Y). Y is free.
+	     The voice system asks whether the VoicePushToTalk action is active and never asks
+	     which key that is, so a rebind changes nothing downstream.
 	     Both press and release are accepted below: hold-to-talk needs the release to know
 	     when to stop, and toggle needs only the press. Same action serves both modes. -->
 	<mapping name="VoicePushToTalk_Button" type="Button" >
-		<button id="IK_V" />
+		<button id="IK_Y" />
     </mapping>
 
 	<!-- Cycling the voice range: whisper, local, yell.

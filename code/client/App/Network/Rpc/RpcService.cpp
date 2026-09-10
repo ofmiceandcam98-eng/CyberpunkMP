@@ -1,5 +1,7 @@
 #include "RpcService.h"
 
+#include <algorithm>   // std::max, for sizing the client table by highest id
+
 #include "RpcValidator.h"
 #include "App/Network/NetworkService.h"
 #include <RED4ext/Scripting/Natives/GameTime.hpp>
@@ -66,7 +68,31 @@ void RpcService::HandleRpc(const PacketEvent<server::RpcCall>& aMessage)
 
 void RpcService::HandleRpcDefinitions(const PacketEvent<server::RpcDefinitions>& aMessage)
 {
-    m_clientRpcs.resize(aMessage.get_client_definitions().size());
+    /*
+     * Sized by the HIGHEST ID, not by how many definitions arrived.
+     *
+     * These are different numbers the moment ids stop being dense from zero, and the table
+     * is written by id: `m_clientRpcs[rpc.get_id()]`. Sizing by count and indexing by id
+     * means any id >= count is an out-of-bounds WRITE - heap corruption, in a handler that
+     * runs on whatever the server sends.
+     *
+     * It is safe today only by coincidence: the server hands out `id = m_clientRpcs.size()`
+     * at registration and serialises every slot, so ids are dense and max+1 == count. That
+     * is a property of the current registration code, not a guarantee of the wire, and the
+     * one operation that could break it is ADDING registrations - which is exactly what the
+     * phone work does. Found while checking zeldfep's null-deref note (map, Known bugs);
+     * same root, worse consequence, so both are fixed together.
+     */
+    size_t highest = 0;
+    for (auto& rpc : aMessage.get_client_definitions())
+        highest = std::max<size_t>(highest, static_cast<size_t>(rpc.get_id()) + 1);
+
+    m_clientRpcs.clear();
+    m_clientRpcs.resize(highest);
+
+    // New table, so old refusals mean nothing - an id that had no handler under the last
+    // set of definitions may be a different function now, and deserves to be reported again.
+    m_refusedIds.clear();
 
     for (auto& rpc : aMessage.get_client_definitions())
     {
@@ -93,8 +119,40 @@ bool RpcService::Call(const server::RpcCall& aMessage) const
     const auto& rpc = m_clientRpcs[id];
 
     const auto* pContext = rpc.Handler;
-    if (rpc.Id.Klass != 0 && !pContext)
+
+    /*
+     * The guard was `if (rpc.Id.Klass != 0 && !pContext)`, which protects the wrong case.
+     *
+     * A slot the definitions never wrote is default-constructed: Klass == 0 AND a null
+     * handler. That makes the first half of the condition false, so the whole guard is
+     * false, so it does NOT return - and the next line dereferences the null handler.
+     * The one shape that needed catching was the only one let through. Reported by
+     * zeldfep from a read of this file (map, Known bugs, INFERRED); confirmed here.
+     *
+     * pContext is dereferenced unconditionally below, so the honest test is simply whether
+     * it exists. Nothing that worked before stops working: any call that reached line 99
+     * without crashing had a non-null handler already.
+     *
+     * This is also the OLD CLIENT case, and it has to be survivable rather than fatal. Ids
+     * are negotiated per connection, so a server that registers an RPC this build does not
+     * implement will call an id whose handler is null here. Refusing with a named log is
+     * the correct outcome - the alternative is every older client crashing the moment a new
+     * RPC is added, which is precisely what the phone work is about to do.
+     */
+    if (!pContext)
+    {
+        // Once per id per connection - see m_refusedIds. A repeating push to an older
+        // client would otherwise log this on every send, for every player.
+        if (m_refusedIds.insert(id).second)
+        {
+            spdlog::warn("Rpc id {} has no handler on this client (class {:X}, function {:X}) - "
+                         "refusing it, and staying quiet about this id from here. This build is "
+                         "likely older than the server.",
+                         id, rpc.Id.Klass, rpc.Id.Function);
+        }
+
         return false;
+    }
 
     const auto pFunc = pContext->function;
     const auto combinedArgCount = pFunc->params.size;

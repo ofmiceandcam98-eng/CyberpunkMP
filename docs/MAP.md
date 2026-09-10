@@ -36,6 +36,117 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
 ## 1. THE LEDGER
 
 ### Standing decrees (law, not open items - violating one is a bug by definition)
+- **The Atlas is the source of truth for STATE** (zeldfep, 2026-09-09): *"tell his feed that
+  atlas is the new source of thruth"*. What is open, broken, parked or in flight is read from
+  the Atlas. If the Atlas and anything else disagree about the state of the work, the Atlas
+  wins. Announced to the other stream on the feed the same day (20260909082400928-6c8f6b).
+  - **Three surfaces, three jobs, and they do not overlap.** The Atlas is STATE. This file is
+    FACTS and LAW - code geography, decrees, the gotcha that bites in each area - and it is
+    PUBLIC, which the Atlas can never be: the Atlas is dev-role only and lives on the tailnet,
+    so README and CONTRIBUTING point here, not there. The feed is EVENTS: ships, deploys,
+    flag days, diagnoses, anything time-ordered.
+  - **What it replaced:** `publish/TODO.md` and `tools/UpdateTodoList.ps1` are deleted
+    (`50dfe81`) - the Discord channel they fed did not survive the revamp.
+  - **A rule announced only on the feed does not bind.** That is why this decree is written
+    here and in CLAUDE.md as well as posted - the feed scrolls, and the other stream reads
+    law from the rulebook.
+
+- **Read the type doc BEFORE turning a mockup into code** (zeldfep, 2026-09-09): *"server
+  side we have a font doc i need you review that when pushing things from mockups"*. The doc
+  is `/mnt/vol/projects/_internal-docs/type-scale.html` - INTERNAL, on the server, per the
+  working-checklists decree - and it exists because the launcher had grown 24 distinct font
+  sizes in one window (.54, .55, .58, .6, .62 ... nine rules agreeing on .72 and fifteen
+  sizes used once or twice each). It collapses them onto SEVEN steps: `--fs-micro .58`,
+  `--fs-label .68`, `--fs-small .74`, `--fs-body .84`, `--fs-lead 1.02`, `--fs-head 1.15`,
+  `--fs-icon 1.2`. Same typefaces, same weights, same colours - only sizes move.
+  - **The trigger is the MOCKUP, not the launcher.** The character selector is redscript and
+    the rule still binds; implementing a mockup without reading the doc reintroduces exactly
+    the drift it was written to kill. This decree exists because the selector was built from
+    an approved mockup without anyone reading it.
+  - **A token is a starting point, not a finished decision.** Hazard yellow (`#f3c50f`) is a
+    launcher token and is still illegible as body text over the selector's bright city
+    backdrop. Pick the token, then READ it against what actually sits behind it - the
+    launcher's tokens were chosen against `--ground #0d0e11`, and nothing in the game menu
+    is that dark.
+
+- **The server must be portable, and git is how it moves** (Cam, restated 2026-09-04
+  ahead of the weekend migration): *"server build should be able to be transferred and
+  build should be on git for quick deployment."* A deployment stands up by cloning the
+  repo and building — never by copying a built artifact off the old box, and never from
+  a step that lives only in somebody's shell history. Two consequences that bite:
+  - **Anything the build needs is IN THE REPO.** A hand-seeded file on one machine is a
+    deploy that cannot be reproduced — and worse, an untracked file the incoming commits
+    are about to create *refuses the pull outright*. That has killed deploys three times
+    (see the Deploy row). If you put a file on a box, commit it the same day.
+  - **git carries the CODE and the machinery, never the STATE or the SECRETS.** Those are
+    hand-carried, per `docs/MIGRATION.md` §2. The rule cuts both ways: a build step that
+    only works because of an untracked local file breaks portability just as badly as a
+    secret committed by accident.
+  Sits with, and is the operational half of, zeldfep's replicable-instances rule:
+  authoritative state must never live only in one process's memory or one box's disk.
+
+- **THE LAUNCHER IS THE ONE-CLICK SOLUTION — nobody runs commands to get a build**
+  (zeldfep, 2026-09-07): *"I should not have to run things on my end unless we're fixing
+  some issue, the whole point of the launcher is one click solution."* Getting a build,
+  any build, is Play. A `.ps1` handed to a human is acceptable ONLY while diagnosing a
+  live problem, never as the route a build takes to reach somebody.
+  - **This binds US harder than it binds players.** zeldfep and Cam are the ones who get
+    handed install commands during a session, and every one of those is a lane the
+    launcher does not have. On the night this landed, five builds in a row were delivered
+    as `powershell ... DevInstall.ps1` — with a RELATIVE path that never once resolved,
+    because this session's cwd is the repo's parent. Nobody got any of those builds, the
+    failure was silent for hours, and screenshots were being read as evidence about code
+    that was never installed. **A manual step is not just friction, it is a place where
+    "did this even ship" stops being answerable.**
+  - **THE LANE ALREADY EXISTS — Tools > Test builds.** `prerelease:list` /
+    `prerelease:install` / `prerelease:restore` in main.js, bridged in preload.mjs, UI in
+    index.html beside "Join the test server's network", gated on `isAdmin()`. It lists the
+    five newest prereleases, installs the WHOLE ModPayload.zip through the same
+    `extractPayloadClean` a normal install uses (so scripts and archives land, not just the
+    DLL), verifies GitHub's sha256, keeps the first shipped DLL for Restore, and writes
+    `.nco-version`. One click, no commands.
+  - **I claimed on 2026-09-07 that this did not exist and filed it as a debt. It was
+    already built.** The mistake was grepping main.js for `releases/latest`, finding the
+    auto-updater, and concluding from its absence of prereleases that nothing handled them
+    — without searching for the feature by name. **The decree was never violated by the
+    launcher. It was violated by pasting commands instead of using what was there.**
+  - Corollary for either stream: **before saying a launcher capability is missing, grep for
+    it by name.** "The updater does not do X" is not evidence that nothing does X.
+
+- **TEST BUILD LIFECYCLE: consolidate if tested, else clear from the launcher** (zeldfep,
+  2026-09-10, after clearing stale launcher rows twice in one session: *"why do we keep
+  leaving stale test builds on launcher"* / *"consolidate test builds if mostly or fully
+  tested otherwise clear it from launcher"*). There is only ever ONE test build to install.
+  When a build's changes are mostly or fully validated, its fixes GRADUATE into this ledger
+  (landing removes, finding adds, same commit) and then the launcher row goes; when they are
+  not, the row is just cleared. **The "clear from launcher" half is now automatic** -
+  `ShipTestBuild.ps1` deletes every superseded `worldstate-test` prerelease on each ship
+  (RELEASE deleted, git TAG kept so the number sequence never rewinds), so the list can no
+  longer grow a stale row (`2bcdc5b`). The "consolidate on the ledger" half stays a human
+  step - deciding a build is validated is a judgement, not a file check.
+
+- **FOUND IT? FLAG IT ON THE ATLAS, THEN CARRY ON** (zeldfep, 2026-09-08): *"Hard rule to
+  ledger when we find new issues flag them on atlas so we can come back to 'what we find'
+  instead of 'WHAT WE ARE WORKING ON'."* Anything noticed that is NOT the task in hand gets
+  an Atlas branch the moment it is noticed - not at the end of the session, not "if it still
+  matters later".
+  - **The distinction the rule protects.** A session has one thing it is working on and
+    produces a dozen things it found. The first is remembered because somebody is holding
+    it; the second evaporates when the session ends. The Atlas is where the second kind
+    lives, so returning to this project means reading a list of findings rather than trying
+    to reconstruct what was in somebody's head.
+  - **It is cheap and the alternative is not.** A branch is one POST. 2026-09-08 produced,
+    among others: a HUD widget spawned on the menu root swallows all input; a DelayCallback
+    written to make silence impossible was itself silent; test builds were deleted and the
+    numbering silently reset so two builds can share a name. Every one of those would have
+    been lost, and two of them had already cost a day each.
+  - **Write it for the person who was not here.** what / why / next, in the branch's own
+    fields, naming the commit or file. A finding nobody can act on without asking you is
+    a note, not a record.
+  - **Address**: the Atlas is at `NCO_ATLAS_URL` (dev role only, via `POST /v1/atlas` on the
+    coord service). `POST /v1/branches` with `"as": "<name>"`; `area` must be one of its
+    known list or it refuses.
+
 - **Boot policy** (2026-08-21): the game boots STRAIGHT TO THE MENU -
   `-skipStartScreen` + Fast Launch auto-install, both halves stay (main.js).
 
@@ -99,6 +210,189 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   `test/character-selector` on 21 Aug and was never merged. Cherry-picked. *Check for an
   existing fix on a side branch before writing a new one.*
 
+- **CRITICAL, OPEN, NOT FIXED — movement replication is per-packet and walks every player.**
+  `MovementComponent::Register` installs a flecs observer on `flecs::OnSet`, and
+  `HandleMoveEntityRequest` sets the component once per received packet. So one movement
+  packet runs `ReplicateMovementComponent`, which does `world().each(...)` over **every
+  player on the server** with a distance check and a send for each one in range. There is
+  no inbound rate limit and no coalescing.
+  - **Amplification:** 1 client packet → O(players) server work, at an unbounded inbound
+    rate. One attacker at 1000 packets/s against 32 players is ~32,000 relevance checks a
+    second, plus sends.
+  - **The existing LOD does not save it.** `ShouldSendTo` reduces by distance — full rate
+    ≤200m, `% 4` to 600m, `% 16` beyond — but the divisors are keyed on
+    `MovementComponent::Sequence`, which `Level.cpp:982` increments **per received packet**.
+    A flood therefore scales sends linearly too; the divisors cut the constant, not the
+    growth. And the walk itself is never reduced.
+  - **DO NOT "fix" this with a packet-rate rejection.** Movement is legitimately
+    high-frequency and dropping packets causes rubber-banding. The right shape is
+    coalescing: store the newest authoritative state on receipt (cheap), and replicate on
+    the server's own tick so five packets arriving between ticks cost one relevance pass,
+    not five.
+  - **COALESCING IS NOW IMPLEMENTED BEHIND `Config::CoalesceMovement`, DEFAULT OFF**
+    (2026-09-04). A packet stores the newest state and raises `ReplicationPending` (a flag,
+    never a queue — O(players), not O(packets)); `GameServer::ReplicatePendingMovement`
+    walks pending entities once per tick. **The rate was not invented**: `UpdateRate{30}`
+    already existed in config and was already sent to clients as their send rate — it was
+    simply never used server-side for anything. A compliant client therefore sees the same
+    cadence it does today; only bunched or flooded packets collapse.
+  - **The sequence split that made it safe.** `Sequence` (received, per packet) is now
+    separate from `ReplicatedSequence` (per replication). The wire and the LOD both use the
+    latter, so a flood can no longer outrun the `% 4` / `% 16` reduction, and the client's
+    staleness test still sees a strictly increasing number either way. **Both consumers were
+    mapped before changing it** — server LOD, and `InterpolationSystem.cpp:721` which drops
+    anything `<=` the last applied.
+  - **STILL OPEN. The flag stays OFF until a live two-client test.** Unit tests prove the
+    cost model (25 checks: 1000 pps drops from 31,000 relevance checks to ~930, a 33x
+    reduction, with the newest state surviving); they cannot prove the absence of jitter or
+    rubber-banding. A design plus green tests is not a fix.
+
+- ~~Movement accepts OUT-OF-ORDER packets~~ **FIXED 2026-09-04.** `MoveEntityRequest` is
+  `unreliable` (UDP, reordering expected) and the handler took whatever arrived last, so a
+  packet overtaken in flight could rewind the server's position — which is a wrong
+  AUTHORIZATION answer, not just a wrong dot: chat range, voice range, jail geofencing, and
+  the trade and medical distance checks all read it. Now rejected before the component is
+  written, before anything is marked pending, and before any walk.
+  - **`tick` is wall-clock milliseconds since the epoch** (`NetworkWorldSystem::GetTick`;
+    `InterpolationSystem.cpp:208` names the magnitude). Established before writing the fix,
+    and it removed most of the machinery the fix would otherwise have needed: it is globally
+    monotonic, it does **not** reset on spawn/respawn/character switch/reconnect, and a
+    uint64 of milliseconds does not wrap in any timeframe that matters — so no per-session
+    ordering domain, no lifecycle baseline reset, and no serial-number arithmetic.
+  - **A new ordering domain is a new component**, not a counter reset: a fresh puppet has
+    `Tick == 0` and accepts anything, which is what makes respawn and character switch work
+    with no special case.
+  - **The one real edge case is the client's wall clock moving backwards** (NTP, or someone
+    changing their system time). Strict rejection would freeze that player until real time
+    caught up — permanently, for a large jump. A backward step larger than 30s is treated as
+    a clock reset and re-baselined. Safe rather than a hole: ownership and epoch are already
+    validated, so it only concerns an entity the sender controls, and a client that wants to
+    be somewhere false just sends a position — the check defends against the NETWORK
+    reordering packets, not against a lying client.
+  - Also fixed in passing: `ReplicatedSequence` and `ReplicationPending` were not being
+    carried across the wholesale component replace, so the LOD would have reset to 0 on
+    every packet and `% 4` would have been true every time — interest management silently
+    off. Caught by writing the ordering check next to it.
+
+- **VOICE HAD NO RATE CAP** (fixed 2026-09-04). Frame size was capped at 1KB and the radius
+  was already server-decided from an intent, but nothing bounded frame RATE — so the same
+  per-population relay walk ran as fast as a client cared to send. Now 100/s inbound
+  (a real client sends ~50), checked after the cheap size rejection and **before** the
+  movement lookup, the call-partner search and the relay walk, so a refused frame costs
+  none of them. Logged once per window, never answered.
+  - Worst case now bounded: 100 frames × 31 recipients ≈ 3,100 relays/s per speaker, about
+    620 KB/s at real Opus frame size (~200 bytes); the 1KB ceiling caps the pathological
+    case near 3.1 MB/s. Both numbers are asserted in `voice_test` so they cannot drift.
+
+### Server-authority audit, 2026-09-04 (Cam stream)
+
+- **CRITICAL, KNOWN, ACCEPTED — the client is authoritative over its own money and
+  inventory.** `HandleSaveCharacterRequest` does `character.Money = aMessage.get_money()`
+  and rebuilds `character.Inventory` from the client's list. A modified client can declare
+  any balance or any items. **This is not an oversight**: the code says so ("Possessions,
+  taken from the client and kept by the server") and the standing decision is recorded in
+  place — *"Recorded, not refused… refusing here, before there is a ledger showing how
+  often it happens or a server-side balance to fall back to, would take money off players
+  whose client is simply ahead of the server. Measure first."* Instrumentation is already
+  in (`[MONEY]` boundaries, `audit.RecordMoney`). **Do not refuse plausible values without
+  that ledger.**
+  - **Fixed the impossible half (2026-09-04):** a negative balance, or one above 1e9, is
+    now refused and the STORED balance kept. Negative would make `AvailableMoney` negative
+    forever, permanently blocking trade and pay; above-1e9 is the trivial exploit needing no
+    race at all. Deliberately far above any real player — refusing what *cannot* happen, not
+    policing what might.
+  - Everything else in trade (reservations, overflow, availability) is sound and is
+    downstream of this: it protects the transfer, not the declaration.
+
+- **CORRECTION — my earlier "epoch validated on movement only" finding was WRONG**, and the
+  conclusion it implied was wrong too. `AuthorityComponent::Epoch` is **not a session epoch**.
+  Its own header says what it is: "which grant of SIMULATION RIGHTS over this entity is
+  current… Only entities that can change hands carry this - vehicles today. Player puppets
+  never transfer, so they never need it, and the epoch check simply does not apply to them."
+  It is a vehicle-handoff ordering counter. **There is no session epoch anywhere, including
+  movement** — so "other handlers are missing the check movement has" was not a real gap.
+  - **Stale-session mutation is prevented structurally instead, in three layers**, and
+    together they are complete:
+    1. **An old CONNECTION cannot reach a new session.** The transport is
+       GameNetworkingSockets — connection-oriented, per-connection encrypted sessions — and
+       `PlayerManager::Remove` erases the connection→player mapping on disconnect. All 16
+       mutating handlers resolve via `GetByConnectionId` and bail when absent.
+    2. **An old CHARACTER cannot mutate a new one.** `HandleSelectCharacterRequest` refuses
+       a switch while the player still has a live puppet — *"the autosave would then write
+       the new character's state over the old one's record"*. Every gameplay mutation needs
+       a puppet, so the window does not exist.
+    3. **Within one connection nothing arrives out of order**, because only FOUR messages
+       are unreliable — `MoveEntityRequest`/`NotifyEntityMove` and
+       `VoiceFrameRequest`/`NotifyVoiceFrame`. Everything that mutates persistent state is
+       `kReliable` and ordered. Movement has its own ordering check; voice mutates nothing.
+  - **`Verify.ps1` now guards leg 3** ("unreliable messages"), because it is the one a future
+    commit could break silently — marking a new mutation unreliable for latency would reopen
+    the whole class and nothing else would notice. The check found the two server→client
+    halves I had not enumerated, which is the check earning its place on its first run.
+  - **NOT adding epoch fields to other handlers.** With no stale path to close, that would be
+    the speculative protocol change the audit brief explicitly forbids.
+
+- **Audited and SOUND, no change needed:** vehicle ownership (`VehicleStore` owns
+  `OwnerId`, `Create`, `Transfer`); weapon ammo (`MagazineAmmo`/`ReserveAmmo` server-side);
+  quickhack cooldown (`MinIntervalMs`); combat refusing a downed attacker; revive checking
+  both `LifeState` **and** server-side distance (`kTreatmentDistance`); trade distance,
+  reservations and atomic commit.
+
+- **NOT APPLICABLE — there is no world-object system.** No doors, gates, containers,
+  elevators or interactables are synchronised at all, so §12/§13 of the audit brief have
+  nothing to audit rather than something unaudited. Worth knowing before anyone builds one.
+
+- **IDEMPOTENCY: `RequestLedger`, and phone sends now use it** (2026-09-04). A client that
+  does not hear back retries, and "the server never got it" is indistinguishable from "it
+  got it and the reply was lost" — so a retry can arrive for work already done. Harmless for
+  a movement packet; a duplicate for anything that CREATES something.
+  - `MessageStore::Send` takes an optional request id. Seen before → returns the ORIGINAL
+    message id without writing a second message. Recorded on **success only**, so a refusal
+    ("no eddies", "blocked") does not become a permanent verdict outliving its reason.
+  - **Empty id means no idempotency and is never a key.** Treating it as one would make
+    every idless send collide — the second text anybody sent would return the first one's id
+    and never be written. The only phone path today (`/text` over the reliable chat channel)
+    has no id to offer, so behaviour is unchanged; this is infrastructure ahead of the RPC.
+  - **Bounded three ways** because a cache keyed on client-supplied strings is a
+    memory-exhaustion surface: a TTL (5 min), a per-owner cap (64) and a global cap (4096),
+    all enforced on insert, oldest-first. **Per-owner is enforced before global on purpose** —
+    otherwise one flooder evicts everyone else's entries and *their* retries duplicate.
+  - **Keyed on the authenticated owner**, so one player cannot replay another's id.
+  - **Not cleared on disconnect**, deliberately: "dropped before hearing the answer,
+    reconnected, asked again" is precisely the retry it exists to catch. Entries expire on
+    time instead, which does not care why the connection went away.
+
+- **CHAT HAD NO RATE LIMIT AT ALL.** Quickhacks have per-hack cooldowns and movement
+  rejects floods, but the one path a client could drive as fast as it liked was the one
+  that copies text to **every player in range** *and* appends it to the log on disk. Both
+  briefs ask for this (phone §27, trade §30). Now a sliding window per player, checked
+  before anything is parsed, logged or relayed, warning **once per window** so the refusal
+  cannot itself be spammed.
+  - **The test set the number, not the other way round.** First draft was 10 per 5s;
+    `ratelimit_test` failed on "a line every 400ms", which is fast typing rather than a
+    bot. Raised to 20 per 5s rather than weakening the test — a real flood is thousands a
+    second, so anything in this range stops it identically, which means the limit should be
+    chosen to never catch a real player. If anyone tightens it, that test is what says
+    whether a human would notice.
+  - Not exempted for staff: one limit, no privilege hole.
+
+- **THE LINUX BUILD IS NOW PARTLY GATED, and 34 latent breakages were already there.**
+  Verify used to end by admitting "there is no GCC on this machine, so server portability
+  is only ever proven by a deploy". `tools/CheckIncludes.ps1` closes the one class of
+  GCC-only failure that has actually cost us a day — a `std::` symbol used without the
+  header that declares it, which MSVC forgives transitively and libstdc++ does not.
+  - **It found 34 across 24 files on its first run** (`<cstdio>`, `<utility>`, `<algorithm>`,
+    `<mutex>`, `<atomic>`, `<functional>`, `<thread>`…). All added; MSVC build still clean.
+    Every one of those was a live risk to the weekend migration, because a container build
+    that fails does NOT roll back — the deploy keeps the previous image, so on **new**
+    hardware nothing would have come up at all.
+  - Wired into `Verify.ps1`, so it gates every ship. **Self-tested both ways**: a planted
+    missing `<cstring>` fails the gate with the file and symbol named; restoring it passes.
+  - The script was UNTRACKED until now, which is exactly the hazard the portability decree
+    describes — an untracked file that incoming commits later create refuses the pull. Now
+    committed.
+  - Still a lint, not a compiler. A clean run is not a promise GCC is happy.
+
 - **A SYMLINKED PLUGIN DLL SILENTLY KILLS THE WHOLE MOD.** Cam's game came up with a
   completely stock main menu, nothing crashed, and it looked like every menu change had
   been reverted. It had not: RED4ext loaded the plugin, the plugin resolved its OWN path
@@ -118,6 +412,99 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
     installed DLL is not a reparse point.
   - **First diagnostic for "the mod did nothing": `red4ext/logs/red4ext-*.log`.** A plugin
     that fails during `Load` says so there and nowhere else.
+
+### FOR ZELDFEP — NETCODE IS FROZEN, THE BRANCH IS NOW A REFERENCE (2026-09-05)
+
+**START HERE AFTER THE SWAP: `docs/ZELDFEP-AFTER-THE-SWAP.md`** — the ordered
+pick-it-up-and-finish-it note. This block is the summary; that document is the plan.
+
+**Read this before touching anything on the branch.** Nothing here changes the live servers, but
+it changes what this branch IS. **Working branch is now `wip/world-state`** (pushed to `fork`);
+`feat/world-state` stays unpushed during the migration so the production NAS cron cannot rebuild
+the live server mid-swap.
+
+**1. Hard freeze on runtime multiplayer networking**, until Cam says the server swap is complete.
+No production `.proto`, handlers, transport, RPC, replication, auth, movement, vehicle, combat,
+voice, phone, selector, or economy networking. This matches what you asked for before the swap;
+it is now written down and it applies to both streams.
+
+**2. `feat/world-state` is now classified OUTGOING SERVER REFERENCE IMPLEMENTATION.** Not a
+deployment target, not the base for the new server, and deliberately NOT cleaned up. A full
+netcode rollback was proposed, audited, and **rejected** — the numbers are in
+`docs/OUTGOING-SERVER-NETCODE-MAP.md` §0, but briefly: the branch is +20,760 lines, the "netcode"
+files are +6,046, and the actual transport is ~1,500-2,500. The rest is persistence, permissions,
+admin tooling and economy work that must survive. `HandleSaveCharacterRequest` is one function
+that is simultaneously a packet handler AND the money guard, the starter kit, the Stage 5
+observation and the audit log. Splitting it is a rewrite, not a revert.
+
+**3. The branch protocol already differs from published `fork/main`** — and has since long before
+this work:
+
+```
+fork/main:        client 0x88b2f6b5cbefc91c   server 0xb2f2bf7363a7f337
+feat/world-state: client 0xc67c52a1b6c5f096   server 0xa14513f4653e80f
+```
+
+134 lines from `9af9e8d` (character slots), `1d5aec2` (phone calls), `8156ebb` (`/call` fix).
+Deliberately NOT reverted. **Do not assume branch protocol == published protocol.**
+
+**4. Three handoff documents are the authority for rebuilding on the new server:**
+
+| Document | What |
+|---|---|
+| `docs/NEW-SERVER-NETCODE-PORTING-HANDOFF.md` | all ten phases; rebuild without reading old code |
+| `docs/OUTGOING-SERVER-NETCODE-MAP.md` | where the old netcode is; every mixed file split keep/don't-port |
+| `docs/NEW-SERVER-AUTHORITY-HANDOFF.md` | economy authority + proven Cyberpunk facts |
+
+**Read the requirements first. Do not start by copying old code.**
+
+**5. Findings that affect your half:**
+- **Money is NOT server-authoritative** — 17 vanilla paths bypass `Economy::`. Vendors move eddies
+  client-side (`vendor.script:1180`, proven from the game's own source). Money is an inventory
+  item.
+- **No vanilla inventory operation is observed at all** — zero hooks on `TransactionSystem`,
+  vendors, crafting, loot, stash.
+- **The item model cannot represent a real item** — `(TweakDBID, quantity)` in,
+  `GiveItemByTDBID` out. A restore hands back a BASE item, losing mods/tier/upgrades. **This is a
+  live data-loss path today**, independent of any authority work.
+- **The cell grid culls nothing** — relevance is effectively broadcast.
+- **netpack does not range-validate enums** — an undeclared value round-trips intact. Two
+  generator defects found and fixed (`b6fc19c`); production protos byte-identical after.
+
+**6. Still unresolved, and not solved by being documented:** movement coalescing (flag OFF, never
+2-client tested — that test needs you), the remote-vehicle-mount crash, cell-grid relevance, money
+authority, item fidelity, and the character session lock.
+
+**7. Selector and full inventory authority are PARKED** until the new server has auth, identity,
+CharacterID, persistence, session lock and authoritative load/spawn.
+
+Phase 5 stages 1-5 stand as architecture and were **not** the reason for the swap.
+
+### Phase 5 (economy authority) — stages 1–5 built, NOTHING BEHAVES DIFFERENTLY YET
+
+Full detail in `docs/PHASE5-ECONOMY-AUTHORITY.md`; this row is the ledger pointer. All of it
+is **local and unpushed** — per Cam, nothing ships before the server swap.
+
+- **The one client-authoritative door is still open, deliberately.** `character.Money =
+  aMessage.get_money()` is untouched. Closing it is Stage 7, and Stage 7 is a flag day.
+- **What is built is the machinery, not the cutover:** atomic persistence for all six stores
+  (Stage 1), the `EconomyRevision`/`MigratedAt` fields (2), a trust-once migration that
+  **nothing calls** (3), `EconomyMutator.h` as the single boundary every server-side money and
+  inventory change now routes through (4/4B), and transaction-scoped revisions plus stale
+  classification (5).
+- **Migration is INERT. No character anywhere is migrated**, so revisions sit at 0 and the
+  Stage 5 observation never fires. This is the intended state — the machinery gets to be
+  proven while being wrong about it is still free.
+- **Two things need a live server and are therefore blocked on the migration:** activating the
+  trust-once migration (irreversible — review the `[MONEY]` audit trail first), and any wire
+  change. The client-observed revision needs a field on `SaveCharacterRequest`, and netpack
+  derives the protocol id from the `.proto` **text**, so that is a flag day like 6 and 7.
+- **The regression that must keep passing for the rest of Phase 5** (`trade_real_test`):
+  *ordinary play never migrates anybody.* If runtime could produce a migrated record the
+  migration gate would mean nothing.
+- **For the other stream:** if you add a server-side money or inventory mutation, route it
+  through `Economy::` and advance the revision **once per transaction, at the boundary** — not
+  inside the primitives. The primitives deliberately never touch it.
 
 ### Landed 2026-09-04 (zeldfep stream) — the launcher is open source
 - **THE RED SMARTSCREEN SCREEN IS UNSIGNED CODE, NOT MALWARE — and the obvious fix does not
@@ -153,7 +540,17 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   point-in-time split, not a live mirror** - it drifts until someone re-runs
   `git subtree split -P code/launcher-lite` and pushes, and SignPath builds from the public
   source, so the two must be in sync at application time.
-  **Open:** the SignPath application itself (deferred by Cam until the current build is done).
+  **THE MIRROR HAS DRIFTED, MEASURED 2026-09-07.** `NightCityOnline/launcher` HEAD is still
+  `eb8574c` (pushed 2026-09-04); `index.html`, `main.js`, `preload.mjs` and `package.json` all
+  differ from the monorepo now — v0.3.115 alone moved three of them. **SignPath builds from the
+  PUBLIC source, so a re-split has to happen before the application, not after.** Recipe, and
+  it regenerates from scratch every time (there is no local branch to preserve, and none is
+  kept — the public repo IS the record):
+  `git subtree split -P code/launcher-lite -b <tmp>` then push `<tmp>` to that repo's `main`,
+  re-adding the root `LICENSE` + `README.md` on top as `eb8574c` did. The split rewrites SHAs,
+  so its history is disjoint from the monorepo's — do not try to diff the two by commit.
+  **Open:** the SignPath application itself. Deferred until "the current build is done" — and
+  v0.3.115 shipping means that condition is now MET, so this is a live decision, not a wait.
   Honest risk - they also require no proprietary component, and a launcher whose job is
   installing non-open-source software is a fair thing for them to refuse. If they do, the
   fallback is a paid certificate, which needs the LLC that does not exist yet: Azure's
@@ -161,7 +558,59 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   commercial CA at roughly 200-500/yr plus a hardware token. Publisher name will be
   **OfficialCutProductions**; nothing is signed until that identity exists, on purpose.
 
+- **DECISION 2026-09-04: the phone ClientRpc pair is APPROVED, and it is NOT a flag day —
+  verified against the code, not accepted on argument.** Cam's stream asked before building
+  contacts + text delivery into the vanilla phone, because it is new traffic in a migration
+  week. Answer: build it. The three legs were checked: (1) `kIdentifier` derives from the
+  `.proto` text ALONE (`netpack/main.cpp:368-369` — `kProtocolString = HashProtocol(...)`,
+  `kIdentifier = FNV1a64` of it), and an RPC pair is a REGISTRATION rather than proto text, so
+  the identifier does not move and the door checks at `GameServer.cpp:819/831` refuse nobody;
+  (2) ids are negotiated PER CONNECTION — `GameServer.cpp:1096-1102` serializes the full
+  `(id, klass, function)` mapping and sends it BEFORE `AuthenticationResponse`; (3) an old
+  client fails safe — `GetRpcHandler` returns null for a function it lacks and `Call()`
+  refuses rather than misdispatching.
+  **TWO CONDITIONS, and the first is the whole point of the ask: LAND IT, DO NOT DEPLOY IT
+  UNTIL THE MIGRATION IS VERIFIED.** `feat/world-state` is what the NAS cron deploys; a server
+  rebuild landing mid-migration is how a clean move becomes an evening. If it must sit on the
+  branch before then, the cron gets PAUSED deliberately rather than both streams assuming the
+  other did it. **Second: the contacts snapshot must tolerate arriving before its
+  definitions** — definitions land at auth, the injection point is the spawn path, and spawn
+  is also where a character SWITCH lands; an unresolved id makes the first snapshot vanish
+  silently, which will read as "contacts are empty for the first character you pick" and get
+  misdiagnosed as a `MessageStore` bug.
+
 ### Needs a live session (built, never validated with humans)
+- **FIELD SESSION 2026-09-06 (zeldfep, test box, `test.19`): "empty map", then "put into a BOX
+  AGAIN". Both diagnosed, both ALREADY FIXED IN HEAD, neither fix is in `test.19`.**
+  - **The BOX is `8401ec3`, whose commit message names it: "spawn: recover from fall-through
+    instead of looping in a box".** The teleport lands before the destination is
+    collision-ready, the player drops through the floor, and the game's OWN out-of-bounds
+    recovery parks them in a holding volume. Nothing puts them back, so it loops — fall,
+    recover, fall. Escape is luck: a reconnect that happens to land after streaming caught up,
+    which is exactly what zeldfep described ("disconnected -> reconnected and now im in
+    world"). The fix arms a watchdog 1.5s after the teleport and re-places up to 3 times;
+    guards spawn AND respawn because both come through `DoTeleport`.
+  - **THE SERVER WAS INNOCENT and the log proves it** — `New arrival zeldfep placed at the
+    start point (-1720.4, -1956.6, 62.4)` fired on EVERY new-character connect (17:41:41,
+    17:44:45). Do not chase the arrivals point for this symptom.
+  - **"Empty map" is the same root one step earlier**: the world loaded is the template, with
+    every quest fact at zero (`ep1_active=0`, `q304_block_dogtown_gate=0`,
+    `ow_combat_zone_mini_world_stories=0`, `holo_setup_active=1`). Proven outright by
+    `[MONEY] 4 restore: first spawn, stripped 121694 template eddies` — the player was
+    briefly holding the template character's balance. `#q000_spwn_start` is a HOLDING ROOM by
+    design (see the clean-start row); the server's arrival teleport is what is supposed to
+    move you out of it.
+  - **`MpLoadOwnCharacterSave` produced NO log lines in either session** — zero `[OwnSave]`
+    entries across both. Worth knowing before anyone reads fault A's fix as "the template
+    load is new": on `test.19` the client is already landing in the template without that
+    code having run at all. `9d4daea` makes the choice deliberate rather than accidental; it
+    does not introduce it.
+  - Also seen, not chased: **21 C++ exceptions at one address during world attach**
+    (`0x00007FFE6FA2187A`, several threads, 17:38:23-17:38:48), and
+    `[error] [Character] no customization state to save` twice. Neither stopped the session.
+  - **Pause menu: zeldfep had NO menus available and closed the game from the taskbar.** That
+    is the best-effort unpause row below, still unconfirmed, and this is a second sighting.
+
 - **Pause menu unpause is BEST-EFFORT, 2026-09-04.** The menu opens again (an inline
   `UnpauseGame()` in `OnInitialize` was killing it — the `SetMenuModeEvent` is queued and
   consumed a frame later, so the unpause landed before the layer read it). The unpause is
@@ -519,8 +968,11 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   exists BEFORE spending the bytes, keep them when it does not, clear only after a commit is
   accepted. Cheap live check: `appearance held - no live customization state yet` once, then
   a real BEGIN after the world attaches. Fault A — `OwnSave` picking a save by file order
-  instead of identity — is STILL OPEN and the big one; its fix is ChatGPT's Phase 1 items 1-4
-  and the correct next piece of work.
+  instead of identity — is FIXED 2026-09-04 by always loading the template and letting the
+  server own identity; see the "I am not the character I made" entry for why the named-save
+  plan was dropped. **COMPILE-CHECKED 2026-09-04 against the real 2.31 install on this box.**
+  Still unproven live: whether always starting from the template leaves a player visibly
+  Veronica when the appearance restore does not land — that is one join away from an answer.
 
 - **"Nobody could see anybody" — never the puppet system. FIXED `ec2858d`, awaiting a live
   run.** `NetworkWorldSystem::Spawn` was never called ONCE in twenty-one session logs — no
@@ -587,7 +1039,52 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   "summon my second Quadra" has no native expression. The server must decide which instance
   a model-summon resolves to - nearest stored, last driven, or explicit via /garage.
 
+### The cell grid does not actually cull anything (measured 2026-09-04)
+- **`kCellSize = 6000` is larger than Night City, so the spatial partition is inert as a
+  RELEVANCE filter — everyone is always in everyone's radius.** Measured against the live
+  server's own stored state (`config/players.json`, `vehicles.json`, `startpoint.json`,
+  `respawn.json` — 11 real positions): `x` spans **-1759.7 .. 672.8**, `y` spans
+  **-1956.5 .. -1261.0**, `z` spans **27.9 .. 69.7**. At `kCellSize = 6000` every one of
+  those falls into **two cells — (-1,-1) and (0,-1)**. `kLoadRadius = 3` then covers a 7×7
+  block, 42,000 units on a side, against a world whose observed extent is ~2,400 × 700.
+- **Consequence, and it is a design input rather than a bug report:** every player receives
+  every other player's and every vehicle's updates regardless of distance, so bandwidth
+  scales with the square of the player count and has no falloff to lean on. The
+  per-connection interpolation-delay work and any future relevance filtering are therefore
+  worth MORE than they look, not less — there is currently nothing else reducing what a far
+  player costs.
+- **It also explains why the cell-size bug was catastrophic rather than merely inefficient.**
+  The grid gates LOADING, so a wrong cell dropped loads entirely ("nobody could see
+  anybody", six days) while never delivering the culling the size was chosen for. The
+  `std::floor` fix and the single-source constants remain correct and necessary; what is
+  wrong is the SIZE, and nothing today depends on that size being large.
+- **Honest limit on the measurement:** 11 stored positions from one server, not a survey of
+  the map. It is last-known player positions, parked vehicles and spawn points, so it does
+  not prove the whole city fits in two cells — but Night City is roughly 5 km across and the
+  cell is 6,000 units, so the whole world is a handful of cells either way. Anyone wanting
+  certainty can widen the sample from `logs/clients/` movement traces.
+- **NOT CHANGED. Do not "fix" this by shrinking `kCellSize` casually** — it is a wire
+  contract the client re-derives (`GameServer` advertises it, the client checks its own
+  answer against the server's and DROPS mismatched loads), so a change is a flag-day-shaped
+  event even though the identifier does not move. Decide the number deliberately, change it
+  on both sides in one commit, and expect the drop-loads path to be the thing that bites.
+
 ### Known bugs, diagnosed, unfixed
+- ~~`RpcService::Call` derefs null on a default-constructed slot~~ **LANDED 2026-09-04 (Cam
+  stream), all three parts, and the read turned up a worse one than was reported.** zeldfep's
+  inference was right: the guard `if (rpc.Id.Klass != 0 && !pContext)` lets through the one
+  shape it needed to catch, because an unwritten slot has `Klass == 0` AND a null handler.
+  Now an unconditional `if (!pContext)`.
+  **The worse bug underneath it:** `HandleRpcDefinitions` sized the table by
+  `client_definitions.size()` — a COUNT — and wrote to it by `rpc.get_id()` — an ID. Those
+  agree only while ids are dense from zero, so any id ≥ count was an out-of-bounds WRITE, not
+  a null read. Heap corruption in a handler driven by whatever the server sends. Now sized by
+  highest id + 1. Same root as the reported bug (count-vs-id), strictly worse consequence.
+  Refusals also log once per id per connection now (cleared when definitions arrive), so a
+  snapshot pushed to an older client cannot spam a line per push per player.
+  **This was the blocker on the phone RPC** — the operation that could leave a gap is adding
+  registrations, which is what the phone pair does. That path is now safe to grow.
+
 - **THE OBSERVER CRASH: cause found 2026-09-04, and it was REPETITION, not memory.**
   zeldfep died (exit `0x80000003`) with his log ending mid-apply, one line after
   `Scheduling change`. The session held **15 remote appearance applies in 16 minutes,
@@ -610,11 +1107,22 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   character he made. His stored blob also flip-flops 10232 -> 6484 -> 10232 bytes, i.e.
   different appearances competing, not one being resent. The server's sync is INNOCENT
   and working (it logged 6 real changes, not 15, and its unchanged-guard holds); it is
-  faithfully broadcasting a bad capture. Fix belongs at capture: `OwnSave` must pick the
-  save by IDENTITY, not file order. Proposed guard, needs a wire field so it is a
-  flag-day: the client reports the gender of the state it captured and the server refuses
-  a capture that contradicts the character record's `IsMale` - that would have caught
-  this in the first second instead of after a night of crashes.
+  faithfully broadcasting a bad capture. **HALF-ADDRESSED 2026-09-04 and the other half got
+  MORE URGENT, deliberately - read this before concluding the fix made things worse.**
+  `OwnSave` no longer picks a save at all: the template loads every time and identity comes
+  from the server (see fault A). That removes the *random* wrong character - a probe's
+  leftover Corpo can no longer win a file-order race. **It does NOT remove the template's own
+  identity, and it makes every machine start from it.** The body at load is now Phantom
+  Veronica for EVERYBODY until the server's appearance restore lands over the top, where
+  before a player with their own save might have started closer to themselves by luck.
+  That trade is intentional: one known starting state that the restore must beat is a bug
+  with one cause, where two competing sources is a coin flip nobody can reproduce. **The
+  consequence is that the appearance restore is now the single thing standing between a
+  player and being Veronica, so its priority goes UP, not down.**
+  Still worth building, and unchanged by any of this: the client reports the gender of the
+  state it captured and the server refuses a capture contradicting the character record's
+  `IsMale`. Needs a wire field, so it is a flag-day - batch it with the slots work. It would
+  have caught this in the first second instead of after a night of crashes.
 
 - **THE crash: SOLVED 2026-08-26/27 (`0da3c9b`, `559828f`, `0fa2bb9`) - never entity
   readiness; a genuine data race, two threads inside flecs' `flecs_stack_restore_cursor`
@@ -740,6 +1248,31 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   at character creation. NEXT: make a character, watch `settlement: armed` -> `INITIALIZED`,
   then buy something, reconnect, confirm it survived.
 
+- **MONEY: the instrument finally produced data, 2026-09-06, and it says RECORDED AND
+  OVERWRITTEN — not "never recorded".** The map had said for weeks that the four `[MONEY]`
+  boundaries postdated every session in the logs and that one live session would decide which
+  fix to write. This is that session, on the test box, `v0.3.114-worldstate-test.19`.
+  - Measured, in order, one character created and immediately reconnected:
+    ```
+    17:39:16  [MONEY] 3 received: client says 300, server had 0,     delta 300
+    17:39:16  [StarterKit] zeldfep - character 'zeldfep', streetkid, 20000 eddies
+    17:39:16  zeldfep stored 21 item stack(s) and 300 eddies
+    17:40:35  [MONEY] 3 received: client says 300, server had 20000, delta -19700
+    17:41:41  zeldfep spawns with 21 stored item stack(s) and 300 eddies
+    ```
+  - **The client reports 300 every time, and 300 is what the game actually holds.** The server
+    grants 20000 into its OWN record; the game never sees it. The next capture truthfully
+    reports the real in-game balance and the server overwrites its 20000 with 300.
+  - **So the bug is not persistence and not the capture. The GRANT is fictional.**
+    `StarterKit`'s 20000 is a number written to the server record that never becomes in-game
+    eddies, and every honest capture afterwards erases it. Chasing "money does not save" was
+    chasing the symptom - the record saves perfectly, it just saves the truth.
+  - **Only boundary 3 (`received`) ever fires.** 1, 2 and 4 produced nothing across the whole
+    session, so the chain is instrumented at one point in practice. Worth fixing before the
+    next money investigation, or the same blind spot repeats.
+  - CONFIDENCE: two data points, one session, one player. The delta is exact and the mechanism
+    is consistent, but it wants a second session before anyone rewrites the economy on it.
+
 - **Money does not persist — but the restore no longer CONFISCATES earned money (`f53e4df`,
   untested live).** The 2026-08-28 observation stands: 84 eddies picked up; every subsequent
   capture read exactly `20000` — nothing decayed, a gain never entered the record.
@@ -834,14 +1367,33 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
 - **"I am not the character I made" — root cause found 2026-09-02: TWO independent faults
   stacking, one still open.** Cam's report: *"the character we created would not be the
   character we play as, it is also not phantom veronica"* — a third person entirely.
-  - **(A) STILL OPEN — the big one: `OwnSave` has no idea which save is the character.** It
-    loads "the newest save that is not `MultiplayerStart`", which is not an identity, it is
-    an accident of file order. On 2026-09-01 it loaded `AutoSave-12` — a throwaway female
-    Corpo from a probe run two days earlier. ANY newer save wins: another test character, a
-    singleplayer session, anything. The fix needs a save NAMED for the character
-    (`ManualSave(saveName: String)` exists on `inkISystemRequestsHandler`, so the mod can
-    name its own saves) and a load that matches that name rather than a position in a list.
-    That is ChatGPT's Phase 1 items 1-4 and it is the correct next piece of work.
+  - **(A) FIXED 2026-09-04 by REMOVING THE CHOICE — not by the plan of record, and the
+    reason matters. COMPILE-CHECKED 2026-09-04 (`CheckScripts.ps1`, real 2.31 install).** `OwnSave` loaded "the newest save that
+    is not `MultiplayerStart`", which is not an identity, it is an accident of file order; on
+    2026-09-01 it took `AutoSave-12`, a throwaway female Corpo from a probe two days earlier,
+    and ANY newer save would have won — another test character, a singleplayer session,
+    anything.
+    **The planned fix was DROPPED deliberately.** It was "name a save per character
+    (`ManualSave(saveName)`) and load by matching the name", and it needs the mod to WRITE
+    saves. `343b912` closed that door hours earlier on purpose: `SaveLocksManager` is held for
+    the whole launcher session because a local save is a second copy of a server-owned
+    character, and *save with the money, spend it, load, spend it again* is the exploit that
+    follows. Naming saves per character would have punched a hole in a rule Cam asked for
+    personally, to solve a problem with a cheaper answer.
+    **What landed instead: the template is loaded ALWAYS, matched BY NAME.** Identity comes
+    from the server, which was always the design — `HasCharacter()`, `GetCharacterName()` and
+    the appearance restore all run before the load does. No file order, no newest-save race,
+    nothing to name. `MpLoadOwnCharacterSave` is renamed `MpLoadMultiplayerWorld` because the
+    old name now describes the opposite of what it does.
+    **Honest costs, both recorded rather than discovered later:** a returning player's own
+    singleplayer world progress no longer enters a session (nothing consulted it — the server
+    owns position, possessions, money and world facts — and it could not have advanced anyway
+    with saving locked), and **the template's Phantom Veronica identity bleed is NOT fixed
+    here** — `MpStarterSettlement` and the appearance restore are the two fixes in flight for
+    that. What changed is that the bleed now comes from ONE known source on every machine
+    instead of whichever save a player happened to have: a bug you can reproduce rather than a
+    coin flip. Fallback if the template is missing from the list logs LOUDLY and takes the
+    newest save, because a player still needs a world.
   - **(B) FIXED**: the stacked second fault — a failed appearance restore destroying its own
     input — see the appearance-restore entry.
 
@@ -876,10 +1428,9 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
 - **FIRST MANIFEST SHIPPED (2026-09-04, v0.3.114)**: `server-manifest.json` + `.sig`
   are on the release, signed by zeldfep's key (`882c415a` - pinned in every launcher
   since v0.3.97, so verification is immediate; Cam's key stays PAUSED per its entry).
-  Launchers now verify instead of "manifest absent - legacy path". Server-side arming
-  (copy the manifest into each server's `config/`) is now ACTIONABLE - do it at a
-  quiet moment AFTER most players are on v0.3.114, since the digest gate refuses
-  mismatched installs at the door.
+  Launchers now verify instead of "manifest absent - legacy path". v0.3.115 shipped the
+  next one (`2026.09.07.01`). Server-side arming is ACTIONABLE and STILL NOT DONE - see the
+  arming entry in the ledger for why it is a decision, not a chore.
 - **Server-side arming**: copy the shipped manifest to the server's `config/` dir —
   absent file = checks disabled (migration). Then manifest_version + install_digest
   gates go live at the door.
@@ -930,7 +1481,338 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   A stream's memory directory is a CACHE of what those already say; carry it if convenient,
   never as a source of truth.
 
+### Tailnet ACLs: the invite is public ON PURPOSE, and ACLs are what make that safe (2026-09-06)
+- **The invite in `publish/server.json` cannot be gated, and that is structural.** The game
+  server is reachable only over the tailnet, so a player who has not joined yet cannot reach
+  ANY gate we could put in front of the invite — including the coord API, which is itself on
+  the tailnet. Serving it behind a role check would lock out exactly the people it is for.
+  *(This entry exists because that fix was proposed, half-shipped in `2a648bf`, and reverted
+  in `d4b2172` once the reasoning was checked. Do not re-propose it.)*
+- **So secrecy is not the control. Scope is.** BEFORE: the tailnet ran the Tailscale default,
+  `{"src":["*"],"dst":["*"],"ip":["*"]}` — anyone who found the invite could reach the NAS,
+  both game servers on every port, and every member's personal machine.
+- **AFTER (applied, validated, and previewed):** owner and admins keep everything; everyone
+  else reaches `nco-live` + `nco-test` on **11778 and 11780 only**. Confirmed with the API's
+  own preview for a plain member — four destinations, nothing else. 11780 is included because
+  the launcher lets dev-role users fetch their key from it, and that endpoint is bearer-key
+  gated on its own.
+- **THIRD GRANT ADDED 2026-09-08 (zeldfep stream): Cam, by name, on the server HOST.**
+  `"nco-atlas"` is a new hosts entry for the box itself — not the game sidecar, which is what
+  `nco-live` points at — and the grant is `ofmiceandcam98-eng@github → nco-atlas, ip ["*"]`.
+  It buys two things at once: the Atlas (the internal mind map, 11782) and ordinary admin
+  work on the box over SSH. Validated against `acl/validate` and applied with `If-Match` on
+  the ETag; the two existing grants are byte-identical afterwards, and all three services
+  answered 200 after.
+  - **IT NAMES CAM AND MUST NOT BE WIDENED TO `autogroup:shared`.** Every player is in that
+    autogroup — the wide 11778/11780 rule above is wide *because the game is meant to be
+    public to players* — so widening this one the same way hands eight people the internal
+    board and a route to the host.
+  - **Deliberately NOT `autogroup:admin`**, which is `dst ["*"]` and includes every member's
+    personal machine. Closing that is why this policy exists.
+  - **Reachability is not an account.** SSH on the box is key auth against a unix user, so
+    the grant lets Cam's packets arrive and nothing more until his public key is installed
+    there. That step is outstanding — it needs his key, which nobody here has.
+  - Why it was needed: the Atlas was deployed and announced as reachable by both streams
+    when it was not. Cam is a shared user, so he sat in the 11778/11780 bucket with the
+    players; his coordination key authenticated fine and the packets never arrived. **Check
+    the grant, not just the auth, before calling a new service cross-stream.**
+  - **AND THE GRANT ALONE IS STILL NOT ENOUGH FOR A SHARED USER.** An ACL rule says what
+    traffic is *permitted*; it does not put a device in somebody's tailnet. A shared user
+    sees only the devices explicitly SHARED with them, and on 2026-09-08
+    `officialcutstudios01` had **no device shares at all** — every existing share is on
+    `nco-server` / `nco-test-server`, the game sidecars. So the new grant permitted traffic
+    to a host Cam could not see. Fixed by creating a multi-use device invite on the host
+    (`POST /api/v2/device/<id>/device-invites`, **body is an ARRAY**, same trap as the
+    player invites). **Two things are needed to reach a new box: a share so the device
+    exists for them, and a grant so the ports open. Neither implies the other**, and the
+    ACL preview cannot show you the first because shared-in users are not in this tailnet's
+    user list.
+- **Hosts are named, not raw IPs, in the policy** (`nco-live`, `nco-test`) so a re-registered
+  sidecar is a one-line edit rather than a hunt.
+- **Rollback is off-tailnet**: `api.tailscale.com` and the admin console are public, so a bad
+  policy can always be reverted even if it locks the tailnet. That is why this was safe to
+  apply directly.
+- **HOW PLAYERS ACTUALLY REACH THE SERVER: a multi-use DEVICE SHARE, not tailnet membership.
+  This was undocumented and it nearly cost every player their access during the migration.**
+  - The server node is shared with a multi-use invite (`POST /api/v2/device/<id>/device-invites`,
+    body is an ARRAY - an object returns `cannot unmarshal object into Go value of type
+    []controlapi.deviceInviteRequest`). People accept it and become **shared users of another
+    tailnet**, NOT members of this one. On 2026-09-06 the old live node carried 10 invites, 8
+    accepted: kozziofficial, coreyh2197, **ofmiceandcam98-eng (Cam)**, Phonix96, darwin.809,
+    rimtek.ds, mrplasticface, minecraftian876. The old test node carried 4.
+  - **ACCEPTANCES DO NOT TRANSFER.** They are bound to a device id, so new hardware means new
+    nodes means everyone re-accepts. New multi-use shares were created on both new nodes.
+  - **THE TRAP, and it is the reason this entry exists:** shared users are `autogroup:shared`,
+    NOT `autogroup:member`. The first ACL draft granted only `autogroup:admin` +
+    `autogroup:member`, which would have cut off all eight - including Cam, whose assistant
+    stream reaches the coord API this way. The previous policy was the Tailscale default
+    `{"src":["*"]}`, which covered them invisibly. Caught before anyone reconnected.
+  - **Tailscale's ACL preview CANNOT verify this.** `acl/preview?type=user` returns no matches
+    for a shared-in user even under a policy that grants them, because they are not in this
+    tailnet's user list. So the autogroup cannot be proven correct from the API. The applied
+    policy therefore ALSO names all eight logins explicitly - belt and braces, so a wrong guess
+    about the autogroup cannot lock anyone out. **Remove the explicit names only after somebody
+    has actually connected and proved `autogroup:shared` works.**
+  - Naming note: the new nodes are `nco-server-1` and `nco-test-server-1` in MagicDNS, because
+    the retired nodes still hold `nco-server` and `nco-test-server`. Deleting the old devices
+    frees the names.
+- **DECIDED 2026-09-06 (zeldfep), NOT BUILT: "Join the server's network" must be gated on
+  DISCORD ROLE.** The invite button lives in the launcher's TOOLS panel and today opens for
+  anyone who clicks — `ipcMain.handle('tailscale:invite')` has no check of any kind. It should
+  hand out an invite only to someone whose Discord role says they belong.
+  - **The launcher already holds everything needed.** It completes Discord OAuth before the
+    tailnet is ever required (the trail logs `token present, name <player>` at launch), and it
+    already resolves roles for the dev panel. So the check is a role test on an identity that
+    is in hand, not new plumbing.
+  - **Client-side alone is NOT the fix, and this is the trap to avoid:** `server.json` is
+    served from `releases/latest/download` with no authentication, so anyone can read the
+    invite out of it whatever the button does. A UI check is a courtesy, not a control.
+  - **The honest architecture is two halves.** (1) The launcher checks the role before
+    offering the button — stops the accidental case. (2) The invite stops being a static field
+    in a public file and is issued per-request by an endpoint that verifies the Discord token,
+    which must live OFF the tailnet, because someone who needs an invite cannot reach anything
+    on it. That endpoint is the piece that does not exist yet and needs public hosting.
+  - **Until both exist, scope is the control, not secrecy** — see the ACL entry above. A
+    leaked invite buys reaching the game servers on two ports, nothing else.
+- **DECIDED 2026-09-07 — published invites are an ACCEPTED RISK while this is a closed alpha.**
+  zeldfep, asked directly about both links sitting in a public release asset: *"this is fine
+  is closed alpha."* So stop treating it as an open wound. **Both device shares are deliberately
+  published in `publish/server.json`, and both are meant to keep working:**
+  - Main server (Tools → "Join the server's network") and test server (Dev panel → "Join the
+    test server's network") are SEPARATE shares — a share binds to one device id and cannot
+    cover both. Accepting one does not get you the other; the UI says so in both places.
+  - **VERIFIED 2026-09-07 via the Tailscale API: both are `multiUse: true` with no email
+    restriction, and neither is exhausted.** They are not single-seat, so the old "rotate when
+    consumed" advice does NOT apply to these two — do not rotate them reflexively.
+  - Both handlers read the PUBLISHED file at click time (`fetchPublishedServer()`), so fixing
+    `server.json` fixes both buttons with no ship. The catch is the cache below.
+  - The exposure is bounded by what a share IS: exactly one node, by construction rather than
+    by policy. That is why `d4b2172` moved off a `/uinv/` user invite, which would have made
+    the holder a tailnet MEMBER with only ACLs standing between them and everyone's machines.
+    **Never swap these back to `/uinv/` links.**
+- **Revisit at open beta, not before.** The durable answer stays what it was: a PUBLIC endpoint
+  (not on the tailnet) that checks the Discord token the launcher already holds — the sign-in
+  happens *before* the tailnet is needed, which is what makes it the one gate that can work.
+  It needs somewhere public to host it, which this project still does not have.
+- **`fetchPublishedServer()` CACHES FOR THE PROCESS LIFETIME** (`main.js:443` — `if
+  (publishedServer) return publishedServer`, no TTL). A launcher that has already fetched a
+  bad or stale `server.json` keeps it until it is RESTARTED. That is why the fix for tonight's
+  outage was "restart the launcher" and not "wait a minute" — and it is why a bad publish
+  reaches everyone instantly but a good one does not.
+
+### Shipping from a FRESH CHECKOUT needs three things the ship does not provide (2026-09-06)
+Every one of these stopped a v0.3.115 attempt cold. The gates all behaved correctly — this is
+setup a new box needs, not a bug in `Ship.ps1`.
+- **`pnpm install` in `code/launcher-lite` has to have been run.** A fresh clone has no
+  `node_modules`, and the ship refuses: *"these dependencies are declared but not installed …
+  packaging now would ship a launcher that cannot start."* Use `--frozen-lockfile`; the pin is
+  pnpm 9.
+- **`distrib/launcher/mod/Rpc` does not exist on a fresh checkout and the ship needs it**
+  (`Ship.ps1:604`). It is not generated by `xmake install`. Source it from the installed mod at
+  `<GameDir>\red4ext\plugins\zzzCyberpunkMP\Rpc` — that IS the previous release's payload — but
+  **only after confirming the protocol has not moved since that release**, or the bindings are
+  wrong. `git diff <release-commit>..HEAD -- code/protocol/` empty is the check.
+- **WINDOWS DEVELOPER MODE MUST BE ON, or electron-builder cannot package.** It extracts a
+  `winCodeSign` bundle containing macOS symlinks (`darwin/10.12/lib/libcrypto.dylib`,
+  `libssl.dylib`); Windows refuses symlink creation without elevation and 7-Zip returns
+  non-zero, so the builder aborts — after retrying into EIGHT abandoned cache directories under
+  `%LOCALAPPDATA%\electron-builder\Cache\winCodeSign`. The Windows half extracts perfectly and
+  is not the problem. Settings → System → For developers → Developer Mode. An elevated terminal
+  also works; the toggle is the fix that stays fixed.
+- **`Ship.ps1:372` failed twice with `Container cannot be copied onto existing leaf item` on
+  `redscript\Plugins`, and it is a RACE, not a state problem.** The identical `Copy-Item` run by
+  hand against the identical destination succeeded. Do not "fix" the copy on the theory that
+  the destination layout is wrong — it is not. Re-running cleared it both times.
+- **THE BUMP TRAP IS REAL AND IT BIT.** `Ship.ps1` bumps `package.json` EARLY, so every failed
+  attempt leaves the version raised. One attempt then tried to cut **v0.3.116** and the notes
+  gate correctly refused, which is the gate doing its job. **`git checkout -- code/launcher-lite/package.json`
+  after ANY failed ship**, before retrying.
+
+### v0.3.116 SHIPPED 2026-09-07 — the design pass, and the new gate proving itself
+Cut from `feat/world-state` (`693a336`), `Ship.ps1 -Launcher`. `/releases/latest` answers
+`v0.3.116`; `NightCityOnline-Setup.exe` 107.5 MB, HTTP 200 anonymously; manifest pair present
+and promoted only after asset verification. Announced automatically to `#server-update` — the
+bot can post there now.
+- **`OK  server address matches origin/main`** — the gate added hours earlier after the v0.3.115
+  outage ran and passed on its first real ship. `server.json` on the release still answers
+  `100.109.52.23` with both invites, verified anonymously with the launcher's User-Agent.
+- **Carried:** the hazard-index section rail counting SECTIONS not rows (`05aef11`, Tools 13
+  stops → 4, Voice → 3, `Uninstall launcher` moved to the end of *Repair and remove*), the
+  uniformity pass (`8490d5d`), and the seven-step type scale (`a0f39c0`).
+- **Two undeclared CSS variables were the real find in that pass**, not the tidying: `--bg` and
+  `--warn` are used by component rules and declared NOWHERE, so six inputs silently rendered a
+  `#111` fallback and a third amber (`#e0af68`) sat on screen beside `--hazard` and `--bad`.
+  **A `var(--x, fallback)` with no declaration anywhere is a bug wearing a default.**
+- **NO PROTOCOL MOVEMENT since v0.3.115** (`git diff v0.3.115..HEAD -- code/protocol/` empty),
+  which is what made the carried-forward `distrib/launcher/mod/Rpc` bindings safe to trust.
+  Check that every time before reusing them.
+- **Gameplay is unchanged in this build** and the notes say so out loud, so nobody hunts for a
+  fix that is not in it.
+
+### server.json IS CANONICAL ON MAIN AND SHIPPABLE FROM ANY BRANCH (2026-09-07, cost an outage)
+**v0.3.115 took the live server offline for every player and nothing anywhere reported it.**
+The ship was cut from `feat/world-state` and republishes `publish/server.json` onto the release
+as a matter of course. That branch had never received the migration edit — it landed on `main`
+only (`2a648bf`, `d4b2172`) — so the asset every launcher fetches reverted to `100.80.243.29`,
+the node retired on 2026-09-06.
+- **Both servers were up the whole time** (`State: running`, uptimes 7279s / 12873s). The
+  launcher's own Checkup was right and specific: `Server target - 100.80.243.29:11778 - the
+  published server` then `Server answers - no route`. Believe that panel; it named the fault.
+- **It reverted the tailnet invite too**, from the DEVICE SHARE back to the old `/uinv/` USER
+  invite that `d4b2172` deliberately replaced — a user invite makes the person a tailnet
+  MEMBER, after which only ACLs keep them off everyone's machines. It also dropped
+  `tailscaleTestInvite`, leaving the test-server button that shipped in the SAME release with
+  nothing to read.
+- **No gate could have caught it.** The notes gate, `Verify.ps1` and manifest signing all
+  passed — the file was valid JSON pointing at a dead host, which is not a category any of
+  them check.
+- **THE RULE: before any ship not cut from `main`, diff that file against `main`.**
+  `git diff main -- publish/server.json` must be empty, or take main's copy first.
+  Fixed in `101dd2f`; asset re-uploaded and verified anonymously.
+
+### v0.3.115 SHIPPED 2026-09-07 — the bundle that was pending is now live
+Cut from `feat/world-state` (`ea76c34`), full `-Mod` ship on zeldfep's box. `/releases/latest`
+answers `v0.3.115`; `NightCityOnline-Setup.exe` 102.6 MB, HTTP 200. Manifest `2026.09.07.01`
+(25,491 bytes, 74 payload files, 12 components) signed `882c415a` and verified against the
+launcher's pins BEFORE promotion. Redscript compile-checked inside the ship (`OK - redscript
+compiles`) against the real 2.31 install.
+- **Fall-through recovery** (`8401ec3`) — **the BOX.** The most player-visible thing in the
+  bundle. `test.19` does not have it, so anyone still on that build keeps looping.
+- **Section rail** (`a9a9c94`) — settings scrollbar replaced by arrows, per zeldfep.
+- **Fault A redscript** (`9d4daea`) — `OwnSave` loads the world template always. Client-side,
+  so a release was the only route it could ever take.
+- **Dev-panel text** (`eff8701`) — new test address, and it no longer claims deploys come from
+  a push to `main` when the cron tracks `feat/world-state`.
+- **Test-server invite button** (`e41f71c`) — its data half (`tailscaleTestInvite`) was already
+  live in `server.json`; the half that reads it now exists.
+- **The distinction that decides what needs a ship, and it still holds:** `publish/server.json`
+  is fetched at runtime from `releases/latest/download`, so address and invite changes land
+  with NO release. `index.html`, `main.js` and `preload.mjs` are baked in and do not.
+- **STILL OPEN — nobody has been told.** The ship's Discord step exited 1: this box has no bot
+  token. It wants `tools\.discord-bot` (`token=` / `channel=` lines, gitignored at
+  `.gitignore:66`) or `DISCORD_BOT_TOKEN` + `DISCORD_CHANNEL_ID` in the environment; then
+  `tools\AnnounceRelease.ps1 -Tag v0.3.115`. The launcher self-updates regardless, so the cost
+  is people not knowing to relaunch, not people stuck on the old build.
+- **STILL OPEN — manifest curation.** The ship warned that `audioware` and `red_data` carry no
+  version pin, no fileId and no hashes (MANIFEST-ARCHITECTURE.md §3.3). Policy is `warn`, so it
+  shipped; it CANNOT move to enforcing until those two are curated.
+
+### REBUILDING THE TEST BOX NEEDS `-p nco-authority` OR IT HALF-FAILS SILENTLY (2026-09-07)
+`docker compose up -d --build` in `/mnt/vol/projects/CyberpunkMP-authority` **builds the image,
+then refuses to create the containers** and leaves the OLD build running. The log ends on
+`Conflict. The container name "/nco-authority-tailscale" is already in use`.
+- **Why:** compose takes the project name from the DIRECTORY. The migration renamed it, so a
+  bare `docker compose` infers `cyberpunkmp-authority` while the running containers belong to
+  project `nco-authority` — and `container_name:` is pinned in the override, so both projects
+  want the same names. New project, same names, instant conflict.
+- **The command is `docker compose -p nco-authority up -d --build`.** Public is a different
+  directory and a different project; the authority compose resolves to exactly two services
+  (`tailscale`, `server`) — checked with `docker compose -p nco-authority config --services`
+  before touching anything, because the same `docker-compose.yml` also defines
+  `cyberpunkmp-server`, which IS production.
+- **The trap is that it looks like a success.** `naming to …nco-authority-server-img:latest
+  done` is in the log, the image is genuinely built, and the container is genuinely `Up` — just
+  `Up 52 minutes` on the old code. **Prove a rebuild with
+  `docker inspect nco-authority-server --format '{{.Created}}'`, not with `docker ps`.**
+- A monitor watching for compile errors and BuildKit failures did NOT catch this — a container
+  name conflict matches neither, so it sat quiet and quiet read as progress. Same lesson as the
+  stale-workload decree, one level in: **the deadline was right and the COVERAGE was wrong.**
+
+### Post-migration leftovers (2026-09-06)
+- **THE OLD NAS IS EMPTY OF THIS PROJECT (2026-09-06). Archived, md5-verified, then deleted.**
+  - Gone from that box: both deployment directories, `nco-backups`, every deploy log, the
+    shelved `update-wolvenkit.sh`, `wolvenkit-console/`, all Docker images and build cache, and
+    `~/.nco-deploy-coord-key` — no reason to leave a credential on a machine leaving our
+    control. `find` for `*cyberpunk*` / `*nco*` returns nothing; the crontab has zero active
+    lines.
+  - **What stays, and it is not ours:** `/mnt/vol/NASa/vod` — 23 GB of zeldfep's personal video
+    predating this project. That box is cold storage; his call, and the only non-project data
+    the sweep found.
+  - **VERIFIED BEFORE DELETING, not after.** The three irreplaceable files were extracted back
+    OUT of the archive on the new box and md5'd against the originals: live `players.json`
+    `597980fb…`, `coord-data/updates.jsonl` `d6d678f2…`, test `players.json` `63b73404…` — all
+    three identical. Entry counts alone would not have been evidence.
+  - **The first archive pass missed `nco-backups` and it was the one thing that mattered
+    most** — 19 dated config snapshots back to 2026-08-19, the only rollback history that
+    existed anywhere. It sat BESIDE the deployments rather than inside them, so a sweep scoped
+    to "the deployment directories" walked straight past it. **Sweep the box, not the paths you
+    remember.**
+  - Container-owned files (`tailscale-state`, server logs) needed root; `docker` group
+    membership is the sanctioned route on TrueNAS, via a throwaway container with only
+    `/mnt/vol/NASa` mounted so `vod` was never in reach.
+
+- **The public artifact carried the addresses too, and that was missed until after the repo
+  scrub.** The cutover checklist published at `claude.ai/code/artifact/…` was `sharing public`
+  and held eight live addresses and account names. Scrubbed with the SAME `redact.js` the feed
+  uses, so the artifact and the release asset cannot disagree about what is safe. **Anything
+  published outside the repo needs the same pass the repo got** — a scrub scoped to `git
+  ls-files` is not a scrub.
+
+- **OLD BUILD ARCHIVED, and the old box is not to be touched. `/mnt/vol/backups/OLD-BUILD-nas-2026-09-06/`
+  on the new server** (zeldfep's call: "archive this on new server as (old build), just reference
+  it if needed but other than that dont touch it").
+  - `CyberpunkMP-live.tar.gz` (git `171b04b`) and `CyberpunkMP-test.tar.gz` (git `2bef193`) -
+    WHOLE deployment directories, not a curated subset: repo, build output, `config/`,
+    `coord-data/`, `logs/`, `.env`, and the test box's untracked `docker-compose.override.yml`.
+    Taken after both were stopped, so nothing was mid-write. 100 MB total.
+  - **Whole rather than curated because 155 MB on a 1.1 TB disk is cheaper than the argument** -
+    the one file somebody wants later is always the one that got left out.
+  - **It contains secrets** (`.env` with `TS_AUTHKEY` and the admin password, and
+    `config/discord-bot-token`), so the directory is `0700` and every file `0600`. Never copy it
+    anywhere less locked down and never into the repo.
+  - **It is a photograph, not a backup.** The live state was carried onto the new box during the
+    cutover and md5-verified. If the archive and the running deployment ever disagree, the
+    running one is right.
+  - **The old TrueNAS box is RETIRED, NOT WIPED**, and its crontab is disarmed - commented out
+    with a do-not-re-arm marker, because it was still pulling `feat/world-state` every ten
+    minutes and one server-relevant push would have restarted the old live server against stale
+    state while the new one was serving. **Delete nothing there until the new box has served a
+    real session with several players; one person connecting once is not that.**
+ — none blocking, all easy to forget
+- **The ACL names eight shared users explicitly as well as `autogroup:shared`.** Belt and
+  braces, because Tailscale's preview cannot verify the autogroup for shared-in users. **Remove
+  the names only once somebody has actually connected and proved the autogroup works** — see
+  the device-share entry.
+- **The admin panel shares the GAME port (11778)**, not the `WebPort` 11779 that is configured
+  and never bound. So no ACL can separate "can play" from "can reach the admin panel"; the only
+  gate there is the credential, which is why it answers `401`. If that separation is ever
+  wanted, the server has to actually bind the admin surface on `WebPort` first.
+- **Old tailnet nodes still hold the good MagicDNS names.** `nco-server` and `nco-test-server`
+  belong to the retired devices, which is why the live ones are `nco-server-1` and
+  `nco-test-server-1`. Deleting the old devices frees the names — do it after everyone has
+  reconnected, not before.
+- **The old NAS deployments are STOPPED but INTACT.** Nothing was deleted. Do not wipe until the
+  new box has served a real session with real players.
+- **`install digest not computable`** — the launcher checkup reports required component
+  `cyberpunk_multiplayer` has no `archive.sha256`, so it launches unattested. The digest gate is
+  not actually attesting the payload on that path. Predates the migration; own bug.
+- **`/mnt/vol/NASa` on the new box** is empty but `rmdir` reports it as non-empty. Cosmetic.
+
 ### Operational debts
+- **TEST BUILDS SHIP THROUGH Tools > Test builds, and I did not look before saying they
+  could not** (2026-09-07). The panel has existed the whole time — see the one-click decree
+  above for what it does. What actually happened is that five test builds were delivered by
+  pasting a `DevInstall.ps1` line into chat instead of using it.
+  - **That fallback failed silently for all five.** The command carried a RELATIVE path
+    (`.\tools\DevInstall.ps1`), and the desktop app's Run button executes from this
+    session's cwd — **the repo's PARENT** — so it resolved to `Projects\tools\` and errored
+    every time. Hours of screenshots were read as evidence about builds that were never
+    installed. zeldfep had to say "I never get anything from them" before it surfaced.
+  - **Two separate lessons, and the second is the expensive one.** If you must hand
+    somebody a command, make the path ABSOLUTE — and treat the absence of a confirmation as
+    a failure rather than as consent. But the reason a command was being pasted at all is
+    that nobody checked whether the launcher already did it. **Grep the feature by name
+    before declaring it missing.**
+- **xmake install can run with a STALE FILE LIST, and it says "install ok!"** (cost a
+  shipped-and-verified build on 2026-09-07). A newly `add_files`-ed archive was NOT copied
+  to `distrib` on the first install after the `xmake.lua` edit; the second identical
+  invocation copied it. `zz_NightCityOnline_Selector.archive` therefore published in
+  test.24 as a 1 KB payload delta against a 3.7 MB asset.
+  - Same family as the "install everything" lesson below, one level deeper: the TARGET was
+    installed, its FILE LIST was not. **After adding a file to an xmake target, run the
+    install twice or verify `distrib` before shipping.**
+  - **It was caught by SIZE, not by any exit code** - the ship exited 0 and published.
+    A 3.7 MB asset cannot hide in a 1 KB delta. Check the published artifact's contents.
 - **"Built and pushed" is NOT "deployed" - three surfaces, each of which bit once on
   2026-08-28.** Every time, a correct fix looked broken because the thing under test was not
   the thing that was built, and each cost a full test round-trip with Cam. Verify the artifact
@@ -952,22 +1834,145 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
      without it, because the release had already been cut. The launcher can only deliver what
      is in a release.
 
-- **Manifest is signed on the RELEASE but not armed on any SERVER.** The old "no signing key"
-  debt is CLOSED - the key exists, is pinned, and v0.3.114 shipped `server-manifest.json` +
-  `.sig` (see the manifest section). What remains is the server half, and it is MEASURED, not
-  assumed: the live server's status endpoint answers `"ManifestVersion": "", "Release": ""`
-  (checked 2026-09-04), so no deployment has been given a copy of the manifest and the
-  digest gate is not running for anyone. Absent file = checks disabled, by design, so
-  nothing is broken - it is simply not on yet. Arming is a copy into each server's `config/`,
-  and the map's advice stands: do it once most players are on v0.3.114, because the gate
-  refuses mismatched installs at the door.
+### "EMPTY MAP" IS DEAD SCRIPTS, NOT A WORLD PROBLEM (2026-09-07)
+**The single most useful thing learned tonight.** When redscript refuses the mod, the C++ half
+still loads and connects, and the SERVER does everything right — measured, same minute:
+`zeldfep has character 'zeldfep' (played)`, `Restored zeldfep to (-1744.8, -1945.2, 61.4)`,
+`5435 bytes of appearance`, `10 stored item stack(s) and 20000 eddies`, `[Link] ping 1ms,
+0.0% loss`. Meanwhile every script that draws the world, the HUD and the chat is dead.
+- **So "I am on an empty map" is a CLIENT SCRIPT failure until proven otherwise.** Do not go
+  looking at world state, the template, or the save. Check the client log's first line.
+- **The one-line test:** the newest `<GameDir>/red4ext/plugins/zzzCyberpunkMP/logs/` file must
+  START with `[Boot] logger up`. If it starts with `Manifest:` the DLL is pre-v0.3.118 and the
+  scripts may be the duplicated set.
 
-- **The live server cannot reach the server list.** `Server could not reach the server list!
-  Could not establish connection`, logged EVERY 60 SECONDS, continuously (observed
-  2026-09-04 across a 3-hour-old container). Direct joins are unaffected, so this is public
-  DISCOVERY being dead rather than the server being down - which is exactly why it has gone
-  unnoticed. Not yet diagnosed: whether the list host is gone, moved, or unreachable from
-  inside the tailscale sidecar's netns.
+### TWO MACHINES, TWO DIFFERENT HALVES OF ONE BUG (2026-09-07)
+Hours went into a contradiction that was two boxes being compared as one. Client logs upload
+into ONE folder per player (`logs/clients/zeldfep/`), so they interleave with nothing saying
+which machine wrote them.
+- **Tell them apart by the `[LocalPuppet]` paths**, which name the Windows user: `Users\Feli`
+  is the workstation, `Users\Felipe Ramos` is the box with the game on `K:`. zeldfep plays on
+  K:. `Server address:` in the same header says which server that session used.
+- On the night: K: had the new payload NOT installed (old DLL, dead scripts, connected fine and
+  saw an empty map); the workstation had the new DLL but a **saved server override** pointing at
+  `100.125.74.56`, a node retired in the migration. Each machine had exactly one half.
+- **`resolveServer()` prefers `settings.serverHost` over the published address, silently.** A
+  saved override outlives the server it named. Clear it in Settings > DEV to fall back to
+  published. **Worth a warning in the launcher and it does not have one yet.**
+
+### THE INSTALLER NEVER PROVED WHAT IT WROTE (fixed 2026-09-07, `f8f0847`)
+zeldfep's mod folder held THREE payload generations at once and every update reported success:
+all twelve Ink controllers at BOTH the top level and under `Ink/`, plus
+`World/CharacterProfile.reds` and `World/KiroshiScanner.reds` — which ship ONLY in test.19 and
+exist on no current branch (`origin/work/2.31-session-2026-08-09`).
+- **`extractPayloadClean` is NOT the bug — checked, not assumed.** It wipes the top-level
+  directories the zip carries, and the shipped zip uses forward slashes (61 of 62 entries), so
+  it does clear `assets/` and `Rpc/`. Something between "payload verified" and files on disk
+  short-circuits; the audit now catches it rather than the next person re-deriving this.
+- **ORDER MATTERS MORE THAN THE CHECK.** The stamp is saved AFTER the audit passes. Stamping
+  first is how a failed install reports itself up to date — and then the pre-launch gate
+  refuses to help, because *"Your game files are out of date"* never fires. Green launcher,
+  correct manifest, stale code, no way for the player to find out.
+- **`Deep clean` will NOT fix this** — it sweeps the launcher's own footprint and never looks
+  inside the mod folder. The tool is `Settings > Remove > Remove the mod`, then Install.
+
+### EVERY PLAYER WHO UPDATED GOT A MOD THAT COULD NOT COMPILE (found + fixed 2026-09-07)
+`028ab8a`. The payload shipped **twelve duplicate redscript classes** — every Ink controller
+appeared at BOTH `assets/redscript/<name>.reds` and `assets/redscript/Ink/<name>.reds`.
+Redscript refuses the whole mod on a duplicate definition: *"The game will start but no
+scripts will take effect"*, naming exactly those twelve files.
+- **Cause:** those twelve moved into `Ink/` at some point. Their old flat copies stayed in
+  `distrib/`, which is GITIGNORED, because `Copy-Item -Force` adds and overwrites but never
+  REMOVES. Every payload since carried both. **v0.3.115, .116 and .117 all shipped it** —
+  confirmed by unzipping v0.3.116's `ModPayload.zip`. Nobody had played since v0.3.115, which
+  is the only reason it was not reported sooner.
+- **THE CHECK PASSED THE WHOLE TIME AND THAT IS THE LESSON.** `Ship.ps1` verified "is every
+  repo file shipped correctly?" and never "is anything shipped that the repo does not have?"
+  **A one-directional comparison cannot see an extra file** — and in redscript an extra file
+  is not dead weight, it is a compile error for the entire mod.
+- **`CheckScripts.ps1` says "OK - redscript compiles" because it compiles the REPO.** The repo
+  was always fine. **Nothing in the pipeline has ever compiled what actually ships.** That gap
+  is still open; the orphan check closes the specific hole, not the class.
+- **Fixed:** the ship wipes the shipped redscript tree before copying (mirror, not merge) and
+  dies naming any file the repo does not have, plus the directory to delete.
+- **The dev machine had a DIFFERENT flavour of the same rot:** its game install had no
+  duplicates but six stale files (`Combat`, `MainMenu`, `OwnSave`, `PauseMenu`, `Phone`,
+  `World/NetworkWorldSystem`) — `xmake install` leaving `.reds` at previous contents, which
+  the ship works around for `distrib` but NOT for the game directory. Mirrored by hand.
+  **Two places rot; the ship only guards one.**
+
+- **TEST SERVER IS ARMED (2026-09-07) AND THE TWO DIGEST IMPLEMENTATIONS AGREE.** First time
+  that has ever been true.
+  - `/mnt/vol/projects/CyberpunkMP-authority/config/server-manifest.json`, manifest
+    `2026.09.07.03` off v0.3.117 (re-armed after the duplicate-script fix regenerated it). **Live is deliberately
+    untouched and still answers `""`.**
+  - **The C++ agreed with an independent implementation of the canonical string TWICE, on two
+    different manifests** — `2026.09.07.02` → `addfcd78…` and `2026.09.07.03` → `ff03041c…`.
+    So `GameServer.cpp` and the documented format agree. The launcher's `manifest.js` is the
+    THIRD implementation and is still unproven — only a real client joining test proves it.
+  - **A `-Launcher` ship does NOT regenerate the manifest** (`Ship.ps1:914`, `if ($Mod)`), and
+    that is correct: the manifest describes the payload, so a launcher-only ship carries the
+    previous one forward with the unchanged bytes it describes. v0.3.117 therefore shipped
+    with the OLD broken manifest until a `-Mod` ship regenerated it into the same release.
+    **A generator fix reaches nobody until a `-Mod` ship.**
+  - **Still needed to arm LIVE:** one real client joins test and gets in. Then live, after
+    players are on v0.3.117 — the gate is a hard refuse and everyone else is locked out until
+    they relaunch.
+
+- **THE MANIFEST GATE WAS NEVER ARMABLE, AND "not armed yet" WAS THE WRONG DIAGNOSIS
+  (found 2026-09-07 while trying to arm it).** Fixed generator-side in `7294cb5`; a ship is
+  needed before arming can do anything.
+  - **The bug:** the install digest is `id:version:archive.sha256` for every component with
+    `required:true` and `audience:"all"`. `cyberpunk_multiplayer` is required, so BOTH
+    implementations reach it and NEITHER can proceed — the launcher throws *"required
+    component ... has no archive.sha256"* (`manifest.js:361`), the server logs *"missing
+    version/archive hash - manifest checks stay disabled"* and clears the version
+    (`GameServer.cpp:823`). Only `class:bundled` components were hashed, because only they
+    name a prerequisite zip; the payload's hash lived at `client.payload.archive` and never
+    on the component. Six of seven required components had a hash. The seventh did not.
+  - **WHY IT HID FOR THREE RELEASES, and this is the lesson.** Both sides fail OPEN by
+    design. Arming a server with that manifest loads it, computes nothing, disables every
+    check, and `/api/v1/status/` keeps answering `ManifestVersion: ""` — identical to never
+    having armed it. We measured that empty string three times and read it as a chore nobody
+    had done. **A fail-open component reports "off" the same way whether it was never
+    switched on or cannot switch on. Check the log line, not the status field.**
+  - **The selftest never caught it because it never passed `--payload-zip`** — it was
+    generating a manifest no ship would ever produce. It does now, plus three checks on the
+    invariant both consumers depend on, and the generator REFUSES to emit a manifest whose
+    required components cannot be digested.
+  - **What arming now takes, in order:** ship (any release regenerates the manifest, and the
+    payload component will carry its hash) → copy `server-manifest.json` into the TEST
+    server's `config/` and prove a real client joins → then live. The gate is a HARD REFUSE,
+    not a warning: `kManifestMismatch` for any version mismatch (including an empty one, so
+    a client started without the launcher is refused too) and `kDigestMismatch` for content,
+    with `N=0` previous versions allowed by default. **Anyone not on the newly-shipped build
+    is locked out until they relaunch**, which is why the announcement goes first.
+  - **`audioware` and `red_data` are still uncurated** (no pin, no fileId, no hashes,
+    MANIFEST-ARCHITECTURE.md §3.3). They are `class:nexus` and optional, so they are NOT in
+    the digest and do not block arming — but `policy.unknownMods` cannot move off `warn`
+    until they are done.
+
+- **Server list: DIAGNOSED AND FIXED 2026-09-06. It was also a REMOTE KILL SWITCH.**
+  - Symptom: `Server could not reach the server list! Could not establish connection`, every
+    60s, both deployments — live for hours, and 1s after boot on a clean rebuild of the test
+    box, which is what proved it systemic rather than a stale binary.
+  - Cause, VERIFIED: `ServerListSystem.cpp` hardcoded
+    `https://cyberpunk.skyrim-together.com` — upstream Tilted Phoques' master server.
+    **That subdomain has NO DNS RECORD** (`getent hosts` from the NAS *and* from inside
+    `cyberpunkmp-server`); parent `skyrim-together.com` still resolves to Cloudflare, so it
+    was RETIRED, not broken. Nothing was ever wrong on our side.
+  - **The real find: `if (response->status == 403) GServer->Kill();`** — a third party we
+    forked away from could shut down every server this project runs. Inert only because the
+    DNS is gone; a re-pointed, re-registered or squatted subdomain kills every deployment at
+    once, and during a migration that reads as the migration failing.
+  - Fixed: endpoint is `Config::ServerListEndpoint`, **default EMPTY = do not announce**
+    (checked before the thread spawns, so no detached thread per minute and one info line
+    instead of an error forever). A 403 now sets `m_refused` and STOPS announcing — a list
+    refusing us is a reason to leave that list, never to disconnect people who are playing.
+    `m_refused`/`m_announcedDisabled` are `std::atomic` because the announce runs on a
+    detached thread (this project has already lost a day to a "cannot happen" data race).
+  - Discovery never depended on it: `publish/server.json`, fetched from `releases/latest`.
+  - **Do not re-point this at a public list without deciding what a 403 should mean.**
 
 - **Live server runs feat-built code while `main` lags** — the cron half is FIXED: the NAS
   cron now pulls `origin/feat/world-state` (remote `ofmiceandcam98-eng`, confirmed live
@@ -1021,14 +2026,142 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   soft-skips, and distrib\launcher\mod\Rpc must be assembled by hand (extracted from
   the previous payload; 9/10 stubs byte-match the repo, RedTypes.cs is the generated
   aggregate).
-  `Ship.ps1 -Mod` does NOT cut a new version — it republishes mod assets into whatever
-  release is already `latest`, so THREE different `ModPayload.zip` builds now exist under the
-  tag `v0.3.113` (28 Aug, and two on 30 Aug). Players still update correctly because the
-  launcher compares the ASSET ID, not the version string, but `.nco-version` reads the same
-  number for three builds — which will mislead the first bug report that quotes it. Cutting
-  v0.3.114 needs a `## What changed - v0.3.114` section in `publish\release-notes.md` and a
-  FULL ship (which also republishes the 103 MB installer). Held on the same 2026-08-30 budget
-  call as the signing-key pause.
+  **Still true and still a trap: `Ship.ps1 -Mod` does NOT cut a new version** - it republishes
+  mod assets into whatever release is already `latest`. THREE different `ModPayload.zip` builds
+  exist under the tag `v0.3.113` (28 Aug, and two on 30 Aug). Players still update correctly
+  because the launcher compares the ASSET ID, not the version string, but `.nco-version` reads
+  the same number for all three - which will mislead the first bug report that quotes it.
+
+### SWEEP AUDIT 2026-09-09 - the repo is clean, and here is the proof
+
+zeldfep asked for a full sweep of unused code, features and stale lines. Backed up first to
+`/mnt/vol/backups/pre-sweep-2026-09-09/` (all-refs bundle + the uncommitted WIP a bundle
+cannot carry, both verified by a real clone). What the sweep actually found:
+
+- **Provenance first, because it bounds everything else.** Of 770 tracked files, 421 are
+  PURE UPSTREAM (never touched by Cameron/zeldfep/ofmiceandcam98-eng/Felipe/Claude), 105 are
+  mixed, 244 are ours. Cleaning upstream files buys nothing and costs merge conflicts, so the
+  sweep surface is the 244. Recompute with `git log --no-merges --format=@@%an --name-only`
+  and bucket by author before any future sweep.
+- **REMOVED - the abandoned hit-rect cluster in `CharacterSelect.reds`** (169 lines):
+  `MpCsArm`, `MpCsHitName`, `MpCsSlotFromHit`, `OnMpCsCardRelease`. A closed cluster whose
+  only entry point was `MpCsArm`, and `f0e8556` deleted both of its call sites when input
+  moved to `OnGlobalRelease` + `MpCsClickAt`. Its comment still claimed "BACK IN USE as of
+  test.31" - that claim was 24 hours stale and is exactly why a name-grep alone is not
+  evidence: the comment said live, the call graph said dead, and the commit that removed the
+  callers settled it.
+- **KEPT, and the do-not-undo block that guards it UPDATED, not deleted.** The
+  `SetInteractive(false)` rationale (the test.27 soft-lock) pointed at the hit rects by name.
+  The RULE outlived the mechanism, so the rule stands and the cross-reference now names
+  `OnGlobalRelease`/`MpCsClickAt`. Never delete a decision because its example rotted.
+- **Verified clean, do not re-audit without cause:** all 66 launcher IPC handlers are
+  invoked; all 76 preload bridges are called (`startServer`/`stopServer`/`restartServer`
+  looked dead only because `index.html:2034` dispatches them through a loop over ids - the
+  "grep by name" trap again); all 6 launcher deps are imported; 0 dead member functions
+  across the 44 C++ files we own; no references to addresses that died in the migration
+  except deliberate ones (a redaction test vector, and `NODE-TO-NODE-VERDICT.md`, which
+  `ADDRESSES.example.md` says is left unsanitised on purpose).
+- **Names that lie, checked and kept:** `tools/netpack-scratch` is a live enum regression
+  harness referenced by `code/netpack/main.cpp`; `tools/netlab` has its own CI workflow and
+  is referenced from `Settings.cpp` and `InterpolationSystem.cpp`. Do not delete either on
+  the strength of its name.
+- **OPEN, needs a human decision (NOT swept):**
+  - ~~`code/launcher/`~~ **DELETED 2026-09-09 (zeldfep's call).** 33 files, 100% upstream,
+    superseded by `launcher-lite`. It was not merely unused - CI's `xmake install -o distrib`
+    passes no target, so its phony `Launcher` target ran TWO `pnpm install`s and an Electron
+    build on every push, producing an artifact nothing consumed (`Ship.ps1` only ever takes
+    `distrib\launcher\mod\*`). The merge-surface worry did not survive contact: the last
+    commit by any upstream author here is 2024-12-11, every merge in our history is from our
+    own fork branches, and no `upstream` remote is configured. Removal needed THREE edits -
+    the directory, `includes("code/launcher")` in `xmake.lua`, and the CI pnpm cache paths.
+    **Do NOT also strip `setup-node`/pnpm from CI**: `code/server/admin/xmake.lua` uses pnpm
+    and sits under the unconditional `includes("code/server")`, so the cache was re-pointed
+    at the admin lockfiles rather than dropped. Verify green after.
+  - `.claude/worktrees/optimistic-liskov-2b7ca0` - a live worktree on
+    `claude/optimistic-liskov-2b7ca0`. May belong to the other stream; not removed.
+  - ~~`docs/songbird-attempt-backup/`~~ **RESOLVED - KEEP** (zeldfep, 2026-09-09). Not stale
+    and not the Phantom Liberty prologue skip, which is a separate live thing
+    (`zz_NightCityOnline_CleanStart.archive`). This is the code from EIGHT failed attempts
+    at the Songbird holocall hang, reverted 2026-08-20, kept so a future attempt starts
+    from the end. Docs-only: never built, never shipped, no code references it. **The hang
+    is MITIGATED, NOT FIXED** - `MpSilenceStoryHolocalls` (the Songbird gate, a do-not-undo
+    block) keeps Songbird from reaching a character at all, and the freeze returns if that
+    gate comes out. Fixed while here: `songbird-holocall-hang.md` never named the folder,
+    so the archive was unreachable from the doc written to lead people to it.
+  - ~~`publish/TODO.md`~~ **DELETED 2026-09-09 (zeldfep).** The Discord was revamped and the
+    `#to-do-list` channel it fed no longer exists - *"we are working off atlas moving
+    forward"*. `tools/UpdateTodoList.ps1` went with it, since syncing a channel that is gone
+    is its only purpose. **README and CONTRIBUTING both linked it** and now point at THIS
+    file instead: the Atlas is dev-role-only on the tailnet, so it cannot be what a public
+    contributor is sent to. The map is the public ledger; the Atlas is the internal one.
+
+### A FAILED CLEAN WAS INVISIBLE, SO EIGHT UPDATES FAILED IN SILENCE (found + fixed 2026-09-09)
+
+- **What happened.** After the manifest fix above, Update ran eight times on zeldfep's box
+  and refused every time with *"The mod folder does not match what was just installed, so the
+  install was NOT recorded."* The trail logged eight `payload verified against manifest
+  2026.09.09.02 before install` lines and NOTHING about the refusal, so the diagnosis started
+  from a screenshot instead of from a log that already had the answer.
+- **The actual blocker:** one leftover, `assets/Archives/zz_NightCityOnline_Selector.archive`,
+  put there by `DevInstall.ps1` on 2026-09-08 and no longer shipped by the corrected v0.3.120
+  payload. `auditPayloadInstall` counts any unknown file inside a payload-owned directory
+  (`assets`, `Rpc`) as an orphan and refuses to stamp the install. Correct behaviour. Deleting
+  that one file cleared it - the archive is tracked at
+  `code/assets/Archives/packed/archive/pc/mod/`, so removing it from a game folder is free.
+- **The defect:** `extractPayloadClean` deletes every payload-owned directory before
+  extracting, inside `try { rmSync(...) } catch { }` - an EMPTY catch whose comment claimed
+  "the extract's error says so louder". It does not: a clean that fails does not stop the
+  extract from succeeding, so the leftovers survive, the audit fails, and the player is told
+  to remove and reinstall the whole mod. Eight refusals, zero evidence.
+- **Fixed:** `extractPayloadClean` now returns the failures with their error codes,
+  `applyUpdate` logs each one, and the audit failure itself writes a trail line naming the
+  missing and left-over FILES, not just counts. When a clean failed first, the thrown message
+  blames that cause and says what to close, instead of sending the player to Remove+reinstall.
+- **STILL UNEXPLAINED, and now instrumented for next time:** on that box the clean *should*
+  have removed the orphan. The installed build's `extractPayloadClean` is byte-identical to
+  source, the separators are forward slashes so `shippedDirs` was `{assets, Rpc}`, the ACL is
+  `BUILTIN@Users FullControl`, and the file deleted without elevation on the first try. So the
+  rmSync failed for a reason nobody can name yet - the new log line is what will name it.
+  Do NOT close this out as "leftover file, deleted" - the cause is still open.
+- **Traps this session re-proved:** mod-folder mtimes are the ZIP's stored times (AdmZip
+  restores them), so they date the BUILD, never the install - do not infer "the extract never
+  ran" from them. And `DevInstall` leftovers become orphans the moment a payload stops
+  shipping a file, which is a standing hazard for both dev boxes, not a one-off.
+- **Testability gap:** `extractPayloadClean` and `auditPayloadInstall` live in `main.js` and
+  need Electron, so `manifest.selftest.mjs` cannot reach them. They are pure `fs`/`path`
+  helpers and belong in `manifest.js`, where Verify would cover them. Not moved - flagged.
+
+### A RE-PUBLISHED RELEASE LOOKS LIKE A TAMPERED DOWNLOAD FOR TEN MINUTES (found + fixed 2026-09-09)
+
+- **What happened.** v0.3.120 shipped, the payload was found to carry a stray archive, and it
+  was replaced with `Ship.ps1 -Mod -NoBump -NoAnnounce`. That re-ran the manifest correctly:
+  `2026.09.09.02` pins the corrected `ModPayload.zip` (`a8b6127...`, 3,163,977) and the public
+  URLs the launcher actually fetches serve that matching pair. Nothing on GitHub was wrong.
+- **Why the launcher refused anyway.** `refreshManifestState()` memoizes for
+  `MANIFEST_TTL_MS` (10 min). zeldfep's launcher read `2026.09.09.01` at 04:56:47, which pins
+  the payload that was replaced minutes later, and pressed Update at 05:02:15 — inside the
+  TTL. `applyUpdate` compared the fresh download to the memoized pin and threw
+  "does not match what the manifest approved".
+  Trail: `update refused: payload sha256 a8b612710c67 != manifest 48bbf4fcd0b9`.
+- **The trap in the guard.** Re-publishing assets bumps the manifest version but NOT the tag,
+  so `manifest.release === info.version` still passes and a superseded pin gets full authority
+  to fail a good file. The comment above it — "a cached older manifest knows nothing about a
+  newer payload and must not fail it" — described exactly the case it did not actually cover.
+- **The fix** (`main.js`, `applyUpdate`): a mismatch now buys a FORCED `refreshManifestState(true)`
+  and is only fatal if the re-fetched manifest still disagrees. The check keeps its teeth
+  against a real bad download; a stale memo stops impersonating an attack. Costs one extra
+  fetch only on the failing path.
+- **Operational note while old launchers are in the field.** Any launcher build before this
+  fix has the same 10-minute window. If a release's assets are ever replaced after publish,
+  say so — the cure is to fully quit the launcher (it has a tray icon; closing the window is
+  not quitting) and reopen, which drops the memo.
+- **Still open, same class:** `installPrereqs` verifies each bundled zip against
+  `usableManifest()` from the same memo and throws `"<name> does not match what the manifest
+  approved"` with no re-fetch. Same stale-memo failure, on the install path rather than the
+  update path. Not yet fixed.
+- **Process lesson:** replacing an asset under a live tag is legitimate and the tooling handles
+  it, but it is a flag for clients holding a cached manifest. Prefer bumping the version when
+  the payload changes after publish.
 
 ## 2. CODE MAP — where things live, and the gotcha that bites there
 
@@ -1048,11 +2181,11 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
 | Combat | `code/server/native/Game/Level.cpp` (handlers) + `Components/{Health,Weapon,Quickhack}Component.h` + `code/assets/redscript/Combat.reds` | Detect → validate → broadcast → apply. Server owns health, magazine, RAM pool | **The game computes, the server bounds.** Weapon damage, quickhack damage and RAM cost all come from the client because they are native calculations needing a live StatsSystem — `GetCost()` runs `CalculateStatModifiers` against the attacker's deck and perks and can include a RANDOM modifier. Quickhack damage MUST stay 0 in the rule table: Cyberpunk applies it through the ordinary hit pipeline, so a number there double-counts (the v0.3.104 bug). A TweakDBID is **CRC32** of the name + length in bits 32-39, not FNV — guarded by a static_assert against a value dumped from the game |
 | Making players targetable | `code/assets/Tweaks/CyberpunkMP.tweak` + `Hackable.reds` | `objectActions` on the puppet records; hostile attitude at spawn | **`MaMuppet`/`WaMuppet` inherit from `Character.Panam`, NOT from `Character.Muppet`** — editing Muppet does nothing. Quickhack action names in the game's scripts are WRONG (`BaseBlindHack` not `BlindHack`, `MadnessHackBase` not `MadnessLvl3Hack`) — they were dumped live. Hostile attitude satisfies BOTH gates: `Att_Hostile` for `TSF_EnemyNPC` and the fourth route to `IsAggressive()`. The entity templates were never missing targeting components (16 `gameTargetingComponent`s, confirmed via WolvenKit CLI). Behind `--hackable-puppets` |
 | Runtime inspection | `bin/x64/plugins/cyber_engine_tweaks/mods/nco_hackdump` (not in repo) | Dumps TweakDB data the game will not reveal statically | CET only honours `registerForEvent` from `init.lua`; a required module's registration is ignored. Mod globals are NOT reachable from the console — export by returning a table. `io` is sandboxed to the mod folder. **Lua output goes to `scripting.log`**, not `cyber_engine_tweaks.log` |
-| World/asset editing | External tool, not in repo: [WolvenKit](https://github.com/WolvenKit/Wolvenkit/releases) | Editor + CLI for the game's own resource formats (`.ent`, `.mesh`, `.app`, world/sector nodes, TweakDB) — the tool for any world-building, level-editing, or static-asset-inspection work, not just confirmation checks (already confirmed the puppet templates' `gameTargetingComponent`s statically — see the targeting row). **NAS updater LIVE 2026-08-29**: `tools/deploy/update-wolvenkit.sh` in `truenas_admin@100.90.85.33`'s crontab (`0 * * * *`, self-throttled to ~72h internally — cron frequency and check cadence are deliberately decoupled, see the script's own header); seed run succeeded — `~/wolvenkit-console/VERSION` reads `8.20.0`, `~/wolvenkit-console/current/` holds the full `WolvenKit.ConsoleLinux` extraction. The script was hand-seeded on the box first (live wiring `ee12df2`) and is NOW TRACKED (`dcc67eb`) — the leftover untracked copy refused the NAS pull for hours until shelved to `~/update-wolvenkit.sh.shelved-20260903` (2026-09-03); the cron LINE still lives only in the crontab, so a rebuilt box needs it re-added by hand. **Local CLI, built from source 2026-08-30 — the route on Cam's PC to READ an asset now**: no installed WolvenKit there, only `C:\Users\Cam\Downloads\WolvenKit-main.zip` (source, 89MB); extract, then `dotnet build WolvenKit.CLI\WolvenKit.CLI.csproj -c Release` — needs the .NET SDK, and **the CLI targets `net10.0`**, so the exe lands at `WolvenKit.CLI\bin\Release\net10.0\WolvenKit.CLI.exe` (Cam's box has SDKs 6/8/9/10, so it builds; a box with only 9 will not). Decode with `convert serialize <file>` (writes `<file>.json` beside it; `convert deserialize` goes back). Proven use: decoding `prototype_hud.inkhud` + `multiplayer_ui.inkwidget` exonerated the asset in the invisible-chat-box bug BEFORE anyone "fixed" a file that was never at fault (see the SOLVED chat-box entry) — `multiplayer_ui` is field-for-field identical to `new_phone` apart from `ignoreHudScaleOverride`, and the chat canvas matches its authored state exactly (1000x1000, `Fixed`, `Fill/Fill`, opacity 1) | JSON traps that cost time: entry names are at `hudEntryName.'$value'`, NOT `.hudEntryName`; a widget library item's tree is at `item.package.Data.File.RootChunk.rootWidget`; and `rootWidget` is often `{"HandleRefId": "N"}` pointing at a `"HandleId": "N"` defined elsewhere in the same package — plain property walks fail, search the raw text for the id. **Version pin**: WolvenKit versions track specific game patches — check the releases page for the version matched to 2.31 before use; a mismatch can misread or corrupt resource formats it does not recognise. Read-only inspection (CLI dumps) is low-risk; anything that WRITES a resource file is engine-pin-grade — verify against 2.31 first |
+| World/asset editing | External tool, not in repo: [WolvenKit](https://github.com/WolvenKit/Wolvenkit/releases) | Editor + CLI for the game's own resource formats (`.ent`, `.mesh`, `.app`, world/sector nodes, TweakDB) — the tool for any world-building, level-editing, or static-asset-inspection work, not just confirmation checks (already confirmed the puppet templates' `gameTargetingComponent`s statically — see the targeting row). **NAS updater LIVE 2026-08-29**: `tools/deploy/update-wolvenkit.sh` in `<nas-user>@<nas-host>`'s crontab (`0 * * * *`, self-throttled to ~72h internally — cron frequency and check cadence are deliberately decoupled, see the script's own header); seed run succeeded — `~/wolvenkit-console/VERSION` reads `8.20.0`, `~/wolvenkit-console/current/` holds the full `WolvenKit.ConsoleLinux` extraction. The script was hand-seeded on the box first (live wiring `ee12df2`) and is NOW TRACKED (`dcc67eb`) — the leftover untracked copy refused the NAS pull for hours until shelved to `~/update-wolvenkit.sh.shelved-20260903` (2026-09-03); the cron LINE still lives only in the crontab, so a rebuilt box needs it re-added by hand. **Local CLI, built from source 2026-08-30 — the route on Cam's PC to READ an asset now**: no installed WolvenKit there, only `C:\Users\Cam\Downloads\WolvenKit-main.zip` (source, 89MB); extract, then `dotnet build WolvenKit.CLI\WolvenKit.CLI.csproj -c Release` — needs the .NET SDK, and **the CLI targets `net10.0`**, so the exe lands at `WolvenKit.CLI\bin\Release\net10.0\WolvenKit.CLI.exe` (Cam's box has SDKs 6/8/9/10, so it builds; a box with only 9 will not). Decode with `convert serialize <file>` (writes `<file>.json` beside it; `convert deserialize` goes back). Proven use: decoding `prototype_hud.inkhud` + `multiplayer_ui.inkwidget` exonerated the asset in the invisible-chat-box bug BEFORE anyone "fixed" a file that was never at fault (see the SOLVED chat-box entry) — `multiplayer_ui` is field-for-field identical to `new_phone` apart from `ignoreHudScaleOverride`, and the chat canvas matches its authored state exactly (1000x1000, `Fixed`, `Fill/Fill`, opacity 1) | JSON traps that cost time: entry names are at `hudEntryName.'$value'`, NOT `.hudEntryName`; a widget library item's tree is at `item.package.Data.File.RootChunk.rootWidget`; and `rootWidget` is often `{"HandleRefId": "N"}` pointing at a `"HandleId": "N"` defined elsewhere in the same package — plain property walks fail, search the raw text for the id. **Version pin**: WolvenKit versions track specific game patches — check the releases page for the version matched to 2.31 before use; a mismatch can misread or corrupt resource formats it does not recognise. Read-only inspection (CLI dumps) is low-risk; anything that WRITES a resource file is engine-pin-grade — verify against 2.31 first |
 | Launcher | `code/launcher-lite/main.js` | Discord identity (membership: only 200/404 are verdicts), roles (10-min memo), manifest state machine, install lock + queue, Nexus manager, game detect (A–Z drives), footprint/uninstall | **CSS specificity**: base `button.action` (0,1,1) beats bare class rules — trio overrides must be `button.action.x`. Electron packaged: new source files MUST be added to package.json `build.files` (v0.3.97 shipped importing a file it didn't contain). **Uninstall is a two-layer mirror**: footprint in main.js AND `build/installer.nsh` — a new write location goes in BOTH. The `nxm://` class is cleared only when its command points at OUR exe (Vortex/MO2 write the same key; empirically tested both ways 2026-08-22) |
 | Manifest kit | `code/launcher-lite/manifest.js` (+ selftest) | Signature verify vs pins, §2.1 availability states, install digest, ownership index, unmanaged classifier, tailnet check | Pure functions, Electron-free; run `node manifest.selftest.mjs` (82 checks) before shipping launcher changes |
 | Ship tooling | `tools/Ship.ps1`, `tools/manifest/*.cjs` | Gate battery, staging, carry-forward, manifest generate/sign/verify-vs-pins, prerelease→verify→promote | Ship bumps package.json but never commits — carry the bump or the next ship collides with an existing tag and silently uploads into an old release. `Ship.ps1:574` copies `distrib\launcher\mod\assets` wholesale and never cleans it — anything left in `assets\Archives\` ships to every player, so keep probes and experiments out of `distrib` |
-| Deploy | `tools/deploy/update-server.sh` | NAS cron: player-count gate + server-relevant-path filter + untracked-file shelving | **Deploys whatever branch the checkout is ON — production `/mnt/vol/NASa/CyberpunkMP` is on `feat/world-state`, not main** (verified 2026-08-22). The repo dir is the script's first ARG and defaults to `~/CyberpunkMP`, which is not where production lives — calling it without the arg fails with "no such directory". Two traps beyond that: it DEFERS while Players>0 (so a deploy can silently not happen), and it skips the rebuild when no server-relevant path changed — a docs-only commit logs "pulled, nothing changed" and leaves earlier unbuilt server code still unbuilt. Verify a deploy by checking the running binary for a symbol, never by reading the log. **Untracked files kill pulls**: git refuses to overwrite an untracked file with an incoming one — three kills so far: the two coord-api publish files, then `tools/deploy/update-wolvenkit.sh` (hand-seeded on the box as the WolvenKit updater's live wiring, `ee12df2`, later committed to the repo, `dcc67eb`). Fingerprint in `~/nco-update.log`: `updating 3cde271 -> <new tip>` then `pull failed` every 10 minutes for hours. Diagnosed 2026-09-03 (zeldfep stream, from the NAS shell) — the remote (`origin` = ofmiceandcam98-eng, tracking `origin/feat/world-state`) and the fetch were both correct; neither suspected candidate was the cause. The byte-identical local copy was shelved to `~/update-wolvenkit.sh.shelved-20260903`, pull unblocked, checkout at the tip. HARDENED against the class, not the instance: the script now shelves ANY untracked file the incoming commits are about to create, with a loud log line naming it. Tracked local modifications still fail the pull ON PURPOSE — that is real divergence and deserves a human; do not "fix" it. Last trap: after a MANUAL pull the cron sees LOCAL==REMOTE and skips the rebuild — launch the rebuild yourself (why the 2026-09-03 rebuild was launched immediately by hand) |
+| Deploy | `tools/deploy/update-server.sh` | NAS cron: player-count gate + server-relevant-path filter + untracked-file shelving | **Deploys whatever branch the checkout is ON — production `/mnt/vol/projects/CyberpunkMP` is on `feat/world-state`, not main** (verified 2026-08-22). The repo dir is the script's first ARG and defaults to `~/CyberpunkMP`, which is not where production lives — calling it without the arg fails with "no such directory". Two traps beyond that: it DEFERS while Players>0 (so a deploy can silently not happen), and it skips the rebuild when no server-relevant path changed — a docs-only commit logs "pulled, nothing changed" and leaves earlier unbuilt server code still unbuilt. Verify a deploy by checking the running binary for a symbol, never by reading the log. **Untracked files kill pulls**: git refuses to overwrite an untracked file with an incoming one — three kills so far: the two coord-api publish files, then `tools/deploy/update-wolvenkit.sh` (hand-seeded on the box as the WolvenKit updater's live wiring, `ee12df2`, later committed to the repo, `dcc67eb`). Fingerprint in `~/nco-update.log`: `updating 3cde271 -> <new tip>` then `pull failed` every 10 minutes for hours. Diagnosed 2026-09-03 (zeldfep stream, from the NAS shell) — the remote (`origin` = ofmiceandcam98-eng, tracking `origin/feat/world-state`) and the fetch were both correct; neither suspected candidate was the cause. The byte-identical local copy was shelved to `~/update-wolvenkit.sh.shelved-20260903`, pull unblocked, checkout at the tip. HARDENED against the class, not the instance: the script now shelves ANY untracked file the incoming commits are about to create, with a loud log line naming it. Tracked local modifications still fail the pull ON PURPOSE — that is real divergence and deserves a human; do not "fix" it. Last trap: after a MANUAL pull the cron sees LOCAL==REMOTE and skips the rebuild — launch the rebuild yourself (why the 2026-09-03 rebuild was launched immediately by hand) |
 | Coordination | `code/coord-api/`, `publish/assistant-updates.json` | The feed both Claude streams post to; dev-key handout | Personal key `~/.ncoa-coord-key`; posts as "zeldfep (Claude)" |
 | Published surface | `publish/` | server.json (address, republished by workflow), modlist.json (curated Nexus list), roles.json (written by server), manifest-source.json (curated components), release-notes.md (EVERY release's body), fullinstall-base/ | All fetched from `releases/latest/download/<name>` — a launcher-only ship must carry mod assets forward or every launcher 404s (v0.3.1 lesson, automated since) |
 | Ship-gate verify | `tools/Verify.ps1` + `tools/tests/` | The pre-ship check battery; every check maps to a failure that has actually happened here, never a category of bug in the abstract: **BOM** (`Set-Content -Encoding UTF8` on PS 5.1 writes one — breaks redscript with "syntax error at 1:1", which names nothing) · **natives vs RTTI** (a native with no `RTTI_METHOD` fails at LOAD, taking every script in the mod down) · **duplicate dispatch** (the `/call` bug: an older deprecation stub at ChatSystem.cpp:2785 matched first and returned, so `/call 555-014-372` answered "use your phone" and rang nobody while the new player-to-player call dispatch at ChatSystem.cpp:3656 sat unreachable dead code — fix is merge into one block or rename one command, deciding which behaviour is wanted FIRST since the live one is whichever wins at 2785; comparison is by INDENTATION, because a nested branch in a compound `if` is not a duplicate) · **requests all handled** (`CreateCharacterRequest`: declared, took a oneof slot, never sent or handled) · **stores + ticks wired** (a store never `Load()`ed silently holds nothing) · **unit tests** (103 checks in `tools/tests/`: seats, calls, trading, permissions, contact migration) | Every failure prints three fields — **what** it costs, **where** it is, **fix** — because two assistants work this codebase from separate sessions and a bare `FAIL` costs whichever one picks it up a fresh investigation of something the check already knew. Self-tested: a bogus native was planted, the failure rendered all three fields, the file was restored to a clean run. **Tests stay IN THE REPO** — the first set was written in a scratchpad and wiped by temp cleanup, turning "the tests passed" into somebody's word rather than something anyone could re-run; do not move them out |
@@ -1079,7 +2212,7 @@ a signing key) generate+sign+verify the manifest.
 still exists and still watches main. See ledger.
 
 **Feat → test server**: manual — `git reset --hard origin/feat/world-state` in
-`/mnt/vol/NASa/CyberpunkMP-authority`, `docker compose -p nco-authority build
+`/mnt/vol/projects/CyberpunkMP-authority`, `docker compose -p nco-authority build
 --build-arg BUILD_JOBS=2` with an IMAGE_READY marker into `~/nco-authority-rebuild.log`,
 then `up -d`. Probe: `docker exec nco-authority-tailscale wget -qO-
 http://localhost:11778/api/v1/status/`.
@@ -1134,3 +2267,42 @@ portability stays unverifiable locally.
   environment identity once live.
 - **Server**: status API `ManifestVersion`/`Release` (empty = migration).
 
+
+## 5. THE GAME INSTALL AS A TOOL (surveyed 2026-09-04, zeldfep's box)
+
+What a machine with the real game can answer that a build-only box cannot, and what is
+STILL missing here. Recorded because "does this box have the game" turned out to be the
+wrong question — the useful one is "which of these does it have".
+
+| Capability | Needs | Status on this box |
+|---|---|---|
+| Compile redscript (`CheckScripts.ps1`) | `engine\tools\scc.exe`, from the **redscript prerequisite** | **YES** — `OK - redscript compiles` |
+| Live-install a build (`DevInstall.ps1`) | `red4ext\plugins\zzzCyberpunkMP` | **YES** |
+| Read VANILLA SCRIPT SOURCES | **REDmod DLC** → `<game>\tools\redmod\scripts` | **NO — not installed** |
+| Read map/world geometry, `.ent`, `gameHitShapeBVH` | WolvenKit (CLI buildable from source) | **NO — not installed** |
+| Verify prerequisite versions against the pins | the install itself | **YES** |
+
+- **REDmod is the notable gap and it is free on Steam.** Every file+line citation the map
+  leans on — the vehicle-damage audit (`vehicleComponent.script:79/:4543/:6304`,
+  `vehicles.script:1123`, `attackData.script:219`), the phone corrections
+  (`phoneSystem.script:9`, `newHudPhoneGameController.script:512`,
+  `messengerUtils.script:89`), `singleplayerMenu.script:1012`, `saveLocksManager.script:29`
+  — comes from those sources. **They cannot be verified or extended on this box.** Anyone
+  about to do that class of work (read the game's own source rather than guess) should
+  install REDmod first; it is the difference between "answered from the sources" and
+  "answered from a runtime dump", which is the distinction that has decided several of the
+  entries above.
+- **Prerequisite versions match their pins EXACTLY**, verified against
+  `publish/manifest-source.json`: RED4ext **1.29.1**, Codeware **1.18.0**, ArchiveXL
+  **1.26.0**, TweakXL **1.11.1**. Also present: `input_loader`, `zzzCyberpunkMP`.
+- **The game has not been RUN since the mod was installed** — `red4ext\logs` is empty. So
+  the install is unproven, and the first launch is the test. First diagnostic if the mod
+  appears to do nothing is that log, per the symlinked-plugin entry.
+- **A live reproduction of ledger fault A is sitting on this machine**, which is worth
+  keeping rather than tidying away. 23 save folders: `MultiplayerStart`, `ManualSave-0/1`,
+  and twenty AutoSaves — **including `AutoSave-12`, the exact save that produced the wrong
+  character on 2026-09-01**. Every one carries a timestamp inside the same two seconds
+  (07:28:41–43, restored as a batch), so under the OLD "newest save that is not the
+  template" rule which character you became was decided by sub-second tie-breaking. The two
+  newest are `AutoSave-13` and `AutoSave-12`. That is the coin flip made visible, and it is
+  why the fix removes the choice rather than sharpening it.

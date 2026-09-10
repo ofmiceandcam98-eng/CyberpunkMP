@@ -26,13 +26,20 @@
 
 [CmdletBinding()]
 param(
-    # Shown in the dev panel next to the tag. Say what to LOOK for, not what changed
-    # internally - "remote players MOVE" is the right shape.
+    # Shown in the dev panel next to the tag, and it is the ONLY thing shown there. Say what
+    # to LOOK for, not what changed internally - "remote players MOVE" is the right shape,
+    # "worldstate" is not. Four builds shipped as "test.N - worldstate" before anybody could
+    # tell them apart; there is a warning below that catches that shape now.
     [Parameter(Mandatory = $true)]
     [string]$Name,
 
     # Override the tag. Defaults to <current version>-worldstate-test.<next number>.
     [string]$Tag,
+
+    # Skip the Verify.ps1 gate. An escape hatch, not a habit - it exists so a genuine false
+    # positive cannot block a ship at midnight, and every use of it is a bug in Verify that
+    # should be fixed rather than routed around.
+    [switch]$SkipVerify,
 
     [switch]$WhatIf
 )
@@ -55,13 +62,25 @@ Set-Location $Repo
 $version = (Get-Content (Join-Path $LauncherDir "package.json") -Raw | ConvertFrom-Json).version
 
 if (-not $Tag) {
-    # Next number in the sequence, read from what is actually published rather than
-    # guessed - two test builds sharing a tag is a silent overwrite.
-    # Asked of GitHub rather than of a remote name: $GhRepo is "owner/name", which
-    # ls-remote does not accept, and which remote points where varies by checkout.
-    $existing = & gh release list --repo $GhRepo --limit 60 2>$null
-
+    # THE SEQUENCE MUST NEVER GO BACKWARDS, and reading only what is published lets it.
+    #
+    # This asked GitHub for the highest published number and added one. Correct while builds
+    # accumulate, and wrong the moment any are deleted: on 2026-09-08 a cleanup removed every
+    # prerelease, so the next ship found none and restarted at 1. The sequence went test.29,
+    # test.30, test.1 - and two different builds can now share a name, which makes "which
+    # build was that" unanswerable for anything before that point.
+    #
+    # So the number is the MAXIMUM of three sources, and the counter is written back. Any one
+    # of them surviving is enough to stop the sequence rewinding:
+    #
+    #   published releases   authoritative while they exist, and the only cross-machine source
+    #   local git tags       survive a release being deleted on GitHub
+    #   a counter file       survives both, and is machine-local (gitignored) rather than
+    #                        committed, because a tracked counter is a merge conflict on
+    #                        every parallel ship
     $highest = 0
+
+    $existing = & gh release list --repo $GhRepo --limit 100 2>$null
     foreach ($line in ($existing -split "`n")) {
         if ($line -match 'worldstate-test\.(\d+)') {
             $n = [int]$Matches[1]
@@ -69,12 +88,52 @@ if (-not $Tag) {
         }
     }
 
+    foreach ($line in (& git tag --list "*worldstate-test*" 2>$null)) {
+        if ($line -match 'worldstate-test\.(\d+)') {
+            $n = [int]$Matches[1]
+            if ($n -gt $highest) { $highest = $n }
+        }
+    }
+
+    $counterFile = Join-Path $PSScriptRoot ".test-build-counter"
+    if (Test-Path $counterFile) {
+        $saved = 0
+        if ([int]::TryParse((Get-Content $counterFile -Raw).Trim(), [ref]$saved)) {
+            if ($saved -gt $highest) { $highest = $saved }
+        }
+    }
+
     $Tag = "v$version-worldstate-test.$($highest + 1)"
+
+    # Written before the build, not after: a ship that dies half way must still burn its
+    # number, or the next attempt reuses it and clobbers whatever the first one managed to
+    # publish.
+    Set-Content -Path $counterFile -Value ($highest + 1) -Encoding ascii
 }
 
 Step "Test build"
 Write-Host "  tag  : $Tag"
 Write-Host "  name : $Name"
+
+# THE NAME IS THE ONLY THING THE LAUNCHER SHOWS, so a bad one costs a person a guess.
+#
+# The parameter has always said "say what to LOOK for, not what changed internally". It was
+# still passed as "worldstate" - the BRANCH name - on four consecutive builds, which put four
+# rows called "test.N - worldstate" in the dev panel with nothing to tell them apart.
+# zeldfep, 2026-09-08: "can we make it into 1 fill test, the test should say what we are
+# working on".
+#
+# A warning rather than a refusal: a bad label is a bad label, not a reason to lose a build at
+# the end of a long ship. It is loud enough to fix next time.
+$branch = (& git rev-parse --abbrev-ref HEAD 2>$null)
+
+if ($Name -eq $branch -or $Name -eq ($branch -replace '.*/', '') -or $Name -notmatch '\s') {
+    Write-Host ""
+    Write-Host "  !!  '$Name' reads like a branch or a keyword, not something to look for." -ForegroundColor Yellow
+    Write-Host "      The dev panel shows ONLY this. Prefer 'remote players MOVE' or" -ForegroundColor DarkYellow
+    Write-Host "      'character selector: click to pick, confirm by name'." -ForegroundColor DarkYellow
+    Write-Host ""
+}
 
 # ---------------------------------------------------------------------------
 # Build
@@ -88,6 +147,26 @@ Step "Client mod"
 & (Join-Path $PSScriptRoot "CheckScripts.ps1") | Out-Null
 if ($LASTEXITCODE -ne 0) { Die "redscript does not compile - not publishing" }
 Ok "redscript compiles"
+
+# Then everything a compiler cannot see. Cam's rule, 2026-09-03: run this before shipping
+# anything.
+#
+# GATED RATHER THAN REMEMBERED, because remembering is what failed. /call shipped as dead
+# code - two dispatches, the older one matching first and returning - and it compiled
+# perfectly, was reported as working, and would have gone out. Verify catches that class:
+# duplicate dispatch, natives with no RTTI behind them (which fail at LOAD and take every
+# script down), unhandled requests, BOMs, and the unit tests.
+if ($SkipVerify) {
+    Warn "verification SKIPPED by -SkipVerify"
+} else {
+    & (Join-Path $PSScriptRoot "Verify.ps1") | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host ""
+        & (Join-Path $PSScriptRoot "Verify.ps1")   # re-run visibly, so the failure is readable
+        Die "verification failed - not publishing. Fix it, or pass -SkipVerify if you are certain"
+    }
+    Ok "verified"
+}
 
 if ($WhatIf) {
     Warn "would build and install Client"
@@ -119,6 +198,28 @@ if (-not $WhatIf) {
     New-Item -ItemType Directory -Force -Path $assetsDst | Out-Null
     Copy-Item (Join-Path $Repo "code\assets\redscript\*") $assetsDst -Recurse -Force
     Ok "redscript force-copied from source"
+
+    # INPUTS and TWEAKS too, for the exact same reason - and this one shipped a bug.
+    # Only redscript was force-copied here, so an edited input XML or tweak took its value
+    # from whatever stale copy distrib already held. Measured 2026-09-10: the voice->T
+    # rebind (IK_V -> IK_T) was committed and the payload STILL carried IK_V, because the
+    # input XML came from distrib (last written by a world-state ship that never had the
+    # change) instead of from source. Anything a payload ships from source must be force-
+    # copied from source; distrib is a build cache, not the truth.
+    # NOT xmake.lua. Each source asset dir carries an xmake.lua build file, and copying '*'
+    # dragged it into the payload - assets/Inputs/xmake.lua and assets/Tweaks/xmake.lua then
+    # showed up as install-audit ORPHANS on 2026-09-10 (they are not in the release manifest),
+    # which is noise a payload should never carry. Ship only the asset the game reads.
+    foreach ($sub in @('Inputs', 'Tweaks')) {
+        $src = Join-Path $Repo "code\assets\$sub"
+        if (Test-Path $src) {
+            $dst = Join-Path $modDir "assets\$sub"
+            New-Item -ItemType Directory -Force -Path $dst | Out-Null
+            Get-ChildItem $src -File | Where-Object { $_.Name -ne 'xmake.lua' } |
+                ForEach-Object { Copy-Item $_.FullName $dst -Force }
+        }
+    }
+    Ok "inputs and tweaks force-copied from source"
 
     $stage = Join-Path $env:TEMP "nco-testbuild"
     if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
@@ -172,10 +273,102 @@ the shipped one. Restore puts the current release back.
 # right there in the release; it just never reached the one screen where the choice is
 # actually made.
 $shortNum = if ($Tag -match 'test\.(\d+)') { $Matches[1] } else { '?' }
-$title = "test.$shortNum - $Name"
+# THE COMMIT IS IN THE TITLE, so a build stays identifiable even if a number is ever
+# reused. Numbering is now monotonic, but that depends on a counter file that a fresh
+# checkout does not have - the sha does not depend on anything.
+#
+# A dirty tree is marked. On 2026-09-08 test.18 was published from uncommitted changes, so
+# the artifact matched no commit for several minutes; saying so on the release is cheaper
+# than refusing to ship and is honest about what was built.
+$sha = (& git rev-parse --short HEAD 2>$null)
+$dirty = if ((& git status --porcelain 2>$null)) { "+dirty" } else { "" }
 
-& gh release create $Tag --repo $GhRepo --prerelease --title $title --notes $notes $payload $dll
-if ($LASTEXITCODE -ne 0) { Die "publishing failed" }
+$title = "test.$shortNum - $Name ($sha$dirty)"
 
-Ok "published $Tag"
+# UPDATE an existing tag rather than failing on it.
+#
+# Iterating on one test build is the normal case, not the exception: a tester finds
+# something, it gets fixed, and the SAME build number should carry the fix so nobody has to
+# be told which of four rows to click. `gh release create` refuses an existing tag, and the
+# refusal came after a full verify-and-build - so every iteration ended in a dead script and
+# a hand-run `gh release upload --clobber`, three times in one evening before this was
+# written. The recovery was always identical, which is the sign it belonged in the tool.
+#
+# Explicitly NOT deleting and recreating the release: that would break the download URLs the
+# launcher may already be holding, and briefly leave the dev panel with no build at all.
+# Asked as a LIST, not as "view this tag" - the same fix Ship.ps1 carries at line 1072, and
+# for the same reason. A missing release makes `gh release view` write to stderr, PowerShell
+# 5.1 turns native stderr into an ErrorRecord, and $ErrorActionPreference='Stop' makes that
+# fatal. So PROBING FOR ABSENCE killed the script - after the full verify, the client build
+# and the payload staging had all succeeded.
+#
+# It failed silently too: the abort happened inside a background run that exited 0, so the
+# only symptom was a test build that never appeared. 2026-09-07.
+$existingTags = (gh release list --repo $GhRepo --limit 100 --json tagName | ConvertFrom-Json).tagName
+
+if ($existingTags -contains $Tag) {
+    Write-Host "  $Tag exists - updating it in place" -ForegroundColor DarkGray
+
+    & gh release upload $Tag --repo $GhRepo --clobber $payload $dll
+    if ($LASTEXITCODE -ne 0) { Die "uploading the new assets to $Tag failed" }
+
+    # The title carries what to LOOK for, so it has to move with the payload - a refreshed
+    # build under last iteration's description is how a tester tests the wrong thing.
+    & gh release edit $Tag --repo $GhRepo --title $title --notes $notes | Out-Null
+    if ($LASTEXITCODE -ne 0) { Die "updating the title and notes on $Tag failed" }
+
+    Ok "updated $Tag"
+}
+else {
+    & gh release create $Tag --repo $GhRepo --prerelease --title $title --notes $notes $payload $dll
+    if ($LASTEXITCODE -ne 0) { Die "publishing failed" }
+
+    Ok "published $Tag"
+}
+
+# ---------------------------------------------------------------------------
+# Prune superseded test builds
+# ---------------------------------------------------------------------------
+#
+# The ship ADDS a numbered prerelease and, until this, never removed the last one - so the
+# launcher's Test builds list grew a stale row on every ship and somebody cleared it by hand
+# (zeldfep, 2026-09-10, asking twice: "why do we keep leaving stale test builds on launcher").
+# There is only ever ONE test build to install - the one just shipped - so every other
+# worldstate-test prerelease is superseded the moment this one publishes.
+#
+# The RELEASE is deleted; the git TAG is kept. The tag is one of the three sources the number
+# sequence takes its max from (see Tag, above), so deleting it could rewind the count - keeping
+# it costs nothing and keeps the sequence monotonic. Only prereleases matching the test pattern
+# are touched, never the Latest release. A failed prune WARNS rather than Dies: the build has
+# already published, and a leftover row is a nuisance, not a reason to fail a good ship.
+#
+# The ledger half of the policy (zeldfep, 2026-09-10: "consolidate test builds if mostly or
+# fully tested otherwise clear it from launcher") is a human step - a validated build's changes
+# graduate into docs/MAP.md before the row goes. This only enforces the "clear from launcher"
+# half, which is the part that was being forgotten.
+Step "Prune superseded test builds"
+
+if ($WhatIf) {
+    Write-Host "  (WhatIf) would delete every worldstate-test prerelease except $Tag" -ForegroundColor DarkGray
+}
+else {
+    $releases = gh release list --repo $GhRepo --limit 100 --json tagName,isPrerelease | ConvertFrom-Json
+    $stale = @($releases | Where-Object { $_.isPrerelease -and $_.tagName -match 'worldstate-test\.\d+' -and $_.tagName -ne $Tag })
+
+    if ($stale.Count -eq 0) {
+        Ok "no superseded test builds to clear"
+    }
+    else {
+        foreach ($r in $stale) {
+            & gh release delete $r.tagName --repo $GhRepo --yes 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                Ok "cleared $($r.tagName) from the launcher (git tag kept)"
+            }
+            else {
+                Warn "could not clear $($r.tagName) - remove it by hand if it lingers"
+            }
+        }
+    }
+}
+
 Write-Host "`nInstall it from Settings > DEV > Test builds." -ForegroundColor Green

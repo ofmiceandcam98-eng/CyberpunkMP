@@ -1,3 +1,4 @@
+#include <exception>
 #include <filesystem>
 #include "Settings.h"
 #include <RED4ext/LaunchParameters.hpp>
@@ -6,112 +7,157 @@ void Settings::Load()
 {
     Settings& settings = Get();
 
+    // Breadcrumbs, because this function used to run in the dark. The 2026-09-07 crash
+    // died somewhere in here - the log file existed and was empty, so we knew only that
+    // it happened before the "Manifest:" line at the bottom. Three cheap markers turn
+    // that into a range of about ten lines.
+    spdlog::info("[Boot] reading launch parameters");
+
     auto& launchParameters = RED4ext::GetLaunchParameters();
 
-    if (launchParameters.Contains(RED4ext::CString("-online")))
-        settings.enabled = true;
-
-    // Developer overlay. The launcher only offers this to accounts with a dev or admin
-    // Discord role, but nothing here enforces that - every action the overlay exposes is
-    // re-checked by the server against the role IT derived from Discord. This flag decides
-    // whether a toolbar is drawn, nothing more.
-    if (launchParameters.Contains(RED4ext::CString("-debug")))
-        settings.debug = true;
-
-    // Voice, from the launcher's Settings > Voice page.
+    // NONE OF THIS IS LOAD-BEARING, SO NONE OF IT MAY BE FATAL.
     //
-    // Every one has a working default, so a game started without the launcher - or by an
-    // older launcher that does not send these - still has a usable voice configuration
-    // rather than no key and silence.
-    if (const auto key = launchParameters.Get("-voicekey"); key && key->size > 0)
-        settings.voicePushToTalkKey = (*key)[0].c_str();
-
-    if (const auto rangeKey = launchParameters.Get("-voicerangekey"); rangeKey && rangeKey->size > 0)
-        settings.voiceCycleRangeKey = (*rangeKey)[0].c_str();
-
-    if (const auto mode = launchParameters.Get("-voicemode"); mode && mode->size > 0)
-        settings.voiceMode = (*mode)[0].c_str();
-
-    if (const auto mic = launchParameters.Get("-micvolume"); mic && mic->size > 0)
-    {
-        // Clamped again here. The launcher clamps before saving, but this is a launch
-        // argument - anything can pass one - and a gain read straight from an argument is
-        // a scream waiting to happen.
-        const auto value = std::strtoul((*mic)[0].c_str(), nullptr, 10);
-        settings.voiceMicVolume = static_cast<uint32_t>(value > 200 ? 200 : value);
-    }
-
-    if (const auto chat = launchParameters.Get("-voicevolume"); chat && chat->size > 0)
-    {
-        const auto value = std::strtoul((*chat)[0].c_str(), nullptr, 10);
-        settings.voiceChatVolume = static_cast<uint32_t>(value > 200 ? 200 : value);
-    }
-
-    if (const auto in = launchParameters.Get("-voicein"); in && in->size > 0)
-        settings.voiceInputDevice = (*in)[0].c_str();
-
-    if (const auto out = launchParameters.Get("-voiceout"); out && out->size > 0)
-        settings.voiceOutputDevice = (*out)[0].c_str();
-
+    // Every field read below has a working default - that is deliberate, so a game
+    // started without the launcher still runs. It followed that a failure to READ one
+    // should degrade too, and it did not: an exception here escaped into a startup with
+    // no terminate handler yet (those are installed later, in NetworkWorldSystem), so
+    // std::terminate called abort and the process died at 0x80000003 with an empty log.
+    // That is the shape of the 2026-09-07 crash, and whatever actually threw, the mod
+    // taking the whole game down over an optional argument is a defect on its own.
+    //
+    // Catch, say so loudly, and carry on with defaults. The player gets in.
+    // Declared out here on purpose: the server-address line at the end of this function
+    // reports them, and if the guarded block below threw before they were set, "DEFAULT"
+    // is exactly what it should say.
     bool ipFromArgs = false;
     bool portFromArgs = false;
 
-    if (const auto ip = launchParameters.Get("-ip"); ip)
+    try
     {
-        if (ip->size > 0)
+        if (launchParameters.Contains(RED4ext::CString("-online")))
+            settings.enabled = true;
+
+        // Developer overlay. The launcher only offers this to accounts with a dev or admin
+        // Discord role, but nothing here enforces that - every action the overlay exposes is
+        // re-checked by the server against the role IT derived from Discord. This flag decides
+        // whether a toolbar is drawn, nothing more.
+        if (launchParameters.Contains(RED4ext::CString("-debug")))
+            settings.debug = true;
+
+        // Voice, from the launcher's Settings > Voice page.
+        //
+        // Every one has a working default, so a game started without the launcher - or by an
+        // older launcher that does not send these - still has a usable voice configuration
+        // rather than no key and silence.
+        if (const auto key = launchParameters.Get("-voicekey"); key && key->size > 0)
+            settings.voicePushToTalkKey = (*key)[0].c_str();
+
+        if (const auto rangeKey = launchParameters.Get("-voicerangekey"); rangeKey && rangeKey->size > 0)
+            settings.voiceCycleRangeKey = (*rangeKey)[0].c_str();
+
+        if (const auto mode = launchParameters.Get("-voicemode"); mode && mode->size > 0)
+            settings.voiceMode = (*mode)[0].c_str();
+
+        if (const auto mic = launchParameters.Get("-micvolume"); mic && mic->size > 0)
         {
-            settings.ip = (*ip)[0].c_str();
-            ipFromArgs = true;
+            // Clamped again here. The launcher clamps before saving, but this is a launch
+            // argument - anything can pass one - and a gain read straight from an argument is
+            // a scream waiting to happen.
+            const auto value = std::strtoul((*mic)[0].c_str(), nullptr, 10);
+            settings.voiceMicVolume = static_cast<uint32_t>(value > 200 ? 200 : value);
         }
-    }
 
-    if (const auto port = launchParameters.Get("-port"); port)
-    {
-        if (port->size > 0)
+        if (const auto chat = launchParameters.Get("-voicevolume"); chat && chat->size > 0)
         {
-            settings.port = std::strtoul((*port)[0].c_str(), nullptr, 10) & 0xFFFF;
-            portFromArgs = true;
+            const auto value = std::strtoul((*chat)[0].c_str(), nullptr, 10);
+            settings.voiceChatVolume = static_cast<uint32_t>(value > 200 ? 200 : value);
         }
-    }
 
-    if (const auto token = launchParameters.Get("-discord-token"); token)
-    {
-        if (token->size > 0)
-            settings.discordToken = (*token)[0].c_str();
-    }
+        if (const auto in = launchParameters.Get("-voicein"); in && in->size > 0)
+            settings.voiceInputDevice = (*in)[0].c_str();
 
-    if (const auto name = launchParameters.Get("-discord-name"); name)
-    {
-        if (name->size > 0)
-            settings.discordName = (*name)[0].c_str();
-    }
+        if (const auto out = launchParameters.Get("-voiceout"); out && out->size > 0)
+            settings.voiceOutputDevice = (*out)[0].c_str();
 
-    // The manifest attestation trio - see Settings.h. Carried, never computed here.
-    if (const auto manifest = launchParameters.Get("-manifest-version"); manifest && manifest->size > 0)
-        settings.manifestVersion = (*manifest)[0].c_str();
 
-    if (const auto digest = launchParameters.Get("-install-digest"); digest && digest->size > 0)
-        settings.installDigest = (*digest)[0].c_str();
-
-    if (const auto unmanaged = launchParameters.Get("-unmanaged"); unmanaged && unmanaged->size > 0)
-    {
-        // One comma-joined argument rather than a repeated flag, because the launcher
-        // builds one argv and the list is small (the launcher caps it before sending).
-        const std::string joined = (*unmanaged)[0].c_str();
-        size_t start = 0;
-        while (start < joined.size())
+        if (const auto ip = launchParameters.Get("-ip"); ip)
         {
-            auto end = joined.find(',', start);
-            if (end == std::string::npos)
-                end = joined.size();
-            if (end > start)
-                settings.unmanaged.push_back(String(joined.substr(start, end - start).c_str()));
-            start = end + 1;
+            if (ip->size > 0)
+            {
+                settings.ip = (*ip)[0].c_str();
+                ipFromArgs = true;
+            }
         }
-    }
 
-    if (const auto password = launchParameters.Get("-server-password"); password && password->size > 0)
-        settings.serverPassword = (*password)[0].c_str();
+        if (const auto port = launchParameters.Get("-port"); port)
+        {
+            if (port->size > 0)
+            {
+                settings.port = std::strtoul((*port)[0].c_str(), nullptr, 10) & 0xFFFF;
+                portFromArgs = true;
+            }
+        }
+
+        if (const auto token = launchParameters.Get("-discord-token"); token)
+        {
+            if (token->size > 0)
+                settings.discordToken = (*token)[0].c_str();
+        }
+
+        if (const auto name = launchParameters.Get("-discord-name"); name)
+        {
+            if (name->size > 0)
+                settings.discordName = (*name)[0].c_str();
+        }
+
+        // The manifest attestation trio - see Settings.h. Carried, never computed here.
+        //
+        // THIS PATH IS NEW IN PRACTICE. Until 2026-09-07 the launcher could never compute an
+        // install digest (the manifest's payload component had no archive hash), so it always
+        // launched unattested and these three arguments were never present. The first session
+        // that ever received them crashed. That does not prove the fault is here - the same
+        // ship also rebuilt the DLL - but it does mean this is the least-exercised code in
+        // startup, and it deserves a marker of its own.
+        spdlog::info("[Boot] parsing manifest attestation arguments");
+
+        if (const auto manifest = launchParameters.Get("-manifest-version"); manifest && manifest->size > 0)
+            settings.manifestVersion = (*manifest)[0].c_str();
+
+        if (const auto digest = launchParameters.Get("-install-digest"); digest && digest->size > 0)
+            settings.installDigest = (*digest)[0].c_str();
+
+        if (const auto unmanaged = launchParameters.Get("-unmanaged"); unmanaged && unmanaged->size > 0)
+        {
+            // One comma-joined argument rather than a repeated flag, because the launcher
+            // builds one argv and the list is small (the launcher caps it before sending).
+            const std::string joined = (*unmanaged)[0].c_str();
+            size_t start = 0;
+            while (start < joined.size())
+            {
+                auto end = joined.find(',', start);
+                if (end == std::string::npos)
+                    end = joined.size();
+                if (end > start)
+                    settings.unmanaged.push_back(String(joined.substr(start, end - start).c_str()));
+                start = end + 1;
+            }
+        }
+
+        if (const auto password = launchParameters.Get("-server-password"); password && password->size > 0)
+            settings.serverPassword = (*password)[0].c_str();
+
+        spdlog::info("[Boot] launch parameters read");
+    }
+    catch (const std::exception& e)
+    {
+        spdlog::error("[Boot] FAILED reading launch parameters: {} - continuing with defaults. "
+                      "Anything the launcher passed after the failure point was not applied.", e.what());
+    }
+    catch (...)
+    {
+        spdlog::error("[Boot] FAILED reading launch parameters (non-standard exception) - "
+                      "continuing with defaults.");
+    }
 
     spdlog::info("Manifest: {}", settings.manifestVersion.empty()
                                      ? "none - launched without the launcher, or pre-manifest launcher"

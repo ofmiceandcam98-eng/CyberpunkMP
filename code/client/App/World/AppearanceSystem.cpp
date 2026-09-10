@@ -465,6 +465,35 @@ bool AppearanceSystem::ApplyAppearance(Red::Handle<Red::game::Object> object)
     // unholstered_mantis
     // nails
 
+    // Has this face/body already been scheduled onto this puppet?
+    //
+    // Clothing and customization arrive in ONE message, so a holstered weapon changing
+    // the visual item count - which it does on its own, every possessions autosave -
+    // re-ran everything below for a face that had not changed a byte. Live, 2026-09-04:
+    // 15 applies in 16 minutes, all with ccstate hash 78a96dec..., the observing client
+    // dying on the last one right after "Scheduling change". The items above are cheap
+    // and idempotent, so they always run; asking the engine to synchronise an appearance
+    // it is already displaying is the part that is neither.
+    // Taken now, not later: `object` is MOVED into the completion capture below, so
+    // reading its id after that point reads a moved-from handle.
+    const auto objectId = object.instance->id;
+
+    const uint64_t ccstateHash = HashBytes(bytes.data(), bytes.size());
+    bool alreadyScheduled = false;
+    {
+        std::lock_guard lock(m_mapLock);
+        const auto it = m_scheduledCcstate.find(objectId);
+        alreadyScheduled = (it != m_scheduledCcstate.end() && it->second == ccstateHash);
+    }
+
+    if (alreadyScheduled)
+    {
+        spdlog::info("[Appearance] entity {:x} already wears this exact state (hash={:016x}) - "
+                     "clothing applied, customization left alone",
+                     object.instance->id.hash, ccstateHash);
+        return true;
+    }
+
     if (stateHandle)
     {
         spdlog::info("Scheduling change");
@@ -587,6 +616,13 @@ bool AppearanceSystem::ApplyAppearance(Red::Handle<Red::game::Object> object)
             
         };
         ScheduleSynchronizedAppearanceChanges(changer, weakHandle, &old_keys, &new_keys, callback, 0);
+
+        // Recorded AFTER the schedule is accepted, so a failure before this point is
+        // retried by the next update rather than being remembered as done.
+        {
+            std::lock_guard lock(m_mapLock);
+            m_scheduledCcstate[objectId] = ccstateHash;
+        }
     }
     else
     {

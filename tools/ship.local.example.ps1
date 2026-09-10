@@ -41,3 +41,10 @@
 # "Working from a second machine" section in CONTRIBUTING.md.
 
 # $GhRepo = "youruser/CyberpunkMP"
+
+# --- backup target ----------------------------------------------------------
+# Used by toolsBackupServerData.ps1. Not in git on purpose - the repo is public.
+# NCO_NAS_USER / NCO_NAS_HOST in the environment win over these.
+
+# $NasUser = "your-server-account"
+# $NasHost = "your-server-address"

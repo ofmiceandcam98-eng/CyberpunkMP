@@ -23,16 +23,37 @@ things) → the coordination feed (what the other stream just did).
 - **Two Claude streams work this repo** — zeldfep's (this one) and Cam's, from separate
   machines. Cam's runs inside the repo so `CLAUDE.md` auto-loads for it. A rule that
   lives only in one machine's memory binds nobody: promote it to `CLAUDE.md`.
+- **The working branch is `wip/world-state`, not `feat/world-state`** (since 2026-09-05).
+  Identical commits; the separate branch exists so Cam can work from a phone / cloud
+  session without a push to `feat/world-state` triggering the production deploy (see §4,
+  Deploy). Work on `wip/world-state` from every machine until the weekend migration is
+  done, then `git checkout feat/world-state && git merge --ff-only wip/world-state &&
+  git push fork feat/world-state` and resume pushing that. A cloud session started from
+  claude.ai/code should clone `ofmiceandcam98-eng/CyberpunkMP` and check out
+  `wip/world-state`.
 
 ## 2. Machines and addresses
+
+**MIGRATED 2026-09-06.** Everything moved off the TrueNAS box onto `officialcutstudios01`
+(Ubuntu 26.04). **Every address below changed** — new hardware means new tailnet node
+identities, so the old ones are dead rather than moved. `docs/MIGRATION.md` §5 is the
+cutover record.
 
 | What | Where | Notes |
 |---|---|---|
 | Your workstation | the repo checkout | Builds C++ (MSVC) and the launcher. **Whether it can also compile REDSCRIPT depends on whether the game is installed here — check, do not assume (§2a)** |
-| NAS (both servers) | `ssh truenas_admin@10.27.27.223` | LAN SSH, key auth, docker group. **`/home` is mounted noexec** — always `/bin/bash script.sh`, never direct execution (exit 126, silent) |
-| Live/public server | `/mnt/vol/NASa/CyberpunkMP` → tailnet `100.80.243.29:11778` | containers `cyberpunkmp-server` + `cyberpunkmp-tailscale`; cron auto-deploys |
-| Test server | `/mnt/vol/NASa/CyberpunkMP-authority` → `100.125.74.56:11778` | compose project `-p nco-authority`; manual rebuild |
-| Coordination feed | `http://100.80.243.29:11780` | on the NAS. **Ignore any older note saying 100.109.102.127 — that was Cam's PC and is dead** |
+| **Server host** | `ssh <server-user>@<server-host>` | Ubuntu 26.04, key auth, `docker` group. `/mnt/vol` is the 1.1T data disk; **Docker's data-root lives there too**, not on the OS disk |
+| Live/public server | `/mnt/vol/projects/CyberpunkMP` → `<live-server>:11778` | containers `cyberpunkmp-server` + `cyberpunkmp-tailscale`; cron auto-deploys |
+| Test server | `/mnt/vol/projects/CyberpunkMP-authority` → `<test-server>:11778` | compose project `-p nco-authority`; manual rebuild |
+| Coordination feed | `http://<live-server>:11780` | beside the live server. Bind is IPv4-only, so **use `127.0.0.1`, not `localhost`** from inside the netns — `localhost` resolves to `::1` and gets connection refused |
+| Old NAS | `ssh <nas-user>@<nas-host>` | **RETIRED but not wiped** — both deployments stopped, data intact. `/home` is noexec there; always `/bin/bash script.sh` |
+
+- **MagicDNS names**: the new nodes are `nco-server-1` and `nco-test-server-1`, because the
+  retired nodes still hold `nco-server` / `nco-test-server`. Deleting the old devices frees
+  the names.
+- **`<a-desktop>` (`DESKTOP-JEBD9RN`) is NOT dead** — an older note in this file said it
+  was; it was on the tailnet on 2026-09-06. It is simply not the feed host and never should
+  be again.
 
 **Player-count probe** (the host publishes only UDP, so go through the sidecar's netns):
 ```
@@ -52,11 +73,17 @@ Test-Path "<GameDir>\engine\tools\scc.exe"        # is the redscript COMPILER he
 NOT ship with the game - a stock Steam install of 2.31 does not contain it anywhere. It
 arrives with **redscript**, one of the prerequisites the Night City Online launcher installs,
 which puts it at `engine\tools\scc.exe` (the path `CheckScripts.ps1` looks at); the REDmod
-DLC is the other source, at `tools\redmod\bin\scc.exe`. Verified 2026-09-04 on a fresh box:
-game present and reporting 2.31, no `scc.exe` anywhere, no `engine\tools`, no `r6\scripts`,
-no `red4ext\plugins`. **So "the game is installed" does not mean you can compile redscript** -
-install the mod once through the launcher, which brings the prerequisites and creates the mod
-folder, and then both `CheckScripts.ps1` and `DevInstall.ps1` work.
+DLC is the other source, at `tools\redmod\bin\scc.exe`. **Both halves were observed on one
+box on 2026-09-04, hours apart, which is the whole argument for checking rather than
+assuming:** before the mod was installed — game present and reporting 2.31, no `scc.exe`
+anywhere, no `engine\tools`, no `r6\scripts`,
+no `red4ext\plugins`. After the launcher installed the mod: `engine\tools\scc.exe` present,
+`red4ext\` populated, and `CheckScripts.ps1` answering `OK - redscript compiles` against the
+real 2.31 scripts. **So "the game is installed" does not mean you can compile redscript, and
+"it could not compile an hour ago" does not mean it cannot now** — run the check, do not
+carry the answer forward. Installing the mod once through the launcher brings the
+prerequisites and creates the mod folder, and both `CheckScripts.ps1` and `DevInstall.ps1`
+work from that point on.
 Point the tooling at it once and everything below follows:
 ```
 copy tools\ship.local.example.ps1 tools\ship.local.ps1   # then set $GameDir
@@ -87,10 +114,23 @@ ships as a **public** release asset). Logs record credential *presence*, never v
 | Feed identity (deploy) | `~/.nco-deploy-coord-key` (NAS only) | the deploy's auto-announce |
 | **Release signing** | `~/.nco-manifest-key` (keyid `882c415a`) | **signed releases** — pinned in every launcher since v0.3.97; a replacement must be pinned and shipped two releases apart |
 | Tailscale API | `~/.tailscale-api-key` (mode 600) | minting auth keys + player invites |
-| Discord bot | `<deploy>/config/discord-bot-token` (NAS) | role resolution |
-| GitHub | Git Credential Manager | see §4 — `gh auth login` does NOT work here |
+| Discord bot | `<deploy>/config/discord-bot-token` on the SERVER, both deployments (mode 660) | role resolution. **The workstation has none**, which is why `AnnounceRelease.ps1` exits 1 here — it wants `tools/.discord-bot` (`token=` / `channel=`, gitignored) or `DISCORD_BOT_TOKEN` + `DISCORD_CHANNEL_ID` |
+| GitHub | `gh` CLI keyring (account `zeldfep`, scopes gist/read:org/repo/workflow) | pushes and every `gh api` call — see §4 |
 
 ## 4. Recipes that took a while to get right
+
+**`git push` HANGS, and it is Git Credential Manager, not the network.** GCM opens a GUI
+account picker ("which GitHub account / x-access-token") that a non-interactive shell can
+never answer, so the push sits there until it is killed — and the human at the keyboard gets
+a popup they did not ask for. `gh` is already authenticated on this box, so route GitHub
+auth through it instead (set repo-locally, so nothing else on the machine changes):
+```bash
+git config --local --add credential.https://github.com.helper '!gh auth git-credential'
+```
+Already applied to this checkout. For a one-off without changing config:
+`git -c credential.helper='!gh auth git-credential' push origin feat/world-state`.
+**`x-access-token`** in those prompts is not a thing to go find: it is the literal username
+GitHub expects when the password is a token, so GCM shows it as the account name.
 
 **GitHub token (bash only — PowerShell has no stdin for this and fails):**
 ```bash
@@ -123,7 +163,7 @@ collisions, and announces `docs/MAP.md` changes on the feed. Force it when empty
 `cd <deploy> && git pull --ff-only && docker compose up -d --build`.
 
 **Read the field:** every launcher POSTs session logs to the server →
-`/mnt/vol/NASa/CyberpunkMP/logs/clients/<player>/` (newest 10 + `launcher-trail.log`).
+`/mnt/vol/projects/CyberpunkMP/logs/clients/<player>/` (newest 10 + `launcher-trail.log`).
 **First stop for any "it broke on my machine" — never ask a player for files.**
 Client-side redscript must log via `ScriptLog` to reach these; `FTLog` reaches nothing
 anyone collects.
@@ -131,7 +171,7 @@ anyone collects.
 **Post to the feed** — full contract and etiquette in `docs/LLM-COMMS.md`; do this for ships, deploys, diagnoses, and every map change:
 ```bash
 KEY=$(cat ~/.ncoa-coord-key)
-curl -s -X POST http://100.80.243.29:11780/v1/updates -H "Authorization: Bearer $KEY" \
+curl -s -X POST http://<live-server>:11780/v1/updates -H "Authorization: Bearer $KEY" \
   -H "Content-Type: application/json" -d '{"title":"...","body":"...","kind":"status"}'
 ```
 Backslashes and unescaped quotes in the body break the JSON — the API says
@@ -184,3 +224,21 @@ machine's memory still contains a dead feed address, which is exactly the failur
 - **Open, in the map:** whether a character's FIRST save captures the creator's choice
   (the wrong-gender question — a 60-second experiment settles it), per-connection
   interpolation delay for far players, and the two-human checklist that has never run.
+
+## 8. Update 2026-09-05
+
+- **Runtime multiplayer netcode is HARD-FROZEN** until Cam says the server swap is
+  complete — no production `.proto`, handlers, transport, RPC, replication, auth,
+  movement, vehicle, combat, voice, phone, selector, or economy networking. Applies to
+  both streams. Full text at the top of `docs/MAP.md` §1 (the "NETCODE IS FROZEN" block)
+  and in `docs/OUTGOING-SERVER-NETCODE-MAP.md`.
+- **`feat/world-state` is now classified an OUTGOING SERVER REFERENCE IMPLEMENTATION** —
+  not a deployment target for the new server, not the base for it, deliberately not
+  cleaned up. A full netcode rollback was proposed and rejected (numbers in
+  `OUTGOING-SERVER-NETCODE-MAP.md` §0). The new server is rebuilt from the three handoff
+  docs: `NEW-SERVER-NETCODE-PORTING-HANDOFF.md`, `OUTGOING-SERVER-NETCODE-MAP.md`,
+  `NEW-SERVER-AUTHORITY-HANDOFF.md`. Read the requirements first; do not start by copying
+  old code.
+- **Nothing is pushed to `feat/world-state` or `main`** and nothing ships before the
+  migration. The 27 commits of recent work now also live on `wip/world-state` (see §1) so
+  they are backed up and phone-reachable, but that is a mirror for working, not a deploy.

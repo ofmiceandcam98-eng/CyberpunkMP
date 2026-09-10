@@ -1,4 +1,5 @@
 #include "WorldFacts.h"
+#include "AtomicWrite.h"
 
 void WorldFactStore::Load(const std::filesystem::path& acPath) noexcept
 {
@@ -61,10 +62,14 @@ void WorldFactStore::Save() const noexcept
 
     try
     {
-        std::filesystem::create_directories(m_path.parent_path());
+        // Atomic - see AtomicWrite.
+        std::string reason;
 
-        std::ofstream file(m_path);
-        file << nlohmann::json(m_facts).dump(2);
+        if (!AtomicWrite::Replace(m_path, nlohmann::json(m_facts).dump(2), &reason))
+        {
+            spdlog::error("Could not write {}: {}. The previous file is intact.",
+                          m_path.string(), reason);
+        }
     }
     catch (const std::exception& e)
     {

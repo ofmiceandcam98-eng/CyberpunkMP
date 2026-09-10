@@ -17,16 +17,36 @@ other Claude is documented in `docs/LLM-COMMS.md`.
 
 1. **`docs/MAP.md`** — the ledger. Open items, standing decrees, code geography, the
    gotcha that bites in each area. If something feels missed, it should already be there.
-2. **The coordination feed** — where both streams announce ships, flag-days, pulls,
+2. **The Atlas — THE SOURCE OF TRUTH FOR STATE** (zeldfep, 2026-09-09: *"tell his feed that
+   atlas is the new source of thruth"*). What is open, broken, parked or in flight is read
+   from the Atlas, not remembered and not reconstructed from this repo. If the Atlas and
+   anything else disagree about the STATE of the work, the Atlas wins. Findings still go
+   there the moment they are noticed.
+   - **This does not demote the map.** `docs/MAP.md` is the PUBLIC ledger and the tiebreaker
+     for FACTS about the code — geography, decrees, the gotcha in each area. The Atlas is
+     dev-role only and on the tailnet, so it can never be what a public contributor is
+     pointed at; README and CONTRIBUTING point at the map for exactly that reason. State
+     lives in the Atlas, facts and law live in the map, events live on the feed.
+   - **`publish/TODO.md` is gone** (`50dfe81`), with `tools/UpdateTodoList.ps1`: the Discord
+     channel it fed did not survive the revamp.
+   - Address: `POST /v1/atlas` on the coord service with a Discord token, dev role only.
+
+3. **The coordination feed** — where both streams announce ships, flag-days, pulls,
    diagnoses, and map changes. Check it before shipping or deploying; post to it when you
    do any of those.
-   - **Address**: `http://100.80.243.29:11780` (tailnet) OR `http://10.27.27.223:11780`
-     (the NAS's LAN). **Try both before concluding it is down - they fail
-     independently** (measured 2026-09-04: tailnet timed out, `tx 1560 rx 0` via a relay,
-     while LAN answered instantly and the service was healthy throughout). From the NAS
-     over SSH, `127.0.0.1:11780` separates "my route is broken" from "the service is
-     down". `GET /v1/updates?limit=N` to read, `POST /v1/updates` with
+   - **Address**: `http://<live-server>:11780` (tailnet). **MOVED 2026-09-06** — it used to
+     be `<old-live-server>` on the NAS, and that address is DEAD, not relocated: the migration
+     onto new hardware gave every node a new tailnet identity. The old LAN fallback
+     (`<nas-host>`) is gone with it, because the feed no longer runs on the NAS.
+     `GET /v1/updates?limit=N` to read, `POST /v1/updates` with
      `Authorization: Bearer <key>` to post.
+   - **Two diagnosis rules that still apply.** A route can fail while the service is
+     healthy (measured 2026-09-04: tailnet timed out, `tx 1560 rx 0` via a relay, while a
+     second path answered instantly) — so from the server host over SSH,
+     `127.0.0.1:11780` separates "my route is broken" from "the service is down". And use
+     **`127.0.0.1`, never `localhost`**: the feed binds IPv4-only while the game binds
+     dual-stack, so `localhost` resolves to `::1` and returns connection refused on a
+     service that is running perfectly.
    - **Keys are machine-local files** (this stream: `~/.ncoa-coord-key`), never in the
      repo and NEVER in a feed body — the feed publishes a slice into `publish/`, which
      ships as a public release asset. Lost your key? Get it from the other human
@@ -34,8 +54,9 @@ other Claude is documented in `docs/LLM-COMMS.md`.
      server-side.
    - **Full contract, etiquette and who-is-who: `docs/LLM-COMMS.md`.** Read it before
      your first post. The short version: post on every ship, deploy, map change and
-     diagnosis; mark confidence; never put a secret in a body; and ask Cam's stream for
-     anything needing the game (only that machine can compile redscript).
+     diagnosis; mark confidence; never put a secret in a body; and for anything needing
+     the game, **check whether YOUR machine has it first** (handoff §2a) — redscript can
+     only be compiled where the game is installed, and which machine that is has changed.
    - `publish/ASSISTANT_UPDATES.md` is an ARCHIVE, not a live mirror - the deploy
      discards local modifications to it, so the committed copy lags (12 days behind as
      of 2026-09-04). The API is the source of truth.
@@ -45,11 +66,61 @@ auto-load — read it deliberately. Cam's stream: it auto-loads; keep it current
 
 ## The decrees (full text in the map's Standing Decrees — do not paraphrase from memory)
 
+- **The launcher is the one-click solution** (zeldfep, 2026-09-07): *"I should not have to
+  run things on my end unless we're fixing some issue, the whole point of the launcher is
+  one click solution."* Getting a build is Play. Handing a human a command is acceptable
+  only while diagnosing a live problem — never as how a build reaches somebody. **Test builds
+  already have a lane: Tools > Test builds**, one click, admin-gated, installs the whole
+  payload. I claimed it did not exist and filed a debt for it after grepping the auto-updater
+  and not the feature — so before saying a launcher capability is missing, grep for it BY
+  NAME. If you do paste a command, make the path ABSOLUTE (this session's cwd is the repo's
+  PARENT; a relative path silently resolved to nothing for five builds straight) and treat a
+  missing confirmation as failure, not consent.
+
+- **Found it? Flag it on the Atlas, then carry on** (zeldfep, 2026-09-08): *"when we find
+  new issues flag them on atlas so we can come back to 'what we find' instead of 'WHAT WE ARE
+  WORKING ON'."* Anything you notice that is NOT the task in hand gets an Atlas branch the
+  moment you notice it - one POST, with what/why/next written for somebody who was not here.
+  A session remembers what it is working on and forgets everything it found; the Atlas is
+  where the second kind lives.
+
 - **Boot policy**: straight to menu, both halves stay.
 - **The footprint rule**: uninstall leaves NOTHING; every write location in the footprint,
   both layers.
 - **The helper rule**: content mods are never load-bearing — no feature depends on one,
   none gates Play/join/digest.
+- **Working checklists are INTERNAL and live on the server** (zeldfep, 2026-09-07):
+  *"any of those checklists we make for work on the go should be internal and should be
+  shared with cam."* Cutover runbooks, incident plans, UI mockups — anything that is us
+  working rather than us shipping — goes to `/mnt/vol/projects/_internal-docs/` on the
+  server, mode 600, and NOT into this public repository. `docs/design/README.md` is a
+  redirect so nothing dangles. **Both streams read them there**, which is why the location
+  is written here rather than in one machine's memory. What stays public is what a
+  contributor needs to build: the map, the handoff, `DESIGN-LANGUAGE.md`, CONTRIBUTING.
+  A published artifact link is a convenience, never the record — viewers can be pinned to
+  an older version, and sharing is per-page and easy to get wrong.
+
+- **The transparency rule** (zeldfep, 2026-09-07): **every player-facing announcement says
+  what changed.** *"make sure when pushing to discord you explain whats being done in those
+  updates we want to be tranparent."* `AnnounceRelease.ps1` now pulls the
+  `## What changed - <tag>` section out of `publish/release-notes.md` into the Discord post,
+  so the two cannot disagree and nobody is asked to update on trust — which matters most
+  right after a week where three releases shipped a mod that could not load. Missing section
+  = the script warns loudly and still posts; write the section rather than shipping quiet.
+
+- **The design language**: `docs/DESIGN-LANGUAGE.md` is what "keep it uniform" means -
+  the palette and what each colour SAYS, seven type sizes, the clipped-corner signature,
+  and the striped-vs-flat hazard rule. Pick a token; do not invent a value. The launcher is
+  the truth and that file is its rulebook.
+  **Building from a mockup? Read the type doc on the server FIRST** (zeldfep, 2026-09-09:
+  *"server side we have a font doc i need you review that when pushing things from
+  mockups"*). It is `/mnt/vol/projects/_internal-docs/type-scale.html`, it is INTERNAL, and
+  it carries the seven steps plus the sizes they replace - a mockup implemented without it
+  reintroduces exactly the drift it was written to kill. The trigger is turning a mockup
+  into code, not touching the launcher: the character selector is redscript and the rule
+  still applies. Colour goes with it - hazard yellow on a bright backdrop is illegible, so
+  a token is a starting point that still has to be READ against what sits behind it.
+
 - **The map convention**: any commit touching `docs/MAP.md` gets a "map updated" post on
   the feed; the other stream re-reads before acting. Landing removes, finding adds, SAME
   commit. Write map entries in the ledger voice: tight categorized bullets, one home per
@@ -73,6 +144,16 @@ auto-load — read it deliberately. Cam's stream: it auto-loads; keep it current
   a `common.proto` content change is a flag-day BY CONVENTION — both sides ship together.
 - **Keep probes and experiments out of `distrib/`** — the ship copies its assets
   wholesale, and anything left there ships to every player.
+- **NO STALE WORKLOADS.** zeldfep, 2026-09-07, after finding three background tasks in his
+  panel at 1h56m, 1h40m and 1h28m: *"I dont like just random stale workloads."* All three
+  were `until grep <pattern> <file>; do sleep 15; done` waiters watching ship attempts that
+  had already died without ever printing a string the pattern matched — one of them missed
+  because the ship said `STOPPED:` and that watcher's list did not include it. **Every wait
+  gets a deadline and a failure branch**; a poll loop with no timeout is not a wait, it is a
+  permanent fixture that makes the panel lie about what is in flight. **You started it, you
+  end it** — before you hand the turn back, the task panel is empty of your work and the
+  scratchpad holds only files something still points at.
+
 - **Don't pause the pipeline for a test session** — deploy and keep building; validation
   rides the next live session.
 - **Missing tooling**: ask to install it rather than shipping "not compiled / not tested"

@@ -1,5 +1,8 @@
 #include "BufferScriptInstance.h"
 #include "IRpc.h"
+#include <atomic>
+#include <cstddef>
+#include <functional>
 
 struct RpcCallExtended : RpcCall
 {

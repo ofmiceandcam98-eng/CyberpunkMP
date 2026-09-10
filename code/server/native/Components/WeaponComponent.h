@@ -32,12 +32,21 @@ struct WeaponComponent
     // not a limit on the client.
     uint64_t ReloadStartedMs{0};
 
-    // Server time of the last accepted shot, for fire-rate validation.
+    // Fire-rate limiter state: the GCRA "theoretical arrival time" - the earliest server time
+    // a perfectly-paced shot stream would have reached. NOT the time of the last shot.
     //
-    // One floor for every weapon rather than per-weapon rates, for the same reason as above:
-    // the server does not model weapons. This catches the difference between a fast weapon
-    // and a script firing every frame, which is the attack worth catching.
-    uint64_t LastShotMs{0};
+    // One sustained ceiling for every weapon rather than per-weapon rates, because the server
+    // does not model weapons. The rate is enforced as a leaky bucket, NOT a per-shot floor, so
+    // that batched delivery - a burst of automatic fire arriving in a single network flush and
+    // processed inside the same millisecond - is accepted, while a script firing forever every
+    // frame still runs the virtual clock past tolerance and is refused. See Level.cpp kFire.
+    //
+    // The old per-shot floor (refuse if <40ms since the previous shot, measured by SERVER
+    // ARRIVAL) refused legitimate batched fire wholesale: every shot after the first in a burst
+    // read "0ms since the last one" and was refused, then the client was corrected, so the gun
+    // felt dead (zeldfep + noremacxxi, test.21, 2026-09-10 - "cant shoot each other", the log
+    // solid with 0ms refusals). Arrival time is not shot time when delivery batches.
+    uint64_t ShotTatMs{0};
 
     // Rises per owner. Same replay and duplicate rejection as combat events, and separate
     // from the combat sequence so a burst of fire and a burst of hits cannot invalidate

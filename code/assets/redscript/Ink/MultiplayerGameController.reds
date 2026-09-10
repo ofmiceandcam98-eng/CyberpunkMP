@@ -52,6 +52,9 @@ public class MultiplayerGameController extends inkGameController {
 
     // The "you are talking" indicator. Built on first transmission, not at startup.
     private let m_voiceIndicator: wref<inkText>;
+    // The persistent TALK button on the HUD bar (megaphone + Y hint). Built once after the
+    // authored bar spawns, relit whenever the mic opens. Render is in TalkButton.reds.
+    private let m_talkButton: wref<inkCanvas>;
 
     // Who ELSE is talking right now - built on first sighting of a remote speaker, not at
     // startup. Separate widget from m_voiceIndicator: your own state and everyone else's
@@ -178,6 +181,26 @@ public class MultiplayerGameController extends inkGameController {
             if network.IsConnected() {
                 FTLog(s"[MultiplayerGameController] Already signed in - entering the world");
                 network.EnterWorld();
+
+                // AND FLIP THIS CONTROLLER INTO ITS CONNECTED STATE, because otherwise
+                // nothing does. The native OnConnected() that sets
+                // UIMultiplayerConnectedToServer fired back on the main menu, when the
+                // selector dialled in - before this controller existed to hear it. The
+                // listener registered in OnInitialize only fires on a CHANGE, and the value
+                // is already true, so m_connectedToServer stays false: the HUD keeps offering
+                // "hold / to connect", the chat box never spawns, and the player has to hold
+                // the connect key to force a full reconnect just to sync the UI to a session
+                // they are already in. That is zeldfep's test.21 report - PLAY took him to the
+                // server but did not auto-connect.
+                //
+                // Driving the transition here is what makes PLAY one click: EnterWorld() above
+                // sent the held spawn, and this wires up the UI. It reaches the SAME end state
+                // as the hold-to-connect path (Connect() -> OnConnected() -> this callback)
+                // WITHOUT the socket abort/redial that path incurs - Connect() closes the live
+                // connection before dialling again, which is exactly why the branch above sends
+                // the held spawn instead of reconnecting. Calling the transition directly keeps
+                // that decision intact while still ending up connected in one press.
+                this.OnConnectedToServer(true);
             } else {
                 FTLog(s"[MultiplayerGameController] Joining - requested from the main menu");
                 network.Connect();
@@ -265,6 +288,30 @@ public class MultiplayerGameController extends inkGameController {
     protected cb func OnPositionAnimationFinish(anim: ref<inkAnimProxy>) -> Bool {
         this.m_startupAnimProxy.UnregisterFromAllCallbacks(inkanimEventType.OnFinish);
         this.m_phoneIconWidget.SetVisible(true);
+        // The bar exists and is laid out now, so this is the moment to add the talk button.
+        this.MpBuildTalkButton();
+    }
+
+    // Build the persistent talk button once and hang it on the HUD root, the same place the
+    // voice indicator places itself. Position is a first guess (the authored bar's button
+    // coordinates are not in script) - sits at the bottom-left under the stats button.
+    private func MpBuildTalkButton() -> Void {
+        if IsDefined(this.m_talkButton) {
+            return;
+        }
+        let root = this.GetRootCompoundWidget();
+        if !IsDefined(root) {
+            return;
+        }
+        let canvas = new inkCanvas();
+        canvas.SetName(n"mp_talk_button");
+        canvas.SetAnchor(inkEAnchor.BottomLeft);
+        canvas.SetAnchorPoint(new Vector2(0.0, 1.0));
+        canvas.SetMargin(new inkMargin(40.0, 0.0, 0.0, 140.0));
+        canvas.SetInteractive(false);
+        canvas.Reparent(root);
+        this.m_talkButton = canvas;
+        MpTalkButtonRender(canvas, this.m_voiceTransmitting);
     }
 
     private cb func OnActivatePhoneElements(element: Uint32) -> Bool {
@@ -420,6 +467,12 @@ public class MultiplayerGameController extends inkGameController {
             let network = GameInstance.GetNetworkWorldSystem();
             if IsDefined(network) {
                 MpQuestDebugDump(network);
+
+                // Songbird cannot reach a character whose save still has the prologue in
+                // it. Done HERE rather than with the server's world facts because those
+                // arrive with RestorePossessions, once the world exists - and the hook can
+                // fire before that. See MpSilenceStoryHolocalls in Quests.reds.
+                MpSilenceStoryHolocalls(network);
 
                 // PHASE 1 EXPERIMENT. Returns immediately unless -mod-local-puppet was passed.
                 MpLocalPuppetExperiment(network);
@@ -1234,6 +1287,11 @@ public class MultiplayerGameController extends inkGameController {
      * and a widget nobody sees should not cost anything to have.
      */
     private func MpVoiceUpdateIndicator() -> Void {
+        // Keep the persistent talk button in step with the mic (runs before the early return
+        // below, so it relights on the way DOWN too).
+        if IsDefined(this.m_talkButton) {
+            MpTalkButtonRender(this.m_talkButton, this.m_voiceTransmitting);
+        }
         if !this.m_voiceTransmitting {
             if IsDefined(this.m_voiceIndicator) {
                 this.m_voiceIndicator.SetVisible(false);

@@ -69,9 +69,13 @@ contextBridge.exposeInMainWorld('launcher', {
 
   // Test builds: pre-releases from GitHub, invisible to player launchers. Install swaps
   // the mod DLL (keeping the shipped one); restore puts it back. Dev role required.
+  atlasGet: () => ipcRenderer.invoke('atlas:get'),
+  atlasOpen: (url) => ipcRenderer.invoke('atlas:open', url),
+
   prereleaseList: () => ipcRenderer.invoke('prerelease:list'),
   prereleaseInstall: (tag) => ipcRenderer.invoke('prerelease:install', tag),
   prereleaseRestore: () => ipcRenderer.invoke('prerelease:restore'),
+  prereleaseOpenNotes: (tag) => ipcRenderer.invoke('prerelease:open-notes', tag),
 
   // The coordination service itself - started alongside the game server, controllable
   // on its own. Host machine only.
@@ -79,8 +83,12 @@ contextBridge.exposeInMainWorld('launcher', {
   startCoord: () => ipcRenderer.invoke('coord:start'),
   stopCoord: () => ipcRenderer.invoke('coord:stop'),
 
-  // Opens the invite to Cam's tailnet in the real browser.
+  // Opens the invite to the server's network in the real browser.
   openTailscaleInvite: () => ipcRenderer.invoke('tailscale:invite'),
+
+  // Same, for the test deployment. It is a separate tailnet node, so it needs its own
+  // device share - one share cannot cover two devices.
+  openTailscaleTestInvite: () => ipcRenderer.invoke('tailscale:test-invite'),
 
   // The curated Nexus mod list, and the Nexus account used to fetch from it.
   // The API key is never handed to the page - only whether one is stored, and the name.

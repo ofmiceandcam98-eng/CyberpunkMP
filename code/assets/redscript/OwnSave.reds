@@ -3,49 +3,71 @@ module CyberpunkMP
 import CyberpunkMP.World.*
 
 /*
- * Load the player's OWN character, not the world template.
+ * Load the WORLD TEMPLATE, always. The server is the only source of who you are.
  *
- * THE BUG. MULTIPLAYER called LoadLastCheckpoint(false), which loads save index 0 - the
- * most recent save, whatever it happens to be. The game's own QuickLoad proves the
- * equivalence (singleplayerMenu.script:1012):
+ * WHAT A SAVE IS FOR HERE, and the sentence that settles it. MainMenu.reds calls the load
+ * "purely as a vehicle into the world" - the mod needs somewhere to stand, nothing more.
+ * But a save does not only carry a world; it carries an IDENTITY, and that identity is the
+ * part this mod then has to fight: strip the template's inventory, override the appearance,
+ * refuse a save that would flip an established character's body. Every one of those guards
+ * exists to undo something a save supplied and nobody asked for.
  *
- *     if (m_isModded) LoadModdedSave(0) else LoadLastCheckpoint(false)
+ * THE BUG THIS REPLACES (ledger fault A). This file used to hunt for "the player's own
+ * save" by taking the newest entry that was not the template. That is not an identity, it
+ * is an accident of file order, and it picked whatever happened to be newest: another test
+ * character, a singleplayer session, a probe run. On 2026-09-01 it loaded `AutoSave-12` - a
+ * throwaway female Corpo from a probe two days earlier - which is the whole of "the
+ * character we created would not be the character we play as, it is also not phantom
+ * veronica". A third person entirely, because the newest file happened to be theirs.
  *
- * The launcher installs the world template into the saves folder as MultiplayerStart. Any
- * time that file is the newest, index 0 IS the template, and the player loads as Phantom
- * Veronica instead of themselves. When one of their own autosaves is newer, they load as
- * themselves. That is why this has been maddeningly inconsistent rather than simply broken
- * - on 28 August the template was written at 17:12 and an autosave at 17:22, and which one
- * you got depended purely on file order.
+ * WHY THE FIX IS NOT "NAME THE SAVE AFTER THE CHARACTER". That was the plan of record, and
+ * it needs the mod to WRITE saves. `343b912` closed that door hours before this was
+ * written, deliberately: SaveLocksManager is held for the whole launcher session because a
+ * local save is a second copy of a server-owned character, and "save with the money, spend
+ * it, load, spend it again" is the exploit that follows. Naming saves per character would
+ * have punched a hole in that rule to solve a problem that has a cheaper answer.
  *
- * Cam remembered this working before the template existed. He was right: it did, because
- * back then index 0 was always one of his own saves.
+ * THE ANSWER: REMOVE THE CHOICE. Every session loads the same known world. There is no file
+ * order to be at the mercy of, no newest-save race, and nothing to name. Identity arrives
+ * from the server, which has been the design the whole time - `HasCharacter()`,
+ * `GetCharacterName()` and the appearance restore already run before this does. The
+ * template stops being a fallback for people with no save and becomes what it always
+ * should have been: the world everyone stands in.
  *
- * THE FIX. Ask for the save list, skip the template by name, and load the newest save that
- * is actually the player's. The template is loaded only when they have nothing of their own
- * - a first-time player with no singleplayer save at all, who genuinely needs a world to
- * stand in.
+ * WHAT THIS COSTS, honestly. A returning player's own singleplayer world progress no longer
+ * comes into a multiplayer session. That progress was never consulted by anything - the
+ * server owns position, possessions, money and world facts - and it could not have advanced
+ * during a session anyway, because saving is locked. What it buys is that every player is
+ * standing in the same world, which is what a shared server wanted in the first place.
  *
- * WHY NOT DELETE OR HIDE THE TEMPLATE. It is a legitimate fallback and it is what the
- * launcher installs; making the load path choose correctly is smaller and reversible, and
- * it does not touch anybody's saves. Nothing here writes or deletes a save.
+ * WHAT IS STILL NOT SOLVED HERE. The template carries Phantom Veronica's identity, and that
+ * bleed is real - her inventory arriving ~88s in, her appearance competing with the stored
+ * one. This file does not fix that and does not pretend to; `MpStarterSettlement`
+ * (Inventory.reds) and the appearance restore are the two fixes already in flight for it.
+ * What changes here is that the bleed now comes from ONE known source on every machine
+ * instead of from whichever save a player happened to have, which is the difference between
+ * a bug you can reproduce and a bug that looks like a coin flip.
+ *
+ * NOTHING HERE WRITES OR DELETES A SAVE.
  */
 
 // The launcher's own name for the template - see TEMPLATE_SAVE_NAME in launcher-lite/main.js.
 // Matched by name because that is what the save list gives us.
 public func MpTemplateSaveName() -> String = "MultiplayerStart"
 
+// Field name predates the rename below and is left alone on purpose: it is only ever set
+// and read in this file, and a rename is a compile risk that buys nothing.
 @addField(SingleplayerMenuGameController)
 public let m_mpOwnSaveArmed: Bool;
 
 /*
- * Asks for the save list, then loads the player's own newest save.
+ * Asks for the save list, then loads the world template out of it.
  *
  * The list arrives asynchronously through OnSavesForLoadReady, so this cannot simply return
  * an answer; it arms the callback and lets that finish the job.
  */
 @addMethod(SingleplayerMenuGameController)
-public func MpLoadOwnCharacterSave() -> Void {
+public func MpLoadMultiplayerWorld() -> Void {
     let network = GameInstance.GetNetworkWorldSystem();
     let handler = this.GetSystemRequestsHandler();
 
@@ -62,10 +84,12 @@ public func MpLoadOwnCharacterSave() -> Void {
     handler.RequestSavesForLoad();
 
     if IsDefined(network) {
-        network.ScriptLog("[OwnSave] asked for the save list - looking for this player's own character");
+        network.ScriptLog("[OwnSave] asked for the save list - loading the multiplayer world template");
     }
 }
 
+// Callback name is bound as a string in RegisterToCallback above - it must keep matching
+// this method exactly, so this one does not get renamed.
 @addMethod(SingleplayerMenuGameController)
 protected cb func MpOnSavesReady(saves: array<String>) -> Bool {
     let network = GameInstance.GetNetworkWorldSystem();
@@ -82,15 +106,14 @@ protected cb func MpOnSavesReady(saves: array<String>) -> Bool {
     let chosen = -1;
     let i = 0;
 
-    // The list is ordered newest first - index 0 is what LoadLastCheckpoint would have
-    // taken. So the first entry that is not the template IS the player's most recent
-    // character, and no timestamps need comparing.
+    // Newest first, so the FIRST template entry is the current one. Matching by name rather
+    // than by position is the entire point: position is what made this a coin flip.
     while i < ArraySize(saves) {
         if IsDefined(network) {
             network.ScriptLog(s"[OwnSave]   save[\(i)] = '\(saves[i])'");
         }
 
-        if chosen < 0 && !StrContains(saves[i], template) {
+        if chosen < 0 && StrContains(saves[i], template) {
             chosen = i;
         }
 
@@ -98,10 +121,12 @@ protected cb func MpOnSavesReady(saves: array<String>) -> Bool {
     }
 
     if chosen < 0 {
-        // Nothing but the template. A player with no save of their own genuinely needs it,
-        // so this is the one case where loading it is correct.
+        // The launcher installs the template, so this means it was deleted, renamed, or
+        // never written. Loud, because the fallback is the exact arbitrary behaviour this
+        // file exists to remove - but the player still needs a world, and refusing to load
+        // anything would mean refusing to let them play at all.
         if IsDefined(network) {
-            network.ScriptLog("[OwnSave] no save of their own - loading the template, which is what it is for");
+            network.ScriptLog("[OwnSave] NO TEMPLATE IN THE SAVE LIST - falling back to newest save, which may be any character. Reinstall through the launcher to restore it.");
         }
 
         this.GetSystemRequestsHandler().LoadLastCheckpoint(false);
@@ -109,7 +134,7 @@ protected cb func MpOnSavesReady(saves: array<String>) -> Bool {
     }
 
     if IsDefined(network) {
-        network.ScriptLog(s"[OwnSave] loading '\(saves[chosen])' at index \(chosen) - NOT the template");
+        network.ScriptLog(s"[OwnSave] loading the world template '\(saves[chosen])' at index \(chosen) - identity comes from the server");
     }
 
     // LoadModdedSave, not LoadSaveInGame. With this mod installed every save the player

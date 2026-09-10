@@ -3,6 +3,9 @@
 #include <string>
 #include <vector>
 #include <random>
+#include <cstring>
+#include <cctype>
+#include <cstdio>
 
 /**
  * A multiplayer character, owned by the server.
@@ -17,6 +20,87 @@
  * The server keeps this instead. It is small, it is authoritative, and it is keyed on the
  * one identifier a player cannot change.
  */
+/**
+ * One entry in a character's phone book.
+ *
+ * The number is the identity and the name is a label THIS character chose. Deliberately
+ * not the other way round: two people can save the same number under different names, and
+ * neither is more correct than the other. A phone book is a private annotation of the
+ * world, not a directory of it.
+ *
+ * Stored per character, so the same player's second character starts with an empty one.
+ *
+ * WHY THE NAME IS NOT RESOLVED AT DISPLAY TIME
+ *
+ * The obvious alternative is to keep storing bare numbers and look up whoever holds each
+ * one when the list is drawn. That is what the code did, and it has a failure that only
+ * appears with roleplay: it shows the name the OWNER currently uses, so somebody who
+ * introduces themselves under one name and later renames silently rewrites themselves in
+ * every phone book on the server. Worse, it means a character cannot be saved as "Ripper
+ * Doc - Watson" or "do not answer", which is most of what people actually use a phone
+ * book for.
+ *
+ * The live lookup is still used when there is no saved name, so an entry added by number
+ * shows who it reaches rather than showing nothing.
+ */
+struct Contact
+{
+    std::string Number;
+
+    // Empty means "no name saved" - fall back to whoever currently holds the number.
+    // Empty rather than a copy of the number, so the two cases stay distinguishable.
+    std::string Name;
+
+    // A character's own marker. Nobody is told they were favourited, the same way nobody
+    // is told they were added.
+    bool Favorite{false};
+};
+
+/**
+ * Written as a bare string when there is no saved name.
+ *
+ * This is a MIGRATION choice, not a formatting one. Contacts were stored as plain strings
+ * and the live players.json is full of them; emitting the object form unconditionally
+ * would rewrite every account on the first flush, and an older server binary reading that
+ * file back would throw on the type. Writing the compact form whenever it is sufficient
+ * means only accounts that actually use a name change shape, so a rollback keeps working
+ * for everyone who has not touched the feature.
+ */
+inline void to_json(nlohmann::json& aJson, const Contact& acContact)
+{
+    if (acContact.Name.empty() && !acContact.Favorite)
+    {
+        aJson = acContact.Number;
+        return;
+    }
+
+    aJson = nlohmann::json{{"Number", acContact.Number},
+                           {"Name", acContact.Name},
+                           {"Favorite", acContact.Favorite}};
+}
+
+/**
+ * Accepts both shapes, because both are in the file.
+ *
+ * A bare string is a contact added before names existed. Anything else is read
+ * field-by-field with defaults, so a hand-edited entry missing a field is filled in
+ * rather than refused - this file is meant to be openable and edited by a person.
+ */
+inline void from_json(const nlohmann::json& acJson, Contact& aContact)
+{
+    if (acJson.is_string())
+    {
+        aContact.Number = acJson.get<std::string>();
+        aContact.Name.clear();
+        aContact.Favorite = false;
+        return;
+    }
+
+    aContact.Number = acJson.value("Number", std::string{});
+    aContact.Name = acJson.value("Name", std::string{});
+    aContact.Favorite = acJson.value("Favorite", false);
+}
+
 struct CharacterRecord
 {
     // Which slot this occupies. Only 0 is used today.
@@ -48,6 +132,39 @@ struct CharacterRecord
     // Which body the puppet is built from. Kept out of the blob because the server needs
     // it without parsing: it decides which record other clients spawn for this player.
     bool IsMale{true};
+
+    /*
+     * Is this character established - chosen, played, and therefore fixed?
+     *
+     * An appearance save may change a face; it may NOT change a body. Cyberpunk fixes
+     * body type at creation and offers no way to change it afterwards, so the two
+     * conditions below are what separate "still being made" from "this is who they are".
+     */
+    [[nodiscard]] bool IsEstablished() const noexcept
+    {
+        return !Appearance.empty() && SpawnedBefore;
+    }
+
+    /*
+     * Would an incoming save flip an established character's body type?
+     *
+     * A free function on the record so it can be tested without a world, a store or a
+     * connection - see tools/tests/character_body_test.cpp. Passing the record by
+     * pointer because the caller has a lookup result that may be null: a character
+     * being created for the first time has nothing to contradict.
+     *
+     * Live, 2026-09-04: a capture reporting the wrong body was stored and then broadcast
+     * to everyone, so one player appeared to all the others as a completely different
+     * character. The server already had the field it needed to know better.
+     */
+    [[nodiscard]] static bool WouldFlipEstablishedBody(const CharacterRecord* apExisting,
+                                                       const bool aIncomingIsMale) noexcept
+    {
+        if (!apExisting || !apExisting->IsEstablished())
+            return false;
+
+        return apExisting->IsMale != aIncomingIsMale;
+    }
 
     // Progression. Applied on load rather than trusted from the client.
     //
@@ -239,7 +356,28 @@ struct CharacterRecord
      * types and what they will still have if the person behind it is not online. Resolving
      * a number to whoever currently holds it is the server's job at the moment of use.
      */
-    std::vector<std::string> Contacts;
+    std::vector<Contact> Contacts;
+
+    /**
+     * Numbers this character refuses to hear from.
+     *
+     * BLOCKING IS PER CHARACTER, and putting the list here is what makes that true without
+     * anybody having to enforce it. If a player blocks somebody, their OTHER character has
+     * not blocked them - those are two different people who happen to share an owner, and
+     * one of them knowing what the other decided would leak exactly the thing that having
+     * separate characters is for.
+     *
+     * Stores numbers rather than character ids, matching Contacts, because a block is
+     * aimed at what somebody was given: the number they were texted from. Someone who
+     * retires a character and makes a new one gets a new number and is not blocked by it,
+     * which is correct - a block is not a punishment the server carries forward, it is one
+     * character declining to hear from another.
+     *
+     * Blocking is silent on purpose. The blocked party is never told, and their messages
+     * are accepted and dropped rather than refused, so a block cannot be probed for by
+     * watching which sends fail.
+     */
+    std::vector<std::string> Blocked;
 
     /**
      * Quests this character is permitted to see, granted one at a time by an admin.
@@ -255,14 +393,68 @@ struct CharacterRecord
     int64_t CreatedAt{0};
     int64_t UpdatedAt{0};
 
+    /**
+     * How many times the SERVER has authoritatively changed this character's money or
+     * inventory. Phase 5, stage 2 - metadata only for now, and deliberately so.
+     *
+     * WHAT IT IS FOR, once the later stages use it. Two questions need answering and they
+     * are not the same question:
+     *
+     *   RequestLedger asks "have I already performed this exact request?" - retry safety.
+     *   This asks "is the client's view of this character's economy current?" - staleness.
+     *
+     * A retry is the same request arriving twice. A stale save is a DIFFERENT request built
+     * on an out-of-date picture, and no amount of request deduplication catches it. That is
+     * why both exist.
+     *
+     * WHAT IT IS NOT. Not the network session epoch, not AuthorityComponent::Epoch (which
+     * names a grant of simulation rights over a vehicle), not the movement sequence, not a
+     * save-file or protocol version. Those are four different clocks and conflating any two
+     * of them is how a fix for one silently breaks another. It gets its own field for that
+     * reason rather than borrowing one that happens to be handy.
+     *
+     * UNSIGNED, because it only ever counts upward and a negative revision has no meaning.
+     *
+     * NOT INCREMENTED YET, by anything. Stage 2 is the data model only; wiring it into the
+     * mutation sites is a later, separately reviewed stage. Every existing character will
+     * load and stay at 0, which is correct - the server has not yet authoritatively changed
+     * anybody's economy.
+     */
+    uint64_t EconomyRevision{0};
+
+    /**
+     * When this character's possessions stopped being client-declared. Unix seconds, the
+     * same convention as CreatedAt, LastSeen and JailedUntil.
+     *
+     * 0 means the record has NOT crossed the authority boundary - its money and inventory
+     * are whatever a client last reported. Non-zero means the server has taken ownership.
+     *
+     * It exists because the migration must run exactly once per character and must be
+     * auditable afterwards. Without a mark there is no way to tell a migrated record from
+     * an unmigrated one, and "run the migration again" would mean re-trusting a client
+     * declaration the server had already replaced.
+     *
+     * SET BY THE SERVER ONLY, and NOT SET BY ANYTHING YET. Stage 2 adds the field; the
+     * trust-once migration that stamps it is a later stage with its own review. A character
+     * loading today does not become migrated by being loaded.
+     */
+    int64_t MigratedAt{0};
+
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(CharacterRecord, Slot, Name, Appearance, IsMale,
                                                 Level, AttributePoints, PerkPoints, Initialised,
                                                 NameChosen, SpawnedBefore, CharacterId,
                                                 Lifepath, StarterKitGranted,
                                                 Inventory, Money, Proficiencies,
                                                 Attributes, Perks, Vehicles,
-                                                PhoneNumber, Contacts, AllowedQuests,
-                                                CreatedAt, UpdatedAt)
+                                                PhoneNumber, Contacts, Blocked, AllowedQuests,
+                                                CreatedAt, UpdatedAt,
+                                                // Phase 5 stage 2. The _WITH_DEFAULT macro is
+                                                // what makes adding these safe: a record
+                                                // written before they existed simply loads
+                                                // them as 0 rather than throwing, which is
+                                                // exactly the "existing records must remain
+                                                // loadable" requirement.
+                                                EconomyRevision, MigratedAt)
 };
 
 /**
@@ -324,20 +516,140 @@ inline bool IsPhoneNumberShaped(const std::string& acValue)
     return true;
 }
 
+/**
+ * The character id alphabet: 23 symbols, none of which can be misread as another.
+ *
+ * No 0 against O. No 1 against I or L. No 5 against S. No 8 against B, no 2 against Z, no U
+ * against V. What is left is what survives being read aloud down a voice channel and typed
+ * back by somebody who has never seen it written.
+ *
+ * TWENTY-THREE IS PRIME AND THAT IS THE WHOLE POINT - see CharacterIdCheckSymbol. Do not add
+ * a symbol to "get more ids": it silently destroys the error detection. Six payload symbols
+ * over this alphabet is 148 million characters, which is not the constraint on this project.
+ */
+inline constexpr char kCharacterIdAlphabet[] = "34679ACDEFGHJKMNPRTWXYZ";
+inline constexpr size_t kCharacterIdBase = 23; // sizeof(alphabet) - 1, and prime
+inline constexpr size_t kCharacterIdPayload = 6;
+
+/**
+ * The check symbol: the one that brings a weighted sum to zero modulo 23.
+ *
+ * Weights are 2,3,4,5,6,7 - distinct, and none of them zero or one. With a PRIME modulus and
+ * DISTINCT weights this catches every single-symbol substitution and every transposition of
+ * two adjacent symbols, which between them are almost every way a person mis-hears or
+ * mis-types a code.
+ *
+ * Why it exists at all: without a check symbol a typo lands on a DIFFERENT VALID id. An admin
+ * running /rename repairs a stranger's character, or a lookup silently answers about somebody
+ * else, and nothing anywhere reports an error. That is the failure this prevents, and it is
+ * why the 16 random hex characters this replaced were the wrong shape as soon as Cam asked
+ * for /rename - hex has no check, so every typo of an id is another valid id.
+ */
+inline char CharacterIdCheckSymbol(const std::string& acPayload)
+{
+    size_t sum = 0;
+
+    for (size_t i = 0; i < acPayload.size(); ++i)
+    {
+        const char* pFound = std::strchr(kCharacterIdAlphabet, acPayload[i]);
+        if (!pFound)
+            return '\0';
+
+        sum += static_cast<size_t>(pFound - kCharacterIdAlphabet) * (i + 2);
+    }
+
+    return kCharacterIdAlphabet[(kCharacterIdBase - (sum % kCharacterIdBase)) % kCharacterIdBase];
+}
+
+/**
+ * A new character id: six random symbols plus a check symbol, grouped as H7K-M4X3.
+ *
+ * Grouped because people read codes in chunks, and the hyphen is a reading aid rather than
+ * part of the value - ParseCharacterId strips it, so H7KM4X3, h7k m4x3 and H7K-M4X3 are the
+ * same id.
+ */
 inline std::string GenerateCharacterId()
 {
     static std::mt19937_64 engine{std::random_device{}()};
-    static std::uniform_int_distribution<uint64_t> dist;
+    std::uniform_int_distribution<size_t> dist(0, kCharacterIdBase - 1);
 
-    const uint64_t value = dist(engine);
+    std::string payload;
+    payload.reserve(kCharacterIdPayload);
 
-    static constexpr char kHex[] = "0123456789abcdef";
-    std::string id(16, '0');
+    for (size_t i = 0; i < kCharacterIdPayload; ++i)
+        payload.push_back(kCharacterIdAlphabet[dist(engine)]);
 
-    for (int i = 0; i < 16; ++i)
-        id[15 - i] = kHex[(value >> (i * 4)) & 0xF];
+    const char check = CharacterIdCheckSymbol(payload);
 
-    return id;
+    return payload.substr(0, 3) + "-" + payload.substr(3) + std::string(1, check);
+}
+
+/**
+ * Normalises what somebody typed into a stored id, or says why it is not one.
+ *
+ * FORGIVING ABOUT FORM, STRICT ABOUT CONTENT. Case, spaces, hyphens and underscores are all
+ * stripped - somebody reading an id back has no idea where the hyphen went. An unrecognised
+ * symbol is REFUSED, never dropped: dropping a stray character turns one player's id into
+ * another player's id, which is the exact accident the check symbol exists to catch.
+ *
+ * Legacy ids (16 hex characters, everything issued before 2026-08-30) are accepted unchanged
+ * and lower-cased. They carry no check symbol - nothing can be done about that now, and
+ * renumbering a stored key to make it prettier is not worth breaking every reference to it.
+ *
+ * Returns the normalised id, or an empty string with acReason set to one of:
+ * "empty", "length", "alphabet", "checksum".
+ */
+inline std::string ParseCharacterId(const std::string& acInput, std::string* apReason = nullptr)
+{
+    const auto fail = [apReason](const char* acpWhy) -> std::string
+    {
+        if (apReason)
+            *apReason = acpWhy;
+        return {};
+    };
+
+    std::string cleaned;
+    cleaned.reserve(acInput.size());
+
+    for (const char c : acInput)
+    {
+        if (c == '-' || c == '_' || c == ' ' || c == '\t')
+            continue;
+
+        cleaned.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+    }
+
+    if (cleaned.empty())
+        return fail("empty");
+
+    // Legacy: 16 hex characters, stored lower-case.
+    if (cleaned.size() == 16 &&
+        cleaned.find_first_not_of("0123456789ABCDEF") == std::string::npos)
+    {
+        std::string legacy = cleaned;
+        for (char& c : legacy)
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+        return legacy;
+    }
+
+    if (cleaned.size() != kCharacterIdPayload + 1)
+        return fail("length");
+
+    for (const char c : cleaned)
+    {
+        if (!std::strchr(kCharacterIdAlphabet, c))
+            return fail("alphabet");
+    }
+
+    const std::string payload = cleaned.substr(0, kCharacterIdPayload);
+    if (CharacterIdCheckSymbol(payload) != cleaned[kCharacterIdPayload])
+        return fail("checksum");
+
+    if (apReason)
+        apReason->clear();
+
+    return payload.substr(0, 3) + "-" + payload.substr(3) + std::string(1, cleaned[kCharacterIdPayload]);
 }
 
 /**

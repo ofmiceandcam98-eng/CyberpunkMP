@@ -117,6 +117,30 @@ void ReplicateMovementComponent(flecs::entity aEntity, const MovementComponent& 
     pos.set_y(aComponent.Position.y);
     pos.set_z(aComponent.Position.z);
 
+    /*
+     * The replication counter advances HERE, not when a packet arrives.
+     *
+     * It is what the wire carries and what the distance LOD divides, and those two want the
+     * same thing: a number that advances once per update actually SENT. Keyed on the
+     * received count instead, a client sending ten times as fast passed the `% 4` filter ten
+     * times as often - the reduction the divisors exist to provide could be defeated by
+     * transmitting faster.
+     *
+     * With coalescing off this function runs once per packet, so this increments once per
+     * packet and behaves exactly as it always has. With it on it advances once per
+     * replication tick, and the divisors finally mean "every fourth update" rather than
+     * "every fourth thing the sender chose to send".
+     *
+     * Strictly increasing either way, which is all the client's staleness test needs
+     * (InterpolationSystem.cpp:721 drops anything <= the last it applied).
+     */
+    auto* pMutable = aEntity.get_mut<MovementComponent>();
+    if (!pMutable)
+        return;
+
+    ++pMutable->ReplicatedSequence;
+    pMutable->ReplicationPending = false;
+
     server::NotifyEntityMove message;
     message.set_id(aEntity);
 
@@ -142,14 +166,14 @@ void ReplicateMovementComponent(flecs::entity aEntity, const MovementComponent& 
     message.set_world_revision(1);
     message.set_cell_x(ToSnapshotCell(aComponent.Position.x));
     message.set_cell_y(ToSnapshotCell(aComponent.Position.y));
-    message.set_sequence(aComponent.Sequence);
+    message.set_sequence(pMutable->ReplicatedSequence);
 
     if (const auto* pAuthority = aEntity.get<AuthorityComponent>())
         message.set_authority_epoch(pAuthority->Epoch);
 
     const auto owner = aEntity.parent();
     const auto& from = aComponent.Position;
-    const auto sequence = aComponent.Sequence;
+    const auto sequence = pMutable->ReplicatedSequence;
 
     aEntity.world().each(
         [owner, &from, sequence, &message](flecs::entity player, const PlayerComponent& aPlayerComponent)
@@ -186,6 +210,27 @@ void MovementComponent::Register(flecs::world& aWorld)
             [](flecs::iter& it, size_t i, const MovementComponent& aComponent)
             {
                 const auto entity = it.entity(i);
+
+                /*
+                 * COALESCED: mark, do not replicate.
+                 *
+                 * This observer fires once per accepted movement packet, and replicating
+                 * from here is what makes one packet cost a walk of every player on the
+                 * server. When coalescing is on, the packet's only job is to leave the
+                 * newest state on the component and raise a flag; GameServer's replication
+                 * pass does the walk once per tick regardless of how many packets arrived.
+                 *
+                 * A flag rather than a queue, deliberately - see the note on the field.
+                 * Five packets between ticks leave one pending state, not five, so a flood
+                 * cannot grow server memory either.
+                 */
+                if (GServer && GServer->ShouldCoalesceMovement())
+                {
+                    if (auto* pMutable = entity.get_mut<MovementComponent>())
+                        pMutable->ReplicationPending = true;
+
+                    return;
+                }
 
                 ReplicateMovementComponent(entity, aComponent);
             });

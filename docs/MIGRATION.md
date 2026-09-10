@@ -89,6 +89,46 @@ only in one machine's memory does not bind the other stream — promote it to `C
 
 ## 4. Standing a deployment up on new hardware
 
+### 4a. Disk layout on the new box (decided 2026-09-06, zeldfep)
+
+Two disks: a 238G NVMe and a 1.09T SSD. **OS on the NVMe, everything CyberpunkMP-related on
+the 1.09T.** Ubuntu Server, no LVM - plain partitions are easier to recover and to resize.
+
+| Path | Disk | Why |
+|---|---|---|
+| `/` | NVMe 238G | OS only. Guided "Use an entire disk" creates the ESP + root correctly |
+| `/mnt/vol` | SSD 1.09T | **Deployments AND Docker.** Same path as today, deliberately |
+
+- **`/mnt/vol` is not a cosmetic choice.** The deployments already live at
+  `/mnt/vol/projects/CyberpunkMP` and `/mnt/vol/projects/CyberpunkMP-authority`, so keeping the mount
+  point identical means the cron lines in 2e, every compose path, and every path in this
+  document transfer UNCHANGED. Mount it anywhere else and all of them need editing - and one
+  of them gets missed at 2am.
+- **MOVE THE DOCKER DATA ROOT OR THE NVMe FILLS ANYWAY.** `/var/lib/docker` sits on `/` by
+  default, and the server image is a full native compile: layers plus the xmake build cache
+  run to tens of GB. Putting only the repo on the big disk leaves the actual bulk on the OS
+  disk. Do this before pulling anything:
+
+```
+sudo systemctl stop docker
+sudo mkdir -p /mnt/vol/docker
+sudo rsync -aP /var/lib/docker/ /mnt/vol/docker/    # skip on a fresh Docker install
+echo '{ "data-root": "/mnt/vol/docker" }' | sudo tee /etc/docker/daemon.json
+sudo systemctl start docker
+docker info | grep -i "docker root dir"             # must say /mnt/vol/docker
+```
+
+- **Partitioning trap, cost real time on the install:** subiquity will not offer **Add GPT
+  Partition** on a disk already marked "to be formatted as ext4". A whole-disk format leaves
+  no free space and no room for an ESP, which is why "Select a boot disk" then cannot be
+  satisfied - the two errors are one problem. **Reformat first, then add partitions**, or skip
+  manual mode and use guided "Use an entire disk" on the OS disk.
+- **The USB installer shows up as a local disk** with an `iso9660` partition, and it carries
+  the only ESP the installer can see. Do not touch it, and do not let its ESP stand in for the
+  target disk.
+
+
+
 1. `git clone` the repo; `git checkout feat/world-state` (what deploys today — see the
    live-vs-main entry in the map).
 2. Copy `<old deploy>/config/` wholesale, `coord-data/` (live only), `.env`, and
@@ -105,3 +145,71 @@ only in one machine's memory does not bind the other stream — promote it to `C
 rebuilds only when server-relevant paths changed, defers while players are online, and
 announces map changes on the feed. That is the "quick deployment from git" requirement —
 the only manual steps are the ones above, because they are the ones git must not hold.
+
+---
+
+## 5. THE 2026-09-06 CUTOVER — live checklist
+
+Tick as you go. Anything unticked is not done, however sure anyone feels.
+**Old box:** TrueNAS, deployments stopped. **New box:** `officialcutstudios01`, Ubuntu 26.04.
+
+### Hardware and OS
+- [x] Ubuntu Server 26.04.1 installed, hostname `officialcutstudios01`
+- [x] `/` on the 238G NVMe (LVM, extended to 232G), `/boot/efi` + `/boot` present
+- [x] 1.09T SSD at `/mnt/vol`, **fstab by UUID** (not `/dev/sdX` - letters move)
+- [x] Docker installed from the official repo (not `docker.io` - BuildKit needed for the xmake cache mount)
+- [x] **`Docker Root Dir: /mnt/vol/docker`** and `/var/lib/docker` absent
+- [x] `zeldfep` in the `docker` group
+- [x] Tailscale up, host node `<server-host>`
+- [x] SSH key authorised for the assistant
+
+### Code and state
+- [x] `/mnt/vol/projects/CyberpunkMP` cloned, `feat/world-state`, 4 submodules
+- [x] `/mnt/vol/projects/CyberpunkMP-authority` cloned, same
+- [x] Both old deployments stopped (**0 players at the moment of stop**)
+- [x] `config/` carried, both deployments
+- [x] `coord-data/` carried (live only)
+- [x] `.env` carried, both
+- [x] `docker-compose.override.yml` carried (test only - UNTRACKED, not reproducible from git)
+- [x] `logs/` carried, both
+- [x] **Checksum verified**: `players.json` md5 identical (74 characters), `updates.jsonl` identical (95 posts)
+- [x] Fresh `TS_AUTHKEY` minted (`k4DKQhY33d11CNTRL`, expires 2026-12-05, reusable + preauthorised), written to both `.env`, mode 600, backups kept
+- [x] Docs repointed `/mnt/vol/NASa` -> `/mnt/vol/projects` (`99d1551`)
+
+### Bring-up — IN PROGRESS
+- [x] Live: `docker compose up -d --build` completes (full native compile, 10-15 min)
+- [x] Live: status endpoint answers `State: running` via the sidecar netns
+- [x] Live: **new tailnet address recorded** (replaces `<old-live-server>`)
+- [ ] Live: a returning character logs `has character '<name>' (played)`, NOT `never spawned`
+- [x] coord-api container up; `GET /health` answers; posting works again
+- [x] Test: built and started with `-p nco-authority`
+- [x] Test: **new tailnet address recorded** (replaces `<old-test-server>`)
+- [x] Cron installed, both lines, repointed at `/mnt/vol/projects/CyberpunkMP`
+
+### Player-facing — do LAST, only after the above is green
+- [x] `publish/server.json`: `host` + `coordHost` -> new address. **MUST be committed on `main`** - the publish workflow triggers on push to `main` only, and `workflow_dispatch` also checks out `main`. An edit on `feat/world-state` reaches nobody.
+- [x] Confirm the release asset actually updated (`releases/latest/download/server.json`)
+- [ ] **Invite distributed via Discord, NOT via `server.json`** - see the decision below
+- [ ] Players told to relaunch
+
+### Decisions taken during this cutover, recorded so they are not re-litigated
+- **`tailscaleInvite` comes OUT of `server.json`.** That file is fetched from
+  `releases/latest/download/server.json` with **no authentication** - verified, `http 200`
+  to an anonymous request - so the invite was a tailnet join link on a public URL. The
+  launcher's `tailscale:invite` handler has **no Discord or role check** either; it opens
+  the link for anyone who clicks. The old invite is already consumed by an unidentifiable
+  party. Omitting the field degrades gracefully ("No invite link is published yet").
+  Fresh invite handed out in Discord instead.
+  **Proper fix, later:** serve it from the coord-api behind the dev-role gate, exactly how
+  coord keys are already handed out - `server.json` states that principle for the coord key
+  and then violates it three lines further down.
+- **`/mnt/vol/projects`, not `/mnt/vol/NASa`.** `NASa` was a TrueNAS *pool* name and means
+  nothing on Ubuntu. Cheap to change: the cron takes the deployment dir as an argument and
+  compose paths are relative, so only documentation referenced it.
+
+### After the cutover — still open
+- [ ] Launcher `index.html` dev panel hardcodes the OLD test-server address. **Needs a ship** - `server.json` is fetched at runtime, `index.html` is baked into the launcher.
+- [ ] Sanitise internal addresses out of the public repo (18 tracked files; `publish/ASSISTANT_UPDATES.md` + `assistant-updates.json` are the ones that actually ship). Full copy to live off-git on the server. **Migration retires the old addresses anyway** - no history rewrite, force-push is forbidden.
+- [ ] `CLAUDE-HANDOFF.md` §2 claims `<a-desktop>` "is dead". It was **seen on the tailnet 2026-09-06**. Correct it.
+- [ ] Old NAS deployments: decide archive vs delete. Do not delete until the new box has served a real session.
+- [ ] `rmdir /mnt/vol/NASa` on the new box once confirmed empty.

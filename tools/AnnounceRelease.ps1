@@ -73,6 +73,49 @@ if (-not $asset) {
 $sizeMb   = [math]::Round($asset.size / 1MB, 1)
 $download = "https://github.com/$Repo/releases/latest"
 
+# WHAT CHANGED, IN THE MESSAGE ITSELF.
+#
+# zeldfep, 2026-09-07: "make sure when pushing to discord you explain whats being done in
+# those updates we want to be tranparent." Until now this posted "A new build is up." and a
+# download link - the release notes existed, were written for players, and were on a page
+# nobody clicks. An announcement that does not say what changed asks people to update on
+# trust, and after a week where three releases shipped a mod that could not load, trust is
+# exactly the thing we are short of.
+#
+# Pulled from publish/release-notes.md rather than retyped, so the Discord post and the
+# release page cannot disagree. If the section is missing the post still goes out - a build
+# people can download beats a perfect message nobody gets - but it says so out loud rather
+# than quietly looking the same as an ordinary release.
+function Get-ReleaseNotesSection {
+    param([string]$Tag)
+
+    $notesFile = Join-Path (Split-Path $PSScriptRoot -Parent) 'publish\release-notes.md'
+    if (-not (Test-Path $notesFile)) { return $null }
+
+    # -Encoding UTF8 is not optional. PowerShell 5.1 reads a BOM-less file as ANSI, which
+    # turns the em dash in "What changed - v0.3.118" into three mojibake characters and
+    # makes the heading unmatchable. That is exactly how this shipped silently the first
+    # time: the script reported "no section" and posted the generic message.
+    $lines = Get-Content $notesFile -Encoding UTF8
+    # The heading uses an em dash, and has been written with a hyphen before now. Accept both.
+    $start = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        # One any-character separator: PowerShell does not expand backslash-u escapes in
+        # a string, and this heading has been written with both an em dash and a hyphen.
+        if ($lines[$i] -match "^##\s+What changed\s+.+?\s+$([regex]::Escape($Tag))\s*$") { $start = $i + 1; break }
+    }
+    if ($start -lt 0) { return $null }
+
+    $out = @()
+    for ($i = $start; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^##\s') { break }
+        $out += $lines[$i]
+    }
+    return ($out -join "`n").Trim()
+}
+
+$changed = Get-ReleaseNotesSection -Tag $release.tag_name
+
 $body = @()
 $body += "A new build is up."
 $body += ""
@@ -80,6 +123,34 @@ if ($Highlights) {
     $body += $Highlights
     $body += ""
 }
+
+if ($changed) {
+    # Discord caps an embed description at 4096 characters. Cut on a line boundary rather
+    # than mid-sentence, and say that it was cut instead of trailing off.
+    $budget = 2600
+    if ($changed.Length -gt $budget) {
+        $kept = @()
+        $used = 0
+        foreach ($line in ($changed -split "`n")) {
+            if ($used + $line.Length + 1 -gt $budget) { break }
+            $kept += $line
+            $used += $line.Length + 1
+        }
+        $changed = ($kept -join "`n").TrimEnd() + "`n`n*(trimmed - the full notes are on the release page)*"
+    }
+    $body += "__**What changed**__"
+    $body += ""
+    $body += $changed
+    $body += ""
+}
+else {
+    Write-Host "No 'What changed - $($release.tag_name)' section in publish\release-notes.md." -ForegroundColor Yellow
+    Write-Host "  Posting anyway, but the message will not say what changed. Add the section and re-run" -ForegroundColor DarkGray
+    Write-Host "  to replace it - people should not be asked to update on trust." -ForegroundColor DarkGray
+    $body += "_Release notes for this build are on the release page._"
+    $body += ""
+}
+
 $body += "**[Download it here]($download)**"
 $body += ""
 $body += "**New here?** Download the launcher, sign in with Discord, and press Install - it fetches the mod and everything it needs. You do not need to unzip anything by hand."
