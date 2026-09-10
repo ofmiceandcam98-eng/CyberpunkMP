@@ -29,18 +29,18 @@
 		<button id="IK_Slash" />
     </mapping>
 
-	<!-- Voice push-to-talk, on T.
-	     NOT V: V is the game's native summon-vehicle key, so binding voice there fired both
-	     at once - pressing V to call a car also keyed the mic, and the car would not spawn
-	     (zeldfep, 2026-09-10: "I cant spawn a vehicle with this voice taking V"). Moved to T,
-	     which is free in vanilla and in this mod's bindings.
+	<!-- Voice push-to-talk, on X.
+	     Two keys were tried and both collided: V is the game's native summon-vehicle key
+	     (voice there ate the car spawn - zeldfep, 2026-09-10: "I cant spawn a vehicle with
+	     this voice taking V"), and T is the phone bind ("T already has the phone bind"). X is
+	     free in vanilla and in this mod's bindings, so voice lives there.
 	     This is still a STARTING VALUE, not a hard key. The voice system asks whether the
 	     VoicePushToTalk action is active and never asks which key that is, so a player
 	     rebinding it changes nothing downstream.
 	     Both press and release are accepted below: hold-to-talk needs the release to know
 	     when to stop, and toggle needs only the press. Same action serves both modes. -->
 	<mapping name="VoicePushToTalk_Button" type="Button" >
-		<button id="IK_T" />
+		<button id="IK_X" />
     </mapping>
 
 	<!-- Cycling the voice range: whisper, local, yell.
