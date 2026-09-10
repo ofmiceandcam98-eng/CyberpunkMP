@@ -1631,21 +1631,37 @@ void Level::HandleWeaponEventRequest(PacketEvent<client::WeaponEventRequest>& aM
             break;
         }
 
-        // A floor on how fast anybody can fire. Not a per-weapon rate - the server does not
-        // model weapons - but enough to separate a fast weapon from a script firing every
-        // frame. 40ms is 1500 rounds a minute, above anything the game ships.
-        constexpr uint64_t kMinShotIntervalMs = 40;
+        // A ceiling on SUSTAINED fire - not a per-shot floor. The server does not model
+        // weapons, so this is one rate for all, enough to separate a fast weapon from a script
+        // firing forever without refusing legitimate automatic fire.
+        //
+        // Why not a per-shot floor: fire events arrive BATCHED. A burst of automatic fire is
+        // delivered in one network flush and processed inside the same millisecond, so a
+        // "refuse if <40ms since the previous shot" test - measured by server ARRIVAL time -
+        // saw "0ms since the last one" for every shot after the first and refused them all,
+        // then corrected the client (the gun felt dead). Arrival time is not shot time when
+        // delivery batches (zeldfep + noremacxxi, test.21, 2026-09-10).
+        //
+        // GCRA (a leaky bucket as one virtual clock): caps the sustained rate at one shot per
+        // T while tolerating a burst of up to tau/T shots arriving together. Batched delivery
+        // passes; a script firing every frame forever runs the clock past tau and is refused.
+        constexpr uint64_t kShotIntervalMs = 40;   // sustained: 1500 RPM, above anything shipped
+        constexpr uint64_t kBurstToleranceMs = 500; // ~12 shots may arrive in one flush
 
-        if (pWeapon->LastShotMs != 0 && now - pWeapon->LastShotMs < kMinShotIntervalMs)
+        // Refuse only when the stream has run more than the tolerance ahead of the sustained
+        // rate - genuine over-fire, not a delivery batch.
+        if (pWeapon->ShotTatMs != 0 && now + kBurstToleranceMs < pWeapon->ShotTatMs)
         {
-            spdlog::warn("Refused a shot from {} - {}ms since the last one", pPlayerComponent->Username,
-                         now - pWeapon->LastShotMs);
+            spdlog::warn("Refused a shot from {} - sustained fire rate over the ceiling",
+                         pPlayerComponent->Username);
             correctClient = true;
             break;
         }
 
+        // Conforming shot. Advance the virtual clock, never letting it fall behind real time
+        // (an idle gap resets the burst allowance rather than banking it).
+        pWeapon->ShotTatMs = (now > pWeapon->ShotTatMs ? now : pWeapon->ShotTatMs) + kShotIntervalMs;
         pWeapon->MagazineAmmo -= 1;
-        pWeapon->LastShotMs = now;
         break;
     }
 
