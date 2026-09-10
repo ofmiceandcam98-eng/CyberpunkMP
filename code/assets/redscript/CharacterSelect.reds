@@ -891,8 +891,19 @@ protected cb func OnGlobalRelease(e: ref<inkPointerEvent>) -> Bool {
         MpCsLog(s"back pressed - closing the screen and staying closed");
         this.m_csDismissed = true;
         this.MpCsClose();
-        this.MpCsShowMenuList();
-        this.MpRefreshMenu();
+
+        // ONLY restore the main menu when there is no live world to stay in. The selector
+        // opens on the main-menu controller, but the auto-spawn ordering bug leaves it up
+        // AFTER the player is already in the world - and restoring the menu there tears the
+        // session down. Measured 2026-09-10: link 1ms/100%%, back pressed, then 'saving before
+        // the world is torn down' + world detach + a BadConnection drop. So while connected,
+        // just close the overlay and stay put; restore the menu only from the actual menu.
+        let net = GameInstance.GetNetworkWorldSystem();
+        if !IsDefined(net) || !net.IsConnected() {
+            this.MpCsShowMenuList();
+            this.MpRefreshMenu();
+        }
+
         e.Handle();
         return true;
     }
