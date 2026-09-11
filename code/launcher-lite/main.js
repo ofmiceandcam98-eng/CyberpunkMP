@@ -3279,6 +3279,31 @@ async function launchGame () {
     args.push('--debug')
   }
 
+  /*
+   * PvP - make other players valid combat targets.
+   *
+   * Without this, NO player could target another on a normal launch, gun or no gun.
+   * Hackable.reds (MpTryMakeHackable) returns early unless HackablePuppetsEnabled(), which
+   * reads Settings.hackablePuppets - default false, and set by nothing but this argument.
+   * The launcher never sent it, so remote players never got a hostile attitude and the
+   * game's weapon filter (TSF_EnemyNPC: Obj_Puppet AND Att_Hostile AND St_Alive AND NOT
+   * Obj_Player) never accepted them. The two-player tests that "worked" had the flag set
+   * some other way; anyone launching normally was aiming at an untargetable body.
+   *
+   * The server was never the problem - Level::HandleCombatEventRequest has no PvP gate and
+   * applies damage within 250m, clamped to 100 a hit.
+   *
+   * Bare flag, no value: the launcher sends --x and Settings reads Get("-x"), the same way
+   * -puppet-driver-all and -mod-local-puppet are read.
+   *
+   * THE COST, stated in Hackable.reds and not hidden here: hostility is what police,
+   * prevention and NPC AI react to, so bystanders and NCPD may treat players as threats.
+   * It is scoped as narrowly as the API allows - per puppet, toward the local player only,
+   * no faction change - but that narrows the effect, it does not remove it. Cam asked for
+   * players to be able to shoot each other (2026-09-11); this is what that takes.
+   */
+  args.push('--hackable-puppets')
+
   // ALWAYS pass the address, even the fallback.
   //
   // Previously this was only passed when an environment variable was set, so for everyone
