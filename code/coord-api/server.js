@@ -67,6 +67,13 @@ const DATA_DIR = process.env.NCO_COORD_DATA || path.join(__dirname, 'data')
 const PARTICIPANTS_FILE = path.join(DATA_DIR, 'participants.json')
 const UPDATES_FILE = path.join(DATA_DIR, 'updates.jsonl')
 
+// The stream journal. SEPARATE FILE ON PURPOSE: publishNow() reads updates.jsonl and
+// nothing else, so journal entries are excluded from the public slice by construction,
+// not by a filter someone could forget. Journal lines routinely carry working-tree
+// state and internal paths - they exist for the NEXT session on the tailnet, never for
+// a release asset.
+const JOURNAL_FILE = path.join(DATA_DIR, 'journal.jsonl')
+
 const PUBLISH_DIR = path.join(REPO_ROOT, 'publish')
 const PUBLISH_JSON = path.join(PUBLISH_DIR, 'assistant-updates.json')
 const PUBLISH_MD = path.join(PUBLISH_DIR, 'ASSISTANT_UPDATES.md')
@@ -170,6 +177,36 @@ function loadUpdates () {
 function appendUpdate (update) {
   ensureDataDir()
   fs.appendFileSync(UPDATES_FILE, JSON.stringify(update) + '\n')
+}
+
+/**
+ * The stream journal - session state, as distinct from work state and events.
+ *
+ * The Atlas answers "what is open"; the feed answers "what happened". Neither answers
+ * "where exactly was the session that just died" - and on 2026-09-10 an app update
+ * killed two working sessions and the answer had to be dug out of a 13.5MB transcript.
+ * A journal line at each natural boundary makes that recovery a twenty-line read:
+ * what was being worked, the tree state, what was in flight, which session to blame.
+ *
+ * Same append-only jsonl discipline as updates: a crash costs the last line, a corrupt
+ * line is skipped. Entries never reach publish/ (see JOURNAL_FILE) and never touch the
+ * coordination log - a journal that spammed the feed would train everyone to ignore both.
+ */
+function loadJournal () {
+  try {
+    return fs.readFileSync(JOURNAL_FILE, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => { try { return JSON.parse(line) } catch { return null } })
+      .filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+function appendJournal (entry) {
+  ensureDataDir()
+  fs.appendFileSync(JOURNAL_FILE, JSON.stringify(entry) + '\n')
 }
 
 // ---------------------------------------------------------------------------
@@ -698,6 +735,62 @@ async function handleApi (req, res, url) {
     return send(res, 201, { ok: true, update })
   }
 
+  if (url.pathname === '/v1/journal' && req.method === 'GET') {
+    let entries = loadJournal()
+
+    // `stream` filters to one participant's line of session state - the usual read is
+    // "what was MY predecessor doing", not the whole room.
+    const stream = url.searchParams.get('stream')
+    if (stream) entries = entries.filter((e) => e.from === stream)
+
+    const since = url.searchParams.get('since')
+    if (since) {
+      const cutoff = Date.parse(since)
+      if (!Number.isNaN(cutoff)) entries = entries.filter((e) => Date.parse(e.at) > cutoff)
+    }
+
+    const limit = Math.min(Number(url.searchParams.get('limit')) || 20, 100)
+    entries = entries.slice(-limit).reverse()
+
+    return send(res, 200, { count: entries.length, entries })
+  }
+
+  if (url.pathname === '/v1/journal' && req.method === 'POST') {
+    let body
+    try {
+      body = await readBody(req)
+    } catch (error) {
+      return send(res, 400, { error: error.message })
+    }
+
+    const state = String(body.state || '').trim().slice(0, 2000)
+    if (!state) {
+      return send(res, 400, {
+        error: 'A state line is required.',
+        hint: 'POST {"state": "working X, tree has Y uncommitted, Z in flight", "session": "<id or title>"}'
+      })
+    }
+
+    const entry = {
+      id: new Date().toISOString().replace(/[-:.TZ]/g, '') + '-' + crypto.randomBytes(3).toString('hex'),
+      at: new Date().toISOString(),
+      from: participant.id,
+      fromLabel: participant.label,
+      state,
+      session: String(body.session || '').slice(0, 200),
+      tree: String(body.tree || '').slice(0, 500),
+      inflight: String(body.inflight || '').slice(0, 500)
+    }
+
+    // Journal only: no coordination-log append, no publishSoon(). Session state is for
+    // the next session on the tailnet, not for the feed and never for the public slice.
+    appendJournal(entry)
+
+    console.log(`[journal] ${participant.id}: ${state.slice(0, 80)}`)
+
+    return send(res, 201, { ok: true, entry })
+  }
+
   if (url.pathname === '/v1/publish' && req.method === 'POST') {
     try {
       await publishNow()
@@ -716,6 +809,8 @@ const ENDPOINTS = [
   'GET  /v1/participants',
   'GET  /v1/updates?limit=&since=&from=&kind=',
   'POST /v1/updates   {"title","body","kind","refs"}',
+  'GET  /v1/journal?stream=&limit=&since=   - session state, never published',
+  'POST /v1/journal   {"state","session","tree","inflight"}',
   'POST /v1/publish',
   'POST /v1/dev-key   {"discordToken"}  - dev role only',
   'POST /v1/atlas     {"discordToken"}  - dev role only, returns the Atlas address'
