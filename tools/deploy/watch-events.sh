@@ -17,11 +17,11 @@
 #
 # NOISE IS THE FAILURE MODE. The 2026-09-10 live session showed exactly which lines
 # matter and which flood: connects, spawns, pings and saves are chatter; crashes,
-# protocol refusals, identity-save refusals, sustained combat refusals and an
-# OrphanVehicle runaway are signal. Each event class has a threshold and a cooldown,
-# and one run posts at most ONE feed entry per container - a watcher that floods the
-# feed trains everyone to ignore both.
-set -u
+# connection refusals, identity-save refusals and sustained combat refusals are
+# signal. Each event class has a threshold and a cooldown, and one run posts at most
+# ONE feed entry per container - a watcher that floods the feed trains everyone to
+# ignore both.
+set -u -o pipefail
 
 STATE_DIR="$HOME/.nco-event-watcher"
 KEYFILE="$HOME/.nco-deploy-coord-key"
@@ -62,10 +62,12 @@ cooled() { # $1 container, $2 class, $3 window-seconds -> 0 if still cooling
     return 1
 }
 
-# Up to 3 sample lines for a pattern, ANSI stripped, flattened for a JSON-safe body.
-samples() { # $1 logs-file, $2 pattern
-    grep -aiE "$2" "$1" | head -3 | cut -c1-220 | tr '\n' '\f' | sed 's/\f/  |  /g'
-}
+# NO RAW LOG LINES IN THE BODY. The feed publishes a slice into publish/, which ships
+# as a public release asset, and the matched lines carry player usernames verbatim
+# (ChatSystem "REFUSED a save from <name>", Level "Refused a shot from <name>") -
+# redact.js scrubs addresses, not names. The rule is "logs record presence only":
+# the post carries class + count, and the docker-logs pull command in the body is
+# how a human gets the detail, on the host, off the record.
 
 for c in $CONTAINERS; do
     docker inspect "$c" >/dev/null 2>&1 || continue
@@ -75,7 +77,13 @@ for c in $CONTAINERS; do
     now_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
     logfile=$(mktemp)
-    docker logs --since "$since" "$c" 2>&1 | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g; s/\x1b[=><]//g' > "$logfile"
+    # stderr stays OUT of the scanned text (docker's own errors are not server events),
+    # and pipefail makes the guard see a failed read - the window must not advance past
+    # logs that were never scanned, or a crash during a container restart is skipped
+    # forever. A failed read keeps $since; the next tick retries the same window.
+    if ! docker logs --since "$since" "$c" 2>/dev/null | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g; s/\x1b[=><]//g' > "$logfile"; then
+        rm -f "$logfile"; continue
+    fi
     echo "$now_iso" > "$since_file"   # advance only after a successful read
 
     if [ ! -s "$logfile" ]; then rm -f "$logfile"; continue; fi
@@ -85,36 +93,36 @@ for c in $CONTAINERS; do
     # Crashes and the watchdog: always signal, shortest cooldown.
     n=$(grep -aciE 'watchdog|\[Crash\]|fatal|unhandled exception|terminate' "$logfile" || true)
     if [ "${n:-0}" -gt 0 ] && ! cooled "$c" crash $((COOLDOWN_S / 2)); then
-        findings="$findings\nCRASH-CLASS lines: $n\n  $(samples "$logfile" 'watchdog|\[Crash\]|fatal|unhandled exception|terminate')"
+        findings="$findings\nCRASH-CLASS lines: $n"
     fi
 
-    # Protocol / identifier refusals: a build mismatch at the door reads as "the button
-    # does nothing" on the client - the server is the only place it is visible.
-    n=$(grep -aciE 'refus[a-z]* .*(protocol|identifier)|protocol mismatch|denial' "$logfile" || true)
+    # Protocol / identifier / manifest refusals at the door: a build mismatch reads as
+    # "the button does nothing" on the client - the server is the only place it is
+    # visible. Patterns quote the ACTUAL emitters (Server.cpp:325/336, GameServer.cpp
+    # ~912/947); a regex that paraphrases a C++ string watches nothing.
+    n=$(grep -aciE 'was refused:|wrong server protocol|Connection attempt with client identifier|Refused connection' "$logfile" || true)
     if [ "${n:-0}" -gt 0 ] && ! cooled "$c" proto "$COOLDOWN_S"; then
-        findings="$findings\nPROTOCOL refusals: $n\n  $(samples "$logfile" 'refus[a-z]* .*(protocol|identifier)|protocol mismatch|denial')"
+        findings="$findings\nCONNECTION refusals (protocol/identifier/manifest): $n"
     fi
 
     # Identity-save refusals: the guard that stops a template capture overwriting a real
     # character. Every firing is a live wrong-character-identity data point.
     n=$(grep -acE 'REFUSED a save' "$logfile" || true)
     if [ "${n:-0}" -gt 0 ] && ! cooled "$c" save "$COOLDOWN_S"; then
-        findings="$findings\nIDENTITY save refusals: $n\n  $(samples "$logfile" 'REFUSED a save')"
+        findings="$findings\nIDENTITY save refusals: $n"
     fi
 
     # Combat refusals: one or two is the rate limiter doing its job; a sustained run is
     # the fire-rate bug class back again.
     n=$(grep -acE 'Refused a (shot|reload)' "$logfile" || true)
     if [ "${n:-0}" -ge 10 ] && ! cooled "$c" combat "$COOLDOWN_S"; then
-        findings="$findings\nSUSTAINED combat refusals: $n\n  $(samples "$logfile" 'Refused a (shot|reload)')"
+        findings="$findings\nSUSTAINED combat refusals: $n"
     fi
 
-    # OrphanVehicle: a handful is churn; a runaway (hundreds before the 0xC0000005) is
-    # the two-player vehicle crash in progress.
-    n=$(grep -acE 'OrphanVehicle' "$logfile" || true)
-    if [ "${n:-0}" -ge 20 ] && ! cooled "$c" orphan "$COOLDOWN_S"; then
-        findings="$findings\nOrphanVehicle runaway: $n lines\n  $(samples "$logfile" 'OrphanVehicle')"
-    fi
+    # (No OrphanVehicle detector: that string is emitted by the CLIENT only -
+    # InterpolationSystem.cpp - and this watcher reads server containers. Watching for
+    # it here can never fire; the runaway is visible in client logs via PullLogs.ps1.
+    # The real fix is the server emitting vehicle-churn events itself.)
 
     # More than one start in a window = crash-looping. Exactly one is usually a deploy,
     # which update-server.sh already logs - stay quiet for that.

@@ -4051,7 +4051,14 @@
         row.appendChild(name)
 
         const badge = document.createElement('span')
-        if (mod.state === 'broken') {
+        if (mod.pulled) {
+          // The server pulled this id from its list; the record only sits in this
+          // bucket because the pull delisted it. Say so - "✓ INSTALLED" here is how
+          // a pull stays invisible to the one player it affects.
+          badge.className = 'mod-badge bad'
+          badge.textContent = 'PULLED FROM SERVER LIST'
+          badge.title = mod.pulledReason || 'Removed from the server\'s list - remove it here too.'
+        } else if (mod.state === 'broken') {
           badge.className = 'mod-badge bad'
           badge.textContent = 'FILES MISSING'
         } else if (mod.updateAvailable) {

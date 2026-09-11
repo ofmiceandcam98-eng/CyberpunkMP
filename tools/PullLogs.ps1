@@ -47,13 +47,26 @@ if (-not $Player) {
     exit 0
 }
 
-# The player dir is exactly the in-game name, case and all - do not normalise it.
-$remote = "$remoteRoot/$Player"
+# The player dir is the SANITIZED in-game name: the server's WebApi SanitizeName keeps
+# only letters, digits, '.', '_' and '-' (case preserved) before creating the dir, so
+# "Johnny Silverhand" ships to JohnnySilverhand. Mirror it here - it also keeps spaces
+# and shell metacharacters out of the remote command line.
+$dirName = -join ($Player.ToCharArray() | Where-Object { [char]::IsLetterOrDigit($_) -or $_ -eq '.' -or $_ -eq '_' -or $_ -eq '-' })
+$remote = "$remoteRoot/$dirName"
 
 $names = ssh "$user@$hostName" "ls -t $remote 2>/dev/null"
+if ($LASTEXITCODE -eq 255) {
+    # 255 is ssh itself failing - transport, not a missing player. Diagnosing this as a
+    # wrong name sent people chasing case-sensitivity while the tailnet was down.
+    Write-Host "  FAIL  could not reach $user@$hostName (ssh exit 255)" -ForegroundColor Red
+    Write-Host "        what   the CONNECTION failed - host down, tailnet off, or key rejected; the player name was never checked" -ForegroundColor DarkYellow
+    Write-Host "        where  ssh $user@$hostName" -ForegroundColor DarkYellow
+    Write-Host "        fix    check 'tailscale status', then try the ssh by hand" -ForegroundColor DarkYellow
+    exit 1
+}
 if ($LASTEXITCODE -ne 0 -or -not $names) {
     Write-Host "  FAIL  no logs for '$Player'" -ForegroundColor Red
-    Write-Host "        what   either the name is wrong (it is the exact in-game name, case-sensitive) or that player has never finished a session with log shipping on" -ForegroundColor DarkYellow
+    Write-Host "        what   no dir '$dirName' on the server (the in-game name reduced to letters/digits/._-, case-sensitive) - or that player has never finished a session with log shipping on" -ForegroundColor DarkYellow
     Write-Host "        where  $user@$hostName`:$remote" -ForegroundColor DarkYellow
     Write-Host "        fix    run .\tools\PullLogs.ps1 with no player to list who has logs" -ForegroundColor DarkYellow
     exit 1

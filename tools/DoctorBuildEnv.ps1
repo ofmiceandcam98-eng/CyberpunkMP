@@ -65,7 +65,7 @@ function Get-EnvFingerprint {
         [Parameter(Mandatory)][string]$ConfPath,
         [Parameter(Mandatory)][string]$PackagesRoot,
         [Parameter(Mandatory)][string]$SdkIncludeRoot,
-        [Parameter(Mandatory)][string]$MsvcToolsRoot
+        [AllowEmptyCollection()][string[]]$MsvcToolsRoot = @()
     )
 
     $parts = @()
@@ -77,7 +77,7 @@ function Get-EnvFingerprint {
         }
     }
 
-    foreach ($root in @($SdkIncludeRoot, $MsvcToolsRoot)) {
+    foreach ($root in (@($SdkIncludeRoot) + @($MsvcToolsRoot))) {
         if (Test-Path $root) {
             $parts += (Get-ChildItem $root -Directory | ForEach-Object { $_.Name } | Sort-Object) -join ','
         }
@@ -154,8 +154,13 @@ if ($SelfTest) {
 $packagesRoot  = Join-Path $env:LOCALAPPDATA '.xmake\packages'
 $confPath      = Join-Path $Repo '.xmake\windows\x64\xmake.conf'
 $sdkRoot       = 'C:\Program Files (x86)\Windows Kits\10\include'
-$msvcRoot      = (Get-ChildItem 'C:\Program Files (x86)\Microsoft Visual Studio\2022\*\VC\Tools\MSVC' -Directory -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
-if (-not $msvcRoot) { $msvcRoot = 'C:\Program Files\Microsoft Visual Studio\2022' }
+# EVERY edition's toolset root, under BOTH Program Files - x86 is where BuildTools
+# lands, plain Program Files is the installer default for full VS. Picking one edition
+# (or falling back to the VS root, whose children are edition names and never change)
+# left the fingerprint blind to a toolset update on the layouts it skipped.
+$msvcRoots     = @(Get-ChildItem 'C:\Program Files (x86)\Microsoft Visual Studio\2022\*\VC\Tools\MSVC',
+                                 'C:\Program Files\Microsoft Visual Studio\2022\*\VC\Tools\MSVC' `
+                                 -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName } | Sort-Object)
 $objsDir       = Join-Path $Repo 'build\.objs'
 $gensDir       = Join-Path $Repo 'build\.gens'
 $fpFile        = Join-Path $Repo 'build\.env-fingerprint'
@@ -236,7 +241,7 @@ if (Test-Path $confPath) {
 # 5. The build tree matches the environment it was compiled under. PCHs bake the SDK's
 #    headers in; artifacts from an older environment under a newer one mix worlds, and
 #    NO reconfigure clears them - only deleting them does.
-$current = Get-EnvFingerprint -ConfPath $confPath -PackagesRoot $packagesRoot -SdkIncludeRoot $sdkRoot -MsvcToolsRoot $msvcRoot
+$current = Get-EnvFingerprint -ConfPath $confPath -PackagesRoot $packagesRoot -SdkIncludeRoot $sdkRoot -MsvcToolsRoot $msvcRoots
 if (Test-Path $objsDir) {
     $stored = if (Test-Path $fpFile) { (Get-Content $fpFile -Raw).Trim() } else { $null }
     if ($stored -and $stored -ne $current) {
@@ -244,8 +249,16 @@ if (Test-Path $objsDir) {
                 -What "build\.objs holds artifacts (PCHs included) baked against the OLD environment; the next build mixes old and new - the C2011 two-SDK corecrt failure that survived even 'xmake f -c' on 2026-09-10" `
                 -Where $objsDir `
                 -Fix "Remove-Item '$objsDir','$gensDir' -Recurse -Force  - then rebuild clean; this file re-baselines automatically"
-    } else {
+    } elseif ($stored) {
         Ok "build tree consistent with the current environment"
+        if ($findings -eq 0) { New-Item -ItemType Directory -Force (Split-Path $fpFile) | Out-Null; Set-Content $fpFile $current -NoNewline }
+    } else {
+        # First run over a PRE-EXISTING build tree: no baseline exists, so consistency
+        # is UNKNOWN - claiming "consistent" here is exactly how the 2026-09-10 poisoned
+        # tree would have sailed through its first doctor run. Say so, baseline anyway
+        # (the check has to start somewhere), and leave the fix on screen.
+        Write-Host "  warn  existing build tree but no baseline yet - cannot vouch for artifacts already in build\.objs" -ForegroundColor DarkYellow
+        Write-Host "        if the next build fails C2011/corecrt or PCH-shaped: Remove-Item '$objsDir','$gensDir' -Recurse -Force and rebuild clean" -ForegroundColor DarkYellow
         if ($findings -eq 0) { New-Item -ItemType Directory -Force (Split-Path $fpFile) | Out-Null; Set-Content $fpFile $current -NoNewline }
     }
 } else {
