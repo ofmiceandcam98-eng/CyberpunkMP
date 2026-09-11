@@ -61,6 +61,26 @@ function Pass($m) { Write-Host "  ok    $m" -ForegroundColor DarkGray }
 function Head($m) { Write-Host "`n$m" -ForegroundColor Cyan }
 
 # ---------------------------------------------------------------------------
+# Environment first: rotted tooling fails every later check with messages that blame
+# the code. On 2026-09-10 a wiped xmake cache plus a stale PCH burned SIX ship attempts
+# (tags 23-28) on failures no code change caused. The doctor names that class in one
+# line before anything expensive runs.
+Head "build environment (doctor)"
+& (Join-Path $PSScriptRoot "DoctorBuildEnv.ps1")
+$doctorOk = $LASTEXITCODE -eq 0
+Set-Location $Repo   # the doctor dot-sources Environment.ps1, which sets location
+
+if ($doctorOk) {
+    Pass "environment sound - packages, SDK pin, build-tree fingerprint"
+} else {
+    # The doctor has already printed each finding in what/where/fix form directly above.
+    Fail -Summary "the build environment is rotted - fix it before trusting ANY later failure" `
+         -What "every finding above makes later checks fail with messages that blame the code; the 2026-09-10 cascade burned six ship attempts this way" `
+         -Where "listed directly above this block" `
+         -Fix "apply each fix line printed above, then re-run .\tools\DoctorBuildEnv.ps1 until it exits clean"
+}
+
+# ---------------------------------------------------------------------------
 Head "BOM"
 $bom = @()
 foreach ($root in @("code\assets\redscript", "distrib\launcher\mod\assets\redscript", "code\server\native", "code\client")) {
