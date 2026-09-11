@@ -67,6 +67,13 @@ const DATA_DIR = process.env.NCO_COORD_DATA || path.join(__dirname, 'data')
 const PARTICIPANTS_FILE = path.join(DATA_DIR, 'participants.json')
 const UPDATES_FILE = path.join(DATA_DIR, 'updates.jsonl')
 
+// The internal-docs share, when this deployment mounts it (read-only). Cam's stream has
+// tailnet reach and a coord key but NO shell account on the host, so "internal docs are
+// shared with Cam on the server" was fiction until this route: everything reached him by
+// relay. Absent the mount (a dev box, a test run) the route answers 503 and nothing else
+// changes.
+const DOCS_DIR = process.env.NCO_DOCS_DIR || null
+
 // The stream journal. SEPARATE FILE ON PURPOSE: publishNow() reads updates.jsonl and
 // nothing else, so journal entries are excluded from the public slice by construction,
 // not by a filter someone could forget. Journal lines routinely carry working-tree
@@ -791,6 +798,65 @@ async function handleApi (req, res, url) {
     return send(res, 201, { ok: true, entry })
   }
 
+  if (url.pathname === '/v1/docs' || url.pathname.startsWith('/v1/docs/')) {
+    // Read-only by construction: GET is the only verb, the mount is ro, and the write
+    // path stays what it always was - SSH from a machine that has an account.
+    if (req.method !== 'GET') return send(res, 405, { error: 'The docs route is read-only.' })
+
+    if (!DOCS_DIR || !fs.existsSync(DOCS_DIR)) {
+      return send(res, 503, { error: 'Internal docs are not mounted on this deployment.' })
+    }
+
+    // Path-jailed: resolve, then require the result to still be under the root. This is
+    // the whole security story of the route - a traversal that escapes the jail would
+    // hand every tailnet keyholder the container's filesystem.
+    const rel = decodeURIComponent(url.pathname.slice('/v1/docs'.length)).replace(/^\/+/, '')
+    const root = path.resolve(DOCS_DIR)
+    const target = path.resolve(root, rel)
+
+    if (target !== root && !target.startsWith(root + path.sep)) {
+      return send(res, 403, { error: 'Path escapes the docs directory.' })
+    }
+
+    let stat
+    try { stat = fs.statSync(target) } catch { return send(res, 404, { error: 'No such file or directory.', hint: 'GET /v1/docs lists the top level.' }) }
+
+    if (stat.isDirectory()) {
+      const entries = fs.readdirSync(target, { withFileTypes: true }).map((e) => ({
+        name: e.name,
+        type: e.isDirectory() ? 'dir' : 'file',
+        size: e.isDirectory() ? undefined : (() => { try { return fs.statSync(path.join(target, e.name)).size } catch { return undefined } })()
+      }))
+      return send(res, 200, { path: '/' + rel, entries })
+    }
+
+    // Mockups and type docs are a few hundred KB; anything bigger does not belong on
+    // this route - pull it over SSH from a machine with an account.
+    if (stat.size > 10 * 1024 * 1024) {
+      return send(res, 413, { error: 'File is over the 10MB route cap - fetch it over SSH instead.' })
+    }
+
+    const types = {
+      '.html': 'text/html; charset=utf-8',
+      '.md': 'text/plain; charset=utf-8',
+      '.txt': 'text/plain; charset=utf-8',
+      '.json': 'application/json; charset=utf-8',
+      '.reds': 'text/plain; charset=utf-8',
+      '.ps1': 'text/plain; charset=utf-8',
+      '.sh': 'text/plain; charset=utf-8',
+      '.css': 'text/css; charset=utf-8',
+      '.js': 'text/plain; charset=utf-8',   // served as text on purpose - read it, do not run it
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.svg': 'image/svg+xml'
+    }
+    const type = types[path.extname(target).toLowerCase()] || 'application/octet-stream'
+
+    const bytes = fs.readFileSync(target)
+    res.writeHead(200, { 'Content-Type': type, 'Content-Length': bytes.length, 'Cache-Control': 'no-store' })
+    return res.end(bytes)
+  }
+
   if (url.pathname === '/v1/publish' && req.method === 'POST') {
     try {
       await publishNow()
@@ -811,6 +877,7 @@ const ENDPOINTS = [
   'POST /v1/updates   {"title","body","kind","refs"}',
   'GET  /v1/journal?stream=&limit=&since=   - session state, never published',
   'POST /v1/journal   {"state","session","tree","inflight"}',
+  'GET  /v1/docs[/<path>]   - internal-docs, read-only, where mounted',
   'POST /v1/publish',
   'POST /v1/dev-key   {"discordToken"}  - dev role only',
   'POST /v1/atlas     {"discordToken"}  - dev role only, returns the Atlas address'
