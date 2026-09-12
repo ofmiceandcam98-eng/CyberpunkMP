@@ -51,6 +51,17 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
     here and in CLAUDE.md as well as posted - the feed scrolls, and the other stream reads
     law from the rulebook.
 
+- **This repo is the open multiplayer service; operator tooling is maintained separately**
+  (zeldfep, 2026-09-11). Scope boundary for what belongs in this repository:
+  - **The multiplayer service and portability → here.** The client, server, protocol and
+    launcher, and the multiplayer mechanics (combat, connectivity) that let anyone stand up
+    and run their own CyberpunkMP server. A stranger cloning the repo can run a working
+    multiplayer server; that is the point and it stays true.
+  - **Server-operator tooling → maintained separately, not in this repo or the launcher
+    payload.** The menus, HUDs and in-world systems a server runs on top of the service.
+  - **The commit test:** does this change make the multiplayer service work or portable? Then
+    it belongs here. Is it operator tooling? Then it does not.
+
 - **Read the type doc BEFORE turning a mockup into code** (zeldfep, 2026-09-09): *"server
   side we have a font doc i need you review that when pushing things from mockups"*. The doc
   is `/mnt/vol/projects/_internal-docs/type-scale.html` - INTERNAL, on the server, per the

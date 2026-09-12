@@ -121,6 +121,16 @@ auto-load — read it deliberately. Cam's stream: it auto-loads; keep it current
   still applies. Colour goes with it - hazard yellow on a bright backdrop is illegible, so
   a token is a starting point that still has to be READ against what sits behind it.
 
+- **This repo is the open multiplayer service; operator tooling is maintained separately**
+  (zeldfep, 2026-09-11): the git repo holds the *multiplayer service and the portability to
+  run one* — the client, server, protocol and launcher, including multiplayer mechanics like
+  combat and connectivity. That is open and self-hostable on purpose; the goal is that anyone
+  can stand up their own server. Server-operator tooling — the menus, HUDs and in-world
+  systems a server runs on top of the service — is **maintained separately and is not part of
+  this repository or the launcher payload**. Before you commit, ask: does this make the
+  multiplayer service work or portable? Then it belongs here. Is it operator tooling? Then it
+  does not go in this repo.
+
 - **The map convention**: any commit touching `docs/MAP.md` gets a "map updated" post on
   the feed; the other stream re-reads before acting. Landing removes, finding adds, SAME
   commit. Write map entries in the ledger voice: tight categorized bullets, one home per
