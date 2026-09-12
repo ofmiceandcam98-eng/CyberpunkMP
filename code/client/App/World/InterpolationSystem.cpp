@@ -261,8 +261,19 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
     //
     // The rule from here on: absolute ticks stay integer, and only DIFFERENCES - which
     // are small - are allowed to become float.
+    // Widen the buffer for THIS remote by a bounded margin sized to its own arrival jitter,
+    // on top of the session-wide base delay. A jittery connection stops starving its buffer
+    // (and dead-reckoning for every observer) while a clean one is untouched, so the worst
+    // link in the session no longer sets everyone's visual quality. Only DIFFERENCES become
+    // float, per the integer-tick rule above. Bounded so a pathological link cannot run the
+    // delay away. Client-only; addresses jitter-driven starvation - a steady high-latency
+    // link with near-zero jitter would still need server-sent ping (the flag-day option).
+    constexpr float cJitterMargin = 2.f;      // cover ~2x the smoothed jitter
+    constexpr float cMaxJitterMargin = 200.f; // never add more than this many ms of delay
+    const float jitterExtra = std::clamp(cJitterMargin * aInterpolation.ArrivalJitter, 0.f, cMaxJitterMargin);
     const int64_t renderTick =
-        static_cast<int64_t>(NetworkWorldSystem::GetTick()) - static_cast<int64_t>(aSimulationDelay);
+        static_cast<int64_t>(NetworkWorldSystem::GetTick()) -
+        static_cast<int64_t>(aSimulationDelay + jitterExtra);
 
     TraceDriverless(aEntity, aEntityComponent, aInterpolation, renderTick, "enter");
 
@@ -786,6 +797,20 @@ void InterpolationSystem::HandleNotifyEntityMove(const PacketEvent<server::Notif
         pInterpolation->LastAuthorityEpoch = aMessage.get_authority_epoch();
         pInterpolation->HasAuthorityEpoch = true;
     }
+
+    // Arrival-jitter estimate for the per-remote adaptive interpolation margin (see
+    // InterpolationComponent). transit is the sample's age at arrival on the shared render
+    // clock; only its frame-to-frame change feeds the estimate, so the clock offset cancels.
+    const int64_t transit = static_cast<int64_t>(NetworkWorldSystem::GetTick()) -
+                            static_cast<int64_t>(aMessage.get_tick());
+    if (pInterpolation->HasTransit)
+    {
+        const int64_t diff = transit - pInterpolation->LastTransit;
+        const float d = static_cast<float>(diff < 0 ? -diff : diff);
+        pInterpolation->ArrivalJitter += (d - pInterpolation->ArrivalJitter) / 16.f;
+    }
+    pInterpolation->LastTransit = transit;
+    pInterpolation->HasTransit = true;
 
     if (Settings::Get().syncTrace)
     {

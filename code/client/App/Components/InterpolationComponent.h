@@ -49,6 +49,20 @@ struct InterpolationComponent
     bool HasSequence{false};
     bool HasAuthorityEpoch{false};
 
+    // Per-remote adaptive interpolation margin (client-only, no wire change).
+    //
+    // The base simulation delay is one size for the whole session, so the JITTERIEST remote
+    // decides whether the buffer starves - and a starved buffer means that remote dead-reckons
+    // for everyone watching them, which is how one 170ms-ping player drags down the visual
+    // quality of the whole session. These track this remote's arrival jitter with RFC 3550's
+    // smoothed transit variation: transit is (local render clock at arrival - sample tick),
+    // and only its FRAME-TO-FRAME change is used, which cancels the client/server clock offset
+    // (the two agree to ~20ms, see InterpolateEntity, but the difference cancels it exactly).
+    // InterpolateEntity widens only THIS remote's buffer by a bounded margin sized from it.
+    int64_t LastTransit{0};
+    float ArrivalJitter{0.f};
+    bool HasTransit{false};
+
     // Recovery state for player dead reckoning. A late authoritative sample should
     // correct the guess over a short window instead of lurching to the wire position.
     glm::vec3 LastRenderedPosition{};
