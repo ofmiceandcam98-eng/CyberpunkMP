@@ -1659,6 +1659,22 @@ async function installEverything (onProgress = () => {}) {
   const running = await isProcessRunning('Cyberpunk2077.exe')
   if (running) throw new Error('Close Cyberpunk 2077 first.')
 
+  // Same refusal as applyUpdate, same measured trap (2026-09-10): "Install everything"
+  // is the RELEASE, and pressing it while a test build is installed silently swaps the
+  // dev off the build that matches the test server. Remove mod clears the tag, so the
+  // recovery path (Remove, then Install everything) is untouched by this.
+  const activeTestTag = loadSettings().testBuildTag
+  if (activeTestTag) {
+    launcherLog(`install everything refused: test build ${activeTestTag} is installed`)
+    throw new Error(
+      `You are on test build ${activeTestTag}. Install everything puts the public release ` +
+      'on, which cannot connect to the test server - so nothing was changed.\n\n' +
+      'To move to a newer test build: Tools > Test builds > Install.\n' +
+      'To deliberately return to the public release: Tools > Test builds > Restore.\n' +
+      'To rebuild from scratch: Settings > Remove mod, then Install everything.'
+    )
+  }
+
   onProgress('Downloading...')
 
   // /releases/latest/download/ is a permanent URL that always resolves to the newest
@@ -1826,7 +1842,11 @@ async function installEverything (onProgress = () => {}) {
     try {
       writeFileSync(path.join(modTarget, '.nco-version'), String(info.version || 'unknown'))
     } catch (err) {
-      console.warn('[install] could not record the version marker:', err.message)
+      // launcherLog, not console.warn. This is the site the comment above warns about -
+      // it once swallowed a ReferenceError silently and shipped every fresh install
+      // unstamped. A trail line is what turns "the marker is missing again" from a
+      // fresh investigation into a one-line answer.
+      launcherLog(`[install] could not record the version marker at ${modTarget}\\.nco-version - ${err.message} - fresh install will read as hand-built until it is re-stamped`)
     }
   }
 
@@ -2105,7 +2125,11 @@ function extractPayloadClean (aModDir, aZip) {
   const cleanFailures = []
   for (const dir of shippedDirs) {
     try {
-      rmSync(path.join(aModDir, dir), { recursive: true, force: true })
+      // maxRetries makes a transient hold (an antivirus scan, an Explorer window mid-
+      // enumeration) survivable instead of a failed install: rmSync retries EBUSY /
+      // EPERM / ENOTEMPTY with a pause between attempts. A hard lock still fails and
+      // is still reported - this widens nothing about what counts as success.
+      rmSync(path.join(aModDir, dir), { recursive: true, force: true, maxRetries: 3, retryDelay: 120 })
     } catch (err) {
       cleanFailures.push({ dir, message: err.code ? `${err.code}: ${err.message}` : String(err.message || err) })
     }
@@ -2117,6 +2141,24 @@ function extractPayloadClean (aModDir, aZip) {
 async function applyUpdate () {
   const modDir = findModDir()
   if (!modDir) throw new Error('The mod is not installed - install it once first.')
+
+  // A test build is not "out of date" - it is a different rail, and Update here would
+  // silently reinstall the public RELEASE over it. Measured 2026-09-10: a dev on a test
+  // build pressed the big Update button, got the release (whose protocol cannot
+  // handshake the test server), and the only symptom was a bare "can't connect" that
+  // read as a server fault. The deliberate ways off a test build are Tools > Test
+  // builds (to move between test builds) and Restore (to return to the release) - both
+  // say what they are doing. Update must not be a third, silent one.
+  const activeTestTag = loadSettings().testBuildTag
+  if (activeTestTag) {
+    launcherLog(`update refused: test build ${activeTestTag} is installed - Update would replace it with the release`)
+    throw new Error(
+      `You are on test build ${activeTestTag}. Update installs the public release, ` +
+      'which cannot connect to the test server - so nothing was changed.\n\n' +
+      'To move to a newer test build: Tools > Test builds > Install.\n' +
+      'To deliberately return to the public release: Tools > Test builds > Restore.'
+    )
+  }
 
   // The game holds CyberpunkMP.dll open, so extracting over it fails with a
   // permission error that reads like a broken download. Say what it actually is.
@@ -2190,7 +2232,32 @@ async function applyUpdate () {
   // install starts reporting itself as up to date, and the up-to-date gate then refuses
   // to fix it: "Your game files are out of date" never fires, so the player launches
   // stale code forever with a green launcher.
-  const audit = auditPayloadInstall(modDir, zip)
+  let audit = auditPayloadInstall(modDir, zip)
+
+  // Orphans get one cleanup attempt before they are allowed to fail the install.
+  //
+  // An orphan is, by definition, a file inside a directory the payload OWNS that the
+  // payload no longer ships - exactly what extractPayloadClean's directory wipe was
+  // supposed to remove and (for reasons still open on the payload-clean branch)
+  // sometimes does not. Deleting each one by name is strictly less destructive than
+  // the wholesale wipe that already ran, and it is what breaks the loop measured
+  // 2026-09-10: leftover test-build files failed the release audit -> "install NOT
+  // recorded" -> the stamp never saved -> "update required" -> the same press, the
+  // same failure, forever. Missing files stay fatal - nothing can conjure those.
+  if (audit.orphans.length && !audit.missing.length) {
+    const stuck = []
+    for (const rel of audit.orphans) {
+      try {
+        rmSync(path.join(modDir, rel.split('/').join(path.sep)), { force: true })
+      } catch (err) {
+        stuck.push(`${rel} (${err.code || err.message})`)
+      }
+    }
+    launcherLog(`cleared ${audit.orphans.length - stuck.length} of ${audit.orphans.length} leftover file(s) the payload no longer ships` +
+                (stuck.length ? ` | still stuck: ${stuck.slice(0, 4).join(', ')}` : ''))
+    audit = auditPayloadInstall(modDir, zip)
+  }
+
   if (audit.missing.length || audit.orphans.length) {
     const say = (label, list) =>
       list.length
@@ -2242,7 +2309,11 @@ async function applyUpdate () {
   try {
     writeFileSync(path.join(modDir, '.nco-version'), String(info.version || 'unknown'))
   } catch (err) {
-    console.warn('[install] could not record the version marker:', err.message)
+    // launcherLog, not console.warn: a swallowed marker write leaves the two records
+    // disagreeing (settings say installed, the folder says nothing) and Checkup then
+    // reads a clean official install as "built by hand" - and console.warn goes to the
+    // Electron console, so nothing about that ever reached launcher-trail.log.
+    launcherLog(`[install] could not record the version marker at ${modDir}\\.nco-version - ${err.message} - Checkup will read this install as hand-built until it is re-stamped`)
   }
 
 
@@ -2299,7 +2370,12 @@ async function uninstallMod () {
   }
 
   rmSync(modDir, { recursive: true, force: true })
-  saveSettings({ installedStamp: null, installedVersion: null })
+
+  // The test-build tag goes with the folder it described. Leaving it set made the
+  // launcher keep reporting a test build that no longer exists on disk - and it would
+  // wrongly trip the are-you-on-a-test-build refusal in installEverything on the very
+  // reinstall this Remove exists to enable.
+  saveSettings({ installedStamp: null, installedVersion: null, testBuildTag: undefined })
 
   return { removed: true, modDir }
 }
@@ -4428,6 +4504,32 @@ function saveInstalledMods (record) {
   }
 }
 
+// The list's `_pulled` block is prose for humans, but every entry LEADS with the id it
+// pulls ("22114 - PULLED 2026-09-08, ..."). Parse exactly that much. A pull that lives
+// only in prose reaches nobody who already installed the mod: those records never had a
+// manifest component (22114 was excluded from the manifest all along), so the rule-59
+// retirement check cannot see them, and the mod would sit under "YOUR MODS" verifying
+// intact forever - with the reason it was pulled stored where nothing reads it.
+// Entries are blank-line separated blocks; the whole block is kept as the reason.
+let pulledMods = new Map()
+
+function parsePulledMods (list) {
+  const out = new Map()
+  const lines = Array.isArray(list?._pulled) ? list._pulled : []
+  let id = null
+  let block = []
+  const flush = () => { if (id) out.set(id, block.join(' ').trim()); id = null; block = [] }
+  for (const raw of lines) {
+    const line = String(raw)
+    if (!line.trim()) { flush(); continue }
+    const m = /^(\d+)\s*-\s*PULLED\b/.exec(line)
+    if (m) { flush(); id = m[1] }
+    if (id) block.push(line)
+  }
+  flush()
+  return out
+}
+
 async function fetchModList () {
   const response = await axios.get(MODLIST_URL, {
     headers: { 'User-Agent': 'NightCityOnline-Launcher' },
@@ -4435,6 +4537,7 @@ async function fetchModList () {
   })
 
   const list = response.data
+  pulledMods = parsePulledMods(list)
   return Array.isArray(list?.mods) ? list.mods : []
 }
 
@@ -4717,6 +4820,10 @@ ipcMain.handle('mods:list', async () => {
       const present = paths.length > 0 && paths.every((rel) => existsSync(path.join(gameDir, rel)))
       const nexus = await fetchModInfo(recordId)
 
+      // A record here because the server PULLED its id is not a mod the player chose -
+      // presenting it as one hides the pull from the only people it affects.
+      const pulledReason = pulledMods.get(String(recordId)) || null
+
       personal.push({
         id: String(recordId),
         name: nexus?.name || record.name || `Nexus mod ${recordId}`,
@@ -4724,6 +4831,8 @@ ipcMain.handle('mods:list', async () => {
         version: record.version || null,
         files: paths.length,
         state: present ? 'installed' : 'broken',
+        pulled: Boolean(pulledReason),
+        pulledReason,
         nexusUrl: `https://www.nexusmods.com/cyberpunk2077/mods/${recordId}`
       })
     }
@@ -4871,6 +4980,9 @@ ipcMain.handle('mods:verify', async () => {
 
   await refreshManifestState().catch(() => null)
   const manifest = usableManifest()
+  // Refresh the pulled-id set alongside the manifest - retirement below needs it, and
+  // a fetch failure degrades the same way a missing manifest does (check skipped).
+  await fetchModList().catch(() => null)
 
   for (const [modId, record] of Object.entries(installed)) {
     checked++
@@ -4924,6 +5036,16 @@ ipcMain.handle('mods:verify', async () => {
     // with the same per-file, confirmed deletion as always.
     if (manifest && record.id && !(manifest.components || []).some((c) => c.id === record.id)) {
       retired.push({ id: modId, name: record.name || `mod ${modId}` })
+    }
+
+    // Retirement, list flavour: the server list PULLED this id outright (_pulled).
+    // The rule-59 check above cannot see these - a mod that was excluded from the
+    // manifest all along (22114) has records with no record.id, so the guard
+    // short-circuits. Without this, a pull is a silent no-op for everyone who
+    // already installed the mod, and the reason it was pulled reaches nobody.
+    const pulledReason = pulledMods.get(String(modId))
+    if (pulledReason && !retired.some((r) => String(r.id) === String(modId))) {
+      retired.push({ id: modId, name: record.name || `mod ${modId}`, reason: pulledReason })
     }
 
     intact++
@@ -5799,6 +5921,70 @@ ipcMain.handle('devServer:set', (_event, host, port) => {
   return { ok: true, host: cleanHost, port: cleanPort }
 })
 
+// The Atlas - the cross-project mind map, on the tailnet beside the coordination feed.
+//
+// Its address is a SETTING and never a literal in this file. This repository is public and
+// ships to every player: docs/CLAUDE-HANDOFF.md placeholders the box's name for exactly
+// that reason, and hardcoding it here would undo that in the one artefact everybody
+// downloads. An admin pastes it once; nobody else ever sees the field do anything.
+ipcMain.handle('atlas:get', async () => {
+  if (!isAdmin()) return { ok: false, error: 'Not permitted' }
+
+  const saved = loadSettings().atlasUrl
+  if (saved) return { ok: true, url: saved }
+
+  // Nothing saved: ask the coordination API, which verifies the Discord dev role and is
+  // the same route the dev key already travels. A dev never types the address, and it
+  // never appears anywhere a player can read - not in this repo, not in server.json.
+  const token = loadToken()
+  if (!token) return { ok: true, url: null }
+
+  const published = await fetchPublishedServer()
+  const host = published?.coordHost || loadSettings().serverHost || published?.host
+  const port = published?.coordPort || 11780
+  if (!host) return { ok: true, url: null }
+
+  try {
+    const response = await axios.post(
+      `http://${host}:${port}/v1/atlas`,
+      { discordToken: token },
+      { timeout: 8000, validateStatus: () => true })
+
+    if (response.status !== 200 || !response.data?.url) return { ok: true, url: null }
+
+    saveSettings({ atlasUrl: response.data.url })
+    return { ok: true, url: response.data.url, discovered: true }
+  } catch {
+    // Reachable only over Tailscale, and this is a convenience - the field still works
+    // by hand, so a failure here is not worth a red banner.
+    return { ok: true, url: null }
+  }
+})
+
+ipcMain.handle('atlas:open', (_event, url) => {
+  if (!isAdmin()) return { ok: false, error: 'The Atlas is for people with the dev role.' }
+
+  const wanted = String(url || loadSettings().atlasUrl || '').trim()
+  if (!wanted) return { ok: false, error: 'No address saved yet - paste the Atlas URL first.' }
+
+  let parsed
+  try {
+    parsed = new URL(wanted)
+  } catch {
+    return { ok: false, error: `Not a URL: ${wanted}` }
+  }
+
+  // openExternal hands the string to the OS, which launches whatever is registered to the
+  // scheme. A file:// or custom scheme typed into this box would be a launch, not a browse.
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { ok: false, error: 'Only http:// and https:// addresses open here.' }
+  }
+
+  saveSettings({ atlasUrl: parsed.toString() })
+  shell.openExternal(parsed.toString())
+  return { ok: true, url: parsed.toString() }
+})
+
 // Pre-releases are how test builds travel: deliberately invisible to player launchers
 // (auto-update reads releases/latest, which skips them), one click for a dev.
 ipcMain.handle('prerelease:list', async () => {
@@ -5972,7 +6158,10 @@ ipcMain.handle('prerelease:install', async (_event, tag) => {
     try {
       writeFileSync(path.join(modDir, '.nco-version'), String(tag))
     } catch (err) {
-      console.warn('[prerelease] could not record the version marker:', err.message)
+      // launcherLog, not console.warn: without the marker a test build reads as the
+      // shipped release in duplicate diagnostics and verify - the one case the marker
+      // exists to disagree with - and console.warn never reaches launcher-trail.log.
+      launcherLog(`[prerelease] could not record the version marker at ${modDir}\\.nco-version - ${err.message} - this test build will read as the shipped release until it is re-stamped`)
     }
 
     return { ok: true, tag, payload: Boolean(payload) }
