@@ -32,29 +32,43 @@ $ErrorActionPreference = 'Stop'
 # Detectors - pure functions over paths, so the selftest can aim them at a temp tree.
 # ---------------------------------------------------------------------------
 
-# A package install that is a directory skeleton with NO files is a lie xmake will
-# happily repeat: its fetch caches keep answering "installed" for a dir the wipe
-# emptied, and nothing re-checks the bytes. Emptiness is checked with a first-entry
-# enumeration, not a full count - this runs on every Verify.
-function Get-HollowPackages {
+# ONE walk of the xmake package tree (letter/pkg/ver/hash). Both the hollow-package
+# detector and the environment fingerprint read the result, so a doctor run enumerates the
+# cache once instead of twice. A row per version dir: its pkg/ver label, the hash-dir
+# leaves beneath it, and whether the version subtree holds any file at all - emptiness by
+# first-entry enumeration, not a full count, because this runs on every Verify.
+function Get-PackageTree {
     param([Parameter(Mandatory)][string]$PackagesRoot)
 
-    $hollow = @()
-    if (-not (Test-Path $PackagesRoot)) { return $hollow }
+    $rows = @()
+    if (-not (Test-Path $PackagesRoot)) { return $rows }
 
     foreach ($letter in [System.IO.Directory]::EnumerateDirectories($PackagesRoot)) {
         foreach ($pkg in [System.IO.Directory]::EnumerateDirectories($letter)) {
             foreach ($ver in [System.IO.Directory]::EnumerateDirectories($pkg)) {
-                $files = [System.IO.Directory]::EnumerateFiles($ver, '*', 'AllDirectories')
+                $hashes = @()
+                foreach ($hash in [System.IO.Directory]::EnumerateDirectories($ver)) {
+                    $hashes += (Split-Path $hash -Leaf)
+                }
                 $first = $null
-                foreach ($f in $files) { $first = $f; break }
-                if (-not $first) {
-                    $hollow += (Split-Path $pkg -Leaf) + '/' + (Split-Path $ver -Leaf)
+                foreach ($f in [System.IO.Directory]::EnumerateFiles($ver, '*', 'AllDirectories')) { $first = $f; break }
+                $rows += [pscustomobject]@{
+                    Label    = (Split-Path $pkg -Leaf) + '/' + (Split-Path $ver -Leaf)
+                    Hashes   = $hashes
+                    HasFiles = [bool]$first
                 }
             }
         }
     }
-    return $hollow
+    return $rows
+}
+
+# A package install that is a directory skeleton with NO files is a lie xmake will happily
+# repeat: its fetch caches keep answering "installed" for a dir the wipe emptied, and
+# nothing re-checks the bytes. Read straight off the single walk above.
+function Get-HollowPackages {
+    param([AllowEmptyCollection()][object[]]$Tree = @())
+    return @($Tree | Where-Object { -not $_.HasFiles } | ForEach-Object { $_.Label })
 }
 
 # The environment fingerprint: everything a compiled artifact silently bakes in. If any
@@ -63,7 +77,7 @@ function Get-HollowPackages {
 function Get-EnvFingerprint {
     param(
         [Parameter(Mandatory)][string]$ConfPath,
-        [Parameter(Mandatory)][string]$PackagesRoot,
+        [AllowEmptyCollection()][object[]]$PackageTree = @(),
         [Parameter(Mandatory)][string]$SdkIncludeRoot,
         [AllowEmptyCollection()][string[]]$MsvcToolsRoot = @()
     )
@@ -83,16 +97,10 @@ function Get-EnvFingerprint {
         }
     }
 
-    if (Test-Path $PackagesRoot) {
+    if ($PackageTree.Count) {
         $dirs = @()
-        foreach ($letter in [System.IO.Directory]::EnumerateDirectories($PackagesRoot)) {
-            foreach ($pkg in [System.IO.Directory]::EnumerateDirectories($letter)) {
-                foreach ($ver in [System.IO.Directory]::EnumerateDirectories($pkg)) {
-                    foreach ($hash in [System.IO.Directory]::EnumerateDirectories($ver)) {
-                        $dirs += (Split-Path $pkg -Leaf) + '/' + (Split-Path $ver -Leaf) + '/' + (Split-Path $hash -Leaf)
-                    }
-                }
-            }
+        foreach ($row in $PackageTree) {
+            foreach ($hash in $row.Hashes) { $dirs += $row.Label + '/' + $hash }
         }
         $parts += ($dirs | Sort-Object) -join ';'
     }
@@ -109,6 +117,15 @@ function Get-EnvFingerprint {
 
 if ($SelfTest) {
     $failures = 0
+    $ran = 0
+    # Count each assertion as it runs, so the summary total is derived from the cases that
+    # actually executed - add a Test-Case call and the "/N" moves with it, no hardcoded total.
+    function Test-Case {
+        param([bool]$Pass, [string]$Ok, [string]$Fail)
+        $script:ran++
+        if ($Pass) { Write-Host "  ok    $Ok" } else { Write-Host "  FAIL  $Fail"; $script:failures++ }
+    }
+
     $t = Join-Path ([System.IO.Path]::GetTempPath()) ("doctor-selftest-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
 
     try {
@@ -117,31 +134,37 @@ if ($SelfTest) {
         New-Item -ItemType Directory -Force (Join-Path $t 'packages\n\nlohmann_json\v3.12.0\bbbb\include') | Out-Null
         Set-Content (Join-Path $t 'packages\n\nlohmann_json\v3.12.0\bbbb\include\json.hpp') 'x'
 
+        # The single walk both detectors read from.
+        $pkgTree = @(Get-PackageTree -PackagesRoot (Join-Path $t 'packages'))
+
         # @() re-wrap first: a one-element array returned from a function unwraps to a
         # scalar string, and [0] on a string is its first CHARACTER.
-        $hollow = @(Get-HollowPackages -PackagesRoot (Join-Path $t 'packages'))
-        if ($hollow.Count -eq 1 -and $hollow[0] -eq 'glm/1.0.3') { Write-Host "  ok    hollow detector finds exactly the empty package" }
-        else { Write-Host "  FAIL  hollow detector: expected ['glm/1.0.3'], got [$($hollow -join ', ')]"; $failures++ }
+        $hollow = @(Get-HollowPackages -Tree $pkgTree)
+        Test-Case ($hollow.Count -eq 1 -and $hollow[0] -eq 'glm/1.0.3') `
+            "hollow detector finds exactly the empty package" `
+            "hollow detector: expected ['glm/1.0.3'], got [$($hollow -join ', ')]"
 
         # Fingerprint changes when the SDK set changes, is stable when nothing moves.
         New-Item -ItemType Directory -Force (Join-Path $t 'sdk\10.0.22621.0'), (Join-Path $t 'msvc\14.44.1') | Out-Null
         Set-Content (Join-Path $t 'xmake.conf') 'vs_sdkver = "10.0.22621.0",'
-        $args1 = @{ ConfPath = (Join-Path $t 'xmake.conf'); PackagesRoot = (Join-Path $t 'packages'); SdkIncludeRoot = (Join-Path $t 'sdk'); MsvcToolsRoot = (Join-Path $t 'msvc') }
+        $args1 = @{ ConfPath = (Join-Path $t 'xmake.conf'); PackageTree = $pkgTree; SdkIncludeRoot = (Join-Path $t 'sdk'); MsvcToolsRoot = (Join-Path $t 'msvc') }
         $fp1 = Get-EnvFingerprint @args1
         $fp2 = Get-EnvFingerprint @args1
         New-Item -ItemType Directory -Force (Join-Path $t 'sdk\10.0.26100.0') | Out-Null
         $fp3 = Get-EnvFingerprint @args1
 
-        if ($fp1 -eq $fp2) { Write-Host "  ok    fingerprint is stable when nothing changes" }
-        else { Write-Host "  FAIL  fingerprint differs across identical runs"; $failures++ }
-        if ($fp1 -ne $fp3) { Write-Host "  ok    fingerprint moves when an SDK appears" }
-        else { Write-Host "  FAIL  fingerprint blind to a new SDK"; $failures++ }
+        Test-Case ($fp1 -eq $fp2) `
+            "fingerprint is stable when nothing changes" `
+            "fingerprint differs across identical runs"
+        Test-Case ($fp1 -ne $fp3) `
+            "fingerprint moves when an SDK appears" `
+            "fingerprint blind to a new SDK"
     }
     finally {
         Remove-Item $t -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    Write-Host "doctor selftest: $(3 - $failures)/3 passed"
+    Write-Host "doctor selftest: $($ran - $failures)/$ran passed"
     exit $(if ($failures) { 1 } else { 0 })
 }
 
@@ -165,6 +188,9 @@ $objsDir       = Join-Path $Repo 'build\.objs'
 $gensDir       = Join-Path $Repo 'build\.gens'
 $fpFile        = Join-Path $Repo 'build\.env-fingerprint'
 
+# Walk the package cache ONCE; the hollow check and the fingerprint both read this.
+$pkgTree       = @(Get-PackageTree -PackagesRoot $packagesRoot)
+
 $findings = 0
 function Finding {
     param([string]$Summary, [string]$What, [string]$Where, [string]$Fix)
@@ -185,7 +211,7 @@ if (-not (Test-Path $packagesRoot)) {
             -Fix "delete $(Join-Path $Repo '.xmake\windows\x64\cache\package') if present, then 'xmake require --force -y' the missing packages - and force the PINNED versions separately (mimalloc 2.1.7, flecs v4.0.3, catch2 2.13.9) or bare names pull latest. Full recipe: Atlas branch the-xmake-package-cache-vanished-from-zeldfep-s-box-mid-day"
 } else {
     # 2. No hollow packages - dirs the wipe emptied but the caches still vouch for.
-    $hollow = Get-HollowPackages -PackagesRoot $packagesRoot
+    $hollow = Get-HollowPackages -Tree $pkgTree
     if ($hollow) {
         Finding -Summary "$(@($hollow).Count) hollow xmake package(s): $(($hollow | Select-Object -First 6) -join ', ')$(if (@($hollow).Count -gt 6) { ', and more' })" `
                 -What "each is an empty directory skeleton xmake's caches still report as installed, so builds fail on missing headers while every restore attempt silently no-ops" `
@@ -241,7 +267,7 @@ if (Test-Path $confPath) {
 # 5. The build tree matches the environment it was compiled under. PCHs bake the SDK's
 #    headers in; artifacts from an older environment under a newer one mix worlds, and
 #    NO reconfigure clears them - only deleting them does.
-$current = Get-EnvFingerprint -ConfPath $confPath -PackagesRoot $packagesRoot -SdkIncludeRoot $sdkRoot -MsvcToolsRoot $msvcRoots
+$current = Get-EnvFingerprint -ConfPath $confPath -PackageTree $pkgTree -SdkIncludeRoot $sdkRoot -MsvcToolsRoot $msvcRoots
 if (Test-Path $objsDir) {
     $stored = if (Test-Path $fpFile) { (Get-Content $fpFile -Raw).Trim() } else { $null }
     if ($stored -and $stored -ne $current) {
