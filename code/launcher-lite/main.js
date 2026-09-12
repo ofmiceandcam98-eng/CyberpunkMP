@@ -2070,90 +2070,9 @@ function isProcessRunning (imageName) {
 // comment) knew this all along; the payload paths now do too. Every top-level DIRECTORY
 // the archive ships is deleted before extracting - top-level files (the DLL) are simply
 // overwritten, and logs/config/.nco-version survive because no payload ships them.
-/**
- * Did the extract actually land? Asked of the disk, not of the extractor.
- *
- * zeldfep's install on 2026-09-07 held THREE generations of payload at once: the twelve
- * Ink controllers at both the top level and under Ink/ (twelve duplicate class
- * definitions, which makes redscript refuse the ENTIRE mod), plus two World scripts that
- * only ever shipped in test.19. Every update in between reported success.
- *
- * extractPayloadClean wipes the top-level directories the zip carries before extracting,
- * so that state should have been impossible - which is exactly why it needs checking
- * rather than assuming. An installer that cannot prove what it wrote is an installer that
- * reports success and leaves the player to find out through a compile dialog three
- * releases later.
- *
- * Two questions, and the second is the one that was never asked: is everything the zip
- * carried on disk, and is anything ELSE in the directories the zip owns?
- */
-function auditPayloadInstall (aModDir, aZip) {
-  const shipped = new Set()
-  const ownedDirs = new Set()
-
-  for (const entry of aZip.getEntries()) {
-    if (entry.isDirectory) continue
-    const rel = entry.entryName.split('\\').join('/')
-    shipped.add(rel)
-    if (rel.includes('/')) ownedDirs.add(rel.split('/')[0])
-  }
-
-  const missing = []
-  for (const rel of shipped) {
-    if (!existsSync(path.join(aModDir, rel.split('/').join(path.sep)))) missing.push(rel)
-  }
-
-  // Only inside directories the payload owns. The mod folder legitimately holds things
-  // the zip never carried - logs/, .nco-version, config written at runtime - and calling
-  // those orphans would make the check cry wolf on every healthy install.
-  const orphans = []
-  const walk = (dir, prefix) => {
-    let entries
-    try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
-    for (const e of entries) {
-      const rel = prefix ? prefix + '/' + e.name : e.name
-      if (e.isDirectory()) walk(path.join(dir, e.name), rel)
-      else if (!shipped.has(rel)) orphans.push(rel)
-    }
-  }
-  for (const dir of ownedDirs) walk(path.join(aModDir, dir), dir)
-
-  return { missing, orphans }
-}
-
-function extractPayloadClean (aModDir, aZip) {
-  const shippedDirs = new Set()
-  for (const entry of aZip.getEntries()) {
-    const name = entry.entryName
-    if (name.includes('/')) shippedDirs.add(name.split('/')[0])
-  }
-  // A failed clean is NOT cosmetic, and the empty catch that used to be here said it was.
-  //
-  // Every file the payload no longer ships survives the extract, the audit below then
-  // refuses to record the install, and the player is told to remove and reinstall the
-  // whole mod. Measured 2026-09-09: one leftover archive from a DevInstall failed eight
-  // consecutive updates and the trail recorded NOTHING about why. The old comment's
-  // promise that "the extract's error says so louder" is simply false - a clean that
-  // fails does not stop the extract from succeeding.
-  //
-  // So name the reason and hand it to the caller, which can then blame the cause instead
-  // of the symptom. force:true already makes "not there" a success, so anything thrown
-  // here is real.
-  const cleanFailures = []
-  for (const dir of shippedDirs) {
-    try {
-      // maxRetries makes a transient hold (an antivirus scan, an Explorer window mid-
-      // enumeration) survivable instead of a failed install: rmSync retries EBUSY /
-      // EPERM / ENOTEMPTY with a pause between attempts. A hard lock still fails and
-      // is still reported - this widens nothing about what counts as success.
-      rmSync(path.join(aModDir, dir), { recursive: true, force: true, maxRetries: 3, retryDelay: 120 })
-    } catch (err) {
-      cleanFailures.push({ dir, message: err.code ? `${err.code}: ${err.message}` : String(err.message || err) })
-    }
-  }
-  aZip.extractAllTo(aModDir, true)
-  return cleanFailures
-}
+// auditPayloadInstall and extractPayloadClean live in manifest.js now. They are pure
+// fs/path (no Electron), so they sit beside the other pure helpers, and
+// manifest.selftest.mjs exercises them. Call them via ManifestKit.
 
 async function applyUpdate () {
   const modDir = findModDir()
@@ -2240,7 +2159,7 @@ async function applyUpdate () {
   }
 
   const zip = new AdmZip(buffer)
-  const cleanFailures = extractPayloadClean(modDir, zip)
+  const cleanFailures = ManifestKit.extractPayloadClean(modDir, zip)
   for (const failure of cleanFailures) {
     launcherLog(`payload clean FAILED for ${failure.dir} - ${failure.message} - anything it still holds will fail the audit`)
   }
@@ -2249,7 +2168,7 @@ async function applyUpdate () {
   // install starts reporting itself as up to date, and the up-to-date gate then refuses
   // to fix it: "Your game files are out of date" never fires, so the player launches
   // stale code forever with a green launcher.
-  let audit = auditPayloadInstall(modDir, zip)
+  let audit = ManifestKit.auditPayloadInstall(modDir, zip)
 
   // Orphans get one cleanup attempt before they are allowed to fail the install.
   //
@@ -2272,7 +2191,7 @@ async function applyUpdate () {
     }
     launcherLog(`cleared ${audit.orphans.length - stuck.length} of ${audit.orphans.length} leftover file(s) the payload no longer ships` +
                 (stuck.length ? ` | still stuck: ${stuck.slice(0, 4).join(', ')}` : ''))
-    audit = auditPayloadInstall(modDir, zip)
+    audit = ManifestKit.auditPayloadInstall(modDir, zip)
   }
 
   if (audit.missing.length || audit.orphans.length) {
@@ -6162,7 +6081,7 @@ ipcMain.handle('prerelease:install', async (_event, tag) => {
         return { ok: false, error: `That payload looks wrong (${bytes.length} bytes) - install left alone.` }
       }
 
-      extractPayloadClean(modDir, new AdmZip(bytes))
+      ManifestKit.extractPayloadClean(modDir, new AdmZip(bytes))
     } else {
       writeFileSync(dllPath, bytes)
     }
@@ -6235,7 +6154,7 @@ ipcMain.handle('prerelease:restore', async () => {
         const plausible = !payload || bytes.length >= 1024 * 1024
 
         if (intact && plausible) {
-          if (payload) extractPayloadClean(modDir, new AdmZip(bytes))
+          if (payload) ManifestKit.extractPayloadClean(modDir, new AdmZip(bytes))
           else writeFileSync(dllPath, bytes)
 
           if (existsSync(backupPath)) unlinkSync(backupPath)

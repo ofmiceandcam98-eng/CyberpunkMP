@@ -15,7 +15,8 @@
  */
 
 import crypto from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync, readdirSync, rmSync } from 'node:fs'
+import path from 'node:path'
 // Pure JS ed25519, no native build step - the same reason 7zip-bin and
 // node-unrar-js were chosen over their faster native cousins. Ship.ps1 signs
 // with this library; verifying with the same one means the two sides can never
@@ -665,4 +666,76 @@ export function sha256Hex (buffer) {
  */
 export function hashFileSha256 (path) {
   return sha256Hex(readFileSync(path))
+}
+
+/**
+ * Did a payload extract actually land? Asked of the disk, not of the extractor - so it can
+ * catch what extractPayloadClean's directory wipe was supposed to make impossible. (One
+ * install on 2026-09-07 held THREE generations of payload at once - duplicate Ink class
+ * definitions make redscript refuse the whole mod - and every update in between reported
+ * success.) Two questions: is everything the zip carried on disk, and is anything ELSE in
+ * the directories the zip owns? aZip is anything with a getEntries(); pure fs/path, no
+ * Electron - which is why it lives here and manifest.selftest.mjs exercises it.
+ */
+export function auditPayloadInstall (aModDir, aZip) {
+  const shipped = new Set()
+  const ownedDirs = new Set()
+
+  for (const entry of aZip.getEntries()) {
+    if (entry.isDirectory) continue
+    const rel = entry.entryName.split('\\').join('/')
+    shipped.add(rel)
+    if (rel.includes('/')) ownedDirs.add(rel.split('/')[0])
+  }
+
+  const missing = []
+  for (const rel of shipped) {
+    if (!existsSync(path.join(aModDir, rel.split('/').join(path.sep)))) missing.push(rel)
+  }
+
+  // Only inside directories the payload owns. The mod folder legitimately holds things the
+  // zip never carried - logs/, .nco-version, config written at runtime - and calling those
+  // orphans would make the check cry wolf on every healthy install.
+  const orphans = []
+  const walk = (dir, prefix) => {
+    let entries
+    try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const e of entries) {
+      const rel = prefix ? prefix + '/' + e.name : e.name
+      if (e.isDirectory()) walk(path.join(dir, e.name), rel)
+      else if (!shipped.has(rel)) orphans.push(rel)
+    }
+  }
+  for (const dir of ownedDirs) walk(path.join(aModDir, dir), dir)
+
+  return { missing, orphans }
+}
+
+/**
+ * Wipe the top-level directories a payload zip carries before extracting it, so a file the
+ * payload no longer ships cannot survive under a directory it owns. Returns the dirs whose
+ * wipe FAILED (each {dir, message}) so the caller can blame the cause, not the symptom - a
+ * clean that fails does NOT stop the extract from succeeding, so a swallowed failure is how
+ * a leftover archive failed eight consecutive updates with nothing recorded (2026-09-09).
+ * force:true already makes "not there" a success, so anything thrown here is real.
+ */
+export function extractPayloadClean (aModDir, aZip) {
+  const shippedDirs = new Set()
+  for (const entry of aZip.getEntries()) {
+    const name = entry.entryName
+    if (name.includes('/')) shippedDirs.add(name.split('/')[0])
+  }
+  const cleanFailures = []
+  for (const dir of shippedDirs) {
+    try {
+      // maxRetries makes a transient hold (an antivirus scan, an Explorer window mid-
+      // enumeration) survivable: rmSync retries EBUSY/EPERM/ENOTEMPTY with a pause. A hard
+      // lock still fails and is still reported - this widens nothing about success.
+      rmSync(path.join(aModDir, dir), { recursive: true, force: true, maxRetries: 3, retryDelay: 120 })
+    } catch (err) {
+      cleanFailures.push({ dir, message: err.code ? `${err.code}: ${err.message}` : String(err.message || err) })
+    }
+  }
+  aZip.extractAllTo(aModDir, true)
+  return cleanFailures
 }
