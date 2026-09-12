@@ -1726,25 +1726,42 @@ async function installEverything (onProgress = () => {}) {
   // so each is verified against the manifest BEFORE its bytes touch the game folder.
   // No manifest (migration) = no check, exactly as before this existed.
   await refreshManifestState().catch(() => null)
-  const manifest = usableManifest()
-  const bundledByArchive = new Map()
-  for (const component of manifest?.components || []) {
-    if (component.class === 'bundled' && component.archive?.name && component.archive?.sha256) {
-      bundledByArchive.set(component.archive.name.toLowerCase(), component)
+  // Built from the current manifest, and REBUILT after a forced re-fetch below - so a
+  // manifest memoized inside MANIFEST_TTL_MS cannot condemn a prerequisite that a newer
+  // manifest actually approves.
+  const buildBundledMap = () => {
+    const map = new Map()
+    for (const component of usableManifest()?.components || []) {
+      if (component.class === 'bundled' && component.archive?.name && component.archive?.sha256) {
+        map.set(component.archive.name.toLowerCase(), component)
+      }
     }
+    return map
   }
+  let bundledByArchive = buildBundledMap()
 
   for (const entry of prereqs) {
     const name = path.basename(normalise(entry.entryName))
     onProgress(`Installing ${name.replace(/\.zip$/, '')}...`)
 
     const data = entry.getData()
+    const got = ManifestKit.sha256Hex(data)
 
-    const expected = bundledByArchive.get(name.toLowerCase())
-    if (expected && ManifestKit.sha256Hex(data) !== expected.archive.sha256) {
-      throw new Error(`${name} does not match what the manifest approved - the download may be ` +
-                      'corrupted or the release tampered with. Nothing more was installed; try again, ' +
-                      'and report it if it repeats.')
+    let expected = bundledByArchive.get(name.toLowerCase())
+    if (expected && got !== expected.archive.sha256) {
+      // The same defect 456679a fixed for the payload update: the manifest is
+      // memoized for up to MANIFEST_TTL_MS, so one that changed inside that window would
+      // reject a perfectly good prerequisite. A mismatch buys a FORCED re-fetch before it
+      // refuses, and only a still-disagreeing FRESH manifest is allowed to fail the install.
+      launcherLog(`[prereq] ${name} sha256 ${got.slice(0, 12)} != manifest ${expected.archive.sha256.slice(0, 12)} - re-fetching the manifest before refusing`)
+      await refreshManifestState(true).catch(() => null)
+      bundledByArchive = buildBundledMap()
+      expected = bundledByArchive.get(name.toLowerCase())
+      if (expected && got !== expected.archive.sha256) {
+        throw new Error(`${name} does not match what the manifest approved - the download may be ` +
+                        'corrupted or the release tampered with. Nothing more was installed; try again, ' +
+                        'and report it if it repeats.')
+      }
     }
 
     const inner = new AdmZip(data)
