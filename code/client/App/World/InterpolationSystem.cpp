@@ -104,13 +104,31 @@ static void DriveEntity(const DriverComponent& aDriver, const EntityComponent& a
                         const glm::vec3& aPosition, float aYaw, float aSpeed, uint32_t aLocomotion,
                         float aFrameDeltaMs)
 {
+    const auto now = std::chrono::steady_clock::now();
+
     // Vehicle-exit grace. The engine rebuilds the puppet's components over several
     // frames after an unmount, and this path writing transforms plus re-binding into
     // that rebuild is the prime suspect for every 2026-08-19 exit crash. Stand down
     // completely until the deadline passes; the puppet holds still for the moment,
     // which beats a dead game.
-    if (aDriver.SuppressUntil > std::chrono::steady_clock::now())
+    if (aDriver.SuppressUntil > now)
         return;
+
+    // The grace has just lapsed (deadline set, now past it). Resuming by writing the live
+    // position teleports a puppet that sat frozen for up to 2s on a MOVING remote - so arm
+    // a short ease FROM the frozen position, fired exactly once by clearing the deadline.
+    // This arms only AFTER the grace, i.e. past the component rebuild, so neither it nor
+    // the eased writes below ever touch the crash window the stand-down guards.
+    constexpr float cExitEaseMs = 250.f;
+    if (aDriver.SuppressUntil != std::chrono::steady_clock::time_point{})
+    {
+        if (aDriver.HasLastPosition)
+        {
+            aDriver.ExitEaseFrom = aDriver.LastPosition;
+            aDriver.ExitEaseUntil = now + std::chrono::milliseconds(static_cast<int>(cExitEaseMs));
+        }
+        aDriver.SuppressUntil = {};
+    }
 
     const auto pSystem = Red::GetGameSystem<NetworkWorldSystem>();
     const auto entityHandle = pSystem->GetEntity(aEntityComponent.Id);
@@ -137,11 +155,27 @@ static void DriveEntity(const DriverComponent& aDriver, const EntityComponent& a
         return;
     }
 
+    // Blend out of the frozen position for the first cExitEaseMs after the grace lapses;
+    // once the window closes (or when no ease is armed) the ratio pins to the live
+    // position and this is a plain pass-through.
+    glm::vec3 writePos = aPosition;
+    if (aDriver.ExitEaseUntil > now)
+    {
+        const float remainMs = std::chrono::duration<float, std::milli>(aDriver.ExitEaseUntil - now).count();
+        const float ratio = std::clamp(1.f - remainMs / cExitEaseMs, 0.f, 1.f);
+        writePos = Lerp(aDriver.ExitEaseFrom, aPosition, ratio);
+    }
+
     Red::WorldTransform transform{};
-    transform.Position = Red::WorldPosition(Red::Vector4{aPosition.x, aPosition.y, aPosition.z, 0.f});
+    transform.Position = Red::WorldPosition(Red::Vector4{writePos.x, writePos.y, writePos.z, 0.f});
     transform.Orientation = Game::ToRed(glm::quat(glm::vec3{0.f, 0.f, aYaw}));
 
     PlacedComponent_SetTransform(entityHandle->placedComponent, transform);
+
+    // Remember what we actually drew, so a later exit eases out of the real on-screen
+    // position rather than a stale sample.
+    aDriver.LastPosition = writePos;
+    aDriver.HasLastPosition = true;
 
     if (aDriver.Driver)
     {

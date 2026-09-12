@@ -2,6 +2,8 @@
 
 #include <chrono>
 
+#include <glm/glm.hpp>
+
 #include "Game/Animation/PuppetDriver.h"
 
 // A puppet moved and animated by the mod-owned PuppetDriver instead of the legacy
@@ -17,4 +19,16 @@ struct DriverComponent
     // re-binding into that rebuild. While now() is before this point, the drive path
     // does nothing at all.
     std::chrono::steady_clock::time_point SuppressUntil{};
+
+    // Exit-ease. When the stand-down above lapses, the drive path resumes by writing the
+    // LIVE position - and after up to 2s frozen on a remote that left a MOVING car, that
+    // first write is a visible teleport (the "exit-grace pop"). These fields blend the
+    // frozen position to the live one over a short window on the RESUME frames, which are
+    // already past the component rebuild the grace guards - so nothing here writes into
+    // the crash window. Mirrors InterpolationComponent's dead-reckoning recovery, which
+    // corrects a late sample over a window instead of lurching to the wire position.
+    glm::vec3 LastPosition{};
+    bool HasLastPosition{false};
+    glm::vec3 ExitEaseFrom{};
+    std::chrono::steady_clock::time_point ExitEaseUntil{};
 };
