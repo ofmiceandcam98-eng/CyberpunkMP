@@ -382,6 +382,31 @@ void NetworkWorldSystem::Update(uint64_t aTick)
             {
                 m_restorePending = false;
 
+                /*
+                 * ARM THE COUNTDOWN AGAIN FOR THE NEXT RESTORE.
+                 *
+                 * This latch was set once and never cleared, so it only ever delayed the
+                 * FIRST restore. Every later one - and the starter kit always produces a
+                 * later one, because NotifyPossessions arms a second restore after the
+                 * spawn response armed the first - found m_restoreReadyAt still holding a
+                 * tick from minutes ago, saw the difference already far past 180, and fired
+                 * on the very next tick with NO settle time at all.
+                 *
+                 * That is exactly the failure the countdown above was added to fix, quoted
+                 * there: "the call returned success while the script never ran... no bail
+                 * message either, because RestorePossessions was never entered."
+                 *
+                 * It is the starter-kit money bug measured live on 2026-09-06. The server
+                 * granted 20000, logged it, and the game never saw it; ninety seconds later
+                 * the honest capture of 300 overwrote the server's record. The map recorded
+                 * it as "the GRANT is fictional" - it is not fictional, it is applied into a
+                 * world that is not ready to accept it, which looks identical from the log.
+                 *
+                 * Resetting here means every restore gets the same three seconds the first
+                 * one gets, rather than the first being careful and the rest being racy.
+                 */
+                m_restoreReadyAt = 0;
+
                 // From here the player standing in the world IS the server's character, so
                 // it is safe to save what they are carrying. Cleared again by any world
                 // detach - see OnBeforeWorldDetach.
