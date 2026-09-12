@@ -1046,9 +1046,15 @@ is **local and unpushed** — per Cam, nothing ships before the server swap.
   vehicles and realistically cannot. Anywhere a brief says "server-authoritative physics",
   what is achievable is server-authoritative STATE with validated client motion.
 
-- **Design call nobody has made:** the phone lists MODELS and cannot list instances, so
-  "summon my second Quadra" has no native expression. The server must decide which instance
-  a model-summon resolves to - nearest stored, last driven, or explicit via /garage.
+- **DECIDED 2026-09-12 (zeldfep): the INSTANCE is the ownable unit.** A player owns a
+  SPECIFIC car - this Quadra, plate ABC-123 - not "a Quadra". The persistence already backs
+  it: id, owner, plate, price and the sale lock are per-instance today. What is missing is
+  player-facing - the phone lists MODELS, so it needs a per-car garage list before ownership
+  features can address one car. Ownership features (sell, gift, park a specific car) target a
+  vehicle id; a bare "summon my car" resolves to a single instance (last driven, nearest
+  stored as fallback) and /garage is the explicit picker. Not built yet - this records the
+  unit so the phone list and every ownership feature are designed against instances, not
+  models. Stop re-asking whether instances are addressable: they are.
 
 ### The cell grid does not actually cull anything (measured 2026-09-04)
 - **`kCellSize = 6000` is larger than Night City, so the spatial partition is inert as a
