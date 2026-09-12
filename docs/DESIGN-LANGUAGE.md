@@ -131,6 +131,32 @@ this when something needs to read as a HUD element rather than a web control.
 
 ---
 
+## In-game ink screens (coordinate space)
+
+The launcher rules above are HTML/CSS. The in-game menus and HUDs are ink widgets in
+redscript, and they have their own coordinate reality — learned by measurement over three
+builds, so read this before drawing a second ink screen.
+
+- **Author at 1920×1080; the canvas is scaled to the root.** Compose every ink screen in the
+  mockup's 1920×1080 units. The menu root is a larger fixed virtual space, so scale the
+  canvas by `rootWidth / 1920` from a **top-left pivot** — anchor and anchor-point both at the
+  top-left, so scaling grows down-and-right rather than from the centre. A fill/centre pivot
+  puts the whole composition off-screen.
+- **`GetScreenSpacePosition()` returns REAL DISPLAY PIXELS, not authored units.** They happen
+  to be equal at 1080p and diverge by the scale factor at any other resolution — which is why
+  a screen that felt fine on one monitor missed every click on a 1440p one.
+  `GetWindowSpacePosition()` returns `0,0` and is useless; do not reach for it.
+- **Convert to authored units ONCE, at the input boundary.** Take the screen-pixel click,
+  divide by pixels-per-unit (`displayHeight / 1080`), and hand authored units to everything
+  downstream. Do NOT carry two coordinate spaces or offset the hit rectangles from the draw
+  rectangles — that hack cost three builds; the real fix is one conversion, after which
+  hit-testing and drawing share a single space.
+- **Same rules on the HUD layer, not just the menu.** An overlay that hangs off the chat/HUD
+  controller scales by `rootWidth / 1920` the same way. The pattern generalises; the medium
+  does not change between menu and HUD.
+
+---
+
 ## Copy
 
 Write from the player's side of the screen. A control says what happens; the result says it
