@@ -1109,8 +1109,10 @@ is **local and unpushed** — per Cam, nothing ships before the server swap.
   a matching update applies clothing and leaves customization alone. **VEHICLES ARE
   EXONERATED** - the 90s cadence ran for ten minutes before the first mount, and the
   `[Interpolation] movement for id N but no puppet is registered - this is a frozen
-  remote player` warning is MISLABELLED: those ids were VEHICLES (each followed by
-  `OnVehicleReady: mounting queued character ... into vehicle N`). Rename that warning.
+  remote player` warning WAS MISLABELLED: those ids were VEHICLES (each followed by
+  `OnVehicleReady: mounting queued character ... into vehicle N`). RENAMED 3b05ab9 - the
+  warning now says nothing is registered under the id yet, names players AND vehicles as
+  candidates, and logs once per id.
 - **WRONG CHARACTER = the real root cause, still open (ledger fault A).** Cam picked
   MALE; every other client renders him FEMALE. Proof in zeldfep's log: `remote state
   produced 24 customization key(s), male=0`, applying `t2_formal_04_q000_corpo_&Female`
