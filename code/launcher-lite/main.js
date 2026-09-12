@@ -809,6 +809,25 @@ function saveSettings (patch) {
   }
 }
 
+/**
+ * The push-to-talk key, moved off V once for anyone the old default put there.
+ *
+ * The default used to be IK_V - the game's vehicle-summon key - and the Settings > Voice
+ * page saves the WHOLE voice block whenever any control changes, a volume slider included.
+ * So most people who ever opened that page have IK_V saved explicitly, not as a default,
+ * and changing the default alone would never reach them.
+ *
+ * One-time, and only for V: the flag records that it ran, and every save from the voice
+ * page sets it too, so somebody who deliberately picks V from now on keeps it.
+ */
+function voiceKeyAfterMigration (settings) {
+  if (settings.voicePushToTalkKey === 'IK_V' && !settings.voiceKeyMovedOffV) {
+    saveSettings({ voicePushToTalkKey: 'IK_Y', voiceKeyMovedOffV: true })
+    return 'IK_Y'
+  }
+  return settings.voicePushToTalkKey || 'IK_Y'
+}
+
 function saveToken (token) {
   if (!token) {
     saveSettings({ token: null })
@@ -3385,7 +3404,7 @@ async function launchGame () {
   {
     const voice = loadSettings()
 
-    const key = voice.voicePushToTalkKey || 'IK_V'
+    const key = voiceKeyAfterMigration(voice)
     const mode = voice.voiceMode || 'ptt'
     const mic = Number.isFinite(voice.voiceMicVolume) ? voice.voiceMicVolume : 100
     const chat = Number.isFinite(voice.voiceChatVolume) ? voice.voiceChatVolume : 100
@@ -4408,9 +4427,11 @@ ipcMain.handle('voice:get', async () => {
     inputDeviceName: settings.voiceInputDeviceName || '',
     outputDeviceName: settings.voiceOutputDeviceName || '',
 
-    // IK_V is a starting value, not the key. Everything downstream reads the ACTION, so
+    // IK_Y is a starting value, not the key. Everything downstream reads the ACTION, so
     // this only decides what the action is bound to on a machine that has never chosen.
-    pushToTalkKey: settings.voicePushToTalkKey || 'IK_V',
+    // It was IK_V - the game's vehicle-summon key - and because --voicekey rebinds the
+    // action at launch, this default beat the Inputs XML (Y since 2026-09-10) every time.
+    pushToTalkKey: voiceKeyAfterMigration(settings),
 
     // Separate key, separate default. Cycling range and talking are the two controls most
     // likely to be pressed together, so they must never be the same key.
@@ -4442,7 +4463,9 @@ ipcMain.handle('voice:save', async (_event, choice) => {
     voiceOutputDevice: choice?.outputDevice || 'default',
     voiceInputDeviceName: choice?.inputDeviceName || '',
     voiceOutputDeviceName: choice?.outputDeviceName || '',
-    voicePushToTalkKey: choice?.pushToTalkKey || 'IK_V',
+    voicePushToTalkKey: choice?.pushToTalkKey || 'IK_Y',
+    // A choice made on this page is deliberate, V included - never migrate it away again.
+    voiceKeyMovedOffV: true,
     voiceCycleRangeKey: choice?.cycleRangeKey || 'IK_F12',
     voiceMode: ['ptt', 'toggle', 'activation'].includes(choice?.mode) ? choice.mode : 'ptt',
     voiceMicVolume: clamp(choice?.micVolume, 100),
