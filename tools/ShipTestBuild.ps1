@@ -300,7 +300,13 @@ $shortNum = if ($Tag -match 'test\.(\d+)') { $Matches[1] } else { '?' }
 # the artifact matched no commit for several minutes; saying so on the release is cheaper
 # than refusing to ship and is honest about what was built.
 $sha = (& git rev-parse --short HEAD 2>$null)
-$dirty = if ((& git status --porcelain 2>$null)) { "+dirty" } else { "" }
+# +dirty reflects whether the PAYLOAD's sources are uncommitted, not the whole tree. The
+# working tree here is almost always dirty from docs/MAP.md's CRLF phantom and the other
+# stream's WIP (docs/, publish/) - none of which is in the client payload (DLL, redscript,
+# Rpc, assets - all built from code/). Scoping to code/ makes +dirty mean "this artifact
+# matches no commit" (the actual concern, e.g. test.18's uncommitted code/protocol fix)
+# instead of firing on every single ship and so meaning nothing.
+$dirty = if ((& git status --porcelain -- code 2>$null)) { "+dirty" } else { "" }
 
 $title = "test.$shortNum - $Name ($sha$dirty)"
 
