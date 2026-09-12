@@ -112,22 +112,14 @@ static void DriveEntity(const DriverComponent& aDriver, const EntityComponent& a
     // completely until the deadline passes; the puppet holds still for the moment,
     // which beats a dead game.
     if (aDriver.SuppressUntil > now)
-        return;
-
-    // The grace has just lapsed (deadline set, now past it). Resuming by writing the live
-    // position teleports a puppet that sat frozen for up to 2s on a MOVING remote - so arm
-    // a short ease FROM the frozen position, fired exactly once by clearing the deadline.
-    // This arms only AFTER the grace, i.e. past the component rebuild, so neither it nor
-    // the eased writes below ever touch the crash window the stand-down guards.
-    constexpr float cExitEaseMs = 250.f;
-    if (aDriver.SuppressUntil != std::chrono::steady_clock::time_point{})
     {
-        if (aDriver.HasLastPosition)
-        {
-            aDriver.ExitEaseFrom = aDriver.LastPosition;
-            aDriver.ExitEaseUntil = now + std::chrono::milliseconds(static_cast<int>(cExitEaseMs));
-        }
-        aDriver.SuppressUntil = {};
+        // Remember we were frozen this grace, so the first frame past it eases out of the
+        // held position instead of teleporting. The flag lives on the PuppetDriver, which
+        // stays mutable through the shared_ptr - DriverComponent arrives const here, the
+        // same reason FirstWriteLogged/GateLogged live there rather than on the component.
+        if (aDriver.Driver)
+            aDriver.Driver->WasSuppressed = true;
+        return;
     }
 
     const auto pSystem = Red::GetGameSystem<NetworkWorldSystem>();
@@ -155,15 +147,33 @@ static void DriveEntity(const DriverComponent& aDriver, const EntityComponent& a
         return;
     }
 
-    // Blend out of the frozen position for the first cExitEaseMs after the grace lapses;
-    // once the window closes (or when no ease is armed) the ratio pins to the live
-    // position and this is a plain pass-through.
+    // Ease out of the exit-grace freeze instead of teleporting. All state lives on the
+    // PuppetDriver (mutable via the shared_ptr; DriverComponent is const here), and this
+    // runs only AFTER the grace - past the component rebuild - so it never writes into the
+    // crash window the stand-down above guards. With no ease armed it is a plain
+    // pass-through of the live position.
+    constexpr float cExitEaseMs = 250.f;
     glm::vec3 writePos = aPosition;
-    if (aDriver.ExitEaseUntil > now)
+    if (auto* pDriver = aDriver.Driver.get())
     {
-        const float remainMs = std::chrono::duration<float, std::milli>(aDriver.ExitEaseUntil - now).count();
-        const float ratio = std::clamp(1.f - remainMs / cExitEaseMs, 0.f, 1.f);
-        writePos = Lerp(aDriver.ExitEaseFrom, aPosition, ratio);
+        // First frame past the grace: arm a short ease FROM where the puppet was frozen,
+        // fired once by clearing the was-suppressed flag.
+        if (pDriver->WasSuppressed)
+        {
+            pDriver->WasSuppressed = false;
+            if (pDriver->HasLastPosition)
+            {
+                pDriver->ExitEaseFrom = pDriver->LastPosition;
+                pDriver->ExitEaseUntil = now + std::chrono::milliseconds(static_cast<int>(cExitEaseMs));
+            }
+        }
+
+        if (pDriver->HasLastPosition && pDriver->ExitEaseUntil > now)
+        {
+            const float remainMs = std::chrono::duration<float, std::milli>(pDriver->ExitEaseUntil - now).count();
+            const float ratio = std::clamp(1.f - remainMs / cExitEaseMs, 0.f, 1.f);
+            writePos = Lerp(pDriver->ExitEaseFrom, aPosition, ratio);
+        }
     }
 
     Red::WorldTransform transform{};
@@ -174,8 +184,11 @@ static void DriveEntity(const DriverComponent& aDriver, const EntityComponent& a
 
     // Remember what we actually drew, so a later exit eases out of the real on-screen
     // position rather than a stale sample.
-    aDriver.LastPosition = writePos;
-    aDriver.HasLastPosition = true;
+    if (aDriver.Driver)
+    {
+        aDriver.Driver->LastPosition = writePos;
+        aDriver.Driver->HasLastPosition = true;
+    }
 
     if (aDriver.Driver)
     {

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <glm/glm.hpp>
+
 #include "AnimationDriver.h"
 #include "States/Base.h"
 
@@ -34,6 +36,18 @@ struct PuppetDriver final : States::ILocomotionHost
     // first transform write happened. Public: written by the interpolation pass.
     bool FirstWriteLogged{false};
     bool GateLogged{false};
+
+    // Exit-grace ease, written by the interpolation pass (DriveEntity). Lives here rather
+    // than on DriverComponent for the same reason the flags above do: DriveEntity receives
+    // that component by const ref, and the shared_ptr to this object stays mutable through
+    // it. WasSuppressed marks that the puppet was frozen in the vehicle-exit grace; the
+    // first frame past the grace then eases from LastPosition (where it was frozen) toward
+    // the live position until ExitEaseUntil, instead of teleporting the caught-up distance.
+    glm::vec3 LastPosition{};
+    bool HasLastPosition{false};
+    glm::vec3 ExitEaseFrom{};
+    std::chrono::steady_clock::time_point ExitEaseUntil{};
+    bool WasSuppressed{false};
 
 private:
     AnimationDriver m_animationDriver;
