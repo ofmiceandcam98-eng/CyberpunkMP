@@ -30,9 +30,15 @@ struct Settings
     // next launch; live changes would need a file the mod can re-read.
     // ---------------------------------------------------------------------------
 
-    // The game's own key id - IK_V, IK_Mouse4, IK_CapsLock. Only used to bind the
+    // The game's own key id - IK_Y, IK_Mouse4, IK_CapsLock. Only used to bind the
     // VoicePushToTalk ACTION; nothing downstream ever compares against it.
-    String voicePushToTalkKey{"IK_V"};
+    //
+    // IK_Y to match Inputs\CyberpunkMP.xml. It was IK_V, which is the game's vehicle-summon
+    // key - and because this fallback and the launcher's --voicekey REBIND the action at
+    // launch, the XML's own default never won: a player who never opened Settings > Voice
+    // got voice on V. zeldfep walked the XML V -> T -> X -> Y on 2026-09-10; this and the
+    // launcher are what never followed.
+    String voicePushToTalkKey{"IK_Y"};
 
     // Cycles whisper -> local -> yell. A separate binding from push-to-talk on purpose:
     // one decides WHEN somebody talks, the other HOW FAR it carries, and sharing a key
