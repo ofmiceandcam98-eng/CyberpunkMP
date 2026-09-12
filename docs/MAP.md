@@ -448,9 +448,9 @@ they were never about the transport. Money is not server-authoritative (17 vanil
 represent a real item; the cell grid culls nothing; wire enums are not range-validated. Those
 are facts about *Cyberpunk*, and they outlive any server.
 
-**Working branch is `feat/world-state` again.** `wip/world-state` was the migration-weekend
-mirror so a push could not trigger the production cron mid-swap; `feat` has since absorbed it
-and moved on. `wip` is stale at `829d239` — do not work from it.
+**`main` is the integration branch now** (since PR #9/#10, 2026-09-10/11): feature branches
+land on it by PR. `wip/world-state` was the migration-weekend mirror so a push could not
+trigger the production cron mid-swap; it is stale at `829d239` — do not work from it.
 
 **`docs/ZELDFEP-AFTER-THE-SWAP.md` is still the ordered pick-it-up note**, minus its premise:
 read the build order and the five things that bite, ignore the "establish the replacement's
@@ -513,10 +513,11 @@ CharacterID, persistence, session lock and authoritative load/spawn.
 
 Phase 5 stages 1-5 stand as architecture and were **not** the reason for the swap.
 
-### Phase 5 (economy authority) — stage 6 metadata landed 2026-09-09, STILL NOTHING BEHAVES DIFFERENTLY
+### Phase 5 (economy authority) — stage 6 metadata built 2026-09-09, STILL NOTHING BEHAVES DIFFERENTLY
 
-Full detail in `docs/PHASE5-ECONOMY-AUTHORITY.md`; this row is the ledger pointer. It is on
-`feat/world-state` and shipped — the "local and unpushed until the swap" note is retired with
+Full detail in `docs/PHASE5-ECONOMY-AUTHORITY.md`; this row is the ledger pointer. Stage 6 was
+built on a local `feat/world-state` that was never pushed; it lands on `main` through
+`feat/money-stage6` (2026-09-12) — the "local and unpushed until the swap" note is retired with
 the freeze.
 
 **Stage 6 (metadata truthfulness) is in**, applied from the patch that was built and
