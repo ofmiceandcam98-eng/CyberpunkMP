@@ -24,6 +24,9 @@ public class ChatController extends inkHUDGameController {
     // chat input already is, and all of it took real debugging to get working. A separate
     // prompt would be a second copy of that, able to break on its own.
     private let m_namePromptOpen: Bool;
+    // The name last read back for confirmation. Empty until the first Enter; cleared
+    // whenever the prompt opens or closes, so a stale one can never confirm a new name.
+    private let m_pendingName: String;
     // The trade overlay's runtime canvas, built onto this controller's root. See
     // TradeScreen.reds for the render; kept here because the overlay lives on this HUD
     // controller and only a real field on the class can hold it (annotations cannot).
@@ -210,6 +213,7 @@ public class ChatController extends inkHUDGameController {
         FTLog(s"[ChatController] character name requested (currently '\(evt.m_current)')");
 
         this.m_namePromptOpen = true;
+        this.m_pendingName = "";
 
         this.ShowNameLabel(true);
         this.ShowChatInput(true);
@@ -227,7 +231,7 @@ public class ChatController extends inkHUDGameController {
         // like the box appearing for no reason.
         let notice = new ChatMessageUIEvent();
         notice.author = "SERVER";
-        notice.message = "What is your character called? Type a name and press Enter.";
+        notice.message = "What is your character called? Type a name and press Enter - it will be read back to you before it is kept.";
         this.QueueEvent(notice);
     }
 
@@ -274,6 +278,42 @@ public class ChatController extends inkHUDGameController {
         }
 
         this.m_nameLabel.SetVisible(show);
+    }
+
+    // True once the text in the box has been read back to the player and Enter was pressed
+    // again on the SAME text. The first Enter - or any Enter after an edit - only shows it.
+    //
+    // Empty is passed straight through: SendName already answers it with a notice, and
+    // asking somebody to confirm nothing would be a second prompt about the same mistake.
+    private func ConfirmName() -> Bool {
+        let wanted = this.m_input.GetText();
+
+        if Equals(wanted, "") || Equals(wanted, this.m_pendingName) {
+            return true;
+        }
+
+        this.m_pendingName = wanted;
+
+        // Spelled out as well as shown whole, because the two faults actually reported are
+        // a missing letter and a wrong capital - both easy to read straight past in a word,
+        // and hard to miss one character at a time.
+        let spelled = "";
+        let i = 0;
+        while i < StrLen(wanted) {
+            if i > 0 {
+                spelled += " ";
+            }
+            spelled += StrMid(wanted, i, 1);
+            i += 1;
+        }
+
+        let notice = new ChatMessageUIEvent();
+        notice.author = "SERVER";
+        notice.message = s"You typed \"\(wanted)\" (\(spelled)). Names are permanent - press Enter again to keep it, or fix it first.";
+        this.QueueEvent(notice);
+
+        FTLog(s"[ChatController] name read back for confirmation '\(wanted)'");
+        return false;
     }
 
     // Commits whatever is in the box as the character's name.
@@ -365,6 +405,7 @@ public class ChatController extends inkHUDGameController {
             // here rather than at each call site so no route out can leave the mode set
             // and turn somebody's next message into a rename.
             this.m_namePromptOpen = false;
+            this.m_pendingName = "";
             this.ShowNameLabel(false);
         }
         this.m_chatInputOpen = show;
@@ -487,6 +528,15 @@ public class ChatController extends inkHUDGameController {
             case n"EnterChat":
                 // The flag is read here, before ShowChatInput clears it below.
                 if this.m_namePromptOpen {
+                    // A name is permanent, so the first Enter only reads it back. Two
+                    // reports (2026-09-10) typed Noremac and got Normac and NOremac - a
+                    // dropped letter and a held Shift - and nothing between the keyboard
+                    // and the server showed the player what they had actually typed.
+                    // Keeping the box open until the SAME text is confirmed catches a
+                    // slip whichever of the two it was, before it becomes an admin ticket.
+                    if !this.ConfirmName() {
+                        return true;
+                    }
                     this.SendName();
                 } else {
                     this.SendChat();
