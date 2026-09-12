@@ -33,11 +33,52 @@ CONTAINERS="${NCO_WATCH_CONTAINERS:-nco-authority-server cyberpunkmp-server}"
 COOLDOWN_S=3600        # per class+container; crashes use half of it
 DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1
 
+# The event classes, one row per detector. Collapsed from five hand-copied blocks so a
+# new class is a line, not a paste. Fields are '@'-delimited (no pattern uses '@'):
+#
+#   class @ grep-flags @ min-count @ cooldown-seconds @ regex @ message (printf, %s=count)
+#
+# min-count is the count the window must REACH to fire: crash/proto/save trip on the first
+# matching line, a combat run needs 10, a restart LOOP needs 2+. Crashes get half the
+# cooldown. Case-insensitive (-i) only where the emitter's casing varies - crash and proto.
+#
+# Patterns quote the ACTUAL emitters (Server.cpp:325/336, GameServer.cpp ~912/947,
+# ChatSystem, Level), never a paraphrase - a regex that reworded a C++ string would watch
+# nothing. NO RAW LOG LINES REACH THE BODY: the matched lines carry player usernames
+# verbatim and redact.js scrubs addresses, not names, so only class + count is posted.
+#
+# No OrphanVehicle row: that string is emitted by the CLIENT only (InterpolationSystem.cpp)
+# and this watcher reads server containers, so a detector for it here could never fire. The
+# runaway shows up in client logs via PullLogs.ps1; the real fix is the server emitting
+# vehicle-churn events itself.
+DETECTORS=(
+    "crash@-aciE@1@$((COOLDOWN_S / 2))@watchdog|\[Crash\]|fatal|unhandled exception|terminate@CRASH-CLASS lines: %s"
+    "proto@-aciE@1@$COOLDOWN_S@was refused:|wrong server protocol|Connection attempt with client identifier|Refused connection@CONNECTION refusals (protocol/identifier/manifest): %s"
+    "save@-acE@1@$COOLDOWN_S@REFUSED a save@IDENTITY save refusals: %s"
+    "combat@-acE@10@$COOLDOWN_S@Refused a (shot|reload)@SUSTAINED combat refusals: %s"
+    "restart@-acE@2@$COOLDOWN_S@Server started on port@RESTART LOOP: server started %s times in one window"
+)
+
 mkdir -p "$STATE_DIR"
+
+# One run at a time. A slow docker-logs read could otherwise overlap the next cron tick
+# and double-post the same window - every other cron script in tools/deploy takes this
+# lock (update-server.sh, update-wolvenkit.sh). A previous run still going: quietly yield.
+LOCK="$STATE_DIR/watch-events.lock"
+exec 9>"$LOCK"
+flock -n 9 || exit 0
 
 # Soft-skip without the key, same as update-server.sh: watching is a courtesy that
 # must never page anyone about its own configuration.
 [ -f "$KEYFILE" ] || { [ "$DRY" = 1 ] && echo "no $KEYFILE - would post nothing"; exit 0; }
+
+# jq builds the JSON payloads. If it is absent, say so loudly and stop rather than posting
+# nothing on the quiet - a watcher that cannot report is worse than one that admits it.
+# (--dry-run prints instead of posting, so it does not need jq.)
+if [ "$DRY" != 1 ] && ! command -v jq >/dev/null 2>&1; then
+    echo "watch-events: jq not found on PATH - required to build feed payloads; install jq" >&2
+    exit 1
+fi
 
 post_feed() { # $1 title, $2 body
     if [ "$DRY" = 1 ]; then
@@ -45,10 +86,17 @@ post_feed() { # $1 title, $2 body
         echo "$2" | sed 's/^/    /'
         return 0
     fi
-    jq -n --arg t "$1" --arg b "$2" '{title: $t, body: $b, kind: "warning"}' \
-      | curl -s -m 10 -X POST "$FEED" \
+    # -S surfaces the transport error, -f turns an HTTP 4xx/5xx (a bad key, a down feed)
+    # into a non-zero exit; `2>&1 >/dev/null` keeps curl's stderr and drops the response
+    # body. A failed post is LOGGED with what and where, never swallowed - the whole point
+    # of this watcher is to not lose events, and a silent POST failure loses them twice.
+    local err
+    if ! err=$(jq -n --arg t "$1" --arg b "$2" '{title: $t, body: $b, kind: "warning"}' \
+      | curl -s -S -f -m 10 -X POST "$FEED" \
           -H "Authorization: Bearer $(cat "$KEYFILE")" -H 'Content-Type: application/json' \
-          -d @- >/dev/null 2>&1 || true
+          -d @- 2>&1 >/dev/null); then
+        echo "watch-events: POST to $FEED failed: ${err:-unknown error}" >&2
+    fi
 }
 
 # Cooldown: report a class once per window per container, not once per cron tick - an
@@ -90,46 +138,16 @@ for c in $CONTAINERS; do
 
     findings=""
 
-    # Crashes and the watchdog: always signal, shortest cooldown.
-    n=$(grep -aciE 'watchdog|\[Crash\]|fatal|unhandled exception|terminate' "$logfile" || true)
-    if [ "${n:-0}" -gt 0 ] && ! cooled "$c" crash $((COOLDOWN_S / 2)); then
-        findings="$findings\nCRASH-CLASS lines: $n"
-    fi
-
-    # Protocol / identifier / manifest refusals at the door: a build mismatch reads as
-    # "the button does nothing" on the client - the server is the only place it is
-    # visible. Patterns quote the ACTUAL emitters (Server.cpp:325/336, GameServer.cpp
-    # ~912/947); a regex that paraphrases a C++ string watches nothing.
-    n=$(grep -aciE 'was refused:|wrong server protocol|Connection attempt with client identifier|Refused connection' "$logfile" || true)
-    if [ "${n:-0}" -gt 0 ] && ! cooled "$c" proto "$COOLDOWN_S"; then
-        findings="$findings\nCONNECTION refusals (protocol/identifier/manifest): $n"
-    fi
-
-    # Identity-save refusals: the guard that stops a template capture overwriting a real
-    # character. Every firing is a live wrong-character-identity data point.
-    n=$(grep -acE 'REFUSED a save' "$logfile" || true)
-    if [ "${n:-0}" -gt 0 ] && ! cooled "$c" save "$COOLDOWN_S"; then
-        findings="$findings\nIDENTITY save refusals: $n"
-    fi
-
-    # Combat refusals: one or two is the rate limiter doing its job; a sustained run is
-    # the fire-rate bug class back again.
-    n=$(grep -acE 'Refused a (shot|reload)' "$logfile" || true)
-    if [ "${n:-0}" -ge 10 ] && ! cooled "$c" combat "$COOLDOWN_S"; then
-        findings="$findings\nSUSTAINED combat refusals: $n"
-    fi
-
-    # (No OrphanVehicle detector: that string is emitted by the CLIENT only -
-    # InterpolationSystem.cpp - and this watcher reads server containers. Watching for
-    # it here can never fire; the runaway is visible in client logs via PullLogs.ps1.
-    # The real fix is the server emitting vehicle-churn events itself.)
-
-    # More than one start in a window = crash-looping. Exactly one is usually a deploy,
-    # which update-server.sh already logs - stay quiet for that.
-    n=$(grep -acE 'Server started on port' "$logfile" || true)
-    if [ "${n:-0}" -ge 2 ] && ! cooled "$c" restart "$COOLDOWN_S"; then
-        findings="$findings\nRESTART LOOP: server started $n times in one window"
-    fi
+    # One pass over the detector table. Each row carries its own threshold, cooldown and
+    # message, so the combat run-of-10 and the restart-loop count-of-2 stay exactly what
+    # they were - the only thing that changed is that the five blocks are now one loop.
+    for row in "${DETECTORS[@]}"; do
+        IFS='@' read -r class flags min cooldown pattern message <<< "$row"
+        n=$(grep "$flags" -- "$pattern" "$logfile" || true)
+        if [ "${n:-0}" -ge "$min" ] && ! cooled "$c" "$class" "$cooldown"; then
+            findings="$findings\n$(printf -- "$message" "$n")"
+        fi
+    done
 
     if [ -n "$findings" ]; then
         body="Window since $since (UTC). One post per container per run; per-class cooldown $((COOLDOWN_S / 60))min. Pull full logs: docker logs --since $since $c$(printf '%b' "$findings")"
