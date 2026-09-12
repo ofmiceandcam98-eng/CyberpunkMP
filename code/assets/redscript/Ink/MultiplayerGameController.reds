@@ -15,6 +15,18 @@ import CyberpunkMP.Plugins.*
  * IsConnected() itself and simply has nothing to show while that is false, the same
  * survives-a-reconnect shape as MpStatusEffectPoll in Combat.reds.
  */
+// Reads the ink probe out three seconds after both asks - see MpInkProbeOnce. A concrete
+// class because DelayCallback requires one, same as the speaking poll below.
+public class MpInkProbeVerdict extends DelayCallback {
+    public let controller: wref<MultiplayerGameController>;
+
+    public func Call() -> Void {
+        if IsDefined(this.controller) {
+            this.controller.MpInkProbeReport();
+        }
+    }
+}
+
 public class MpVoiceSpeakingPoll extends DelayCallback {
     public let controller: wref<MultiplayerGameController>;
 
@@ -55,6 +67,12 @@ public class MultiplayerGameController extends inkGameController {
     // The persistent TALK button on the HUD bar (megaphone + Y hint). Built once after the
     // authored bar spawns, relit whenever the mic opens. Render is in TalkButton.reds.
     private let m_talkButton: wref<inkCanvas>;
+
+    // The ink-probe experiment (Atlas: can-a-cli-authored-inkwidget-be-spawned...).
+    // One-shot per session; comes out the moment the question is answered.
+    private let m_inkProbeArmed: Bool;
+    private let m_inkProbeControl: Bool;
+    private let m_inkProbeAuthored: Bool;
 
     // Who ELSE is talking right now - built on first sighting of a remote speaker, not at
     // startup. Separate widget from m_voiceIndicator: your own state and everyone else's
@@ -290,6 +308,90 @@ public class MultiplayerGameController extends inkGameController {
         this.m_phoneIconWidget.SetVisible(true);
         // The bar exists and is laid out now, so this is the moment to add the talk button.
         this.MpBuildTalkButton();
+        // And the moment async spawning demonstrably works, which is what the probe needs.
+        this.MpInkProbeOnce();
+    }
+
+    /**
+     * THE DISCRIMINATING TEST the menu-controller probes could not give us.
+     *
+     * Three builds asked SingleplayerMenuGameController to AsyncSpawnFromExternal and no
+     * callback EVER fired - for the CLI-authored library OR for multiplayer_ui, which this
+     * controller spawns successfully every session (chat, emotes, jobs, deliveries). So
+     * the same two asks run HERE, where async spawning provably works:
+     *
+     *   control spawns, authored does not  -> the CLI round-trip makes bad libraries
+     *   both spawn                         -> the library is fine; the MENU controller is
+     *                                         the blocker, and the selector stays runtime-built
+     *   both silent                        -> AsyncSpawnFromExternal (vs FromLocal) is the
+     *                                         suspect on every controller
+     *
+     * Spawned widgets are hidden immediately - this is a measurement, not UI. Requires
+     * zz_NightCityOnline_Selector.archive in the payload (the authored library lives there;
+     * its backdrop texture is what proved the archive itself loads).
+     */
+    private func MpInkProbeOnce() -> Void {
+        if this.m_inkProbeArmed {
+            return;
+        }
+        this.m_inkProbeArmed = true;
+
+        this.MpInkProbeLog("asking for BOTH libraries from MultiplayerGameController - verdict in 3s");
+
+        this.AsyncSpawnFromExternal(this.GetRootCompoundWidget(),
+                                    r"mods\\cyberpunkmp\\multiplayer_ui.inkwidget",
+                                    n"server_list", this, n"OnMpInkProbeControl");
+
+        this.AsyncSpawnFromExternal(this.GetRootCompoundWidget(),
+                                    r"nightcityonline\\character_select.inkwidget",
+                                    n"character_select", this, n"OnMpInkProbeAuthored");
+
+        // Silence has to report itself - a wait needs a deadline and a failure branch,
+        // or it cannot be told from still-working. Same lesson as the menu-side probe.
+        let verdict = new MpInkProbeVerdict();
+        verdict.controller = this;
+        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(verdict, 3.0, false);
+    }
+
+    private func MpInkProbeLog(text: String) -> Void {
+        FTLog(s"[InkProbe] \(text)");
+        let network = GameInstance.GetNetworkWorldSystem();
+        if IsDefined(network) {
+            network.ScriptLog(s"[InkProbe] \(text)");
+        }
+    }
+
+    protected cb func OnMpInkProbeControl(widget: ref<inkWidget>, userData: ref<IScriptable>) -> Bool {
+        this.m_inkProbeControl = true;
+        this.MpInkProbeLog(s"CONTROL callback fired - widget defined: \(IsDefined(widget))");
+        if IsDefined(widget) {
+            widget.SetVisible(false);
+        }
+    }
+
+    protected cb func OnMpInkProbeAuthored(widget: ref<inkWidget>, userData: ref<IScriptable>) -> Bool {
+        this.m_inkProbeAuthored = true;
+        this.MpInkProbeLog(s"AUTHORED callback fired - widget defined: \(IsDefined(widget))");
+        if IsDefined(widget) {
+            widget.SetVisible(false);
+        }
+    }
+
+    // Called by the verdict DelayCallback, so it cannot be private.
+    public func MpInkProbeReport() -> Void {
+        if this.m_inkProbeControl && this.m_inkProbeAuthored {
+            this.MpInkProbeLog("VERDICT: BOTH spawned - the CLI-authored library is VALID; the menu controller is the blocker");
+        } else {
+            if this.m_inkProbeControl && !this.m_inkProbeAuthored {
+                this.MpInkProbeLog("VERDICT: control spawned, authored SILENT - the CLI round-trip produces bad libraries");
+            } else {
+                if !this.m_inkProbeControl && !this.m_inkProbeAuthored {
+                    this.MpInkProbeLog("VERDICT: BOTH silent - AsyncSpawnFromExternal itself is the suspect, on every controller");
+                } else {
+                    this.MpInkProbeLog("VERDICT: authored spawned but control did NOT - unexpected; re-read the control path");
+                }
+            }
+        }
     }
 
     // Build the persistent talk button once and hang it on the HUD root, the same place the

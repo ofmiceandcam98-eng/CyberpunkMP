@@ -367,10 +367,20 @@ Nexus's own API client types. The md5 surface in v1 is only the reverse
 The initial id set: `cyberpunk_multiplayer` (payload), `red4ext`, `redscript`,
 `codeware`, `archive_xl`, `tweak_xl`, `input_loader` (bundled), and one id per
 modlist entry (`fast_launch`, `native_settings_ui`, `dlc_call_off`,
-`audioware`, `red_data`, …). The two entries with unconfirmed names
-(nexusModId 4198, 22114) must be resolved before they get ids — and 4198 is
-suspected to be a duplicate ArchiveXL install over the pinned prerequisite,
-which the conflict engine (§5) would flag as its first real catch.
+`audioware`, `red_data`, …). The two entries that had unconfirmed names
+(nexusModId 4198, 22114) are both **resolved and pulled** as of 2026-09-08, so
+neither needs an id: 4198 was confirmed a duplicate ArchiveXL install over the
+pinned prerequisite, and 22114 is "YOU ARE UNDER ARREST", which requires Cyber
+Engine Tweaks — the component §5's own worked example lists as
+`known_incompatible / critical` against the payload. Worth noting what that
+means for §5: its `detection` block would have caught this — but only *after* a
+player installed CET to satisfy the entry, since the entries compare components
+that are actually present. Nothing in the spec looks at an entry's `requires`
+list and asks whether satisfying it would install something the compatibility
+section already calls `critical`. That check belongs at curation time, on the
+list, not at the door on one machine — it is the difference between warning a
+player mid-install and never shipping the entry. Cheap to add: the `requires`
+ids are right there in modlist.json. See modlist.json `_pulled` for both.
 
 ### 3.3 Server-approved version, not latest (spec §39)
 

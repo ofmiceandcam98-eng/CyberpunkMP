@@ -61,6 +61,44 @@ function Pass($m) { Write-Host "  ok    $m" -ForegroundColor DarkGray }
 function Head($m) { Write-Host "`n$m" -ForegroundColor Cyan }
 
 # ---------------------------------------------------------------------------
+# Environment first: rotted tooling fails every later check with messages that blame
+# the code. On 2026-09-10 a wiped xmake cache plus a stale PCH burned SIX ship attempts
+# (tags 23-28) on failures no code change caused. The doctor names that class in one
+# line before anything expensive runs.
+# Gated on -SkipTests: every doctor finding is about COMPILER state (package cache,
+# SDK pin, PCH freshness), and -SkipTests is the documented compiler-free path - a
+# docs- or launcher-only machine must not fail Verify over a cache it never needs.
+if (-not $SkipTests) {
+    Head "build environment (doctor)"
+    $doctorRan = $false
+    $doctorOk = $false
+    try {
+        & (Join-Path $PSScriptRoot "DoctorBuildEnv.ps1")
+        $doctorRan = $true
+        $doctorOk = $LASTEXITCODE -eq 0
+    } catch {
+        # A throw here (package cache mutated mid-walk by a concurrent xmake, the script
+        # missing from a stale checkout) must degrade to ONE failed check - not abort
+        # Verify before the BOM/protocol/test checks ever run.
+        Fail -Summary "the environment doctor itself crashed - environment rot is UNKNOWN" `
+             -What "the doctor could not finish its scan, so a rotted environment would not have been caught; treat any later compile-shaped failure with suspicion" `
+             -Where "DoctorBuildEnv.ps1: $($_.Exception.Message)" `
+             -Fix "run .\tools\DoctorBuildEnv.ps1 on its own to see the full error, fix that, re-run Verify"
+    }
+    Set-Location $Repo   # the doctor dot-sources Environment.ps1, which sets location
+
+    if ($doctorOk) {
+        Pass "environment sound - packages, SDK pin, build-tree fingerprint"
+    } elseif ($doctorRan) {
+        # The doctor has already printed each finding in what/where/fix form directly above.
+        Fail -Summary "the build environment is rotted - fix it before trusting ANY later failure" `
+             -What "every finding above makes later checks fail with messages that blame the code; the 2026-09-10 cascade burned six ship attempts this way" `
+             -Where "listed directly above this block" `
+             -Fix "apply each fix line printed above, then re-run .\tools\DoctorBuildEnv.ps1 until it exits clean"
+    }
+}
+
+# ---------------------------------------------------------------------------
 Head "BOM"
 $bom = @()
 foreach ($root in @("code\assets\redscript", "distrib\launcher\mod\assets\redscript", "code\server\native", "code\client")) {

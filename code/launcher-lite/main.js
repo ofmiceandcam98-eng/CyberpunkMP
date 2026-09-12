@@ -4496,6 +4496,32 @@ function saveInstalledMods (record) {
   }
 }
 
+// The list's `_pulled` block is prose for humans, but every entry LEADS with the id it
+// pulls ("22114 - PULLED 2026-09-08, ..."). Parse exactly that much. A pull that lives
+// only in prose reaches nobody who already installed the mod: those records never had a
+// manifest component (22114 was excluded from the manifest all along), so the rule-59
+// retirement check cannot see them, and the mod would sit under "YOUR MODS" verifying
+// intact forever - with the reason it was pulled stored where nothing reads it.
+// Entries are blank-line separated blocks; the whole block is kept as the reason.
+let pulledMods = new Map()
+
+function parsePulledMods (list) {
+  const out = new Map()
+  const lines = Array.isArray(list?._pulled) ? list._pulled : []
+  let id = null
+  let block = []
+  const flush = () => { if (id) out.set(id, block.join(' ').trim()); id = null; block = [] }
+  for (const raw of lines) {
+    const line = String(raw)
+    if (!line.trim()) { flush(); continue }
+    const m = /^(\d+)\s*-\s*PULLED\b/.exec(line)
+    if (m) { flush(); id = m[1] }
+    if (id) block.push(line)
+  }
+  flush()
+  return out
+}
+
 async function fetchModList () {
   const response = await axios.get(MODLIST_URL, {
     headers: { 'User-Agent': 'NightCityOnline-Launcher' },
@@ -4503,6 +4529,7 @@ async function fetchModList () {
   })
 
   const list = response.data
+  pulledMods = parsePulledMods(list)
   return Array.isArray(list?.mods) ? list.mods : []
 }
 
@@ -4785,6 +4812,10 @@ ipcMain.handle('mods:list', async () => {
       const present = paths.length > 0 && paths.every((rel) => existsSync(path.join(gameDir, rel)))
       const nexus = await fetchModInfo(recordId)
 
+      // A record here because the server PULLED its id is not a mod the player chose -
+      // presenting it as one hides the pull from the only people it affects.
+      const pulledReason = pulledMods.get(String(recordId)) || null
+
       personal.push({
         id: String(recordId),
         name: nexus?.name || record.name || `Nexus mod ${recordId}`,
@@ -4792,6 +4823,8 @@ ipcMain.handle('mods:list', async () => {
         version: record.version || null,
         files: paths.length,
         state: present ? 'installed' : 'broken',
+        pulled: Boolean(pulledReason),
+        pulledReason,
         nexusUrl: `https://www.nexusmods.com/cyberpunk2077/mods/${recordId}`
       })
     }
@@ -4939,6 +4972,9 @@ ipcMain.handle('mods:verify', async () => {
 
   await refreshManifestState().catch(() => null)
   const manifest = usableManifest()
+  // Refresh the pulled-id set alongside the manifest - retirement below needs it, and
+  // a fetch failure degrades the same way a missing manifest does (check skipped).
+  await fetchModList().catch(() => null)
 
   for (const [modId, record] of Object.entries(installed)) {
     checked++
@@ -4992,6 +5028,16 @@ ipcMain.handle('mods:verify', async () => {
     // with the same per-file, confirmed deletion as always.
     if (manifest && record.id && !(manifest.components || []).some((c) => c.id === record.id)) {
       retired.push({ id: modId, name: record.name || `mod ${modId}` })
+    }
+
+    // Retirement, list flavour: the server list PULLED this id outright (_pulled).
+    // The rule-59 check above cannot see these - a mod that was excluded from the
+    // manifest all along (22114) has records with no record.id, so the guard
+    // short-circuits. Without this, a pull is a silent no-op for everyone who
+    // already installed the mod, and the reason it was pulled reaches nobody.
+    const pulledReason = pulledMods.get(String(modId))
+    if (pulledReason && !retired.some((r) => String(r.id) === String(modId))) {
+      retired.push({ id: modId, name: record.name || `mod ${modId}`, reason: pulledReason })
     }
 
     intact++

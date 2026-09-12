@@ -48,3 +48,15 @@
 
 # $NasUser = "your-server-account"
 # $NasHost = "your-server-address"
+
+# --- the CURRENT server -----------------------------------------------------
+# Used by tools\PullLogs.ps1 and anything else that reaches the live box over SSH.
+# Not in git on purpose - the repo is public. NCO_SERVER_USER / NCO_SERVER_HOST in
+# the environment win over these.
+#
+# Named separately from $NasUser/$NasHost above BECAUSE those may still point at the
+# retired pre-migration NAS on machines configured before 2026-09-06 - the migration
+# gave every node a new identity, and the old address is dead, not relocated.
+
+# $ServerUser = "your-server-account"
+# $ServerHost = "your-server-address"

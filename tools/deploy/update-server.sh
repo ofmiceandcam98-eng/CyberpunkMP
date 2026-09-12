@@ -55,6 +55,24 @@ announce_map_change() {
     echo "$(date -Is) announced MAP.md change on the coordination feed" >> "$LOG"
 }
 
+# The coordination API runs from this same checkout behind the "coord" compose profile,
+# which every plain `docker compose up -d` in this script IGNORES - and its source is a
+# read-only bind mount, so a pull updates server.js on disk while the running Node
+# process keeps the old module in memory. Net effect before this function existed: a
+# coord-api change deployed only when somebody remembered a manual restart, and the
+# /v1/journal endpoints 404'd on the live box while every caller believed they were
+# live. Gated on the container actually running, so the host that deliberately does
+# not run the coord profile (the test server) never has it started by accident.
+restart_coord_api() {
+    git diff --name-only "$1" "$2" | grep -q '^code/coord-api/' || return 0
+    docker ps --format '{{.Names}}' | grep -qx 'nco-coord-api' || return 0
+    if docker compose --profile coord up -d --force-recreate coord-api >> "$LOG" 2>&1; then
+        echo "$(date -Is) restarted coord-api for $(git rev-parse --short @) - its source changed" >> "$LOG"
+    else
+        echo "$(date -Is) COORD-API RESTART FAILED - it keeps serving the PREVIOUS code" >> "$LOG"
+    fi
+}
+
 # The third file to silently kill every deploy (2026-09-03): a hand-seeded copy of a
 # script that later landed in the repo (update-wolvenkit.sh). Fetch worked, pull
 # refused ("untracked working tree files would be overwritten"), and "pull failed"
@@ -95,13 +113,15 @@ fi
 if ! git diff --name-only "$LOCAL" "$REMOTE" | grep -qE '^(code/(server|common|protocol|assets|client)|docker|Dockerfile|xmake)'; then
     git pull --quiet || { echo "$(date -Is) pull failed" >> "$LOG"; exit 1; }
     announce_map_change "$LOCAL" "$(git rev-parse @)"
-    echo "$(date -Is) pulled $(git rev-parse --short @) - nothing the server uses changed, no restart" >> "$LOG"
+    restart_coord_api "$LOCAL" "$(git rev-parse @)"
+    echo "$(date -Is) pulled $(git rev-parse --short @) - nothing the server image uses changed, no rebuild" >> "$LOG"
     exit 0
 fi
 
 echo "$(date -Is) updating $LOCAL -> $REMOTE" >> "$LOG"
 git pull --quiet || { echo "$(date -Is) pull failed" >> "$LOG"; exit 1; }
 announce_map_change "$LOCAL" "$(git rev-parse @)"
+restart_coord_api "$LOCAL" "$(git rev-parse @)"
 
 if docker compose up -d --build >> "$LOG" 2>&1; then
     echo "$(date -Is) deployed $(git rev-parse --short @)" >> "$LOG"

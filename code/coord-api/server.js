@@ -67,6 +67,20 @@ const DATA_DIR = process.env.NCO_COORD_DATA || path.join(__dirname, 'data')
 const PARTICIPANTS_FILE = path.join(DATA_DIR, 'participants.json')
 const UPDATES_FILE = path.join(DATA_DIR, 'updates.jsonl')
 
+// The internal-docs share, when this deployment mounts it (read-only). Cam's stream has
+// tailnet reach and a coord key but NO shell account on the host, so "internal docs are
+// shared with Cam on the server" was fiction until this route: everything reached him by
+// relay. Absent the mount (a dev box, a test run) the route answers 503 and nothing else
+// changes.
+const DOCS_DIR = process.env.NCO_DOCS_DIR || null
+
+// The stream journal. SEPARATE FILE ON PURPOSE: publishNow() reads updates.jsonl and
+// nothing else, so journal entries are excluded from the public slice by construction,
+// not by a filter someone could forget. Journal lines routinely carry working-tree
+// state and internal paths - they exist for the NEXT session on the tailnet, never for
+// a release asset.
+const JOURNAL_FILE = path.join(DATA_DIR, 'journal.jsonl')
+
 const PUBLISH_DIR = path.join(REPO_ROOT, 'publish')
 const PUBLISH_JSON = path.join(PUBLISH_DIR, 'assistant-updates.json')
 const PUBLISH_MD = path.join(PUBLISH_DIR, 'ASSISTANT_UPDATES.md')
@@ -170,6 +184,36 @@ function loadUpdates () {
 function appendUpdate (update) {
   ensureDataDir()
   fs.appendFileSync(UPDATES_FILE, JSON.stringify(update) + '\n')
+}
+
+/**
+ * The stream journal - session state, as distinct from work state and events.
+ *
+ * The Atlas answers "what is open"; the feed answers "what happened". Neither answers
+ * "where exactly was the session that just died" - and on 2026-09-10 an app update
+ * killed two working sessions and the answer had to be dug out of a 13.5MB transcript.
+ * A journal line at each natural boundary makes that recovery a twenty-line read:
+ * what was being worked, the tree state, what was in flight, which session to blame.
+ *
+ * Same append-only jsonl discipline as updates: a crash costs the last line, a corrupt
+ * line is skipped. Entries never reach publish/ (see JOURNAL_FILE) and never touch the
+ * coordination log - a journal that spammed the feed would train everyone to ignore both.
+ */
+function loadJournal () {
+  try {
+    return fs.readFileSync(JOURNAL_FILE, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => { try { return JSON.parse(line) } catch { return null } })
+      .filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+function appendJournal (entry) {
+  ensureDataDir()
+  fs.appendFileSync(JOURNAL_FILE, JSON.stringify(entry) + '\n')
 }
 
 // ---------------------------------------------------------------------------
@@ -698,6 +742,121 @@ async function handleApi (req, res, url) {
     return send(res, 201, { ok: true, update })
   }
 
+  if (url.pathname === '/v1/journal' && req.method === 'GET') {
+    let entries = loadJournal()
+
+    // `stream` filters to one participant's line of session state - the usual read is
+    // "what was MY predecessor doing", not the whole room.
+    const stream = url.searchParams.get('stream')
+    if (stream) entries = entries.filter((e) => e.from === stream)
+
+    const since = url.searchParams.get('since')
+    if (since) {
+      const cutoff = Date.parse(since)
+      if (!Number.isNaN(cutoff)) entries = entries.filter((e) => Date.parse(e.at) > cutoff)
+    }
+
+    const limit = Math.min(Number(url.searchParams.get('limit')) || 20, 100)
+    entries = entries.slice(-limit).reverse()
+
+    return send(res, 200, { count: entries.length, entries })
+  }
+
+  if (url.pathname === '/v1/journal' && req.method === 'POST') {
+    let body
+    try {
+      body = await readBody(req)
+    } catch (error) {
+      return send(res, 400, { error: error.message })
+    }
+
+    const state = String(body.state || '').trim().slice(0, 2000)
+    if (!state) {
+      return send(res, 400, {
+        error: 'A state line is required.',
+        hint: 'POST {"state": "working X, tree has Y uncommitted, Z in flight", "session": "<id or title>"}'
+      })
+    }
+
+    const entry = {
+      id: new Date().toISOString().replace(/[-:.TZ]/g, '') + '-' + crypto.randomBytes(3).toString('hex'),
+      at: new Date().toISOString(),
+      from: participant.id,
+      fromLabel: participant.label,
+      state,
+      session: String(body.session || '').slice(0, 200),
+      tree: String(body.tree || '').slice(0, 500),
+      inflight: String(body.inflight || '').slice(0, 500)
+    }
+
+    // Journal only: no coordination-log append, no publishSoon(). Session state is for
+    // the next session on the tailnet, not for the feed and never for the public slice.
+    appendJournal(entry)
+
+    console.log(`[journal] ${participant.id}: ${state.slice(0, 80)}`)
+
+    return send(res, 201, { ok: true, entry })
+  }
+
+  if (url.pathname === '/v1/docs' || url.pathname.startsWith('/v1/docs/')) {
+    // Read-only by construction: GET is the only verb, the mount is ro, and the write
+    // path stays what it always was - SSH from a machine that has an account.
+    if (req.method !== 'GET') return send(res, 405, { error: 'The docs route is read-only.' })
+
+    if (!DOCS_DIR || !fs.existsSync(DOCS_DIR)) {
+      return send(res, 503, { error: 'Internal docs are not mounted on this deployment.' })
+    }
+
+    // Path-jailed: resolve, then require the result to still be under the root. This is
+    // the whole security story of the route - a traversal that escapes the jail would
+    // hand every tailnet keyholder the container's filesystem.
+    const rel = decodeURIComponent(url.pathname.slice('/v1/docs'.length)).replace(/^\/+/, '')
+    const root = path.resolve(DOCS_DIR)
+    const target = path.resolve(root, rel)
+
+    if (target !== root && !target.startsWith(root + path.sep)) {
+      return send(res, 403, { error: 'Path escapes the docs directory.' })
+    }
+
+    let stat
+    try { stat = fs.statSync(target) } catch { return send(res, 404, { error: 'No such file or directory.', hint: 'GET /v1/docs lists the top level.' }) }
+
+    if (stat.isDirectory()) {
+      const entries = fs.readdirSync(target, { withFileTypes: true }).map((e) => ({
+        name: e.name,
+        type: e.isDirectory() ? 'dir' : 'file',
+        size: e.isDirectory() ? undefined : (() => { try { return fs.statSync(path.join(target, e.name)).size } catch { return undefined } })()
+      }))
+      return send(res, 200, { path: '/' + rel, entries })
+    }
+
+    // Mockups and type docs are a few hundred KB; anything bigger does not belong on
+    // this route - pull it over SSH from a machine with an account.
+    if (stat.size > 10 * 1024 * 1024) {
+      return send(res, 413, { error: 'File is over the 10MB route cap - fetch it over SSH instead.' })
+    }
+
+    const types = {
+      '.html': 'text/html; charset=utf-8',
+      '.md': 'text/plain; charset=utf-8',
+      '.txt': 'text/plain; charset=utf-8',
+      '.json': 'application/json; charset=utf-8',
+      '.reds': 'text/plain; charset=utf-8',
+      '.ps1': 'text/plain; charset=utf-8',
+      '.sh': 'text/plain; charset=utf-8',
+      '.css': 'text/css; charset=utf-8',
+      '.js': 'text/plain; charset=utf-8',   // served as text on purpose - read it, do not run it
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.svg': 'image/svg+xml'
+    }
+    const type = types[path.extname(target).toLowerCase()] || 'application/octet-stream'
+
+    const bytes = fs.readFileSync(target)
+    res.writeHead(200, { 'Content-Type': type, 'Content-Length': bytes.length, 'Cache-Control': 'no-store' })
+    return res.end(bytes)
+  }
+
   if (url.pathname === '/v1/publish' && req.method === 'POST') {
     try {
       await publishNow()
@@ -716,6 +875,9 @@ const ENDPOINTS = [
   'GET  /v1/participants',
   'GET  /v1/updates?limit=&since=&from=&kind=',
   'POST /v1/updates   {"title","body","kind","refs"}',
+  'GET  /v1/journal?stream=&limit=&since=   - session state, never published',
+  'POST /v1/journal   {"state","session","tree","inflight"}',
+  'GET  /v1/docs[/<path>]   - internal-docs, read-only, where mounted',
   'POST /v1/publish',
   'POST /v1/dev-key   {"discordToken"}  - dev role only',
   'POST /v1/atlas     {"discordToken"}  - dev role only, returns the Atlas address'
