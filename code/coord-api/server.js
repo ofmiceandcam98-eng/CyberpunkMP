@@ -162,16 +162,17 @@ function saveParticipants (list) {
 }
 
 /**
- * One JSON object per line.
+ * One JSON object per line - the shared jsonl discipline for both feeds.
  *
  * Append-only by construction: a crash mid-write costs the last line rather than the
  * file, and a corrupted line is skipped instead of taking the history with it. That
- * matters more here than elegance - this IS the record of what the assistants told each
- * other, and the project has already lost a day's work to a file going missing once.
+ * matters more here than elegance - these ARE the record of what the assistants told each
+ * other (and of where each session left off), and the project has already lost a day's
+ * work to a file going missing once.
  */
-function loadUpdates () {
+function loadJsonl (file) {
   try {
-    return fs.readFileSync(UPDATES_FILE, 'utf8')
+    return fs.readFileSync(file, 'utf8')
       .split('\n')
       .filter(Boolean)
       .map((line) => { try { return JSON.parse(line) } catch { return null } })
@@ -181,10 +182,13 @@ function loadUpdates () {
   }
 }
 
-function appendUpdate (update) {
+function appendJsonl (file, record) {
   ensureDataDir()
-  fs.appendFileSync(UPDATES_FILE, JSON.stringify(update) + '\n')
+  fs.appendFileSync(file, JSON.stringify(record) + '\n')
 }
+
+const loadUpdates = () => loadJsonl(UPDATES_FILE)
+const appendUpdate = (update) => appendJsonl(UPDATES_FILE, update)
 
 /**
  * The stream journal - session state, as distinct from work state and events.
@@ -195,25 +199,49 @@ function appendUpdate (update) {
  * A journal line at each natural boundary makes that recovery a twenty-line read:
  * what was being worked, the tree state, what was in flight, which session to blame.
  *
- * Same append-only jsonl discipline as updates: a crash costs the last line, a corrupt
- * line is skipped. Entries never reach publish/ (see JOURNAL_FILE) and never touch the
- * coordination log - a journal that spammed the feed would train everyone to ignore both.
+ * Same append-only jsonl discipline as updates (see loadJsonl). Entries never reach
+ * publish/ (see JOURNAL_FILE) and never touch the coordination log - a journal that
+ * spammed the feed would train everyone to ignore both.
  */
-function loadJournal () {
-  try {
-    return fs.readFileSync(JOURNAL_FILE, 'utf8')
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => { try { return JSON.parse(line) } catch { return null } })
-      .filter(Boolean)
-  } catch {
-    return []
+const loadJournal = () => loadJsonl(JOURNAL_FILE)
+const appendJournal = (entry) => appendJsonl(JOURNAL_FILE, entry)
+
+/**
+ * The common scaffold for a feed record: a sortable id (an ISO stamp with a hex suffix),
+ * the timestamp, and the authoring participant. Both POST routes build on this and add
+ * their own fields; the id format is what lets `since` fall back to an id comparison.
+ */
+function makeEntry (participant, fields) {
+  return {
+    id: new Date().toISOString().replace(/[-:.TZ]/g, '') + '-' + crypto.randomBytes(3).toString('hex'),
+    at: new Date().toISOString(),
+    from: participant.id,
+    fromLabel: participant.label,
+    ...fields
   }
 }
 
-function appendJournal (entry) {
-  ensureDataDir()
-  fs.appendFileSync(JOURNAL_FILE, JSON.stringify(entry) + '\n')
+/**
+ * The shared read pipeline for the two jsonl feeds.
+ *
+ * `since` accepts either an ISO timestamp or an entry id: a parseable date filters on the
+ * `at` timestamp, anything else falls back to comparing the opaque id string - which sorts
+ * the same way, because every id is an ISO stamp with a hex suffix. The journal route used
+ * to OMIT that fallback and silently return everything for a non-date `since`; both routes
+ * share this helper now, so both behave the id-fallback way.
+ *
+ * Route-specific filters (from/kind/stream) are applied by the caller before this runs.
+ */
+function queryFeed (entries, url, { defaultLimit, maxLimit }) {
+  const since = url.searchParams.get('since')
+  if (since) {
+    const cutoff = Date.parse(since)
+    if (!Number.isNaN(cutoff)) entries = entries.filter((e) => Date.parse(e.at) > cutoff)
+    else entries = entries.filter((e) => e.id > since)
+  }
+
+  const limit = Math.min(Number(url.searchParams.get('limit')) || defaultLimit, maxLimit)
+  return entries.slice(-limit).reverse()
 }
 
 // ---------------------------------------------------------------------------
@@ -687,21 +715,13 @@ async function handleApi (req, res, url) {
   if (url.pathname === '/v1/updates' && req.method === 'GET') {
     let updates = loadUpdates()
 
-    const since = url.searchParams.get('since')
-    if (since) {
-      const cutoff = Date.parse(since)
-      if (!Number.isNaN(cutoff)) updates = updates.filter((u) => Date.parse(u.at) > cutoff)
-      else updates = updates.filter((u) => u.id > since)
-    }
-
     const from = url.searchParams.get('from')
     if (from) updates = updates.filter((u) => u.from === from)
 
     const kind = url.searchParams.get('kind')
     if (kind) updates = updates.filter((u) => u.kind === kind)
 
-    const limit = Math.min(Number(url.searchParams.get('limit')) || 25, 200)
-    updates = updates.slice(-limit).reverse()
+    updates = queryFeed(updates, url, { defaultLimit: 25, maxLimit: 200 })
 
     return send(res, 200, { count: updates.length, updates })
   }
@@ -722,16 +742,12 @@ async function handleApi (req, res, url) {
 
     const kind = KINDS.includes(body.kind) ? body.kind : 'update'
 
-    const update = {
-      id: new Date().toISOString().replace(/[-:.TZ]/g, '') + '-' + crypto.randomBytes(3).toString('hex'),
-      at: new Date().toISOString(),
-      from: participant.id,
-      fromLabel: participant.label,
+    const update = makeEntry(participant, {
       kind,
       title,
       body: text,
       refs: Array.isArray(body.refs) ? body.refs.slice(0, 20).map((r) => String(r).slice(0, 200)) : []
-    }
+    })
 
     appendUpdate(update)
     appendToCoordinationLog(update)
@@ -750,14 +766,7 @@ async function handleApi (req, res, url) {
     const stream = url.searchParams.get('stream')
     if (stream) entries = entries.filter((e) => e.from === stream)
 
-    const since = url.searchParams.get('since')
-    if (since) {
-      const cutoff = Date.parse(since)
-      if (!Number.isNaN(cutoff)) entries = entries.filter((e) => Date.parse(e.at) > cutoff)
-    }
-
-    const limit = Math.min(Number(url.searchParams.get('limit')) || 20, 100)
-    entries = entries.slice(-limit).reverse()
+    entries = queryFeed(entries, url, { defaultLimit: 20, maxLimit: 100 })
 
     return send(res, 200, { count: entries.length, entries })
   }
@@ -778,16 +787,12 @@ async function handleApi (req, res, url) {
       })
     }
 
-    const entry = {
-      id: new Date().toISOString().replace(/[-:.TZ]/g, '') + '-' + crypto.randomBytes(3).toString('hex'),
-      at: new Date().toISOString(),
-      from: participant.id,
-      fromLabel: participant.label,
+    const entry = makeEntry(participant, {
       state,
       session: String(body.session || '').slice(0, 200),
       tree: String(body.tree || '').slice(0, 500),
       inflight: String(body.inflight || '').slice(0, 500)
-    }
+    })
 
     // Journal only: no coordination-log append, no publishSoon(). Session state is for
     // the next session on the tailnet, not for the feed and never for the public slice.
