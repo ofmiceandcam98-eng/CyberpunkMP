@@ -424,22 +424,44 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   - **First diagnostic for "the mod did nothing": `red4ext/logs/red4ext-*.log`.** A plugin
     that fails during `Load` says so there and nowhere else.
 
-### FOR ZELDFEP — NETCODE IS FROZEN, THE BRANCH IS NOW A REFERENCE (2026-09-05)
+### ~~NETCODE FROZEN~~ — FREEZE LIFTED 2026-09-09, AND WHAT IT WAS ACTUALLY FOR
 
-**START HERE AFTER THE SWAP: `docs/ZELDFEP-AFTER-THE-SWAP.md`** — the ordered
-pick-it-up-and-finish-it note. This block is the summary; that document is the plan.
+**THE FREEZE IS OVER.** Cam, 2026-09-09: *"thats what i meant, hardware migration, but yes
+continue."* Its own stated condition — "until Cam says the server swap is complete" — is met.
 
-**Read this before touching anything on the branch.** Nothing here changes the live servers, but
-it changes what this branch IS. **Working branch is now `wip/world-state`** (pushed to `fork`);
-`feat/world-state` stays unpushed during the migration so the production NAS cron cannot rebuild
-the live server mid-swap.
+**AND THE PREMISE WAS WRONG, WHICH IS THE PART WORTH KEEPING.** The freeze was written against
+*"we are replacing the current multiplayer server/netcode."* **What actually happened was a
+HARDWARE migration** — `publish/server.json` repointed players from `100.80.243.29` to
+`100.109.52.23`, same stack, same netcode, same protocol identifiers. No replacement server
+implementation exists, in this repo or any branch. A whole programme of freezes, a proposed
+netcode rollback, and three handoff documents were built on a reading of "new server" that
+nobody had actually made.
 
-**1. Hard freeze on runtime multiplayer networking**, until Cam says the server swap is complete.
-No production `.proto`, handlers, transport, RPC, replication, auth, movement, vehicle, combat,
-voice, phone, selector, or economy networking. This matches what you asked for before the swap;
-it is now written down and it applies to both streams.
+**The lesson, because it will recur:** "new server" is ambiguous between *new hardware* and *new
+implementation*, and the two imply opposite work. Ask which before designing around either. The
+cost here was bounded — everything produced is still useful — but the rollback would have
+destroyed a working branch for nothing.
 
-**2. `feat/world-state` is now classified OUTGOING SERVER REFERENCE IMPLEMENTATION.** Not a
+**What survives, and it is worth more than the freeze was:** the audits are all still true, and
+they were never about the transport. Money is not server-authoritative (17 vanilla paths bypass
+`Economy::`); no vanilla inventory operation is observed; `(TweakDBID, quantity)` cannot
+represent a real item; the cell grid culls nothing; wire enums are not range-validated. Those
+are facts about *Cyberpunk*, and they outlive any server.
+
+**`main` is the integration branch now** (since PR #9/#10, 2026-09-10/11): feature branches
+land on it by PR. `wip/world-state` was the migration-weekend mirror so a push could not
+trigger the production cron mid-swap; it is stale at `829d239` — do not work from it.
+
+**`docs/ZELDFEP-AFTER-THE-SWAP.md` is still the ordered pick-it-up note**, minus its premise:
+read the build order and the five things that bite, ignore the "establish the replacement's
+capabilities" step, because there is no replacement to establish.
+
+**The old classification, for the record:** `feat/world-state` was briefly labelled OUTGOING
+SERVER REFERENCE IMPLEMENTATION. It is not. It is the live branch. What follows is the
+reasoning that produced that label, kept because the rollback analysis in it is sound and would
+apply to a real implementation swap.
+
+**~~2.~~ `feat/world-state` was classified OUTGOING SERVER REFERENCE IMPLEMENTATION.** Not a
 deployment target, not the base for the new server, and deliberately NOT cleaned up. A full
 netcode rollback was proposed, audited, and **rejected** — the numbers are in
 `docs/OUTGOING-SERVER-NETCODE-MAP.md` §0, but briefly: the branch is +20,760 lines, the "netcode"
@@ -491,10 +513,43 @@ CharacterID, persistence, session lock and authoritative load/spawn.
 
 Phase 5 stages 1-5 stand as architecture and were **not** the reason for the swap.
 
-### Phase 5 (economy authority) — stages 1–5 built, NOTHING BEHAVES DIFFERENTLY YET
+### Phase 5 (economy authority) — stage 6 metadata built 2026-09-09, STILL NOTHING BEHAVES DIFFERENTLY
 
-Full detail in `docs/PHASE5-ECONOMY-AUTHORITY.md`; this row is the ledger pointer. All of it
-is **local and unpushed** — per Cam, nothing ships before the server swap.
+Full detail in `docs/PHASE5-ECONOMY-AUTHORITY.md`; this row is the ledger pointer. Stage 6 was
+built on a local `feat/world-state` that was never pushed; it lands on `main` through
+`feat/money-stage6` (2026-09-12) — the "local and unpushed until the swap" note is retired with
+the freeze.
+
+**Stage 6 (metadata truthfulness) is in**, applied from the patch that was built and
+deliberately reverted during the freeze:
+- **`EconomyRevision` → `MoneyRevision`, `MigratedAt` → `MoneyMigratedAt`.** The old names
+  claimed money AND inventory; those cross the authority boundary at different times, so one
+  number cannot honestly version both. `InventoryRevision`/`InventoryMigratedAt` are reserved
+  and deliberately NOT declared — an unused field invites someone to assume it means something.
+- **A revision advances only when MONEY changes.** An item-only trade must not advance it, and
+  `trade_real_test` covers item-only trades explicitly. Same for a starter kit that grants no
+  eddies: compared against the prior balance, not assumed.
+- **Revision headroom is only required when money will actually move**, so an exhausted
+  `MoneyRevision` no longer blocks an item-only trade — a transaction cannot be refused on a
+  field it never touches.
+- **`InspectLegacyMetadata` reads the RAW players.json** before deserialization, because
+  deserializing drops keys the struct no longer declares and the evidence is gone by then. A
+  nonzero old key is reported and **never reinterpreted** in either direction; the record loads
+  unmigrated, which is the safe reading. Production is expected to contain none — this exists so
+  that expectation is testable rather than assumed.
+
+**The rename is safe for a precise reason, not a hopeful one:** migration has never run, every
+persisted value is 0, and a record carrying only the old keys loads with the new ones defaulted
+to 0 — not migrated, which is exactly correct.
+
+**Verify: 18 test files, 522 checks.** `legacymetadata_test` is new (31). Two real defects were
+caught on the way in and are worth recording: the new test compiled against `EconomyMigration.h`
+alone while calling `Economy::IsMigrated`, and `InspectLegacyMetadata` used `std::move` without
+`<utility>` — **MSVC supplies it transitively and GCC does not**, which is precisely the class
+`CheckIncludes.ps1` exists to catch, and GCC is the build that serves players.
+
+**Still not started: stages 7 and 8**, and they are gated on something no metadata change
+fixes — money is not server-authoritative today. See `docs/PHASE5-STAGE6B-MONEY-AUDIT.md`.
 
 - **The one client-authoritative door is still open, deliberately.** `character.Money =
   aMessage.get_money()` is untouched. Closing it is Stage 7, and Stage 7 is a flag day.
