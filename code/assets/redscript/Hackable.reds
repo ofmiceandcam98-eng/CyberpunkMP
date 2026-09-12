@@ -81,3 +81,79 @@ public func MpTryMakeHackable(entity: ref<GameObject>) -> Void {
 
     FTLog(s"[Hackable] \(EntityID.GetHash(entity.GetEntityID())) is now a valid combat and quickhack target");
 }
+
+/**
+ * Remote players must be damageable - the runtime half of the Panam god-mode fix.
+ *
+ * The muppet records inherit from Character.Panam, and the game grants NPC god mode from
+ * record tags when the puppet initialises (NPCManager.SetNPCImmortalityMode, source
+ * 'Default'). An Invulnerable puppet absorbs every shot before Combat.reds can report it.
+ * CyberpunkMP.tweak strips the tags; this is the backstop in case that does not take, and
+ * the proof either way - it LOGS which god modes were on the puppet and from what source,
+ * because TweakDB tags are hashed and cannot be read offline. No log line saying "had god
+ * mode" on a fresh session means the tweak did its job.
+ *
+ * Independent of -no-hackable-puppets on purpose. That switch is about hostility, which
+ * other systems react to; a remote player being unkillable is never correct.
+ *
+ * Checked twice: once at attach, and again a moment later, because NPCManager runs from
+ * OnPostInitialize and nothing guarantees that has happened before OnEntityAttached. The
+ * game never re-applies it after init, so a clear that lands after it sticks.
+ *
+ * Only the 'Default' source is cleared - the one the record grants. Anything else holding
+ * god mode on a puppet is logged and left alone, because it would be something to find,
+ * not something to paper over.
+ */
+public static func MpGodModeRecheckSeconds() -> Float = 1.0
+
+public func MpStripInheritedGodMode(entity: ref<GameObject>) -> Void {
+    if !IsDefined(entity) || !entity.HasTag(n"CyberpunkMP.Puppet") {
+        return;
+    }
+
+    MpClearRecordGodMode(entity, "attach");
+
+    let recheck = new MpGodModeRecheckCallback();
+    recheck.entity = entity;
+    GameInstance.GetDelaySystem(entity.GetGame()).DelayCallback(recheck, MpGodModeRecheckSeconds(), false);
+}
+
+public func MpClearRecordGodMode(entity: ref<GameObject>, when: String) -> Void {
+    let gods = GameInstance.GetGodModeSystem(entity.GetGame());
+    let id = entity.GetEntityID();
+
+    let invulnerable = gods.GetGodModeSources(id, gameGodModeType.Invulnerable);
+    let immortal = gods.GetGodModeSources(id, gameGodModeType.Immortal);
+
+    if ArraySize(invulnerable) == 0 && ArraySize(immortal) == 0 {
+        FTLog(s"[Hackable] \(when): \(EntityID.GetHash(id)) has no god mode - damageable");
+        return;
+    }
+
+    FTLogWarning(s"[Hackable] \(when): \(EntityID.GetHash(id)) had god mode - Invulnerable from [\(MpJoinNames(invulnerable))], Immortal from [\(MpJoinNames(immortal))] - clearing 'Default'");
+    gods.ClearGodMode(id, n"Default");
+}
+
+public func MpJoinNames(names: array<CName>) -> String {
+    let joined = "";
+    let i = 0;
+    while i < ArraySize(names) {
+        if i > 0 {
+            joined += ", ";
+        }
+        joined += NameToString(names[i]);
+        i += 1;
+    }
+    return joined;
+}
+
+public class MpGodModeRecheckCallback extends DelayCallback {
+    public let entity: wref<GameObject>;
+
+    public func Call() -> Void {
+        if !IsDefined(this.entity) {
+            return;
+        }
+        MpClearRecordGodMode(this.entity, "recheck");
+    }
+}
