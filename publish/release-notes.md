@@ -6,6 +6,26 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.122
+
+This is a launcher-reliability release. **There is no gameplay change** — nothing in the
+mod itself moved, so if something in-game has been off, this build does not change it.
+
+- **A failed version stamp no longer disappears in silence.** When the launcher records which
+  build is on disk, that write could fail without anything noticing — leaving the launcher and
+  the folder disagreeing, and a clean official install reading as "built by hand". If the write
+  fails now, it says so in the launcher log, names the file, and tells you it will re-stamp.
+- **Installing while you are on a test build is clearer.** For anyone using the Dev test-build
+  lane: Update and "install everything" no longer quietly bounce you off a test build, the test
+  build shows what it is for in place, and the launcher stops treating a test build as an
+  out-of-date release. Removing the test build returns you to the normal update path.
+- **A batch of smaller launcher fixes** from a pre-release review — a failed cleanup now reports
+  itself instead of failing quietly, a refused install is logged, and a dev-only Tools entry
+  opens the coordination board without anyone typing an address.
+
+If you hit a crash, send the log — `tools\CollectCrash.ps1` gathers it in one step. Run it
+**before** relaunching; relaunching overwrites the evidence.
+
 ## What changed — v0.3.121
 
 - **The launcher could refuse a perfectly good update.** It keeps the signed manifest in
