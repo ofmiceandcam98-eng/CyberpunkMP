@@ -1842,7 +1842,11 @@ async function installEverything (onProgress = () => {}) {
     try {
       writeFileSync(path.join(modTarget, '.nco-version'), String(info.version || 'unknown'))
     } catch (err) {
-      console.warn('[install] could not record the version marker:', err.message)
+      // launcherLog, not console.warn. This is the site the comment above warns about -
+      // it once swallowed a ReferenceError silently and shipped every fresh install
+      // unstamped. A trail line is what turns "the marker is missing again" from a
+      // fresh investigation into a one-line answer.
+      launcherLog(`[install] could not record the version marker at ${modTarget}\\.nco-version - ${err.message} - fresh install will read as hand-built until it is re-stamped`)
     }
   }
 
@@ -2305,7 +2309,11 @@ async function applyUpdate () {
   try {
     writeFileSync(path.join(modDir, '.nco-version'), String(info.version || 'unknown'))
   } catch (err) {
-    console.warn('[install] could not record the version marker:', err.message)
+    // launcherLog, not console.warn: a swallowed marker write leaves the two records
+    // disagreeing (settings say installed, the folder says nothing) and Checkup then
+    // reads a clean official install as "built by hand" - and console.warn goes to the
+    // Electron console, so nothing about that ever reached launcher-trail.log.
+    launcherLog(`[install] could not record the version marker at ${modDir}\\.nco-version - ${err.message} - Checkup will read this install as hand-built until it is re-stamped`)
   }
 
 
@@ -6150,7 +6158,10 @@ ipcMain.handle('prerelease:install', async (_event, tag) => {
     try {
       writeFileSync(path.join(modDir, '.nco-version'), String(tag))
     } catch (err) {
-      console.warn('[prerelease] could not record the version marker:', err.message)
+      // launcherLog, not console.warn: without the marker a test build reads as the
+      // shipped release in duplicate diagnostics and verify - the one case the marker
+      // exists to disagree with - and console.warn never reaches launcher-trail.log.
+      launcherLog(`[prerelease] could not record the version marker at ${modDir}\\.nco-version - ${err.message} - this test build will read as the shipped release until it is re-stamped`)
     }
 
     return { ok: true, tag, payload: Boolean(payload) }
