@@ -733,7 +733,7 @@ is **local and unpushed** — per Cam, nothing ships before the server swap.
 
 - **zeldfep's nxm:// hand-off**: broken only on his PC, works for everyone else. v0.3.103
   writes the whole story to his trail — after his next Mod Manager Download click, read
-  `logs/clients/zeldfep/launcher-trail.log` on the NAS: no arrival line = browser/registry
+  `logs/clients/zeldfep/launcher-trail.log` on the server: no arrival line = browser/registry
   on his machine (browser protocol-block most likely); arrival + failure = the reason is
   in the line.
 
@@ -1224,7 +1224,7 @@ is **local and unpushed** — per Cam, nothing ships before the server swap.
 
 - **The installer strips no wrapper folder — a whole class of Nexus archive installs
   one level too deep and silently does nothing (CONFIRMED by code read, 2026-09-08).**
-  `main.js:6410-6421` writes every zip entry verbatim to `path.join(gameDir, relative)`.
+  `main.js:6644-6655` writes every zip entry verbatim to `path.join(gameDir, relative)`.
   The only guard is `..` path-climbing; there is no common-prefix strip and no check
   that an entry lands in a real mod surface (`archive/pc/mod`, `r6/scripts`,
   `red4ext/plugins`, `bin/x64/plugins`). So an archive shaped
@@ -1395,7 +1395,7 @@ is **local and unpushed** — per Cam, nothing ships before the server swap.
   Still loses to `vehicle_dr`, which remains the right candidate to port - `adaptive`
   was never meant for vehicles, it's just no longer lying about it. NEXT:
   capture real traces — launch a far player's client with `-sync-trace` (dev flag,
-  hand-added; writes NDJSON into the mod's logs, ships to the NAS automatically),
+  hand-added; writes NDJSON into the mod's logs, ships to the server automatically),
   then `replay.py --trace file --validate` to prove the lab's baseline matches the
   shipped C++ before promoting any candidate to InterpolationSystem.cpp.
   Real-roads pipeline is ready: `paths/` banks recorded drives as reusable truth
@@ -2278,7 +2278,7 @@ launcher state machine (valid/rollback/invalid/cached/absent) → launch args at
 server checks at the door.
 
 **Evidence back from the field**: every launcher POSTs session logs + trail to the
-server (`/api/v1/logs/`) → NAS `logs/clients/<player>/`, newest 10 + trail. First stop
+server (`/api/v1/logs/`) → the server's `logs/clients/<player>/`, newest 10 + trail. First stop
 for any "it broke on my machine". The coordination feed is where both Claude streams
 announce flag-days, ships, pulls, and diagnoses — check it before shipping or deploying.
 
