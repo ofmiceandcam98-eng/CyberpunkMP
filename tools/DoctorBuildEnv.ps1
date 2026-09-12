@@ -57,6 +57,34 @@ function Get-HollowPackages {
     return $hollow
 }
 
+# The package NAMES the build actually declares, across every xmake.lua. A hollow package
+# whose name is NOT in here is a STRAY skeleton nobody requires - left by someone once
+# typing the wrong name (`xmake require opus` when the dep is `libopus`). The build never
+# looks at it, so it is harmless to the build; but the old advice ("delete then re-require")
+# RECREATES it, because the name it re-requires is not a real package. So the doctor must
+# split needed-and-hollow from stray-and-hollow and advise each differently.
+function Get-DeclaredPackages {
+    param([Parameter(Mandatory)][string]$RepoRoot)
+
+    $names = @{}
+    foreach ($lua in (Get-ChildItem $RepoRoot -Recurse -Filter xmake.lua -ErrorAction SilentlyContinue)) {
+        # Strip Lua line comments FIRST. The root xmake.lua carries a comment that quotes
+        # "opus" to warn it is not a package ('"libopus", not "opus"') - without this the
+        # extractor read that comment as a declaration and classified a stray opus/ as
+        # NEEDED, which is the exact bug this fixes (Atlas: the-build-doctor-tells-you-to-
+        # re-require-a-hollow-package). Package names never contain '--', so this is safe.
+        $text = ((Get-Content $lua.FullName) -replace '--.*$', '') -join "`n"
+        foreach ($call in [regex]::Matches($text, '(?s)add_(?:requires|packages)\s*\((.*?)\)')) {
+            foreach ($q in [regex]::Matches($call.Groups[1].Value, '"([^"]+)"')) {
+                # first token drops the version: "libopus 1.5.2" -> "libopus"
+                $base = ($q.Groups[1].Value -split '\s+')[0]
+                if ($base) { $names[$base] = $true }
+            }
+        }
+    }
+    return $names.Keys
+}
+
 # The environment fingerprint: everything a compiled artifact silently bakes in. If any
 # of it changes while build\.objs still holds artifacts from the old world, the next
 # build MIXES worlds - the exact C2011 two-SDK failure - so the artifacts must go first.
@@ -136,12 +164,24 @@ if ($SelfTest) {
         else { Write-Host "  FAIL  fingerprint differs across identical runs"; $failures++ }
         if ($fp1 -ne $fp3) { Write-Host "  ok    fingerprint moves when an SDK appears" }
         else { Write-Host "  FAIL  fingerprint blind to a new SDK"; $failures++ }
+
+        # Declared-package extraction: a real dep name is found (version dropped), a stray is
+        # not - INCLUDING a stray quoted inside a comment (the exact bug: '"libopus", not "opus"').
+        New-Item -ItemType Directory -Force $t | Out-Null
+        Set-Content (Join-Path $t 'xmake.lua') 'add_requires(
+    -- "libopus", not "opus" - the latter is not a package
+    "libopus 1.5.2", "glm")
+add_packages("mimalloc")'
+        $declared = @{}; Get-DeclaredPackages -RepoRoot $t | ForEach-Object { $declared[$_] = $true }
+        if ($declared.ContainsKey('libopus') -and $declared.ContainsKey('glm') -and $declared.ContainsKey('mimalloc') -and -not $declared.ContainsKey('opus')) {
+            Write-Host "  ok    declared-package extraction: real names in (version dropped), stray 'opus' out"
+        } else { Write-Host "  FAIL  declared-package extraction: got [$(($declared.Keys | Sort-Object) -join ', ')]"; $failures++ }
     }
     finally {
         Remove-Item $t -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    Write-Host "doctor selftest: $(3 - $failures)/3 passed"
+    Write-Host "doctor selftest: $(4 - $failures)/4 passed"
     exit $(if ($failures) { 1 } else { 0 })
 }
 
@@ -175,6 +215,8 @@ function Finding {
     Write-Host "        fix    $Fix" -ForegroundColor DarkYellow
 }
 function Ok($m) { Write-Host "  ok    $m" -ForegroundColor DarkGray }
+# A note that does NOT fail the gate - for things worth cleaning up that do not block a build.
+function Warn($m) { Write-Host "  note  $m" -ForegroundColor DarkYellow }
 
 # 1. The package cache exists at all. Its total absence is what started the 2026-09-10
 #    cascade - and plain `xmake require -y` will NOT cure it (stale fetch caches).
@@ -184,15 +226,29 @@ if (-not (Test-Path $packagesRoot)) {
             -Where $packagesRoot `
             -Fix "delete $(Join-Path $Repo '.xmake\windows\x64\cache\package') if present, then 'xmake require --force -y' the missing packages - and force the PINNED versions separately (mimalloc 2.1.7, flecs v4.0.3, catch2 2.13.9) or bare names pull latest. Full recipe: Atlas branch the-xmake-package-cache-vanished-from-zeldfep-s-box-mid-day"
 } else {
-    # 2. No hollow packages - dirs the wipe emptied but the caches still vouch for.
-    $hollow = Get-HollowPackages -PackagesRoot $packagesRoot
-    if ($hollow) {
-        Finding -Summary "$(@($hollow).Count) hollow xmake package(s): $(($hollow | Select-Object -First 6) -join ', ')$(if (@($hollow).Count -gt 6) { ', and more' })" `
-                -What "each is an empty directory skeleton xmake's caches still report as installed, so builds fail on missing headers while every restore attempt silently no-ops" `
-                -Where $packagesRoot `
-                -Fix "delete the hollow dirs and $(Join-Path $Repo '.xmake\windows\x64\cache\package'), then 'xmake require --force -y <names>' - pinned versions by their exact strings (mimalloc 2.1.7, flecs v4.0.3, catch2 2.13.9)"
-    } else {
+    # 2. Hollow packages - dirs the wipe emptied but the caches still vouch for. Split the
+    #    ones the build DECLARES (real problem, re-require) from STRAYS nobody requires (a
+    #    stray is harmless to the build and re-requiring it recreates it - Atlas: the-build-
+    #    doctor-tells-you-to-re-require-a-hollow-package).
+    $hollow = @(Get-HollowPackages -PackagesRoot $packagesRoot)
+    if ($hollow.Count -eq 0) {
         Ok "package cache present, no hollow packages"
+    } else {
+        $declared = @{}; Get-DeclaredPackages -RepoRoot $Repo | ForEach-Object { $declared[$_] = $true }
+        $needed = @($hollow | Where-Object { $declared.ContainsKey(($_ -split '/')[0]) })
+        $stray  = @($hollow | Where-Object { -not $declared.ContainsKey(($_ -split '/')[0]) })
+
+        if ($needed.Count -gt 0) {
+            Finding -Summary "$($needed.Count) hollow xmake package(s) the build NEEDS: $(($needed | Select-Object -First 6) -join ', ')$(if ($needed.Count -gt 6) { ', and more' })" `
+                    -What "each is an empty directory skeleton xmake's caches still report as installed, so builds fail on missing headers while every restore attempt silently no-ops" `
+                    -Where $packagesRoot `
+                    -Fix "delete the hollow dirs and $(Join-Path $Repo '.xmake\windows\x64\cache\package'), then 'xmake require --force -y <names>' - pinned versions by their exact strings (mimalloc 2.1.7, flecs v4.0.3, catch2 2.13.9)"
+        }
+        if ($stray.Count -gt 0) {
+            # A stray does NOT block: the build never looks at it. Note it for cleanup only.
+            Warn "$($stray.Count) hollow package(s) NOTHING in any xmake.lua declares (stray skeletons): $($stray -join ', '). Harmless to the build - it ignores them. Delete to keep the cache clean (Remove-Item under $packagesRoot), but do NOT 'xmake require' them: that name is not a real package (e.g. 'opus' - the dep is 'libopus'), so re-requiring just recreates the skeleton."
+        }
+        if ($needed.Count -eq 0 -and $stray.Count -eq 0) { Ok "package cache present, no hollow packages" }
     }
 }
 
