@@ -6535,6 +6535,23 @@ async function installModArchive (modId, buffer, options = {}) {
   // previous one - reinstalling yourself over yourself is the normal update case, not
   // a conflict. No manifest = index of records only, which still catches two Nexus
   // mods fighting over one path.
+
+  // Refuse or de-wrapper the layout: an archive whose files land in no folder the game reads
+  // installs a silent no-op - usually a wrapper folder the author left in (ModName/archive/
+  // pc/mod/...). Strip a single wrapper when that reveals a real surface; refuse loudly
+  // otherwise. Applied to the relative path in BOTH loops below so the clash check and the
+  // write agree on where each file lands.
+  const layout = ManifestKit.resolveArchiveStrip(
+    entries.map((e) => e.entryName.replace(/\\/g, '/')).filter((p) => !p.includes('..')))
+  if (!layout.ok) {
+    if (cleanup) cleanup()
+    throw new Error(`${mod?.name || `Mod ${modId}`} does not look like a Cyberpunk mod: ${layout.reason}. ` +
+                    'Nothing was installed - if it really is a mod, its files may be nested one folder too deep.')
+  }
+  if (layout.strip) {
+    launcherLog(`[install] ${mod?.name || modId}: stripping wrapper folder "${layout.strip}" so its files land on a real mod surface`)
+  }
+
   {
     const others = { ...loadInstalledMods() }
     delete others[String(modId)]
@@ -6556,8 +6573,10 @@ async function installModArchive (modId, buffer, options = {}) {
     const index = ManifestKit.buildOwnershipIndex(guardManifest, others)
     const clashes = []
     for (const entry of entries) {
-      const relative = entry.entryName.replace(/\\/g, '/')
+      let relative = entry.entryName.replace(/\\/g, '/')
       if (relative.includes('..')) continue
+      if (layout.strip && relative.startsWith(layout.strip)) relative = relative.slice(layout.strip.length)
+      if (!relative) continue
       const owners = index.get(relative.toLowerCase())
       if (owners?.length) clashes.push(`${relative} (owned by ${owners.join(', ')})`)
     }
@@ -6580,8 +6599,10 @@ async function installModArchive (modId, buffer, options = {}) {
   for (const entry of entries) {
     // Normalise separators and refuse anything trying to climb out of the game folder.
     // A zip is untrusted input, and "../../windows/system32" is a real archive trick.
-    const relative = entry.entryName.replace(/\\/g, '/')
+    let relative = entry.entryName.replace(/\\/g, '/')
     if (relative.includes('..')) continue
+    if (layout.strip && relative.startsWith(layout.strip)) relative = relative.slice(layout.strip.length)
+    if (!relative) continue
 
     const data = entry.getData()
     const target = path.join(gameDir, relative)

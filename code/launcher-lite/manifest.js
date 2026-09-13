@@ -739,3 +739,40 @@ export function extractPayloadClean (aModDir, aZip) {
   aZip.extractAllTo(aModDir, true)
   return cleanFailures
 }
+
+// The top-level folders the game and its mod loaders actually read. A real mod archive's
+// paths begin with one of these; a wrapper folder an author left in (ModName/archive/pc/
+// mod/...) does not - which is how such an archive installs a silent no-op.
+export const GAME_ROOTS = ['archive', 'r6', 'red4ext', 'bin', 'mods', 'engine', 'plugins', 'tools']
+
+/**
+ * Decide how a mod archive's files map onto the game folder, so a wrapper folder cannot
+ * make the whole install a no-op. relPaths are forward-slash file/dir paths from the zip.
+ *   { ok: true,  strip: '' }         - files already land on a real surface, install as-is
+ *   { ok: true,  strip: 'Wrapper/' } - one wrapper dir hides the surface; strip that prefix
+ *   { ok: false, reason }            - nothing lands on a surface, even after stripping one
+ */
+export function resolveArchiveStrip (relPaths) {
+  const files = (relPaths || []).filter((p) => p && !p.endsWith('/'))
+  if (files.length === 0) return { ok: false, strip: '', reason: 'the archive contains no files' }
+
+  const landsInGame = (p) => GAME_ROOTS.includes(p.split('/')[0].toLowerCase())
+
+  if (files.some(landsInGame)) return { ok: true, strip: '' }
+
+  // Everything under a single top-level dir? Strip it and re-check - that catches the
+  // common ModName/<surface>/... wrapper without touching anything already laid out right.
+  const tops = new Set(files.map((p) => p.split('/')[0]))
+  if (tops.size === 1) {
+    const top = [...tops][0]
+    if (files.every((p) => p.length > top.length + 1) &&
+        files.map((p) => p.slice(top.length + 1)).some(landsInGame)) {
+      return { ok: true, strip: top + '/' }
+    }
+  }
+
+  return {
+    ok: false, strip: '',
+    reason: 'no file lands in a folder the game reads (archive/, r6/, red4ext/, bin/, mods/, ...)'
+  }
+}

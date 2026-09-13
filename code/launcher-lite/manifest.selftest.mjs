@@ -35,7 +35,8 @@ import {
   checkMinLauncher,
   normalizeOwnedPath,
   auditPayloadInstall,
-  extractPayloadClean
+  extractPayloadClean,
+  resolveArchiveStrip
 } from './manifest.js'
 
 let passed = 0
@@ -630,6 +631,42 @@ function mockZip (paths) {
     check('auditPayloadInstall: does not flag a runtime file outside owned dirs',
       audit.orphans.includes('.nco-version'), false)
   } finally { try { rmSync(d, { recursive: true, force: true }) } catch { /* best effort */ } }
+}
+
+// ---------------------------------------------------------------------------
+// resolveArchiveStrip - wrapper-folder detection for mod archives
+// ---------------------------------------------------------------------------
+
+{
+  // Already laid out on real surfaces: install as-is, no strip.
+  const r = resolveArchiveStrip(['archive/pc/mod/x.archive', 'r6/scripts/y.reds'])
+  check('resolveArchiveStrip: a correctly-shaped archive needs no strip', `${r.ok}/${r.strip}`, 'true/')
+}
+{
+  // The wrapper case this branch exists for: ModName/<surface>/... - strip the wrapper.
+  const r = resolveArchiveStrip(['MyMod/archive/pc/mod/x.archive', 'MyMod/red4ext/plugins/z.dll'])
+  check('resolveArchiveStrip: strips a single wrapper folder hiding a surface',
+    `${r.ok}/${r.strip}`, 'true/MyMod/')
+}
+{
+  // A directory entry for the wrapper is filtered out and does not defeat detection.
+  const r = resolveArchiveStrip(['MyMod/', 'MyMod/archive/pc/mod/x.archive'])
+  check('resolveArchiveStrip: ignores the wrapper dir entry itself',
+    `${r.ok}/${r.strip}`, 'true/MyMod/')
+}
+{
+  // Nothing lands on a surface even after stripping - refuse rather than install a no-op.
+  const r = resolveArchiveStrip(['docs/readme.txt', 'MyMod/notes.md'])
+  check('resolveArchiveStrip: refuses an archive with no mod surface', r.ok, false)
+}
+{
+  // Empty archive is refused, not silently accepted.
+  check('resolveArchiveStrip: refuses an empty archive', resolveArchiveStrip([]).ok, false)
+}
+{
+  // A wrapper whose stripped paths STILL do not reach a surface is refused (only one strip).
+  const r = resolveArchiveStrip(['Outer/Inner/archive/pc/mod/x.archive'])
+  check('resolveArchiveStrip: does not strip more than one level', r.ok, false)
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)
