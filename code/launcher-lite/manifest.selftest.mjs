@@ -633,6 +633,23 @@ function mockZip (paths) {
   } finally { try { rmSync(d, { recursive: true, force: true }) } catch { /* best effort */ } }
 }
 
+{
+  // A DevInstall leftover: an orphan listed in .nco-devinstall is a dev leftover - reported
+  // separately and kept, not a mystery orphan the update path would delete or refuse over.
+  const d = mkdtempSync(path.join(os.tmpdir(), 'nco-devleftover-'))
+  try {
+    mkdirSync(path.join(d, 'archive'), { recursive: true })
+    writeFileSync(path.join(d, 'archive', 'ours.archive'), 'x')
+    writeFileSync(path.join(d, 'archive', 'devwip.archive'), 'x')
+    writeFileSync(path.join(d, '.nco-devinstall'), 'CyberpunkMP.dll\narchive/devwip.archive\n')
+    const audit = auditPayloadInstall(d, mockZip(['archive/ours.archive']))
+    check('auditPayloadInstall: a DevInstall-placed leftover is a devLeftover, not an orphan',
+      (audit.devLeftovers || []).join(','), 'archive/devwip.archive')
+    check('auditPayloadInstall: the dev leftover is NOT counted as an orphan',
+      audit.orphans.includes('archive/devwip.archive'), false)
+  } finally { try { rmSync(d, { recursive: true, force: true }) } catch { /* best effort */ } }
+}
+
 // ---------------------------------------------------------------------------
 // resolveArchiveStrip - wrapper-folder detection for mod archives
 // ---------------------------------------------------------------------------

@@ -693,22 +693,33 @@ export function auditPayloadInstall (aModDir, aZip) {
     if (!existsSync(path.join(aModDir, rel.split('/').join(path.sep)))) missing.push(rel)
   }
 
+  // Files DevInstall placed, recorded one forward-slash relative path per line at
+  // <modDir>/.nco-devinstall. An orphan the DEV install wrote is a dev leftover, not a
+  // stale release file - separated out so the update path can KEEP it (and name it)
+  // instead of deleting a dev's own work the moment the payload stops shipping that file.
+  let devPlaced = new Set()
+  try {
+    devPlaced = new Set(readFileSync(path.join(aModDir, '.nco-devinstall'), 'utf8')
+      .split('\n').map((l) => l.trim().split('\\').join('/')).filter(Boolean))
+  } catch { /* no dev install recorded here - every leftover is a plain orphan */ }
+
   // Only inside directories the payload owns. The mod folder legitimately holds things the
   // zip never carried - logs/, .nco-version, config written at runtime - and calling those
   // orphans would make the check cry wolf on every healthy install.
   const orphans = []
+  const devLeftovers = []
   const walk = (dir, prefix) => {
     let entries
     try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
     for (const e of entries) {
       const rel = prefix ? prefix + '/' + e.name : e.name
       if (e.isDirectory()) walk(path.join(dir, e.name), rel)
-      else if (!shipped.has(rel)) orphans.push(rel)
+      else if (!shipped.has(rel)) (devPlaced.has(rel) ? devLeftovers : orphans).push(rel)
     }
   }
   for (const dir of ownedDirs) walk(path.join(aModDir, dir), dir)
 
-  return { missing, orphans }
+  return { missing, orphans, devLeftovers }
 }
 
 /**

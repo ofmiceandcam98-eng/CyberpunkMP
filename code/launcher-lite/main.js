@@ -2194,6 +2194,14 @@ async function applyUpdate () {
     audit = ManifestKit.auditPayloadInstall(modDir, zip)
   }
 
+  // Files DevInstall placed are kept, not deleted and not counted as a mismatch - a dev's
+  // own work under the mod folder is expected, and silently deleting it (or refusing the
+  // update over it) is exactly what bit zeldfep on 2026-09-09.
+  if (audit.devLeftovers?.length) {
+    launcherLog(`kept ${audit.devLeftovers.length} file(s) placed by DevInstall (not from the release): ` +
+                audit.devLeftovers.slice(0, 8).join(', ') + (audit.devLeftovers.length > 8 ? ', and more' : ''))
+  }
+
   if (audit.missing.length || audit.orphans.length) {
     const say = (label, list) =>
       list.length
