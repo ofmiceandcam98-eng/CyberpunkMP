@@ -6,6 +6,27 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.123
+
+Another launcher-reliability release. **No gameplay change** — the mod itself is untouched.
+
+- **Mods zipped with an extra folder now install instead of doing nothing.** A common way
+  authors package a mod is to leave a wrapper folder inside the zip (`ModName/archive/pc/
+  mod/...`). The launcher used to write that verbatim, so the files landed one level too
+  deep where the game never looks — it reported success and the mod did nothing, with no
+  error to chase. The launcher now strips a single wrapper folder so the files land where
+  the game reads them, or, if an archive contains nothing the game recognises, refuses it
+  plainly instead of installing a silent no-op.
+- **A good prerequisite is no longer mistaken for a tampered one.** If the release's file
+  list had just changed, the launcher could reject a perfectly good bundled prerequisite as
+  "not what the manifest approved." It now re-fetches the current list and only refuses if
+  that fresh list still disagrees — the same fix already made for the main download.
+- **Under the hood:** the checks that decide whether an install is recorded are now covered
+  by tests, and a developer's own local files are kept across updates rather than deleted.
+
+If you hit a crash, send the log — `tools\CollectCrash.ps1` gathers it in one step. Run it
+**before** relaunching; relaunching overwrites the evidence.
+
 ## What changed — v0.3.122
 
 This is a launcher-reliability release. **There is no gameplay change** — nothing in the
