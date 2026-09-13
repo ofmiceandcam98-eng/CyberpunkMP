@@ -1222,20 +1222,16 @@ is **local and unpushed** — per Cam, nothing ships before the server swap.
   (`tools/hackid.py` never applied here — 22114 is a Nexus id, not a hack id. WebFetch
   gets a Cloudflare 403 on Nexus; a real browser reads the page fine.)
 
-- **The installer strips no wrapper folder — a whole class of Nexus archive installs
-  one level too deep and silently does nothing (CONFIRMED by code read, 2026-09-08).**
-  `main.js:6644-6655` writes every zip entry verbatim to `path.join(gameDir, relative)`.
-  The only guard is `..` path-climbing; there is no common-prefix strip and no check
-  that an entry lands in a real mod surface (`archive/pc/mod`, `r6/scripts`,
-  `red4ext/plugins`, `bin/x64/plugins`). So an archive shaped
-  `ModName/archive/pc/mod/x.archive` — a common way authors zip their work — installs
-  to `<game>/ModName/archive/pc/mod/x.archive`, which the game never reads.
-  **The nasty part is that verify agrees with it**: the record lists the files it wrote,
-  the files are there, per-file hashes match, so verification PASSES while the mod does
-  nothing at all. Nobody gets an error to chase. Fix direction: detect a single top-level
-  directory that contains a known surface and strip it at install, and/or refuse an
-  archive whose entries land in no known surface — refusing loudly beats installing a
-  no-op. Affects any current list entry whose upstream re-zips with a wrapper.
+- **FIXED 6299e89: the installer strips a wrapper folder, or refuses.** A whole class of
+  Nexus archive used to install one level too deep and silently do nothing — an archive
+  shaped `ModName/archive/pc/mod/x.archive` (a common way authors zip their work) landed at
+  `<game>/ModName/...`, which the game never reads, and verify AGREED (the record listed the
+  files, they were there, per-file hashes matched) so nobody got an error to chase.
+  `installModArchive` now runs `resolveArchiveStrip` (manifest.js, selftested): install
+  as-is when files already land on a game root (`archive`, `r6`, `red4ext`, `bin`, `mods`,
+  `engine`, ...), strip a single wrapper dir when that reveals a surface, else refuse loudly
+  rather than write a no-op. The strip is applied in both the ownership-clash check and the
+  write loop so they agree on where each file lands.
 
 - **Death-respawn loop for creator-flow players** (ashencorridor 17, rimtek 59 respawns).
   Mechanism: immortality blocks death but not damage; the health floor fires "downed",
