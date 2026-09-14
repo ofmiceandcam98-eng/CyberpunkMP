@@ -457,28 +457,11 @@ public class ChatController extends inkHUDGameController {
         // Scale to whatever the root actually measures; a not-yet-laid-out root reports zero,
         // so fall back to 1:1 rather than scaling the composition to nothing. Everything below is
         // driven by the MEASURED root size, so it adapts to any resolution (zeldfep runs 2K).
-        // Enter a modal game context once (cursor + input capture + the frosted modal state).
-        // Guarded by m_trModalActive so the /tr* re-renders do not stack it. Copied from the
-        // server-list modal (MultiplayerGameController.OnServerListSpawned), which raises this
-        // in-game and pops cleanly - the de-risked recipe. MpTrClose reverses every line, and the
-        // cancel/back listener in OnAction is the safety hatch that always pops it.
-        if !this.m_trModalActive {
-            this.m_uiSystem.PushGameContext(UIGameContext.ModalPopup);
-            this.m_uiSystem.RequestNewVisualState(n"inkModalPopupState");
-            this.m_player.RegisterInputListener(this, n"cancel");
-            this.m_player.RegisterInputListener(this, n"back");
-            this.m_player.RegisterInputListener(this, n"proceed");
-            // Explicitly raise the mouse cursor - the modal context alone does not show one
-            // (it is keyboard/gamepad-navigated). Same call the EmoteSelector had staged.
-            let curOn = new inkMenuLayer_SetCursorVisibility();
-            curOn.Init(true, new Vector2(0.5, 0.5));
-            this.QueueEvent(curOn);
-            // Freeze the scene so the character stops moving and the panel holds authority - the
-            // piece the server-list modal has that this was missing (zeldfep: "the character still
-            // moves ... switch authority to the panel like the exit menu").
-            TimeDilationHelper.SetTimeDilationWithProfile(this.m_player, "radialMenu", true, true);
-            this.m_trModalActive = true;
-        }
+        // NOTE: a modal game context (PushGameContext(ModalPopup) + cursor + time dilation) was
+        // tried here to get a clickable cursor - it half-captured input (blocked chat typing, so
+        // the /tr* nudges broke) without freezing movement or showing a cursor. Bolting a modal
+        // onto a HUD widget does not work; a real cursor needs the overlay to BE a menu controller
+        // (like ServerListController), which is a separate build. Reverted to the plain overlay.
 
         // Seed the tunable placement from the defaults on the first open; the /tr* commands
         // nudge these live thereafter.
@@ -519,20 +502,6 @@ public class ChatController extends inkHUDGameController {
         if IsDefined(this.m_trRoot) {
             this.m_trRoot.RemoveAllChildren();
             this.m_trRoot.SetVisible(false);
-        }
-        // Pop the modal context and unregister input - exactly reversing MpTrOpen. This is what
-        // makes the overlay always escapable: /tradeoff and the Esc/cancel listener both land here.
-        if this.m_trModalActive {
-            this.m_player.UnregisterInputListener(this, n"cancel");
-            this.m_player.UnregisterInputListener(this, n"back");
-            this.m_player.UnregisterInputListener(this, n"proceed");
-            let curOff = new inkMenuLayer_SetCursorVisibility();
-            curOff.Init(false, new Vector2(0.5, 0.5));
-            this.QueueEvent(curOff);
-            TimeDilationHelper.SetTimeDilationWithProfile(this.m_player, "radialMenu", false, false);
-            this.m_uiSystem.PopGameContext(UIGameContext.ModalPopup);
-            this.m_uiSystem.RestorePreviousVisualState(n"inkModalPopupState");
-            this.m_trModalActive = false;
         }
         PopupStateUtils.SetBackgroundBlur(this, false);
         FTLog(s"[TradeScreen] closed");
@@ -690,22 +659,6 @@ public class ChatController extends inkHUDGameController {
     protected cb func OnAction(action: ListenerAction, consumer: ListenerActionConsumer) -> Bool {
         let actionName: CName = ListenerAction.GetName(action);
         let actionType: gameinputActionType = ListenerAction.GetType(action);
-
-        // Trade overlay modal input. Esc/cancel is the SAFETY HATCH - it always closes and pops
-        // the context, so a bad modal can never trap the player. Handled before chat so it wins.
-        if this.m_trModalActive {
-            if Equals(actionType, gameinputActionType.BUTTON_RELEASED) {
-                if Equals(actionName, n"cancel") || Equals(actionName, n"back") {
-                    this.MpTrClose();
-                    return true;
-                }
-                if Equals(actionName, n"proceed") {
-                    FTLog(s"[TradeScreen] proceed (confirm) pressed");
-                    return true;
-                }
-            }
-            return false;
-        }
 
         if !this.m_chatInputOpen {
             if Equals(actionName, n"UIEnterChatMessage") && Equals(actionType, gameinputActionType.BUTTON_RELEASED) {
