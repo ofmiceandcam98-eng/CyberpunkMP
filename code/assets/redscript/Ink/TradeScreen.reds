@@ -118,6 +118,34 @@ public func MpTrRow(parent: ref<inkCompoundWidget>, x: Float, y: Float, w: Float
 
 // ============================================================================ the render
 
+// The /tradehelp overlay - a command reference drawn on top of the panel. Typed commands are the
+// working interface (the nav keys do not reach a HUD controller without a UI context).
+public func MpTrHelp(c: ref<inkCanvas>) -> Void {
+    let x = MpTrPanelX() + 70.0;
+    let y = MpTrPanelY() + 78.0;
+    let w = MpTrPanelW() - 140.0;
+    let h = 384.0;
+    MpCsRect(c, x, y, w, h, MpTrVoid(), 0.95);
+    MpCsBorder(c, x, y, w, h, MpTrCyan(), 1.0);
+    MpCsGlowText(c, x + 26.0, y + 18.0, MpCsSpaced("TRADE COMMANDS"), 26, n"Bold", MpTrCyan());
+
+    let lx = x + 26.0;
+    let dx = x + 250.0;
+    let ly = y + 64.0;
+    let step = 29.0;
+    MpCsText(c, lx, ly,             "/tradeui",  20, n"Medium", MpTrGold());  MpCsText(c, dx, ly,             "open the trade menu",         20, n"Regular", MpTrInk());
+    MpCsText(c, lx, ly + step,      "/tradeoff", 20, n"Medium", MpTrGold());  MpCsText(c, dx, ly + step,      "close it",                    20, n"Regular", MpTrInk());
+    MpCsText(c, lx, ly + step*2.0,  "/tr+  /tr-",20, n"Medium", MpTrGold());  MpCsText(c, dx, ly + step*2.0,  "offer more / less eddies",    20, n"Regular", MpTrInk());
+    MpCsText(c, lx, ly + step*3.0,  "/trok",     20, n"Medium", MpTrGold());  MpCsText(c, dx, ly + step*3.0,  "confirm",                     20, n"Regular", MpTrInk());
+    MpCsText(c, lx, ly + step*4.0,  "/trright /trleft", 20, n"Medium", MpTrGold()); MpCsText(c, dx, ly + step*4.0, "move the menu sideways",   20, n"Regular", MpTrInk());
+    MpCsText(c, lx, ly + step*5.0,  "/trup /trdown",    20, n"Medium", MpTrGold()); MpCsText(c, dx, ly + step*5.0, "move the menu up / down",  20, n"Regular", MpTrInk());
+    MpCsText(c, lx, ly + step*6.0,  "/trbig /trsmall",  20, n"Medium", MpTrGold()); MpCsText(c, dx, ly + step*6.0, "resize the menu",          20, n"Regular", MpTrInk());
+    MpCsText(c, lx, ly + step*7.0,  "/trgap",    20, n"Medium", MpTrGold());  MpCsText(c, dx, ly + step*7.0,  "spacing",                     20, n"Regular", MpTrInk());
+    MpCsText(c, lx, ly + step*8.0,  "/trsave",   20, n"Medium", MpTrGold());  MpCsText(c, dx, ly + step*8.0,  "save this position",          20, n"Regular", MpTrInk());
+    MpCsText(c, lx, ly + step*9.0,  "/trreset",  20, n"Medium", MpTrGold());  MpCsText(c, dx, ly + step*9.0,  "reset to default position",   20, n"Regular", MpTrInk());
+    MpCsText(c, lx, ly + step*10.0, "/tradehelp",18, n"Regular", MpTrInkFaint()); MpCsText(c, dx, ly + step*10.0, "show / hide this list",    18, n"Regular", MpTrInkFaint());
+}
+
 public func MpTrBuild(c: ref<inkCanvas>, gap: Float, sel: Int32, eddies: Int32) -> Void {
     let bx = MpTrPanelX();
     let by = MpTrPanelY();
@@ -180,7 +208,7 @@ public func MpTrBuild(c: ref<inkCanvas>, gap: Float, sel: Int32, eddies: Int32) 
     MpCsRect(c, bx + 24.0, fY + 31.0, 12.0, 12.0, MpTrCyan(), 0.9);
     MpCsText(c, bx + 44.0, fY + 26.0, "Noremac: confirmed", 19, n"Medium", MpTrInk());
     MpCsText(c, bx + 300.0, fY + 40.0,
-             "TAB select   - / + eddies   ENTER ok   ESC exit   (or type /tr+  /tr-  /trok  /tradeoff)",
+             "Type  /tradehelp  for all commands      /tr+  /tr- eddies    /trok confirm    /tradeoff exit",
              14, n"Regular", MpTrInkFaint());
     let btnW = 190.0;
     let btnH = 44.0;

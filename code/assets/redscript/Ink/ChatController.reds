@@ -45,6 +45,7 @@ public class ChatController extends inkHUDGameController {
     private let m_trOpen: Bool;
     private let m_trSel: Int32;
     private let m_trEddies: Int32;
+    private let m_trHelp: Bool;
     private let m_nameLabel: wref<inkText>;
 
     protected cb func OnInitialize() -> Bool {
@@ -481,6 +482,7 @@ public class ChatController extends inkHUDGameController {
             this.m_trFracY = MpTrShiftFracY();
             this.m_trZoom = MpTrZoom();
             this.m_trGap = MpTrGapDefault();
+            this.m_trSel = 3; // no footer ring by default (nav keys do not fire without a UI context)
             // A /trsave'd placement overrides the baked default; (0,0,0,0) = nothing saved.
             let saved = GameInstance.GetNetworkWorldSystem().GetChatSystem().LoadTradePlacement();
             if saved.Z > 0.0 {
@@ -505,6 +507,9 @@ public class ChatController extends inkHUDGameController {
         this.m_trRoot.SetScale(new Vector2(scale, scale));
 
         MpTrBuild(this.m_trRoot, this.m_trGap, this.m_trSel, this.m_trEddies);
+        if this.m_trHelp {
+            MpTrHelp(this.m_trRoot);
+        }
         this.m_trRoot.SetVisible(true);
         // Frosted backdrop behind the see-through boxes. Standalone call (no modal context push),
         // so worst case it simply does not blur - it cannot hide the HUD or trap input.
@@ -583,6 +588,7 @@ public class ChatController extends inkHUDGameController {
         if Equals(textEntered, "/tr+") { this.m_input.SetText(""); this.MpTrEddies(500); return; }
         if Equals(textEntered, "/tr-") { this.m_input.SetText(""); this.MpTrEddies(-500); return; }
         if Equals(textEntered, "/trok") { this.m_input.SetText(""); this.m_trSel = 1; this.MpTrActivate(); return; }
+        if Equals(textEntered, "/tradehelp") { this.m_input.SetText(""); this.m_trHelp = !this.m_trHelp; this.MpTrOpen(); return; }
         // /trade <player> - the real-player trigger. Open the overlay WITH the modal cursor, and
         // forward the command to the server's /trade flow. Data stays mock until the NotifyTrade
         // wire (flag-day A); this makes the cursor trigger on a real trade, not just /tradeui.
