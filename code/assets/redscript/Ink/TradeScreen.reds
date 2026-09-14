@@ -75,8 +75,12 @@ public func MpTrZoom() -> Float = 1.0
 // bottom-left of this root, so the composition's top-left lands at (fracX, fracY) of the root,
 // putting the overlay to the RIGHT of the chat box (zeldfep, 2026-09-14: "move them right past
 // the chat box; dynamic to monitor size"). Nudge these two: +X right, +Y down, range 0..1.
-public func MpTrShiftFracX() -> Float = 0.52
+public func MpTrShiftFracX() -> Float = 0.72
 public func MpTrShiftFracY() -> Float = 0.06
+
+// Default gap between the four floating boxes, authored px. Bigger than the first pass (16 read
+// as one merged block at scale). Live-tunable via /trgap.
+public func MpTrGapDefault() -> Float = 40.0
 
 // ============================================================================ a floating box
 //
@@ -85,8 +89,9 @@ public func MpTrShiftFracY() -> Float = 0.06
 // the talk button, 2026-09-14). Bump the alpha a touch over the mockup - a live game frame behind
 // read-size text needs a firmer backing.
 public func MpTrBox(c: ref<inkCanvas>, x: Float, y: Float, w: Float, h: Float) -> Void {
-    MpCsRect(c, x, y, w, h, MpTrPanel(), 0.88);
-    MpCsBorder(c, x, y, w, h, MpTrCyanDim(), 0.9);
+    MpCsRect(c, x, y, w, h, MpTrPanel(), 0.92);
+    // Bright cyan border so each box reads as a SEPARATE floating box, not one merged panel.
+    MpCsBorder(c, x, y, w, h, MpTrCyan(), 0.75);
 }
 
 // ============================================================================ one item row
@@ -110,12 +115,11 @@ public func MpTrRow(parent: ref<inkCompoundWidget>, x: Float, y: Float, w: Float
 
 // ============================================================================ the render
 
-public func MpTrBuild(c: ref<inkCanvas>) -> Void {
+public func MpTrBuild(c: ref<inkCanvas>, gap: Float) -> Void {
     let bx = MpTrPanelX();
     let by = MpTrPanelY();
     let bw = MpTrPanelW();
 
-    let gap = 16.0;
     let headH = 96.0;
     let colY = by + headH + gap;
     let colH = 470.0;

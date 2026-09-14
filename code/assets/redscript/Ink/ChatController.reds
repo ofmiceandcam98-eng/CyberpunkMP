@@ -31,6 +31,14 @@ public class ChatController extends inkHUDGameController {
     // TradeScreen.reds for the render; kept here because the overlay lives on this HUD
     // controller and only a real field on the class can hold it (annotations cannot).
     private let m_trRoot: wref<inkCanvas>;
+    // Live-tunable trade overlay placement (position as a fraction of the measured root, zoom,
+    // and box gap). Seeded from the MpTr* defaults on first open, then nudged in-game via the
+    // /tr* chat commands so the overlay can be placed without a ship per tweak.
+    private let m_trFracX: Float;
+    private let m_trFracY: Float;
+    private let m_trZoom: Float;
+    private let m_trGap: Float;
+    private let m_trTuned: Bool;
     private let m_nameLabel: wref<inkText>;
 
     protected cb func OnInitialize() -> Bool {
@@ -446,22 +454,31 @@ public class ChatController extends inkHUDGameController {
         // Scale to whatever the root actually measures; a not-yet-laid-out root reports zero,
         // so fall back to 1:1 rather than scaling the composition to nothing. Everything below is
         // driven by the MEASURED root size, so it adapts to any resolution (zeldfep runs 2K).
+        // Seed the tunable placement from the defaults on the first open; the /tr* commands
+        // nudge these live thereafter.
+        if !this.m_trTuned {
+            this.m_trFracX = MpTrShiftFracX();
+            this.m_trFracY = MpTrShiftFracY();
+            this.m_trZoom = MpTrZoom();
+            this.m_trGap = MpTrGapDefault();
+            this.m_trTuned = true;
+        }
+
         let rootSize = root.GetSize();
         let scale = 1.0;
         if rootSize.X > 1.0 {
-            scale = (rootSize.X / 1920.0) * MpTrZoom();
+            scale = (rootSize.X / 1920.0) * this.m_trZoom;
             // Land the composition's authored top-left at a FRACTION of the measured root, so the
             // overlay sits to the RIGHT of the chat box (which owns the bottom-left) on any display.
             this.m_trRoot.SetMargin(new inkMargin(
-                rootSize.X * MpTrShiftFracX() - MpTrPanelX() * scale,
-                rootSize.Y * MpTrShiftFracY() - MpTrPanelY() * scale, 0.0, 0.0));
+                rootSize.X * this.m_trFracX - MpTrPanelX() * scale,
+                rootSize.Y * this.m_trFracY - MpTrPanelY() * scale, 0.0, 0.0));
         }
         this.m_trRoot.SetScale(new Vector2(scale, scale));
-        FTLog(s"[TradeScreen] root \(rootSize.X)x\(rootSize.Y) scale \(scale) shift \(rootSize.X * MpTrShiftFracX())x\(rootSize.Y * MpTrShiftFracY())");
 
-        MpTrBuild(this.m_trRoot);
+        MpTrBuild(this.m_trRoot, this.m_trGap);
         this.m_trRoot.SetVisible(true);
-        FTLog(s"[TradeScreen] opened - root \(rootSize.X)x\(rootSize.Y), scaled \(scale)");
+        FTLog(s"[TradeScreen] opened - root \(rootSize.X)x\(rootSize.Y) scale \(scale) fracX \(this.m_trFracX) fracY \(this.m_trFracY) zoom \(this.m_trZoom) gap \(this.m_trGap)");
     }
 
     public final func MpTrClose() -> Void {
@@ -488,6 +505,17 @@ public class ChatController extends inkHUDGameController {
             this.MpTrClose();
             return;
         }
+        // Live placement nudges - open with /tradeui first, then move/scale the overlay in-game
+        // until it sits right. Each re-renders and logs the values; read the final fracX/fracY/
+        // zoom/gap off the "[TradeScreen] opened" line and they get baked as the new defaults.
+        if Equals(textEntered, "/trright") { this.m_input.SetText(""); this.m_trFracX += 0.04; this.MpTrOpen(); return; }
+        if Equals(textEntered, "/trleft")  { this.m_input.SetText(""); this.m_trFracX -= 0.04; this.MpTrOpen(); return; }
+        if Equals(textEntered, "/trup")    { this.m_input.SetText(""); this.m_trFracY -= 0.03; this.MpTrOpen(); return; }
+        if Equals(textEntered, "/trdown")  { this.m_input.SetText(""); this.m_trFracY += 0.03; this.MpTrOpen(); return; }
+        if Equals(textEntered, "/trbig")   { this.m_input.SetText(""); this.m_trZoom += 0.1;  this.MpTrOpen(); return; }
+        if Equals(textEntered, "/trsmall") { this.m_input.SetText(""); this.m_trZoom -= 0.1;  this.MpTrOpen(); return; }
+        if Equals(textEntered, "/trgap")   { this.m_input.SetText(""); this.m_trGap += 8.0;   this.MpTrOpen(); return; }
+        if Equals(textEntered, "/trreset") { this.m_input.SetText(""); this.m_trTuned = false; this.MpTrOpen(); return; }
         if NotEquals(textEntered, "") {
             FTLog(s"[ChatController] SendChat \"\(textEntered)\"");
 
