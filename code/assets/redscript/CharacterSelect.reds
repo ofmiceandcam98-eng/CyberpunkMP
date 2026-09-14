@@ -332,10 +332,13 @@ public func MpCsOpen() -> Void {
         return;
     }
 
-    // First open of this selector session (m_csOpen is still false here - it is set true near
-    // the end): tell the server we left the world so it releases our puppet. Without this the
-    // server keeps the puppet alive and refuses every select/delete with "leave the world
-    // first", and re-selecting respawns the template (Phantom Veronica) instead of our pick.
+    // DO NOT UNDO (zeldfep, 2026-09-14: "stop breaking this specific part we've looped like 5
+    // times"). First open of this selector session (m_csOpen is still false here - it is set
+    // true near the end): tell the server we left the world so it releases our puppet. Without
+    // this the server keeps the puppet alive and refuses every select/delete with "leave the
+    // world first", and re-selecting respawns the template (Phantom Veronica) instead of our
+    // pick. This one call is what makes switch, delete AND appearance work; the server side is
+    // HandleLeaveWorldRequest (see its DO-NOT-UNDO banner in ChatSystem.cpp).
     if !this.m_csOpen {
         network.LeaveWorld();
     }
@@ -1342,6 +1345,12 @@ public class MpCsDeleteRefresh extends DelayCallback {
  * the card, the second sends. SLOT-EXPLICIT - DeleteCharacterSlot(m_csCursor) names the slot on
  * the wire, so the server does not have to infer it from the active slot (which a live puppet can
  * make wrong, and which the pin-down showed was never reaching the server at all via the DEL key).
+ *
+ * DO NOT UNDO the slot-explicit path (zeldfep, 2026-09-14: "stop breaking this specific part
+ * we've looped like 5 times"). Reverting to a slot-less DeleteCharacter() deletes whatever the
+ * server thinks is active - which, with a live puppet, is the wrong character or nothing. The
+ * store-level guarantee (delete removes EXACTLY the named slot, siblings intact, non-contiguous
+ * survives) is locked in tools/tests/characterlifecycle_test.cpp.
  */
 @addMethod(SingleplayerMenuGameController)
 public func MpCsDelete() -> Void {

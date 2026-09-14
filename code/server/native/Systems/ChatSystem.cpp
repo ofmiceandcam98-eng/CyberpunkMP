@@ -363,6 +363,16 @@ void ChatSystem::HandleDeleteCharacterRequest(const PacketEvent<client::DeleteCh
     SendCharacterList(*pPlayer);
 }
 
+// DO NOT UNDO (zeldfep, 2026-09-14: "stop breaking this specific part we've looped like 5
+// times over this exact fix"). This handler is LOAD-BEARING for THREE things at once:
+// character switch, character delete, and per-character appearance. All three were "broken"
+// separately and all three had the same root cause - the server clears a puppet ONLY on
+// disconnect, so a player sitting at the selector still had a live puppet, and the is_alive()
+// guards in HandleSelectCharacterRequest / HandleDeleteCharacterRequest / the appearance swap
+// all refused. The client never signalled "I left the world"; this request is that signal.
+// Removing it, or short-circuiting it, re-opens all three at once - it will look like three
+// unrelated regressions and it is one. Guarantees locked in tools/tests/characterlifecycle_test.cpp.
+//
 // The player is back at the selector while still connected. Release their puppet so the
 // is_alive() checks in select/delete/appearance stop refusing - this is the fix for
 // "Leave the world before switching/deleting", and for spawning as the wrong (template)
