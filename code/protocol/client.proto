@@ -253,6 +253,16 @@ message SelectCharacterRequest {
     int32 slot = 1;
 }
 
+// "I have left the world and am back at the character selector."
+//
+// The client sends this when it returns to the selector while still connected. The server
+// releases the player's puppet - despawns it and keeps the connection - so switching
+// characters, deleting, and re-selecting are no longer refused with "leave the world first",
+// which is the whole point of the selector. Carries nothing: the connection identifies the
+// player, and there is only one world to leave.
+message LeaveWorldRequest {
+}
+
 // CreateCharacterRequest USED TO BE HERE, and it was never wired to anything.
 //
 // It was added with the slot work on the assumption that creating a character in a chosen
@@ -537,5 +547,6 @@ message Protocol {
         // 19 was CreateCharacterRequest - removed, never used. Not reused.
         CallRequest call_request = 20;
         CallControlRequest call_control_request = 21;
+        LeaveWorldRequest leave_world_request = 22;
     }
 }

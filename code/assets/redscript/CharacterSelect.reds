@@ -332,6 +332,14 @@ public func MpCsOpen() -> Void {
         return;
     }
 
+    // First open of this selector session (m_csOpen is still false here - it is set true near
+    // the end): tell the server we left the world so it releases our puppet. Without this the
+    // server keeps the puppet alive and refuses every select/delete with "leave the world
+    // first", and re-selecting respawns the template (Phantom Veronica) instead of our pick.
+    if !this.m_csOpen {
+        network.LeaveWorld();
+    }
+
     if IsDefined(this.m_csRoot) {
         this.m_csRoot.RemoveAllChildren();
     } else {
