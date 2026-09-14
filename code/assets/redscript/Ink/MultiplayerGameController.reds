@@ -308,8 +308,12 @@ public class MultiplayerGameController extends inkGameController {
         this.m_phoneIconWidget.SetVisible(true);
         // The bar exists and is laid out now, so this is the moment to add the talk button.
         this.MpBuildTalkButton();
-        // And the moment async spawning demonstrably works, which is what the probe needs.
-        this.MpInkProbeOnce();
+        // The ink probe is DISABLED, and its being disabled IS the verdict: on 2026-09-13 it
+        // HARD-CRASHED the client a few seconds after spawn, every session. AsyncSpawnFromExternal
+        // of the CLI-authored character_select.inkwidget takes the game down - so a CLI-authored
+        // inkwidget is NOT safely spawnable this way; the selector stays runtime-built. Do not
+        // re-arm this in a build anyone plays. See atlas:can-a-cli-authored-inkwidget-be-spawned.
+        // this.MpInkProbeOnce();
     }
 
     /**
