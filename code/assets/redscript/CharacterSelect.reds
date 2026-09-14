@@ -1289,6 +1289,43 @@ public func MpCsAct() -> Void {
     this.HandleMenuItemActivate(play);
 }
 
+// After a delete is sent, the roster reply lands on the network thread with no script event.
+// Poll until the deleted slot is empty in the roster (or the server set an error refusing it),
+// then re-render the selector so the card actually disappears.
+public class MpCsDeleteRefresh extends DelayCallback {
+    public let controller: wref<SingleplayerMenuGameController>;
+    public let slot: Int32;
+    public let attempts: Int32;
+
+    public func Call() -> Void {
+        if !IsDefined(this.controller) {
+            return;
+        }
+        let network = GameInstance.GetNetworkWorldSystem();
+        if !IsDefined(network) {
+            return;
+        }
+
+        // Either outcome is an answer: the slot is now empty (deleted) or the server said why not.
+        if this.controller.MpCsRosterIndex(this.slot) < 0 || NotEquals(network.GetCharacterError(), "") {
+            this.controller.MpCsOpen();
+            return;
+        }
+
+        this.attempts += 1;
+        if this.attempts >= 12 {
+            MpCsLog(s"the server never answered the delete");
+            return;
+        }
+
+        let again = new MpCsDeleteRefresh();
+        again.controller = this.controller;
+        again.slot = this.slot;
+        again.attempts = this.attempts;
+        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(again, 0.25, false);
+    }
+}
+
 /**
  * DELETE the character in the selected slot. Two calls: the first arms and puts ARE YOU SURE on
  * the card, the second sends. SLOT-EXPLICIT - DeleteCharacterSlot(m_csCursor) names the slot on
@@ -1313,6 +1350,13 @@ public func MpCsDelete() -> Void {
         MpCsLog(s"delete confirmed for slot \(this.m_csCursor + 1) - sending to server");
         this.MpCsSay("Deleting...");
         network.DeleteCharacterSlot(this.m_csCursor);
+        // The delete reply lands on the network thread with no script event to hang off, so
+        // poll for the roster to change and re-render the selector - otherwise the deleted card
+        // stays on screen and it looks like the delete did nothing (it did; see the server log).
+        let refresh = new MpCsDeleteRefresh();
+        refresh.controller = this;
+        refresh.slot = this.m_csCursor;
+        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(refresh, 0.25, false);
         return;
     }
 
