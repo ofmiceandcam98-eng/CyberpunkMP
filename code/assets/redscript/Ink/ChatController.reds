@@ -552,6 +552,16 @@ public class ChatController extends inkHUDGameController {
         if Equals(textEntered, "/trsmall") { this.m_input.SetText(""); this.m_trZoom -= 0.1;  this.MpTrOpen(); return; }
         if Equals(textEntered, "/trgap")   { this.m_input.SetText(""); this.m_trGap += 8.0;   this.MpTrOpen(); return; }
         if Equals(textEntered, "/trreset") { this.m_input.SetText(""); this.m_trTuned = false; this.MpTrOpen(); return; }
+        // /trade <player> - the real-player trigger. Open the overlay WITH the modal cursor, and
+        // forward the command to the server's /trade flow. Data stays mock until the NotifyTrade
+        // wire (flag-day A); this makes the cursor trigger on a real trade, not just /tradeui.
+        let trParts = StrSplit(textEntered, " ");
+        if ArraySize(trParts) >= 2 && Equals(trParts[0], "/trade") {
+            this.MpTrOpen();
+            GameInstance.GetNetworkWorldSystem().GetChatSystem().Send(textEntered);
+            this.m_input.SetText("");
+            return;
+        }
         if NotEquals(textEntered, "") {
             FTLog(s"[ChatController] SendChat \"\(textEntered)\"");
 
