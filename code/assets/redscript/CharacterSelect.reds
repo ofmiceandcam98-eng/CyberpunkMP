@@ -925,33 +925,9 @@ protected cb func OnGlobalRelease(e: ref<inkPointerEvent>) -> Bool {
      * but neither is a reason to delete on one press.
      */
     if e.IsAction(n"delete_save") {
-        if this.MpCsRosterIndex(this.m_csCursor) < 0 {
-            this.MpCsSay("Nothing in that slot to delete.");
-            e.Handle();
-            return true;
-        }
-
-        if this.m_csDeleteArmed {
-            this.m_csDeleteArmed = false;
-            MpCsLog(s"delete confirmed for slot \(this.m_csCursor + 1)");
-
-            this.MpCsSay("Deleting...");
-
-            let data = new PauseMenuListItemData();
-            data.eventName = n"OnMultiplayerDeleteCharacter";
-
-            // The menu's own handler arms on the first call and sends on the second, so it
-            // is called twice: the confirmation already happened HERE, on the card.
-            this.HandleMenuItemActivate(data);
-            this.HandleMenuItemActivate(data);
-
-            e.Handle();
-            return true;
-        }
-
-        this.m_csDeleteArmed = true;
-        this.MpCsOpen();
-        this.MpCsSay("ARE YOU SURE? Press DEL again to delete this character.");
+        // Kept for if delete_save ever starts arriving here; the working path is the DELETE
+        // button hit region in MpCsClickAt. Both route through the same slot-explicit MpCsDelete.
+        this.MpCsDelete();
         e.Handle();
         return true;
     }
@@ -1214,6 +1190,14 @@ public func MpCsClickAt(x: Float, y: Float) -> Void {
         return;
     }
 
+    // DELETE button - MpCsActions draws it at x 320-556, y 910-968. Click is the input that
+    // reliably arrives (the DEL key's delete_save never reaches OnGlobalRelease), so deletion
+    // is driven from here. Two clicks: arm, then confirm (MpCsDelete).
+    if x >= 314.0 && x <= 562.0 && y >= 900.0 && y <= 978.0 {
+        this.MpCsDelete();
+        return;
+    }
+
     /*
      * NEAREST CARD WINS, rather than strict bands.
      *
@@ -1306,6 +1290,38 @@ public func MpCsAct() -> Void {
     let play = new PauseMenuListItemData();
     play.eventName = n"OnMultiplayerContinue";
     this.HandleMenuItemActivate(play);
+}
+
+/**
+ * DELETE the character in the selected slot. Two calls: the first arms and puts ARE YOU SURE on
+ * the card, the second sends. SLOT-EXPLICIT - DeleteCharacterSlot(m_csCursor) names the slot on
+ * the wire, so the server does not have to infer it from the active slot (which a live puppet can
+ * make wrong, and which the pin-down showed was never reaching the server at all via the DEL key).
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsDelete() -> Void {
+    let network = GameInstance.GetNetworkWorldSystem();
+    if !IsDefined(network) || !network.IsConnected() {
+        MpCsLog(s"delete clicked with no connection");
+        return;
+    }
+
+    if this.MpCsRosterIndex(this.m_csCursor) < 0 {
+        this.MpCsSay("Nothing in that slot to delete.");
+        return;
+    }
+
+    if this.m_csDeleteArmed {
+        this.m_csDeleteArmed = false;
+        MpCsLog(s"delete confirmed for slot \(this.m_csCursor + 1) - sending to server");
+        this.MpCsSay("Deleting...");
+        network.DeleteCharacterSlot(this.m_csCursor);
+        return;
+    }
+
+    this.m_csDeleteArmed = true;
+    this.MpCsOpen();
+    this.MpCsSay("ARE YOU SURE? Click DELETE again to delete this character.");
 }
 
 /**
