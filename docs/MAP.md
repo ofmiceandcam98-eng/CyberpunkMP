@@ -996,6 +996,23 @@ fixes — money is not server-authoritative today. See `docs/PHASE5-STAGE6B-MONE
     `CharacterId` — and the branch supplied the missing client panel that draws four slots
     and says which are in use.
 
+- **A freshly-created character is relocated out of the q000 box in the SAME session, not
+  only on the next join.** The arrivals-point relocation (`Level::HandleSpawnCharacterRequest`)
+  is gated on the character's `SpawnedBefore` flag, which lives on the record. A brand-new
+  character spawns with its active slot still EMPTY - the account was pointed at a free slot
+  but the creator's save has not landed - so `FindCharacter` returns null and the old gate
+  (record REQUIRED) skipped relocation, leaving the character in the base-game q000 holding
+  box until they reconnected. Now the spawn relocates a record-less arrival too and sets
+  `PlayerComponent::RelocatedAwaitingRecord`; the creator save that lands moments later writes
+  `SpawnedBefore=true` onto the new record (`ChatSystem::HandleSaveCharacterRequest`). The
+  fire-once guarantee is preserved BOTH ways round the race: save-first, the spawn sees the
+  record and writes the flag directly; spawn-first, the flag rides the component onto the next
+  save. **Do not re-narrow `isNewHere` to require a non-null record** - that is the exact line
+  that trapped new characters in the box; the repeat bug it was guarding against is still
+  covered because a returning player always has a record with `SpawnedBefore=true`. Store-level
+  invariant (defaults false, survives reload once true) locked in
+  `tools/tests/characterlifecycle_test.cpp`. Server-only, no flag day.
+
 - **Puppet release on selector-open is LOAD-BEARING for switch, delete AND appearance — DO
   NOT UNDO** (zeldfep, 2026-09-14: *"stop breaking this specific part we've looped like 5
   times over this exact fix"*). The server clears a player's puppet ONLY on disconnect, so a
