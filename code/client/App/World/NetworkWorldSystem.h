@@ -225,6 +225,11 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
 
     void DeleteCharacter();
 
+    // Tell the server we are back at the selector so it releases our puppet - see
+    // HandleLeaveWorldRequest. Without this the server keeps the puppet alive and refuses
+    // every select/delete with "leave the world first".
+    void LeaveWorld();
+
     // ---------------------------------------------------------------------------
     // Player-to-player calls, for the PHONE.
     //
@@ -958,6 +963,7 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(DeleteCharacterSlot);
     RTTI_METHOD(EnterWorld);
     RTTI_METHOD(DeleteCharacter);
+    RTTI_METHOD(LeaveWorld);
     RTTI_METHOD(IsModEnabled);
     RTTI_METHOD(GetCallState);
     RTTI_METHOD(HasCall);

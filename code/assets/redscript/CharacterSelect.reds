@@ -332,6 +332,17 @@ public func MpCsOpen() -> Void {
         return;
     }
 
+    // DO NOT UNDO (zeldfep, 2026-09-14: "stop breaking this specific part we've looped like 5
+    // times"). First open of this selector session (m_csOpen is still false here - it is set
+    // true near the end): tell the server we left the world so it releases our puppet. Without
+    // this the server keeps the puppet alive and refuses every select/delete with "leave the
+    // world first", and re-selecting respawns the template (Phantom Veronica) instead of our
+    // pick. This one call is what makes switch, delete AND appearance work; the server side is
+    // HandleLeaveWorldRequest (see its DO-NOT-UNDO banner in ChatSystem.cpp).
+    if !this.m_csOpen {
+        network.LeaveWorld();
+    }
+
     if IsDefined(this.m_csRoot) {
         this.m_csRoot.RemoveAllChildren();
     } else {
@@ -925,33 +936,9 @@ protected cb func OnGlobalRelease(e: ref<inkPointerEvent>) -> Bool {
      * but neither is a reason to delete on one press.
      */
     if e.IsAction(n"delete_save") {
-        if this.MpCsRosterIndex(this.m_csCursor) < 0 {
-            this.MpCsSay("Nothing in that slot to delete.");
-            e.Handle();
-            return true;
-        }
-
-        if this.m_csDeleteArmed {
-            this.m_csDeleteArmed = false;
-            MpCsLog(s"delete confirmed for slot \(this.m_csCursor + 1)");
-
-            this.MpCsSay("Deleting...");
-
-            let data = new PauseMenuListItemData();
-            data.eventName = n"OnMultiplayerDeleteCharacter";
-
-            // The menu's own handler arms on the first call and sends on the second, so it
-            // is called twice: the confirmation already happened HERE, on the card.
-            this.HandleMenuItemActivate(data);
-            this.HandleMenuItemActivate(data);
-
-            e.Handle();
-            return true;
-        }
-
-        this.m_csDeleteArmed = true;
-        this.MpCsOpen();
-        this.MpCsSay("ARE YOU SURE? Press DEL again to delete this character.");
+        // Kept for if delete_save ever starts arriving here; the working path is the DELETE
+        // button hit region in MpCsClickAt. Both route through the same slot-explicit MpCsDelete.
+        this.MpCsDelete();
         e.Handle();
         return true;
     }
@@ -1214,6 +1201,14 @@ public func MpCsClickAt(x: Float, y: Float) -> Void {
         return;
     }
 
+    // DELETE button - MpCsActions draws it at x 320-556, y 910-968. Click is the input that
+    // reliably arrives (the DEL key's delete_save never reaches OnGlobalRelease), so deletion
+    // is driven from here. Two clicks: arm, then confirm (MpCsDelete).
+    if x >= 314.0 && x <= 562.0 && y >= 900.0 && y <= 978.0 {
+        this.MpCsDelete();
+        return;
+    }
+
     /*
      * NEAREST CARD WINS, rather than strict bands.
      *
@@ -1306,6 +1301,88 @@ public func MpCsAct() -> Void {
     let play = new PauseMenuListItemData();
     play.eventName = n"OnMultiplayerContinue";
     this.HandleMenuItemActivate(play);
+}
+
+// After a delete is sent, the roster reply lands on the network thread with no script event.
+// Poll until the deleted slot is empty in the roster (or the server set an error refusing it),
+// then re-render the selector so the card actually disappears.
+public class MpCsDeleteRefresh extends DelayCallback {
+    public let controller: wref<SingleplayerMenuGameController>;
+    public let slot: Int32;
+    public let attempts: Int32;
+
+    public func Call() -> Void {
+        if !IsDefined(this.controller) {
+            return;
+        }
+        let network = GameInstance.GetNetworkWorldSystem();
+        if !IsDefined(network) {
+            return;
+        }
+
+        // Either outcome is an answer: the slot is now empty (deleted) or the server said why not.
+        if this.controller.MpCsRosterIndex(this.slot) < 0 || NotEquals(network.GetCharacterError(), "") {
+            this.controller.MpCsOpen();
+            return;
+        }
+
+        this.attempts += 1;
+        if this.attempts >= 12 {
+            MpCsLog(s"the server never answered the delete");
+            return;
+        }
+
+        let again = new MpCsDeleteRefresh();
+        again.controller = this.controller;
+        again.slot = this.slot;
+        again.attempts = this.attempts;
+        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(again, 0.25, false);
+    }
+}
+
+/**
+ * DELETE the character in the selected slot. Two calls: the first arms and puts ARE YOU SURE on
+ * the card, the second sends. SLOT-EXPLICIT - DeleteCharacterSlot(m_csCursor) names the slot on
+ * the wire, so the server does not have to infer it from the active slot (which a live puppet can
+ * make wrong, and which the pin-down showed was never reaching the server at all via the DEL key).
+ *
+ * DO NOT UNDO the slot-explicit path (zeldfep, 2026-09-14: "stop breaking this specific part
+ * we've looped like 5 times"). Reverting to a slot-less DeleteCharacter() deletes whatever the
+ * server thinks is active - which, with a live puppet, is the wrong character or nothing. The
+ * store-level guarantee (delete removes EXACTLY the named slot, siblings intact, non-contiguous
+ * survives) is locked in tools/tests/characterlifecycle_test.cpp.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsDelete() -> Void {
+    let network = GameInstance.GetNetworkWorldSystem();
+    if !IsDefined(network) || !network.IsConnected() {
+        MpCsLog(s"delete clicked with no connection");
+        return;
+    }
+
+    if this.MpCsRosterIndex(this.m_csCursor) < 0 {
+        this.MpCsSay("Nothing in that slot to delete.");
+        return;
+    }
+
+    if this.m_csDeleteArmed {
+        this.m_csDeleteArmed = false;
+        MpCsLog(s"delete confirmed for slot \(this.m_csCursor + 1) - sending to server");
+        this.MpCsSay("Deleting...");
+        network.DeleteCharacterSlot(this.m_csCursor);
+        // The delete reply lands on the network thread with no script event to hang off, so
+        // poll for the roster to change and re-render the selector - otherwise the deleted card
+        // stays on screen and it looks like the delete did nothing (it did; see the server log).
+        let refresh = new MpCsDeleteRefresh();
+        refresh.controller = this;
+        refresh.slot = this.m_csCursor;
+        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(refresh, 0.25, false);
+        return;
+    }
+
+    this.m_csDeleteArmed = true;
+    this.MpCsOpen();
+    this.MpCsSay("ARE YOU SURE? Click DELETE again to delete this character.");
 }
 
 /**

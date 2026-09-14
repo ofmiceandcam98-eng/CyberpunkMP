@@ -2036,6 +2036,22 @@ void NetworkWorldSystem::DeleteCharacter()
     service->Send(request);
 }
 
+void NetworkWorldSystem::LeaveWorld()
+{
+    const auto& service = Core::Container::Get<NetworkService>();
+
+    if (!service || !service->IsConnected())
+        return;
+
+    // Tell the server we are at the selector; it releases our puppet so select/delete/
+    // appearance-swap are no longer refused with "leave the world first". Idempotent - the
+    // server no-ops if we are not embodied.
+    client::LeaveWorldRequest request;
+    service->Send(request);
+
+    spdlog::info("[Character] told the server we left the world (back at the selector)");
+}
+
 void NetworkWorldSystem::HandleCharacterList(const PacketEvent<server::NotifyCharacterList>& aMessage)
 {
     m_characterError = aMessage.get_error().c_str();

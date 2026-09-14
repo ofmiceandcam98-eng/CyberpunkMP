@@ -226,6 +226,7 @@ protected:
     // "Play as the character in this slot." Answers nothing directly - the real answer is
     // the spawn that follows, or a refusal carried on the character list.
     void HandleSelectCharacterRequest(const PacketEvent<client::SelectCharacterRequest>& aMessage);
+    void HandleLeaveWorldRequest(const PacketEvent<client::LeaveWorldRequest>& aMessage);
 
     // Send this connection its current character list. The selector redraws from this
     // rather than assuming what a delete did.

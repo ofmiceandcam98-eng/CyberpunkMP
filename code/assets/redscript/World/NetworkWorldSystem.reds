@@ -158,6 +158,9 @@ public native class NetworkWorldSystem extends IGameSystem {
     // roster, or as a refusal carried on it.
     public native func SelectCharacterSlot(slot: Int32) -> Void;
     public native func DeleteCharacterSlot(slot: Int32) -> Void;
+    // Tell the server we returned to the selector, so it releases our puppet and stops
+    // refusing select/delete with "leave the world first".
+    public native func LeaveWorld() -> Void;
 
     // Why the last request was refused, empty when nothing was. Shown on the panel rather
     // than swallowed - a button that appears to do nothing is the worst outcome here.
