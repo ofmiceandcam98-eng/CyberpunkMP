@@ -118,7 +118,7 @@ public func MpTrRow(parent: ref<inkCompoundWidget>, x: Float, y: Float, w: Float
 
 // ============================================================================ the render
 
-public func MpTrBuild(c: ref<inkCanvas>, gap: Float) -> Void {
+public func MpTrBuild(c: ref<inkCanvas>, gap: Float, sel: Int32, eddies: Int32) -> Void {
     let bx = MpTrPanelX();
     let by = MpTrPanelY();
     let bw = MpTrPanelW();
@@ -138,6 +138,7 @@ public func MpTrBuild(c: ref<inkCanvas>, gap: Float) -> Void {
     MpCsText(c, bx + bw - 250.0, by + 36.0, "20,100", 21, n"Medium", MpTrGold());
     MpCsBorder(c, bx + bw - 56.0, by + 16.0, 34.0, 34.0, MpTrRed(), 0.85);
     MpCsText(c, bx + bw - 46.0, by + 19.0, "X", 24, n"Bold", MpTrRed());
+    if sel == 2 { MpCsBorder(c, bx + bw - 60.0, by + 12.0, 42.0, 42.0, MpTrGold(), 1.0); }
     MpCsRect(c, bx + 18.0, by + 62.0, bw - 36.0, 1.0, MpTrCyanDim(), 0.7);
 
     // ---- two columns with a vertical divider ----
@@ -155,7 +156,7 @@ public func MpTrBuild(c: ref<inkCanvas>, gap: Float) -> Void {
     MpCsText(c, leftX, colTop + 44.0, "Eddies", 20, n"Medium", MpTrGold());
     MpCsBorder(c, leftX + 106.0, colTop + 38.0, 250.0, 40.0, MpTrCyanDim(), 0.8);
     MpCsText(c, leftX + 120.0, colTop + 44.0, "-", 24, n"Bold", MpTrInkDim());
-    MpCsText(c, leftX + 168.0, colTop + 46.0, "0", 21, n"Medium", MpTrGold());
+    MpCsText(c, leftX + 168.0, colTop + 46.0, s"\(eddies)", 21, n"Medium", MpTrGold());
     MpCsText(c, leftX + 214.0, colTop + 44.0, "+", 24, n"Bold", MpTrCyan());
     MpCsText(c, leftX + 262.0, colTop + 48.0, "/ 20,100", 15, n"Regular", MpTrInkFaint());
     MpTrRow(c, leftX, colTop + 104.0, leftW, "Nekomata", "Sniper", 1);
@@ -178,9 +179,9 @@ public func MpTrBuild(c: ref<inkCanvas>, gap: Float) -> Void {
     MpCsText(c, bx + 44.0, fY - 2.0, "You: not confirmed", 19, n"Medium", MpTrInk());
     MpCsRect(c, bx + 24.0, fY + 31.0, 12.0, 12.0, MpTrCyan(), 0.9);
     MpCsText(c, bx + 44.0, fY + 26.0, "Noremac: confirmed", 19, n"Medium", MpTrInk());
-    MpCsText(c, bx + 320.0, fY + 40.0,
-             "Any change to either offer clears both confirmations.", 15, n"Regular",
-             MpTrInkFaint());
+    MpCsText(c, bx + 300.0, fY + 40.0,
+             "TAB select   - / + eddies   ENTER ok   ESC exit   (or type /tr+  /tr-  /trok  /tradeoff)",
+             14, n"Regular", MpTrInkFaint());
     let btnW = 190.0;
     let btnH = 44.0;
     let btnY = fY + 4.0;
@@ -192,4 +193,8 @@ public func MpTrBuild(c: ref<inkCanvas>, gap: Float) -> Void {
     MpCsRect(c, confirmX, btnY, btnW, btnH, MpTrCyanDim(), 0.6);
     MpCsBorder(c, confirmX, btnY, btnW, btnH, MpTrCyan(), 0.9);
     MpCsText(c, confirmX + 50.0, btnY + 11.0, MpCsSpaced("CONFIRM"), 20, n"Medium", MpTrCyan());
+
+    // Selection highlight (Tab cycles it): gold ring around the chosen footer control.
+    if sel == 0 { MpCsBorder(c, cancelX - 4.0, btnY - 4.0, btnW + 8.0, btnH + 8.0, MpTrGold(), 1.0); }
+    if sel == 1 { MpCsBorder(c, confirmX - 4.0, btnY - 4.0, btnW + 8.0, btnH + 8.0, MpTrGold(), 1.0); }
 }

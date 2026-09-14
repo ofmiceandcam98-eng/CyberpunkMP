@@ -39,9 +39,12 @@ public class ChatController extends inkHUDGameController {
     private let m_trZoom: Float;
     private let m_trGap: Float;
     private let m_trTuned: Bool;
-    // True while the trade overlay holds a modal game context (cursor + input + blur). Guards the
-    // push/pop so nudge re-renders do not stack contexts, and so a leak can always be popped.
-    private let m_trModalActive: Bool;
+    // Trade overlay keyboard state: whether it is up (gates input + guards listener register/
+    // unregister), which footer button is selected (0=Cancel, 1=Confirm, 2=Exit), and the eddies
+    // amount the +/- keys adjust.
+    private let m_trOpen: Bool;
+    private let m_trSel: Int32;
+    private let m_trEddies: Int32;
     private let m_nameLabel: wref<inkText>;
 
     protected cb func OnInitialize() -> Bool {
@@ -457,11 +460,19 @@ public class ChatController extends inkHUDGameController {
         // Scale to whatever the root actually measures; a not-yet-laid-out root reports zero,
         // so fall back to 1:1 rather than scaling the composition to nothing. Everything below is
         // driven by the MEASURED root size, so it adapts to any resolution (zeldfep runs 2K).
-        // NOTE: a modal game context (PushGameContext(ModalPopup) + cursor + time dilation) was
-        // tried here to get a clickable cursor - it half-captured input (blocked chat typing, so
-        // the /tr* nudges broke) without freezing movement or showing a cursor. Bolting a modal
-        // onto a HUD widget does not work; a real cursor needs the overlay to BE a menu controller
-        // (like ServerListController), which is a separate build. Reverted to the plain overlay.
+        // Interim keyboard nav (until the menu-controller cursor). Register the nav actions once -
+        // NO game-context push (that broke chat typing, reverted test.50), so this cannot trap the
+        // player; if an action needs a UI context to fire, it simply does nothing and the typed
+        // /tr+ /tr- /trok /tradeoff fallbacks still work. Unregistered in MpTrClose.
+        if !this.m_trOpen {
+            this.m_player.RegisterInputListener(this, n"back");
+            this.m_player.RegisterInputListener(this, n"navigate_up");
+            this.m_player.RegisterInputListener(this, n"navigate_down");
+            this.m_player.RegisterInputListener(this, n"popup_moveLeft");
+            this.m_player.RegisterInputListener(this, n"popup_moveRight");
+            this.m_player.RegisterInputListener(this, n"proceed");
+            this.m_trOpen = true;
+        }
 
         // Seed the tunable placement from the defaults on the first open; the /tr* commands
         // nudge these live thereafter.
@@ -493,7 +504,7 @@ public class ChatController extends inkHUDGameController {
         }
         this.m_trRoot.SetScale(new Vector2(scale, scale));
 
-        MpTrBuild(this.m_trRoot, this.m_trGap);
+        MpTrBuild(this.m_trRoot, this.m_trGap, this.m_trSel, this.m_trEddies);
         this.m_trRoot.SetVisible(true);
         // Frosted backdrop behind the see-through boxes. Standalone call (no modal context push),
         // so worst case it simply does not blur - it cannot hide the HUD or trap input.
@@ -506,8 +517,31 @@ public class ChatController extends inkHUDGameController {
             this.m_trRoot.RemoveAllChildren();
             this.m_trRoot.SetVisible(false);
         }
+        if this.m_trOpen {
+            this.m_player.UnregisterInputListener(this, n"back");
+            this.m_player.UnregisterInputListener(this, n"navigate_up");
+            this.m_player.UnregisterInputListener(this, n"navigate_down");
+            this.m_player.UnregisterInputListener(this, n"popup_moveLeft");
+            this.m_player.UnregisterInputListener(this, n"popup_moveRight");
+            this.m_player.UnregisterInputListener(this, n"proceed");
+            this.m_trOpen = false;
+        }
         PopupStateUtils.SetBackgroundBlur(this, false);
         FTLog(s"[TradeScreen] closed");
+    }
+
+    private final func MpTrEddies(delta: Int32) -> Void {
+        this.m_trEddies += delta;
+        if this.m_trEddies < 0 { this.m_trEddies = 0; }
+        if this.m_trEddies > 20100 { this.m_trEddies = 20100; }
+        this.MpTrOpen();
+    }
+
+    private final func MpTrActivate() -> Void {
+        // Cancel (0) and Exit (2) just close; Confirm (1) will commit once the trade data wire
+        // exists - for now it logs and closes like the others.
+        if this.m_trSel == 1 { FTLog(s"[TradeScreen] confirm (mock)"); }
+        this.MpTrClose();
     }
 
     private final func SendChat() -> Void {
@@ -544,6 +578,11 @@ public class ChatController extends inkHUDGameController {
             GameInstance.GetNetworkWorldSystem().GetChatSystem().SaveTradePlacement(this.m_trFracX, this.m_trFracY, this.m_trZoom, this.m_trGap);
             return;
         }
+        // Typed fallbacks for the trade controls - guaranteed since typing always works. Eddies
+        // -/+ and confirm; exit is /tradeoff.
+        if Equals(textEntered, "/tr+") { this.m_input.SetText(""); this.MpTrEddies(500); return; }
+        if Equals(textEntered, "/tr-") { this.m_input.SetText(""); this.MpTrEddies(-500); return; }
+        if Equals(textEntered, "/trok") { this.m_input.SetText(""); this.m_trSel = 1; this.MpTrActivate(); return; }
         // /trade <player> - the real-player trigger. Open the overlay WITH the modal cursor, and
         // forward the command to the server's /trade flow. Data stays mock until the NotifyTrade
         // wire (flag-day A); this makes the cursor trigger on a real trade, not just /tradeui.
@@ -669,6 +708,21 @@ public class ChatController extends inkHUDGameController {
     protected cb func OnAction(action: ListenerAction, consumer: ListenerActionConsumer) -> Bool {
         let actionName: CName = ListenerAction.GetName(action);
         let actionType: gameinputActionType = ListenerAction.GetType(action);
+
+        // Trade overlay keyboard nav. Only while the overlay is up and the chat field is not
+        // focused, so it never eats typing. navigate = cycle the footer button (Tab), popup move
+        // left/right = eddies -/+, proceed = activate, back = close. If these actions do not reach
+        // us in gameplay (no UI context), nothing fires and the typed /tr fallbacks still work.
+        if this.m_trOpen && !this.m_chatInputOpen {
+            if Equals(actionType, gameinputActionType.BUTTON_RELEASED) {
+                if Equals(actionName, n"back") { this.MpTrClose(); return true; }
+                if Equals(actionName, n"navigate_down") { this.m_trSel = (this.m_trSel + 1) % 3; this.MpTrOpen(); return true; }
+                if Equals(actionName, n"navigate_up") { this.m_trSel = (this.m_trSel + 2) % 3; this.MpTrOpen(); return true; }
+                if Equals(actionName, n"popup_moveLeft") { this.MpTrEddies(-500); return true; }
+                if Equals(actionName, n"popup_moveRight") { this.MpTrEddies(500); return true; }
+                if Equals(actionName, n"proceed") { this.MpTrActivate(); return true; }
+            }
+        }
 
         if !this.m_chatInputOpen {
             if Equals(actionName, n"UIEnterChatMessage") && Equals(actionType, gameinputActionType.BUTTON_RELEASED) {
