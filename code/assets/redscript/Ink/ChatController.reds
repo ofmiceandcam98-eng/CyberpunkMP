@@ -470,6 +470,14 @@ public class ChatController extends inkHUDGameController {
             this.m_trFracY = MpTrShiftFracY();
             this.m_trZoom = MpTrZoom();
             this.m_trGap = MpTrGapDefault();
+            // A /trsave'd placement overrides the baked default; (0,0,0,0) = nothing saved.
+            let saved = GameInstance.GetNetworkWorldSystem().GetChatSystem().LoadTradePlacement();
+            if saved.Z > 0.0 {
+                this.m_trFracX = saved.X;
+                this.m_trFracY = saved.Y;
+                this.m_trZoom = saved.Z;
+                this.m_trGap = saved.W;
+            }
             this.m_trTuned = true;
         }
 
@@ -486,11 +494,6 @@ public class ChatController extends inkHUDGameController {
         this.m_trRoot.SetScale(new Vector2(scale, scale));
 
         MpTrBuild(this.m_trRoot, this.m_trGap);
-        // On-panel readout of the live placement, so the tuned values can be READ off the screen
-        // and baked as defaults - the session log drops these lines, so this is the reliable path.
-        MpCsText(this.m_trRoot, MpTrPanelX(), MpTrPanelY() - 34.0,
-                 s"TRPOS x=\(this.m_trFracX) y=\(this.m_trFracY) zoom=\(this.m_trZoom) gap=\(this.m_trGap)",
-                 24, n"Medium", MpTrGold());
         this.m_trRoot.SetVisible(true);
         // Frosted backdrop behind the see-through boxes. Standalone call (no modal context push),
         // so worst case it simply does not blur - it cannot hide the HUD or trap input.
@@ -534,6 +537,13 @@ public class ChatController extends inkHUDGameController {
         if Equals(textEntered, "/trsmall") { this.m_input.SetText(""); this.m_trZoom -= 0.1;  this.MpTrOpen(); return; }
         if Equals(textEntered, "/trgap")   { this.m_input.SetText(""); this.m_trGap += 8.0;   this.MpTrOpen(); return; }
         if Equals(textEntered, "/trreset") { this.m_input.SetText(""); this.m_trTuned = false; this.MpTrOpen(); return; }
+        // /trsave - persist the current placement to a file so it survives relaunch (no numbers,
+        // no ship needed). LoadTradePlacement on next open picks it up.
+        if Equals(textEntered, "/trsave") {
+            this.m_input.SetText("");
+            GameInstance.GetNetworkWorldSystem().GetChatSystem().SaveTradePlacement(this.m_trFracX, this.m_trFracY, this.m_trZoom, this.m_trGap);
+            return;
+        }
         // /trade <player> - the real-player trigger. Open the overlay WITH the modal cursor, and
         // forward the command to the server's /trade flow. Data stays mock until the NotifyTrade
         // wire (flag-day A); this makes the cursor trigger on a real trade, not just /tradeui.
