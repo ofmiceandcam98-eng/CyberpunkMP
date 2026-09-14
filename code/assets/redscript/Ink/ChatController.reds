@@ -444,20 +444,20 @@ public class ChatController extends inkHUDGameController {
         }
 
         // Scale to whatever the root actually measures; a not-yet-laid-out root reports zero,
-        // so fall back to 1:1 rather than scaling the composition to nothing. MpTrZoom()
-        // enlarges the overlay past the authored 1:1 (2x). A TopLeft-pivot scale grows the
-        // composition toward the bottom-right, which pushes the panel off-screen at 2x, so
-        // re-centre the panel rect on screen after scaling.
+        // so fall back to 1:1 rather than scaling the composition to nothing. Everything below is
+        // driven by the MEASURED root size, so it adapts to any resolution (zeldfep runs 2K).
         let rootSize = root.GetSize();
         let scale = 1.0;
         if rootSize.X > 1.0 {
             scale = (rootSize.X / 1920.0) * MpTrZoom();
-            let pcx = MpTrPanelX() + MpTrPanelW() / 2.0;
-            let pcy = MpTrPanelY() + MpTrPanelH() / 2.0;
-            this.m_trRoot.SetMargin(new inkMargin(rootSize.X * 0.5 - pcx * scale,
-                                                  rootSize.Y * 0.5 - pcy * scale, 0.0, 0.0));
+            // Land the composition's authored top-left at a FRACTION of the measured root, so the
+            // overlay sits to the RIGHT of the chat box (which owns the bottom-left) on any display.
+            this.m_trRoot.SetMargin(new inkMargin(
+                rootSize.X * MpTrShiftFracX() - MpTrPanelX() * scale,
+                rootSize.Y * MpTrShiftFracY() - MpTrPanelY() * scale, 0.0, 0.0));
         }
         this.m_trRoot.SetScale(new Vector2(scale, scale));
+        FTLog(s"[TradeScreen] root \(rootSize.X)x\(rootSize.Y) scale \(scale) shift \(rootSize.X * MpTrShiftFracX())x\(rootSize.Y * MpTrShiftFracY())");
 
         MpTrBuild(this.m_trRoot);
         this.m_trRoot.SetVisible(true);

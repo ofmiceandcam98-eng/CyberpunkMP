@@ -66,9 +66,17 @@ public func MpTrPanelW() -> Float = 1180.0
 public func MpTrPanelH() -> Float = 744.0
 
 // Overlay zoom over the authored 1:1. v2 authors the composition large (four floating boxes,
-// 28px item text), so the base fit is already HUD-sized and this stays 1.0; MpTrOpen still
-// re-centres the bounding rect on screen. Bump this one number to grow the whole overlay.
+// 28px item text), so the base fit is already HUD-sized and this stays 1.0. Bump this one
+// number to grow the whole overlay.
 public func MpTrZoom() -> Float = 1.0
+
+// Overlay position, as a FRACTION of the chat root's MEASURED size (root.GetSize()) - so it is
+// resolution-independent (zeldfep runs 2K; must adapt to any display). The chat box owns the
+// bottom-left of this root, so the composition's top-left lands at (fracX, fracY) of the root,
+// putting the overlay to the RIGHT of the chat box (zeldfep, 2026-09-14: "move them right past
+// the chat box; dynamic to monitor size"). Nudge these two: +X right, +Y down, range 0..1.
+public func MpTrShiftFracX() -> Float = 0.52
+public func MpTrShiftFracY() -> Float = 0.06
 
 // ============================================================================ a floating box
 //
