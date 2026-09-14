@@ -633,8 +633,6 @@ public func MpCsCard(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float,
     if !unlocked {
         MpCsRect(parent, x, y, w, h, MpCsPlate(), 0.45);
         MpCsBorder(parent, x, y, w, h, MpCsRedDim(), 0.35);
-        MpCsNotch(parent, x + w, y, 26.0, MpCsVoid());
-        MpCsNotch(parent, x, y + h, 26.0, MpCsVoid());
 
         MpCsText(parent, x + 15.0, y + 36.0, s"0\(slot + 1)", 13, n"Regular", MpCsInkFaint());
         MpCsText(parent, x + 128.0, y + 32.0, "LOCKED", 26, n"Bold", MpCsInkFaint());
@@ -661,10 +659,6 @@ public func MpCsCard(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float,
     MpCsRect(parent, cx, y, w, h, plate, plateAlpha);
     MpCsBorder(parent, cx, y, w, h, edge, edgeAlpha);
 
-    // The notches, painted the colour of the backplate so they read as cut out of the card.
-    MpCsNotch(parent, cx + w, y, 26.0, MpCsVoid());
-    MpCsNotch(parent, cx, y + h, 26.0, MpCsVoid());
-
     if selected {
         MpCsRect(parent, cx - 14.0, y + 6.0, 5.0, h - 12.0, MpCsGold(), 1.0);
     }
@@ -681,7 +675,6 @@ public func MpCsCard(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float,
 
     MpCsRect(parent, chipX, chipY, 64.0, 64.0, MpCsRed(), occupied ? 0.14 : 0.05);
     MpCsBorder(parent, chipX, chipY, 64.0, 64.0, edge, occupied ? 0.9 : 0.4);
-    MpCsNotch(parent, chipX + 64.0, chipY, 16.0, MpCsVoid());
 
     if !occupied {
         MpCsText(parent, chipX + 26.0, chipY + 18.0, "+", 24, n"Bold",
@@ -1118,8 +1111,6 @@ public func MpCsActionButton(parent: ref<inkCanvas>, x: Float, y: Float, w: Floa
 
     MpCsRect(parent, x, y, w, h, MpCsPlate(), enabled ? 0.72 : 0.4);
     MpCsBorder(parent, x, y, w, h, edge, enabled ? 0.9 : 0.35);
-    MpCsNotch(parent, x + w, y, 18.0, MpCsVoid());
-    MpCsNotch(parent, x, y + h, 18.0, MpCsVoid());
 
     MpCsText(parent, x + 18.0, y + 10.0, MpCsSpaced(label), 17, n"Bold", text);
     MpCsText(parent, x + 18.0, y + 34.0, s"[ \(key) ]", 12, n"Regular",
@@ -1179,8 +1170,6 @@ public func MpCsEnterButton(parent: ref<inkCanvas>, x: Float, y: Float) -> Void 
     }
 
     MpCsRect(parent, x, y, w, h, MpCsGold(), armed ? 1.0 : 0.24);
-    MpCsNotch(parent, x + w, y, 26.0, MpCsVoid());
-    MpCsNotch(parent, x, y + h, 26.0, MpCsVoid());
 
     let ink = armed ? new HDRColor(0.1, 0.08, 0.0, 1.0) : MpCsInkFaint();
 
@@ -1511,8 +1500,6 @@ public func MpCsDetail(parent: ref<inkCanvas>, x: Float, y: Float) -> Void {
 
     MpCsRect(parent, x, y, w, h, MpCsPlate(), 0.82);
     MpCsBorder(parent, x, y, w, h, MpCsGoldDim(), 0.9);
-    MpCsNotch(parent, x + w, y, 34.0, MpCsVoid());
-    MpCsNotch(parent, x, y + h, 34.0, MpCsVoid());
 
     // The hazard strip: alternating gold and dark, drawn as blocks. Striped rather than
     // flat because this panel is what the ENTER press acts on - it is the screen's claim
