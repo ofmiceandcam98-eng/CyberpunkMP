@@ -47,7 +47,7 @@ static std::string Read(const std::filesystem::path& acPath)
 
 static constexpr int64_t kNow = 1787000000;
 
-// A players.json exactly as one exists today: no EconomyRevision, no MigratedAt.
+// A players.json exactly as one exists today: no MoneyRevision, no MoneyMigratedAt.
 static const char* kLegacyFile = R"([
   {
     "DiscordId": "111",
@@ -118,8 +118,8 @@ int main()
         {
             const auto& jack = pRecord->Characters[0];
 
-            Check(jack.MigratedAt == kNow, "RAM: the character is stamped");
-            Check(jack.EconomyRevision == 1, "RAM: opening revision is 1");
+            Check(jack.MoneyMigratedAt == kNow, "RAM: the character is stamped");
+            Check(jack.MoneyRevision == 1, "RAM: opening revision is 1");
             Check(jack.Money == 20000, "RAM: MONEY IS UNCHANGED");
             Check(jack.Inventory.size() == 1 && jack.Inventory[0].Id == 4369 &&
                       jack.Inventory[0].Quantity == 7,
@@ -137,8 +137,8 @@ int main()
         {
             const auto& jack = pFromDisk->Characters[0];
 
-            Check(jack.MigratedAt == kNow, "DISK: the stamp persisted");
-            Check(jack.EconomyRevision == 1, "DISK: so did the revision");
+            Check(jack.MoneyMigratedAt == kNow, "DISK: the stamp persisted");
+            Check(jack.MoneyRevision == 1, "DISK: so did the revision");
             Check(jack.Money == 20000, "DISK: money unchanged");
         }
 
@@ -146,7 +146,7 @@ int main()
         const auto* pTwo = reloaded.Find("222");
         if (pTwo && !pTwo->RetiredCharacters.empty())
         {
-            Check(pTwo->RetiredCharacters[0].MigratedAt == kNow,
+            Check(pTwo->RetiredCharacters[0].MoneyMigratedAt == kNow,
                   "a RETIRED character is migrated as well - a restore must not reopen the line");
         }
 
@@ -173,7 +173,7 @@ int main()
 
         if (pRecord && !pRecord->Characters.empty())
         {
-            Check(pRecord->Characters[0].MigratedAt == kNow,
+            Check(pRecord->Characters[0].MoneyMigratedAt == kNow,
                   "the ORIGINAL timestamp survives - not moved to T2");
         }
     }
@@ -208,7 +208,7 @@ int main()
         const auto* pRecord = store.Find("1");
         if (pRecord && !pRecord->Characters.empty())
         {
-            Check(pRecord->Characters[0].MigratedAt == 0,
+            Check(pRecord->Characters[0].MoneyMigratedAt == 0,
                   "RAM: the GOOD character is not migrated either - all or nothing");
         }
     }
@@ -218,7 +218,7 @@ int main()
 
         const char* odd = R"([
           { "DiscordId": "1", "Characters": [
-              { "CharacterId": "HALF", "Money": 100, "EconomyRevision": 5, "MigratedAt": 0,
+              { "CharacterId": "HALF", "Money": 100, "MoneyRevision": 5, "MoneyMigratedAt": 0,
                 "Inventory": [] } ] }
         ])";
 
@@ -235,7 +235,7 @@ int main()
         const auto* pRecord = store.Find("1");
         if (pRecord && !pRecord->Characters.empty())
         {
-            Check(pRecord->Characters[0].EconomyRevision == 5,
+            Check(pRecord->Characters[0].MoneyRevision == 5,
                   "and is NOT silently repaired");
         }
     }
@@ -277,9 +277,9 @@ int main()
         const auto* pRecord = store2.Find("111");
         if (pRecord && !pRecord->Characters.empty())
         {
-            Check(pRecord->Characters[0].MigratedAt == 0,
+            Check(pRecord->Characters[0].MoneyMigratedAt == 0,
                   "RAM IS NOT FALSELY MIGRATED - failed migration is NO migration");
-            Check(pRecord->Characters[0].EconomyRevision == 0,
+            Check(pRecord->Characters[0].MoneyRevision == 0,
                   "and no revision was advanced");
         }
     }
@@ -301,9 +301,9 @@ int main()
         const auto* pRecord = reloaded.Find("111");
         if (pRecord && !pRecord->Characters.empty())
         {
-            Check(pRecord->Characters[0].MigratedAt == 0,
+            Check(pRecord->Characters[0].MoneyMigratedAt == 0,
                   "a normal position save does NOT stamp anybody migrated");
-            Check(pRecord->Characters[0].EconomyRevision == 0,
+            Check(pRecord->Characters[0].MoneyRevision == 0,
                   "nor advance a revision");
         }
         Check(pRecord && pRecord->X == 1.f, "while the position it WAS asked to save persisted");

@@ -394,8 +394,25 @@ struct CharacterRecord
     int64_t UpdatedAt{0};
 
     /**
-     * How many times the SERVER has authoritatively changed this character's money or
-     * inventory. Phase 5, stage 2 - metadata only for now, and deliberately so.
+     * How many times the SERVER has authoritatively changed this character's MONEY.
+     *
+     * MONEY ONLY. NOT INVENTORY. Renamed from EconomyRevision on 2026-09-05, and the rename
+     * is the whole point rather than tidying: money and inventory no longer cross the
+     * authority boundary together, so a version number covering "the economy" would version
+     * two things that migrate at different times and be wrong about at least one of them.
+     *
+     * The Stage 6B audit settled why they split. Inventory has 16+ unobserved vanilla
+     * sources, no item-instance state in the model, and a substantially larger problem to
+     * solve; money has a bounded source list and an enforcement path that already works.
+     * Inventory authority became its own workstream, and it will get InventoryRevision /
+     * InventoryMigratedAt when it needs them. Deliberately not declared yet - an unused
+     * field invites somebody to assume it means something.
+     *
+     * THE RULE THIS FIELD LIVES BY: it advances when MONEY changes and at no other time. An
+     * item-only trade does not advance it. A starter kit of items with no eddies does not
+     * advance it. AddItem and RemoveItem never touch it. Combined with the standing Stage 5
+     * rule - revision the transaction, not the primitive - that gives one advance per
+     * participant per committed money change.
      *
      * WHAT IT IS FOR, once the later stages use it. Two questions need answering and they
      * are not the same question:
@@ -420,14 +437,19 @@ struct CharacterRecord
      * load and stay at 0, which is correct - the server has not yet authoritatively changed
      * anybody's economy.
      */
-    uint64_t EconomyRevision{0};
+    uint64_t MoneyRevision{0};
 
     /**
-     * When this character's possessions stopped being client-declared. Unix seconds, the
-     * same convention as CreatedAt, LastSeen and JailedUntil.
+     * When this character's MONEY stopped being client-declared. Unix seconds, the same
+     * convention as CreatedAt, LastSeen and JailedUntil.
      *
-     * 0 means the record has NOT crossed the authority boundary - its money and inventory
-     * are whatever a client last reported. Non-zero means the server has taken ownership.
+     * 0 means the record has NOT crossed the money authority boundary - its balance is
+     * whatever a client last reported. Non-zero means the server owns the balance.
+     *
+     * MONEY ONLY, for the reason given on MoneyRevision above. Inventory remains
+     * client-declared through SaveCharacterRequest.inventory regardless of this field, and
+     * will get its own stamp when that workstream reaches a cutover. A single mark covering
+     * both would claim inventory authority the server does not have.
      *
      * It exists because the migration must run exactly once per character and must be
      * auditable afterwards. Without a mark there is no way to tell a migrated record from
@@ -438,7 +460,7 @@ struct CharacterRecord
      * trust-once migration that stamps it is a later stage with its own review. A character
      * loading today does not become migrated by being loaded.
      */
-    int64_t MigratedAt{0};
+    int64_t MoneyMigratedAt{0};
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(CharacterRecord, Slot, Name, Appearance, IsMale,
                                                 Level, AttributePoints, PerkPoints, Initialised,
@@ -448,13 +470,25 @@ struct CharacterRecord
                                                 Attributes, Perks, Vehicles,
                                                 PhoneNumber, Contacts, Blocked, AllowedQuests,
                                                 CreatedAt, UpdatedAt,
-                                                // Phase 5 stage 2. The _WITH_DEFAULT macro is
-                                                // what makes adding these safe: a record
-                                                // written before they existed simply loads
-                                                // them as 0 rather than throwing, which is
-                                                // exactly the "existing records must remain
-                                                // loadable" requirement.
-                                                EconomyRevision, MigratedAt)
+                                                // Phase 5 stage 2, renamed stage 6. The
+                                                // _WITH_DEFAULT macro is what makes adding
+                                                // these safe: a record written before they
+                                                // existed simply loads them as 0 rather than
+                                                // throwing, which is exactly the "existing
+                                                // records must remain loadable" requirement.
+                                                //
+                                                // It is also what makes the RENAME safe. A
+                                                // record carrying the old EconomyRevision /
+                                                // MigratedAt keys has no MoneyRevision or
+                                                // MoneyMigratedAt, so both load as 0 - not
+                                                // migrated, which is exactly right for every
+                                                // record that exists, because migration has
+                                                // never run. The old keys are simply ignored.
+                                                //
+                                                // A NONZERO old key is a different matter and
+                                                // is NOT silently reinterpreted - see
+                                                // EconomyMigration::InspectLegacyMetadata.
+                                                MoneyRevision, MoneyMigratedAt)
 };
 
 /**

@@ -424,22 +424,44 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   - **First diagnostic for "the mod did nothing": `red4ext/logs/red4ext-*.log`.** A plugin
     that fails during `Load` says so there and nowhere else.
 
-### FOR ZELDFEP — NETCODE IS FROZEN, THE BRANCH IS NOW A REFERENCE (2026-09-05)
+### ~~NETCODE FROZEN~~ — FREEZE LIFTED 2026-09-09, AND WHAT IT WAS ACTUALLY FOR
 
-**START HERE AFTER THE SWAP: `docs/ZELDFEP-AFTER-THE-SWAP.md`** — the ordered
-pick-it-up-and-finish-it note. This block is the summary; that document is the plan.
+**THE FREEZE IS OVER.** Cam, 2026-09-09: *"thats what i meant, hardware migration, but yes
+continue."* Its own stated condition — "until Cam says the server swap is complete" — is met.
 
-**Read this before touching anything on the branch.** Nothing here changes the live servers, but
-it changes what this branch IS. **Working branch is now `wip/world-state`** (pushed to `fork`);
-`feat/world-state` stays unpushed during the migration so the production NAS cron cannot rebuild
-the live server mid-swap.
+**AND THE PREMISE WAS WRONG, WHICH IS THE PART WORTH KEEPING.** The freeze was written against
+*"we are replacing the current multiplayer server/netcode."* **What actually happened was a
+HARDWARE migration** — `publish/server.json` repointed players from `100.80.243.29` to
+`100.109.52.23`, same stack, same netcode, same protocol identifiers. No replacement server
+implementation exists, in this repo or any branch. A whole programme of freezes, a proposed
+netcode rollback, and three handoff documents were built on a reading of "new server" that
+nobody had actually made.
 
-**1. Hard freeze on runtime multiplayer networking**, until Cam says the server swap is complete.
-No production `.proto`, handlers, transport, RPC, replication, auth, movement, vehicle, combat,
-voice, phone, selector, or economy networking. This matches what you asked for before the swap;
-it is now written down and it applies to both streams.
+**The lesson, because it will recur:** "new server" is ambiguous between *new hardware* and *new
+implementation*, and the two imply opposite work. Ask which before designing around either. The
+cost here was bounded — everything produced is still useful — but the rollback would have
+destroyed a working branch for nothing.
 
-**2. `feat/world-state` is now classified OUTGOING SERVER REFERENCE IMPLEMENTATION.** Not a
+**What survives, and it is worth more than the freeze was:** the audits are all still true, and
+they were never about the transport. Money is not server-authoritative (17 vanilla paths bypass
+`Economy::`); no vanilla inventory operation is observed; `(TweakDBID, quantity)` cannot
+represent a real item; the cell grid culls nothing; wire enums are not range-validated. Those
+are facts about *Cyberpunk*, and they outlive any server.
+
+**`main` is the integration branch now** (since PR #9/#10, 2026-09-10/11): feature branches
+land on it by PR. `wip/world-state` was the migration-weekend mirror so a push could not
+trigger the production cron mid-swap; it is stale at `829d239` — do not work from it.
+
+**`docs/ZELDFEP-AFTER-THE-SWAP.md` is still the ordered pick-it-up note**, minus its premise:
+read the build order and the five things that bite, ignore the "establish the replacement's
+capabilities" step, because there is no replacement to establish.
+
+**The old classification, for the record:** `feat/world-state` was briefly labelled OUTGOING
+SERVER REFERENCE IMPLEMENTATION. It is not. It is the live branch. What follows is the
+reasoning that produced that label, kept because the rollback analysis in it is sound and would
+apply to a real implementation swap.
+
+**~~2.~~ `feat/world-state` was classified OUTGOING SERVER REFERENCE IMPLEMENTATION.** Not a
 deployment target, not the base for the new server, and deliberately NOT cleaned up. A full
 netcode rollback was proposed, audited, and **rejected** — the numbers are in
 `docs/OUTGOING-SERVER-NETCODE-MAP.md` §0, but briefly: the branch is +20,760 lines, the "netcode"
@@ -491,10 +513,43 @@ CharacterID, persistence, session lock and authoritative load/spawn.
 
 Phase 5 stages 1-5 stand as architecture and were **not** the reason for the swap.
 
-### Phase 5 (economy authority) — stages 1–5 built, NOTHING BEHAVES DIFFERENTLY YET
+### Phase 5 (economy authority) — stage 6 metadata built 2026-09-09, STILL NOTHING BEHAVES DIFFERENTLY
 
-Full detail in `docs/PHASE5-ECONOMY-AUTHORITY.md`; this row is the ledger pointer. All of it
-is **local and unpushed** — per Cam, nothing ships before the server swap.
+Full detail in `docs/PHASE5-ECONOMY-AUTHORITY.md`; this row is the ledger pointer. Stage 6 was
+built on a local `feat/world-state` that was never pushed; it lands on `main` through
+`feat/money-stage6` (2026-09-12) — the "local and unpushed until the swap" note is retired with
+the freeze.
+
+**Stage 6 (metadata truthfulness) is in**, applied from the patch that was built and
+deliberately reverted during the freeze:
+- **`EconomyRevision` → `MoneyRevision`, `MigratedAt` → `MoneyMigratedAt`.** The old names
+  claimed money AND inventory; those cross the authority boundary at different times, so one
+  number cannot honestly version both. `InventoryRevision`/`InventoryMigratedAt` are reserved
+  and deliberately NOT declared — an unused field invites someone to assume it means something.
+- **A revision advances only when MONEY changes.** An item-only trade must not advance it, and
+  `trade_real_test` covers item-only trades explicitly. Same for a starter kit that grants no
+  eddies: compared against the prior balance, not assumed.
+- **Revision headroom is only required when money will actually move**, so an exhausted
+  `MoneyRevision` no longer blocks an item-only trade — a transaction cannot be refused on a
+  field it never touches.
+- **`InspectLegacyMetadata` reads the RAW players.json** before deserialization, because
+  deserializing drops keys the struct no longer declares and the evidence is gone by then. A
+  nonzero old key is reported and **never reinterpreted** in either direction; the record loads
+  unmigrated, which is the safe reading. Production is expected to contain none — this exists so
+  that expectation is testable rather than assumed.
+
+**The rename is safe for a precise reason, not a hopeful one:** migration has never run, every
+persisted value is 0, and a record carrying only the old keys loads with the new ones defaulted
+to 0 — not migrated, which is exactly correct.
+
+**Verify: 18 test files, 522 checks.** `legacymetadata_test` is new (31). Two real defects were
+caught on the way in and are worth recording: the new test compiled against `EconomyMigration.h`
+alone while calling `Economy::IsMigrated`, and `InspectLegacyMetadata` used `std::move` without
+`<utility>` — **MSVC supplies it transitively and GCC does not**, which is precisely the class
+`CheckIncludes.ps1` exists to catch, and GCC is the build that serves players.
+
+**Still not started: stages 7 and 8**, and they are gated on something no metadata change
+fixes — money is not server-authoritative today. See `docs/PHASE5-STAGE6B-MONEY-AUDIT.md`.
 
 - **The one client-authoritative door is still open, deliberately.** `character.Money =
   aMessage.get_money()` is untouched. Closing it is Stage 7, and Stage 7 is a flag day.
@@ -2225,7 +2280,7 @@ cannot carry, both verified by a real clone). What the sweep actually found:
 | Client world | `code/client/App/World/` | NetworkWorldSystem (join/detach/denial natives), VehicleSystem (load/enter queue, exit grace), InterpolationSystem, AppearanceSystem, PuppetRegistry | Every native needs a matching `native func` line in the .reds or ALL scripts fail with UNRESOLVED_METHOD |
 | Scripts | `code/assets/redscript/` | MainMenu (join arming), Death.reds (immortality + floor + menu backstop), Combat.reds (hit hook, weapon poll, quickhack requests), Hackable.reds, Difficulty.reds (pins Very Hard for every connected player — `d5d506f`, `77971ee`), World/*.reds | redscript is ONE compilation unit — one broken file boots the game with no scripts at all. **No hex literals** (`0xFF...` is a parse error that kills every script). Match integer widths exactly — `GetMagazineAmmoCount` returns Uint32, and mixing it with Int32 is NO_MATCHING_OVERLOAD. Difficulty.reds reads the difficulty index BY NAME rather than hardcoding 3 — keep it that way |
 | Combat | `code/server/native/Game/Level.cpp` (handlers) + `Components/{Health,Weapon,Quickhack}Component.h` + `code/assets/redscript/Combat.reds` | Detect → validate → broadcast → apply. Server owns health, magazine, RAM pool | **The game computes, the server bounds.** Weapon damage, quickhack damage and RAM cost all come from the client because they are native calculations needing a live StatsSystem — `GetCost()` runs `CalculateStatModifiers` against the attacker's deck and perks and can include a RANDOM modifier. Quickhack damage MUST stay 0 in the rule table: Cyberpunk applies it through the ordinary hit pipeline, so a number there double-counts (the v0.3.104 bug). A TweakDBID is **CRC32** of the name + length in bits 32-39, not FNV — guarded by a static_assert against a value dumped from the game |
-| Making players targetable | `code/assets/Tweaks/CyberpunkMP.tweak` + `Hackable.reds` | `objectActions` on the puppet records; hostile attitude at spawn | **`MaMuppet`/`WaMuppet` inherit from `Character.Panam`, NOT from `Character.Muppet`** — editing Muppet does nothing. Quickhack action names in the game's scripts are WRONG (`BaseBlindHack` not `BlindHack`, `MadnessHackBase` not `MadnessLvl3Hack`) — they were dumped live. Hostile attitude satisfies BOTH gates: `Att_Hostile` for `TSF_EnemyNPC` and the fourth route to `IsAggressive()`. The entity templates were never missing targeting components (16 `gameTargetingComponent`s, confirmed via WolvenKit CLI). Behind `--hackable-puppets` |
+| Making players targetable | `code/assets/Tweaks/CyberpunkMP.tweak` + `Hackable.reds` | `objectActions` on the puppet records; hostile attitude at spawn | **`MaMuppet`/`WaMuppet` inherit from `Character.Panam`, NOT from `Character.Muppet`** — editing Muppet does nothing. Quickhack action names in the game's scripts are WRONG (`BaseBlindHack` not `BlindHack`, `MadnessHackBase` not `MadnessLvl3Hack`) — they were dumped live. Hostile attitude satisfies BOTH gates: `Att_Hostile` for `TSF_EnemyNPC` and the fourth route to `IsAggressive()`. The entity templates were never missing targeting components (16 `gameTargetingComponent`s, confirmed via WolvenKit CLI). Behind `--hackable-puppets` — **which the launcher did not send until `feat/pvp` (2026-09-11)**: `Settings.hackablePuppets` defaults false and nothing else sets it, so on every normal launch players could not target each other at all, gun or no gun; the two-player tests that worked had the flag set by hand. The launcher now passes it unconditionally. The server was never the gate — `HandleCombatEventRequest` has no PvP check. Known cost, from `Hackable.reds`: hostility is what NCPD and NPC AI react to, so watch for bystanders treating players as threats |
 | Runtime inspection | `bin/x64/plugins/cyber_engine_tweaks/mods/nco_hackdump` (not in repo) | Dumps TweakDB data the game will not reveal statically | CET only honours `registerForEvent` from `init.lua`; a required module's registration is ignored. Mod globals are NOT reachable from the console — export by returning a table. `io` is sandboxed to the mod folder. **Lua output goes to `scripting.log`**, not `cyber_engine_tweaks.log` |
 | World/asset editing | External tool, not in repo: [WolvenKit](https://github.com/WolvenKit/Wolvenkit/releases) | Editor + CLI for the game's own resource formats (`.ent`, `.mesh`, `.app`, world/sector nodes, TweakDB) — the tool for any world-building, level-editing, or static-asset-inspection work, not just confirmation checks (already confirmed the puppet templates' `gameTargetingComponent`s statically — see the targeting row). **NAS updater LIVE 2026-08-29**: `tools/deploy/update-wolvenkit.sh` in `<nas-user>@<nas-host>`'s crontab (`0 * * * *`, self-throttled to ~72h internally — cron frequency and check cadence are deliberately decoupled, see the script's own header); seed run succeeded — `~/wolvenkit-console/VERSION` reads `8.20.0`, `~/wolvenkit-console/current/` holds the full `WolvenKit.ConsoleLinux` extraction. The script was hand-seeded on the box first (live wiring `ee12df2`) and is NOW TRACKED (`dcc67eb`) — the leftover untracked copy refused the NAS pull for hours until shelved to `~/update-wolvenkit.sh.shelved-20260903` (2026-09-03); the cron LINE still lives only in the crontab, so a rebuilt box needs it re-added by hand. **Local CLI, built from source 2026-08-30 — the route on Cam's PC to READ an asset now**: no installed WolvenKit there, only `C:\Users\Cam\Downloads\WolvenKit-main.zip` (source, 89MB); extract, then `dotnet build WolvenKit.CLI\WolvenKit.CLI.csproj -c Release` — needs the .NET SDK, and **the CLI targets `net10.0`**, so the exe lands at `WolvenKit.CLI\bin\Release\net10.0\WolvenKit.CLI.exe` (Cam's box has SDKs 6/8/9/10, so it builds; a box with only 9 will not). Decode with `convert serialize <file>` (writes `<file>.json` beside it; `convert deserialize` goes back). Proven use: decoding `prototype_hud.inkhud` + `multiplayer_ui.inkwidget` exonerated the asset in the invisible-chat-box bug BEFORE anyone "fixed" a file that was never at fault (see the SOLVED chat-box entry) — `multiplayer_ui` is field-for-field identical to `new_phone` apart from `ignoreHudScaleOverride`, and the chat canvas matches its authored state exactly (1000x1000, `Fixed`, `Fill/Fill`, opacity 1) | JSON traps that cost time: entry names are at `hudEntryName.'$value'`, NOT `.hudEntryName`; a widget library item's tree is at `item.package.Data.File.RootChunk.rootWidget`; and `rootWidget` is often `{"HandleRefId": "N"}` pointing at a `"HandleId": "N"` defined elsewhere in the same package — plain property walks fail, search the raw text for the id. **Version pin**: WolvenKit versions track specific game patches — check the releases page for the version matched to 2.31 before use; a mismatch can misread or corrupt resource formats it does not recognise. Read-only inspection (CLI dumps) is low-risk; anything that WRITES a resource file is engine-pin-grade — verify against 2.31 first |
 | Launcher | `code/launcher-lite/main.js` | Discord identity (membership: only 200/404 are verdicts), roles (10-min memo), manifest state machine, install lock + queue, Nexus manager, game detect (A–Z drives), footprint/uninstall | **CSS specificity**: base `button.action` (0,1,1) beats bare class rules — trio overrides must be `button.action.x`. Electron packaged: new source files MUST be added to package.json `build.files` (v0.3.97 shipped importing a file it didn't contain). **Uninstall is a two-layer mirror**: footprint in main.js AND `build/installer.nsh` — a new write location goes in BOTH. The `nxm://` class is cleared only when its command points at OUR exe (Vortex/MO2 write the same key; empirically tested both ways 2026-08-22) |

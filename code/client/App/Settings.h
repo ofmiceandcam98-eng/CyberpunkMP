@@ -30,9 +30,15 @@ struct Settings
     // next launch; live changes would need a file the mod can re-read.
     // ---------------------------------------------------------------------------
 
-    // The game's own key id - IK_V, IK_Mouse4, IK_CapsLock. Only used to bind the
+    // The game's own key id - IK_Y, IK_Mouse4, IK_CapsLock. Only used to bind the
     // VoicePushToTalk ACTION; nothing downstream ever compares against it.
-    String voicePushToTalkKey{"IK_V"};
+    //
+    // IK_Y to match Inputs\CyberpunkMP.xml. It was IK_V, which is the game's vehicle-summon
+    // key - and because this fallback and the launcher's --voicekey REBIND the action at
+    // launch, the XML's own default never won: a player who never opened Settings > Voice
+    // got voice on V. zeldfep walked the XML V -> T -> X -> Y on 2026-09-10; this and the
+    // launcher are what never followed.
+    String voicePushToTalkKey{"IK_Y"};
 
     // Cycles whisper -> local -> yell. A separate binding from push-to-talk on purpose:
     // one decides WHEN somebody talks, the other HOW FAR it carries, and sharing a key
@@ -159,15 +165,23 @@ struct Settings
     // could be the vanilla V's body being mistaken for the puppet's.
     bool modLocalPuppetFemale = false;
 
-    // Apply the GameplayRestriction.FistFight status effect to remote puppets, which is
-    // what ScriptedPuppet.IsAggressive() reads first - one of the two remaining obstacles
-    // to a remote player being a legitimate quickhack target. See Hackable.reds.
+    // Make remote players legitimate combat targets - PvP. See Hackable.reds.
     //
-    // A flag rather than simply on, because FistFight is the brawl restriction and the game
-    // consults it in melee stim handling as well. On a server-driven puppet that never
-    // swings at anything it should be inert; "should be" is not "is", and this way turning
-    // it off is a relaunch instead of a rebuild.
-    bool hackablePuppets = false;
+    // WHAT IT ACTUALLY DOES NOW: sets a hostile attitude on each remote puppet toward the
+    // local player, which satisfies the weapon filter (TSF_EnemyNPC needs Att_Hostile) and
+    // is also the fourth route to IsAggressive() for quickhacks. The FistFight status effect
+    // this comment used to describe was tried and DISCARDED - Hackable.reds records why.
+    //
+    // ON BY DEFAULT since 2026-09-11 (Cam: "get it to where we can shoot each other"). It was
+    // off, and nothing ever turned it on: the launcher never passed -hackable-puppets, so on
+    // every normal launch no player could target another. Defaulting it here rather than
+    // relying on the launcher argument alone is deliberate - test builds ship the DLL, not a
+    // launcher, so a launcher-only fix could never reach a tester.
+    //
+    // Still switchable without a rebuild: -no-hackable-puppets turns it off (Settings.cpp).
+    // Keep that - hostility is what NCPD and NPC AI react to, and if bystanders start
+    // treating players as threats, a relaunch is the fastest way to prove it is this.
+    bool hackablePuppets = true;
     // Extra content paths fed by repeated -mod launch arguments; Main.cpp routes each
     // into the payload's own loading channels (scripts, ArchiveXL, TweakXL, Input
     // Loader). A side door for the payload's OWN extensions and dev experiments only.

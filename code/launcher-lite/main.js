@@ -809,6 +809,25 @@ function saveSettings (patch) {
   }
 }
 
+/**
+ * The push-to-talk key, moved off V once for anyone the old default put there.
+ *
+ * The default used to be IK_V - the game's vehicle-summon key - and the Settings > Voice
+ * page saves the WHOLE voice block whenever any control changes, a volume slider included.
+ * So most people who ever opened that page have IK_V saved explicitly, not as a default,
+ * and changing the default alone would never reach them.
+ *
+ * One-time, and only for V: the flag records that it ran, and every save from the voice
+ * page sets it too, so somebody who deliberately picks V from now on keeps it.
+ */
+function voiceKeyAfterMigration (settings) {
+  if (settings.voicePushToTalkKey === 'IK_V' && !settings.voiceKeyMovedOffV) {
+    saveSettings({ voicePushToTalkKey: 'IK_Y', voiceKeyMovedOffV: true })
+    return 'IK_Y'
+  }
+  return settings.voicePushToTalkKey || 'IK_Y'
+}
+
 function saveToken (token) {
   if (!token) {
     saveSettings({ token: null })
@@ -3231,6 +3250,31 @@ async function launchGame () {
     args.push('--debug')
   }
 
+  /*
+   * PvP - make other players valid combat targets.
+   *
+   * Without this, NO player could target another on a normal launch, gun or no gun.
+   * Hackable.reds (MpTryMakeHackable) returns early unless HackablePuppetsEnabled(), which
+   * reads Settings.hackablePuppets - default false, and set by nothing but this argument.
+   * The launcher never sent it, so remote players never got a hostile attitude and the
+   * game's weapon filter (TSF_EnemyNPC: Obj_Puppet AND Att_Hostile AND St_Alive AND NOT
+   * Obj_Player) never accepted them. The two-player tests that "worked" had the flag set
+   * some other way; anyone launching normally was aiming at an untargetable body.
+   *
+   * The server was never the problem - Level::HandleCombatEventRequest has no PvP gate and
+   * applies damage within 250m, clamped to 100 a hit.
+   *
+   * Bare flag, no value: the launcher sends --x and Settings reads Get("-x"), the same way
+   * -puppet-driver-all and -mod-local-puppet are read.
+   *
+   * THE COST, stated in Hackable.reds and not hidden here: hostility is what police,
+   * prevention and NPC AI react to, so bystanders and NCPD may treat players as threats.
+   * It is scoped as narrowly as the API allows - per puppet, toward the local player only,
+   * no faction change - but that narrows the effect, it does not remove it. Cam asked for
+   * players to be able to shoot each other (2026-09-11); this is what that takes.
+   */
+  args.push('--hackable-puppets')
+
   // ALWAYS pass the address, even the fallback.
   //
   // Previously this was only passed when an environment variable was set, so for everyone
@@ -3337,7 +3381,7 @@ async function launchGame () {
   {
     const voice = loadSettings()
 
-    const key = voice.voicePushToTalkKey || 'IK_V'
+    const key = voiceKeyAfterMigration(voice)
     const mode = voice.voiceMode || 'ptt'
     const mic = Number.isFinite(voice.voiceMicVolume) ? voice.voiceMicVolume : 100
     const chat = Number.isFinite(voice.voiceChatVolume) ? voice.voiceChatVolume : 100
@@ -4360,9 +4404,11 @@ ipcMain.handle('voice:get', async () => {
     inputDeviceName: settings.voiceInputDeviceName || '',
     outputDeviceName: settings.voiceOutputDeviceName || '',
 
-    // IK_V is a starting value, not the key. Everything downstream reads the ACTION, so
+    // IK_Y is a starting value, not the key. Everything downstream reads the ACTION, so
     // this only decides what the action is bound to on a machine that has never chosen.
-    pushToTalkKey: settings.voicePushToTalkKey || 'IK_V',
+    // It was IK_V - the game's vehicle-summon key - and because --voicekey rebinds the
+    // action at launch, this default beat the Inputs XML (Y since 2026-09-10) every time.
+    pushToTalkKey: voiceKeyAfterMigration(settings),
 
     // Separate key, separate default. Cycling range and talking are the two controls most
     // likely to be pressed together, so they must never be the same key.
@@ -4394,7 +4440,9 @@ ipcMain.handle('voice:save', async (_event, choice) => {
     voiceOutputDevice: choice?.outputDevice || 'default',
     voiceInputDeviceName: choice?.inputDeviceName || '',
     voiceOutputDeviceName: choice?.outputDeviceName || '',
-    voicePushToTalkKey: choice?.pushToTalkKey || 'IK_V',
+    voicePushToTalkKey: choice?.pushToTalkKey || 'IK_Y',
+    // A choice made on this page is deliberate, V included - never migrate it away again.
+    voiceKeyMovedOffV: true,
     voiceCycleRangeKey: choice?.cycleRangeKey || 'IK_F12',
     voiceMode: ['ptt', 'toggle', 'activation'].includes(choice?.mode) ? choice.mode : 'ptt',
     voiceMicVolume: clamp(choice?.micVolume, 100),

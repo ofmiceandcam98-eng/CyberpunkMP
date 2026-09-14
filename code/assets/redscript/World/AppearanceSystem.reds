@@ -249,6 +249,7 @@ public native class AppearanceSystem extends IScriptable {
             mappinSystem.RegisterMappinWithObject(mappinData, entity, n"Nameplate");
 
             MpTryMakeHackable(entity);
+            MpStripInheritedGodMode(entity);
 
             // this.SetMorphWeights(entity);
         } else {

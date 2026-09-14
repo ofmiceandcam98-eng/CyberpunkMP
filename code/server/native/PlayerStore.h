@@ -92,6 +92,39 @@ struct PlayerStore
         try
         {
             const auto data = nlohmann::json::parse(file);
+
+            /*
+             * Pre-rename metadata, checked on the RAW document before it is deserialised.
+             *
+             * EconomyRevision / MigratedAt became MoneyRevision / MoneyMigratedAt when money
+             * and inventory stopped crossing the authority boundary together. Deserialising
+             * drops keys the struct no longer declares, so this is the only moment the old
+             * ones are still visible.
+             *
+             * A file that merely CONTAINS the old keys is normal and silent - every file
+             * written before today does, and they all hold 0, which loads as "not migrated"
+             * and is exactly right.
+             *
+             * A NONZERO old key is not guessed at. It would mean a record crossed the
+             * boundary under the old meaning, which claimed money AND inventory, and nothing
+             * in the number says how to narrow that. So it is reported loudly and left
+             * alone: the new fields still default to 0, so the record is treated as
+             * unmigrated, which is the safe reading in both directions.
+             */
+            if (const auto legacy = EconomyMigration::InspectLegacyMetadata(data); legacy.Nonzero)
+            {
+                spdlog::error("[ECONOMY] {} character(s) carry NONZERO pre-rename metadata "
+                              "(EconomyRevision/MigratedAt). These are NOT reinterpreted as "
+                              "MoneyRevision/MoneyMigratedAt - the old mark claimed money AND "
+                              "inventory and nothing here can say which was meant. They load "
+                              "as UNMIGRATED and migration must refuse them until a human "
+                              "decides.",
+                              legacy.Characters.size());
+
+                for (const auto& id : legacy.Characters)
+                    spdlog::error("[ECONOMY]   legacy metadata on character {}", id);
+            }
+
             m_records = data.get<std::vector<PlayerRecord>>();
             spdlog::info("Loaded {} saved player position(s)", m_records.size());
 
@@ -1050,10 +1083,16 @@ struct PlayerStore
          * Unmigrated characters answer Success and stay at revision 0, so this changes
          * nothing for the legacy population while migration is inactive.
          */
-        if (Economy::CanAdvanceRevision(*pLeft) != Economy::Result::Success ||
-            Economy::CanAdvanceRevision(*pRight) != Economy::Result::Success)
+        // Only asked when money is actually going to move. A trade that advances no revision
+        // needs no revision headroom, and refusing an ITEM-ONLY trade because somebody's
+        // MoneyRevision is exhausted would block a transaction that never touches the field.
+        if (acLeft.Money > 0 || acRight.Money > 0)
         {
-            return fail("revision_exhausted");
+            if (Economy::CanAdvanceRevision(*pLeft) != Economy::Result::Success ||
+                Economy::CanAdvanceRevision(*pRight) != Economy::Result::Success)
+            {
+                return fail("revision_exhausted");
+            }
         }
 
         // Copies. Every mutation below happens on these, so a validation failure halfway
@@ -1068,18 +1107,30 @@ struct PlayerStore
             return false;
 
         /*
-         * ONE revision each, for the whole trade.
+         * ONE revision each, for the whole trade - and ONLY IF MONEY MOVED.
          *
-         * Not one per item, not one per direction, not one per Economy call - a trade of
-         * two thousand eddies and three items is ONE thing that happened to each
-         * participant. The primitives deliberately do not touch the revision so that this
-         * is the only place it can advance.
+         * Not one per item, not one per direction, not one per Economy call: a trade of two
+         * thousand eddies and three items is ONE thing that happened to each participant.
+         * The primitives deliberately do not touch the revision so that this is the only
+         * place it can advance.
          *
-         * On the candidates, after both directions have already succeeded, so a trade that
-         * fails advances nothing.
+         * THE MONEY GATE (stage 6). The field is MoneyRevision now, not EconomyRevision, so
+         * an ITEM-ONLY TRADE MUST NOT ADVANCE IT - and item-only trades are real, deliberate
+         * and tested ("an item-only trade succeeds - zero money is not an error"). Advancing
+         * there would tell a client its balance had changed when nothing had touched it.
+         *
+         * Either side offering money moves BOTH balances, so one flag covers both
+         * participants. Note this stays true when the two offers are equal: 500 each way is
+         * a debit and a credit on each side, not a no-op, and both balances really did
+         * change on the way through.
          */
-        Economy::AdvanceRevision(left);
-        Economy::AdvanceRevision(right);
+        const bool moneyMoved = acLeft.Money > 0 || acRight.Money > 0;
+
+        if (moneyMoved)
+        {
+            Economy::AdvanceRevision(left);
+            Economy::AdvanceRevision(right);
+        }
 
         // Only now does anything real change.
         *pLeft = left;

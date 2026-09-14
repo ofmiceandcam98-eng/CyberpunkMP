@@ -555,15 +555,21 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
          */
         if (pExisting && Economy::IsMigrated(*pExisting))
         {
-            spdlog::warn("[ECONOMY] {} sent a possessions save for MIGRATED character {} "
-                         "(server revision {}). Stage 7 will refuse this; recorded, not "
-                         "refused.",
-                         pPlayer->Username, pExisting->CharacterId, pExisting->EconomyRevision);
+            // MONEY only. The inventory half of this save stays legitimate for a migrated
+            // character - inventory authority is its own workstream and its own boundary,
+            // and Stage 7 will refuse the declared BALANCE while still accepting the
+            // declared items. Saying "possessions" here would misdescribe what changes.
+            spdlog::warn("[ECONOMY] {} declared a balance for MONEY-MIGRATED character {} "
+                         "(server money revision {}). Stage 7 will ignore the balance and keep "
+                         "the server's; the inventory in this save stays legitimate. Recorded, "
+                         "not refused.",
+                         pPlayer->Username, pExisting->CharacterId, pExisting->MoneyRevision);
 
-            GServer->GetAuditLog().Record("economy.legacy_save", pPlayer->DiscordId,
+            GServer->GetAuditLog().Record("economy.legacy_money_save", pPlayer->DiscordId,
                                           pExisting->CharacterId,
-                                          {{"revision", pExisting->EconomyRevision},
-                                           {"claimed_money", aMessage.get_money()}});
+                                          {{"money_revision", pExisting->MoneyRevision},
+                                           {"claimed_money", aMessage.get_money()},
+                                           {"server_money", pExisting->Money}});
         }
 
         // The balance the SERVER last had for this character, before the client's claim
@@ -839,7 +845,16 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
                 // ONE revision for the whole kit - money and every item together are a
                 // single thing that happened, not five. Advanced on the candidate after all
                 // of it succeeded, so a refused kit advances nothing.
-                Economy::AdvanceRevision(granted);
+                //
+                // AND ONLY IF THE BALANCE ACTUALLY CHANGED (stage 6). The field is
+                // MoneyRevision, so a kit of items with no eddies must not advance it -
+                // StarterKitGranted being set is not by itself a money event. Compared
+                // rather than assumed: the kit sets an OPENING balance from zero, so
+                // whether that is a change depends on what the character had before, and a
+                // kit whose starting money happens to equal the previous balance really did
+                // not move it.
+                if (granted.Money != moneyBefore)
+                    Economy::AdvanceRevision(granted);
 
                 character = granted;
                 character.Lifepath = StarterKit::ToString(lifepath);

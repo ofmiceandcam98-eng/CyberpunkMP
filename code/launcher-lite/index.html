@@ -3445,7 +3445,7 @@
     const saved = await window.launcher.getVoiceSettings()
     if (!saved) return
 
-    const key = saved.pushToTalkKey || 'IK_V'
+    const key = saved.pushToTalkKey || 'IK_Y'
     $('voiceBindKey').dataset.key = key
     $('voiceBindKey').textContent = prettyKey(key)
 
@@ -3788,7 +3788,7 @@
       outputDevice: outputReady ? $('voiceOutput').value : previous?.outputDevice,
       outputDeviceName: outputReady ? chosenName($('voiceOutput')) : previous?.outputDeviceName,
 
-      pushToTalkKey: $('voiceBindKey').dataset.key || 'IK_V',
+      pushToTalkKey: $('voiceBindKey').dataset.key || 'IK_Y',
       cycleRangeKey: $('voiceBindRangeKey').dataset.key || 'IK_F12',
       mode: $('voiceMode').value,
       micVolume: Number($('voiceMicVolume').value),

@@ -324,9 +324,9 @@ int main()
         const auto* pA = CharacterOf(store, "111");
         const auto* pB = CharacterOf(store, "222");
 
-        Check(pA && pA->EconomyRevision == 0 && pA->MigratedAt == 0,
+        Check(pA && pA->MoneyRevision == 0 && pA->MoneyMigratedAt == 0,
               "AND THE PAYER IS STILL UNMIGRATED - runtime never migrates");
-        Check(pB && pB->EconomyRevision == 0 && pB->MigratedAt == 0,
+        Check(pB && pB->MoneyRevision == 0 && pB->MoneyMigratedAt == 0,
               "and so is the recipient");
         Check(pA && !Economy::IsMigrated(*pA) && pB && !Economy::IsMigrated(*pB),
               "neither counts as migrated by the same test the server uses");
@@ -338,7 +338,7 @@ int main()
         reloaded.Load(path);
 
         const auto* pReloaded = CharacterOf(reloaded, "111");
-        Check(pReloaded && pReloaded->EconomyRevision == 0,
+        Check(pReloaded && pReloaded->MoneyRevision == 0,
               "DISK: still unmigrated after the trade was persisted");
     }
 
@@ -354,8 +354,8 @@ int main()
             auto* pRecord = const_cast<PlayerRecord*>(store.Find(discord));
             if (pRecord && !pRecord->Characters.empty())
             {
-                pRecord->Characters[0].EconomyRevision = 1;
-                pRecord->Characters[0].MigratedAt = 1'700'000'000;
+                pRecord->Characters[0].MoneyRevision = 1;
+                pRecord->Characters[0].MoneyMigratedAt = 1'700'000'000;
             }
         }
 
@@ -375,9 +375,115 @@ int main()
         const auto* pA = CharacterOf(store, "111");
         const auto* pB = CharacterOf(store, "222");
 
-        Check(pA && pA->EconomyRevision == 2,
+        Check(pA && pA->MoneyRevision == 2,
               "the payer advanced exactly once, despite money AND two item moves");
-        Check(pB && pB->EconomyRevision == 2, "and so did the recipient");
+        Check(pB && pB->MoneyRevision == 2, "and so did the recipient");
+    }
+
+    { // ============ STAGE 6: AN ITEM-ONLY TRADE MUST NOT ADVANCE MoneyRevision ============
+        //
+        // The field is MoneyRevision now, not EconomyRevision. Under the old rule this
+        // advanced, which would tell a client its balance had changed when nothing had
+        // touched it - a lie in the one direction that matters.
+        Seed(path, 20000, 5000);
+        PlayerStore store;
+        store.Load(path);
+
+        for (const char* discord : {"111", "222"})
+        {
+            auto* pRecord = const_cast<PlayerRecord*>(store.Find(discord));
+            if (pRecord && !pRecord->Characters.empty())
+            {
+                pRecord->Characters[0].MoneyRevision = 5;
+                pRecord->Characters[0].MoneyMigratedAt = 1'700'000'000;
+            }
+        }
+
+        PlayerStore::TradeSide left;
+        left.CharacterId = "CHAR-A";
+        left.Items.push_back({kPistol, 1});
+        left.Items.push_back({kAmmo, 100});     // items only, no money either way
+
+        PlayerStore::TradeSide right;
+        right.CharacterId = "CHAR-B";
+
+        std::string why;
+        Check(store.ApplyTrade(left, right, &why), "an item-only trade between migrated characters succeeds");
+
+        const auto* pA = CharacterOf(store, "111");
+        const auto* pB = CharacterOf(store, "222");
+
+        Check(pA && pA->MoneyRevision == 5,
+              "AND THE PAYER'S MoneyRevision DID NOT MOVE - no money changed");
+        Check(pB && pB->MoneyRevision == 5, "nor the recipient's");
+        Check(pB && Economy::Held(*pB, kPistol) == 1, "but the items still moved");
+        Check(pA && pA->Money == 20000 && pB && pB->Money == 5000, "and no balance changed");
+    }
+
+    { // one-sided money still advances BOTH - a transfer moves two balances
+        Seed(path, 20000, 5000);
+        PlayerStore store;
+        store.Load(path);
+
+        for (const char* discord : {"111", "222"})
+        {
+            auto* pRecord = const_cast<PlayerRecord*>(store.Find(discord));
+            if (pRecord && !pRecord->Characters.empty())
+            {
+                pRecord->Characters[0].MoneyRevision = 3;
+                pRecord->Characters[0].MoneyMigratedAt = 1'700'000'000;
+            }
+        }
+
+        PlayerStore::TradeSide left;
+        left.CharacterId = "CHAR-A";
+        left.Money = 750;                        // only one side offers money
+
+        PlayerStore::TradeSide right;
+        right.CharacterId = "CHAR-B";
+        right.Items.clear();
+
+        std::string why;
+        Check(store.ApplyTrade(left, right, &why), "a one-sided money trade succeeds");
+
+        const auto* pA = CharacterOf(store, "111");
+        const auto* pB = CharacterOf(store, "222");
+
+        Check(pA && pA->MoneyRevision == 4, "the payer advanced once");
+        Check(pB && pB->MoneyRevision == 4, "AND SO DID THE RECIPIENT - their balance moved too");
+    }
+
+    { // an exhausted revision must NOT block an item-only trade
+        //
+        // Headroom is only required when a revision is going to advance. Refusing a trade
+        // that never touches MoneyRevision because MoneyRevision is full would block a
+        // transaction on a field it does not use.
+        Seed(path, 20000, 5000);
+        PlayerStore store;
+        store.Load(path);
+
+        {
+            auto* pRecord = const_cast<PlayerRecord*>(store.Find("222"));
+            if (pRecord && !pRecord->Characters.empty())
+            {
+                pRecord->Characters[0].MoneyRevision = std::numeric_limits<uint64_t>::max();
+                pRecord->Characters[0].MoneyMigratedAt = 1'700'000'000;
+            }
+        }
+
+        PlayerStore::TradeSide left;
+        left.CharacterId = "CHAR-A";
+        left.Items.push_back({kAmmo, 25});
+
+        PlayerStore::TradeSide right;
+        right.CharacterId = "CHAR-B";
+
+        std::string why;
+        Check(store.ApplyTrade(left, right, &why),
+              "an item-only trade succeeds even with an EXHAUSTED counterparty revision");
+
+        const auto* pB = CharacterOf(store, "222");
+        Check(pB && Economy::Held(*pB, kAmmo) == 25, "and the items arrived");
     }
 
     { // a REFUSED trade advances nothing - the revision counts changes, not attempts
@@ -390,8 +496,8 @@ int main()
             auto* pRecord = const_cast<PlayerRecord*>(store.Find(discord));
             if (pRecord && !pRecord->Characters.empty())
             {
-                pRecord->Characters[0].EconomyRevision = 5;
-                pRecord->Characters[0].MigratedAt = 1'700'000'000;
+                pRecord->Characters[0].MoneyRevision = 5;
+                pRecord->Characters[0].MoneyMigratedAt = 1'700'000'000;
             }
         }
 
@@ -408,8 +514,8 @@ int main()
         const auto* pA = CharacterOf(store, "111");
         const auto* pB = CharacterOf(store, "222");
 
-        Check(pA && pA->EconomyRevision == 5, "and the payer's revision did NOT move");
-        Check(pB && pB->EconomyRevision == 5, "nor the recipient's");
+        Check(pA && pA->MoneyRevision == 5, "and the payer's revision did NOT move");
+        Check(pB && pB->MoneyRevision == 5, "nor the recipient's");
     }
 
     { // an exhausted participant is refused BEFORE anything moves
@@ -421,8 +527,8 @@ int main()
             auto* pRecord = const_cast<PlayerRecord*>(store.Find("222"));
             if (pRecord && !pRecord->Characters.empty())
             {
-                pRecord->Characters[0].EconomyRevision = std::numeric_limits<uint64_t>::max();
-                pRecord->Characters[0].MigratedAt = 1'700'000'000;
+                pRecord->Characters[0].MoneyRevision = std::numeric_limits<uint64_t>::max();
+                pRecord->Characters[0].MoneyMigratedAt = 1'700'000'000;
             }
         }
 
@@ -443,7 +549,7 @@ int main()
 
         Check(pA && pA->Money == 20000 && pB && pB->Money == 5000,
               "AND NO MONEY MOVED - headroom is validated before mutation, not after");
-        Check(pB && pB->EconomyRevision == std::numeric_limits<uint64_t>::max(),
+        Check(pB && pB->MoneyRevision == std::numeric_limits<uint64_t>::max(),
               "the exhausted revision is stuck, not wrapped to zero");
     }
 
@@ -459,8 +565,8 @@ int main()
             auto* pRecord = const_cast<PlayerRecord*>(store.Find("111"));
             if (pRecord && !pRecord->Characters.empty())
             {
-                pRecord->Characters[0].EconomyRevision = 3;
-                pRecord->Characters[0].MigratedAt = 1'700'000'000;
+                pRecord->Characters[0].MoneyRevision = 3;
+                pRecord->Characters[0].MoneyMigratedAt = 1'700'000'000;
             }
         }
 
@@ -478,8 +584,8 @@ int main()
         const auto* pA = CharacterOf(store, "111");
         const auto* pB = CharacterOf(store, "222");
 
-        Check(pA && pA->EconomyRevision == 4, "the migrated side advances");
-        Check(pB && pB->EconomyRevision == 0, "and the legacy side stays at zero");
+        Check(pA && pA->MoneyRevision == 4, "the migrated side advances");
+        Check(pB && pB->MoneyRevision == 0, "and the legacy side stays at zero");
         Check(pA && pA->Money == 19000 && pB && pB->Money == 6000, "the money still moved");
     }
 

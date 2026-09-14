@@ -257,8 +257,18 @@ void Settings::Load()
         spdlog::info("Sync trace ON - writing movement NDJSON for tools/netlab");
     }
 
+    // PvP is ON by default now (Settings.h). -hackable-puppets is kept so an explicit "on"
+    // from the launcher still means on; -no-hackable-puppets is the off-switch that keeps
+    // this a relaunch rather than a rebuild. Off wins if both are somehow passed - if a
+    // player went to the trouble of turning it off, that is the answer.
     if (launchParameters.Get("-hackable-puppets"))
         settings.hackablePuppets = true;
+
+    if (launchParameters.Get("-no-hackable-puppets"))
+    {
+        settings.hackablePuppets = false;
+        spdlog::info("PvP targeting OFF - -no-hackable-puppets was passed");
+    }
 
     if (const auto record = launchParameters.Get("-puppet-record-female"); record)
     {

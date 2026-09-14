@@ -39,10 +39,17 @@ if (-not $user -or -not $hostName) {
 
 $remoteRoot = '/mnt/vol/projects/CyberpunkMP/logs/clients'
 
+# Fail fast instead of hanging on an interactive prompt when the key is wrong or the host
+# key is unknown - the flags BackupServerData.ps1 carried and this script had dropped. A
+# bad key should surface as an ssh error, not a silent wait on "Are you sure you want to
+# continue connecting?" with nobody at the keyboard. LogLevel=ERROR also mutes the
+# known-hosts add notice that StrictHostKeyChecking=no would otherwise print.
+$sshOpts = @('-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=no', '-o', 'LogLevel=ERROR')
+
 # No player named: answer the question that comes first anyway.
 if (-not $Player) {
     Write-Host "Players with shipped logs on $hostName`:" -ForegroundColor Cyan
-    ssh "$user@$hostName" "ls -1 $remoteRoot" | ForEach-Object { Write-Host "  $_" }
+    ssh @sshOpts "$user@$hostName" "ls -1 $remoteRoot" | ForEach-Object { Write-Host "  $_" }
     Write-Host "`nPull one:  .\tools\PullLogs.ps1 <player>" -ForegroundColor DarkGray
     exit 0
 }
@@ -54,7 +61,7 @@ if (-not $Player) {
 $dirName = -join ($Player.ToCharArray() | Where-Object { [char]::IsLetterOrDigit($_) -or $_ -eq '.' -or $_ -eq '_' -or $_ -eq '-' })
 $remote = "$remoteRoot/$dirName"
 
-$names = ssh "$user@$hostName" "ls -t $remote 2>/dev/null"
+$names = ssh @sshOpts "$user@$hostName" "ls -t $remote 2>/dev/null"
 if ($LASTEXITCODE -eq 255) {
     # 255 is ssh itself failing - transport, not a missing player. Diagnosing this as a
     # wrong name sent people chasing case-sensitivity while the tailnet was down.
@@ -79,11 +86,27 @@ $trail = $names | Where-Object { $_ -eq 'launcher-trail.log' } | Select-Object -
 if (-not $Dest) { $Dest = Join-Path $env:TEMP "nco-logs\$Player" }
 New-Item -ItemType Directory -Force $Dest | Out-Null
 
+$wanted = @(@($clientLogs) + @($trail) | Where-Object { $_ })
+
+# One scp, one SSH connection, all files - instead of a connect-per-file loop. The names
+# are sanitized log basenames (letters/digits/._-, no spaces or shell metacharacters - see
+# the SanitizeName note above), so a remote brace list is safe: "dir/{a,b,c}" reaches the
+# remote shell, which expands it to the three files. That brace expansion is a SHELL
+# feature, so it needs scp's legacy transfer mode (-O); SFTP-mode scp (OpenSSH 9+, the
+# default now) globs "*?[]" but never "{}", and would look for a literal "{a,b,c}". A lone
+# file gets no braces at all (bash would leave "{a}" untouched).
 $pulled = @()
-foreach ($name in (@($clientLogs) + @($trail) | Where-Object { $_ })) {
-    scp -q "$user@$hostName`:$remote/$name" (Join-Path $Dest $name)
-    if ($LASTEXITCODE -eq 0) { $pulled += (Join-Path $Dest $name) }
-    else { Write-Host "  warn  could not pull $name" -ForegroundColor DarkYellow }
+if ($wanted.Count -gt 0) {
+    $remoteSpec = if ($wanted.Count -eq 1) { "$remote/$($wanted[0])" } else { "$remote/{$($wanted -join ',')}" }
+    scp -O -q @sshOpts "$user@$hostName`:$remoteSpec" $Dest
+
+    # scp's exit status is for the whole batch; check each file so a missing one is
+    # reported without discarding the rest.
+    foreach ($name in $wanted) {
+        $local = Join-Path $Dest $name
+        if (Test-Path $local) { $pulled += $local }
+        else { Write-Host "  warn  could not pull $name" -ForegroundColor DarkYellow }
+    }
 }
 
 Write-Host "Pulled $($pulled.Count) file(s) for $Player`:" -ForegroundColor Cyan
