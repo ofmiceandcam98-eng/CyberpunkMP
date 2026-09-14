@@ -477,6 +477,11 @@ public class ChatController extends inkHUDGameController {
         this.m_trRoot.SetScale(new Vector2(scale, scale));
 
         MpTrBuild(this.m_trRoot, this.m_trGap);
+        // On-panel readout of the live placement, so the tuned values can be READ off the screen
+        // and baked as defaults - the session log drops these lines, so this is the reliable path.
+        MpCsText(this.m_trRoot, MpTrPanelX(), MpTrPanelY() - 34.0,
+                 s"TRPOS x=\(this.m_trFracX) y=\(this.m_trFracY) zoom=\(this.m_trZoom) gap=\(this.m_trGap)",
+                 24, n"Medium", MpTrGold());
         this.m_trRoot.SetVisible(true);
         // Frosted backdrop behind the see-through boxes. Standalone call (no modal context push),
         // so worst case it simply does not blur - it cannot hide the HUD or trap input.
