@@ -468,6 +468,15 @@ public class ChatController extends inkHUDGameController {
             this.m_player.RegisterInputListener(this, n"cancel");
             this.m_player.RegisterInputListener(this, n"back");
             this.m_player.RegisterInputListener(this, n"proceed");
+            // Explicitly raise the mouse cursor - the modal context alone does not show one
+            // (it is keyboard/gamepad-navigated). Same call the EmoteSelector had staged.
+            let curOn = new inkMenuLayer_SetCursorVisibility();
+            curOn.Init(true, new Vector2(0.5, 0.5));
+            this.QueueEvent(curOn);
+            // Freeze the scene so the character stops moving and the panel holds authority - the
+            // piece the server-list modal has that this was missing (zeldfep: "the character still
+            // moves ... switch authority to the panel like the exit menu").
+            TimeDilationHelper.SetTimeDilationWithProfile(this.m_player, "radialMenu", true, true);
             this.m_trModalActive = true;
         }
 
@@ -517,6 +526,10 @@ public class ChatController extends inkHUDGameController {
             this.m_player.UnregisterInputListener(this, n"cancel");
             this.m_player.UnregisterInputListener(this, n"back");
             this.m_player.UnregisterInputListener(this, n"proceed");
+            let curOff = new inkMenuLayer_SetCursorVisibility();
+            curOff.Init(false, new Vector2(0.5, 0.5));
+            this.QueueEvent(curOff);
+            TimeDilationHelper.SetTimeDilationWithProfile(this.m_player, "radialMenu", false, false);
             this.m_uiSystem.PopGameContext(UIGameContext.ModalPopup);
             this.m_uiSystem.RestorePreviousVisualState(n"inkModalPopupState");
             this.m_trModalActive = false;
