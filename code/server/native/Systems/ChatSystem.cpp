@@ -66,6 +66,7 @@ ChatSystem::ChatSystem(gsl::not_null<World*> apWorld)
     GServer->RegisterHandler<&ChatSystem::HandleSaveCharacterRequest>(this);
     GServer->RegisterHandler<&ChatSystem::HandleDeleteCharacterRequest>(this);
     GServer->RegisterHandler<&ChatSystem::HandleSelectCharacterRequest>(this);
+    GServer->RegisterHandler<&ChatSystem::HandleLeaveWorldRequest>(this);
     GServer->RegisterHandler<&ChatSystem::HandleCallRequest>(this);
     GServer->RegisterHandler<&ChatSystem::HandleCallControlRequest>(this);
 
@@ -360,6 +361,45 @@ void ChatSystem::HandleDeleteCharacterRequest(const PacketEvent<client::DeleteCh
     spdlog::info("{} deleted their character", pPlayer->Username);
 
     SendCharacterList(*pPlayer);
+}
+
+// The player is back at the selector while still connected. Release their puppet so the
+// is_alive() checks in select/delete/appearance stop refusing - this is the fix for
+// "Leave the world before switching/deleting", and for spawning as the wrong (template)
+// character. The connection stays; only the body is removed.
+void ChatSystem::HandleLeaveWorldRequest(const PacketEvent<client::LeaveWorldRequest>& aMessage)
+{
+    auto* pPlayerManager = m_pWorld->get<PlayerManager>();
+
+    const auto entity = pPlayerManager->GetByConnectionId(aMessage.ConnectionId);
+    if (!entity || !entity.has<PlayerComponent>())
+        return;
+
+    auto* pPlayer = entity.get_mut<PlayerComponent>();
+
+    // Nothing to release if they are not embodied.
+    if (!pPlayer->Puppet || !pPlayer->Puppet.is_alive())
+        return;
+
+    // Save position BEFORE the puppet is gone, exactly as OnDisconnection does, so re-entry
+    // puts them back where they left rather than at a template spawn.
+    auto& store = GServer->GetPlayerStore();
+    if (const auto* pMovement = pPlayer->Puppet.get<MovementComponent>())
+    {
+        store.Remember(pPlayer->DiscordId, pPlayer->Username, pMovement->Position,
+                       pMovement->Rotation.z);
+        store.Flush();
+    }
+
+    // Tell the other clients to unload it (Level::Remove skips the owner's own client), then
+    // destroy the entity and clear the handle.
+    if (auto* pLevel = m_pWorld->get_mut<Level>())
+        pLevel->Remove(pPlayer->Puppet);
+
+    pPlayer->Puppet.destruct();
+    pPlayer->Puppet = flecs::entity{};
+
+    spdlog::info("{} returned to the selector - puppet released", pPlayer->Username);
 }
 
 void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharacterRequest>& aMessage)
