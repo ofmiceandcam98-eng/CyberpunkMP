@@ -62,8 +62,8 @@ public func MpTrVoid() -> HDRColor = new HDRColor(0.031, 0.031, 0.047, 1.0)   //
 // re-centre the whole thing on screen. Authored large: item text sits at the 28px HUD anchor.
 public func MpTrPanelX() -> Float = 690.0
 public func MpTrPanelY() -> Float = 200.0
-public func MpTrPanelW() -> Float = 1180.0
-public func MpTrPanelH() -> Float = 744.0
+public func MpTrPanelW() -> Float = 1120.0
+public func MpTrPanelH() -> Float = 560.0
 
 // Overlay zoom over the authored 1:1. v2 authors the composition large (four floating boxes,
 // 28px item text), so the base fit is already HUD-sized and this stays 1.0. Bump this one
@@ -103,15 +103,16 @@ public func MpTrBox(c: ref<inkCanvas>, x: Float, y: Float, w: Float, h: Float) -
 // Name and category are placeholders in the shell; with the wire they resolve from the TweakDBID.
 public func MpTrRow(parent: ref<inkCompoundWidget>, x: Float, y: Float, w: Float, name: String,
                     category: String, qty: Int32) -> Void {
-    MpCsRect(parent, x, y + 6.0, 16.0, 16.0, MpTrCyan(), 0.85);
-    MpCsText(parent, x + 30.0, y, name, 28, n"Medium", MpTrInk());
+    // Square bullet (mockup's .ic), name, a category chip under it, gold quantity on the right.
+    MpCsRect(parent, x, y + 3.0, 14.0, 14.0, MpTrCyan(), 0.85);
+    MpCsText(parent, x + 24.0, y, name, 21, n"Medium", MpTrInk());
 
-    let chipW = 20.0 + Cast<Float>(StrLen(category)) * 11.0;
-    MpCsBorder(parent, x + 30.0, y + 40.0, chipW, 26.0, MpTrCyanDim(), 0.8);
-    MpCsText(parent, x + 40.0, y + 43.0, category, 18, n"Regular", MpTrInkDim());
+    let chipW = 16.0 + Cast<Float>(StrLen(category)) * 8.0;
+    MpCsBorder(parent, x + 24.0, y + 28.0, chipW, 22.0, MpTrCyanDim(), 0.8);
+    MpCsText(parent, x + 32.0, y + 30.0, category, 13, n"Regular", MpTrInkDim());
 
     if qty > 1 {
-        MpCsText(parent, x + w - 90.0, y, s"x\(qty)", 28, n"Medium", MpTrGold());
+        MpCsText(parent, x + w - 66.0, y, s"x\(qty)", 21, n"Medium", MpTrGold());
     }
 }
 
@@ -121,73 +122,74 @@ public func MpTrBuild(c: ref<inkCanvas>, gap: Float) -> Void {
     let bx = MpTrPanelX();
     let by = MpTrPanelY();
     let bw = MpTrPanelW();
+    let bh = MpTrPanelH();
 
-    let headH = 96.0;
-    let colY = by + headH + gap;
-    let colH = 470.0;
-    let colW = (bw - gap) / 2.0;
-    let leftX = bx;
-    let rightX = bx + colW + gap;
-    let actY = colY + colH + gap;
-    let actH = 146.0;
+    // ---- ONE cohesive panel (the mockup: "read as one strip, not two floating windows") ----
+    // See-through fill; the frosted look comes from SetBackgroundBlur in MpTrOpen.
+    MpCsRect(c, bx, by, bw, bh, MpTrPanel(), 0.5);
+    MpCsBorder(c, bx, by, bw, bh, MpTrCyan(), 0.8);
 
-    // ------------------------------------------------------------------ header box
-    MpTrBox(c, bx, by, bw, headH);
-    MpCsGlowText(c, bx + 28.0, by + 22.0, MpCsSpaced("TRADE"), 40, n"Bold", MpTrCyan());
-    MpCsText(c, bx + 230.0, by + 40.0, "with Noremac", 28, n"Regular", MpTrInkDim());
-    // Weight and eddies readout, parked left of the close button.
-    MpCsText(c, bx + bw - 430.0, by + 20.0, MpCsSpaced("WEIGHT"), 18, n"Regular", MpTrInkFaint());
-    MpCsText(c, bx + bw - 430.0, by + 44.0, "6 / 200", 26, n"Medium", MpTrInk());
-    MpCsText(c, bx + bw - 250.0, by + 20.0, MpCsSpaced("EDDIES"), 18, n"Regular", MpTrInkFaint());
-    MpCsText(c, bx + bw - 250.0, by + 44.0, "20,100", 26, n"Medium", MpTrGold());
-    // Close X - DRAWN; the overlay closes on /tradeoff until input is wired (flag-day A).
-    MpCsBorder(c, bx + bw - 62.0, by + 22.0, 40.0, 40.0, MpTrRed(), 0.85);
-    MpCsText(c, bx + bw - 50.0, by + 25.0, "X", 30, n"Bold", MpTrRed());
+    // ---- header: title, partner, weight + eddies, close X, divider ----
+    MpCsGlowText(c, bx + 24.0, by + 16.0, MpCsSpaced("TRADE"), 32, n"Bold", MpTrCyan());
+    MpCsText(c, bx + 200.0, by + 24.0, "with Noremac", 22, n"Regular", MpTrInkDim());
+    MpCsText(c, bx + bw - 420.0, by + 16.0, MpCsSpaced("WEIGHT"), 15, n"Regular", MpTrInkFaint());
+    MpCsText(c, bx + bw - 420.0, by + 36.0, "6 / 200", 21, n"Medium", MpTrInk());
+    MpCsText(c, bx + bw - 250.0, by + 16.0, MpCsSpaced("EDDIES"), 15, n"Regular", MpTrInkFaint());
+    MpCsText(c, bx + bw - 250.0, by + 36.0, "20,100", 21, n"Medium", MpTrGold());
+    MpCsBorder(c, bx + bw - 56.0, by + 16.0, 34.0, 34.0, MpTrRed(), 0.85);
+    MpCsText(c, bx + bw - 46.0, by + 19.0, "X", 24, n"Bold", MpTrRed());
+    MpCsRect(c, bx + 18.0, by + 62.0, bw - 36.0, 1.0, MpTrCyanDim(), 0.7);
 
-    // ------------------------------------------------------------------ you offer box
-    MpTrBox(c, leftX, colY, colW, colH);
-    MpCsText(c, leftX + 24.0, colY + 22.0, MpCsSpaced("YOU OFFER"), 28, n"Medium", MpTrCyan());
-    // Eddies stepper box.
-    MpCsText(c, leftX + 24.0, colY + 70.0, "Eddies", 28, n"Medium", MpTrInkDim());
-    MpCsBorder(c, leftX + 24.0, colY + 108.0, 264.0, 46.0, MpTrCyanDim(), 0.8);
-    MpCsText(c, leftX + 38.0, colY + 112.0, "+", 30, n"Bold", MpTrCyan());
-    MpCsText(c, leftX + 82.0, colY + 114.0, "0 / 20,100", 26, n"Medium", MpTrGold());
-    // Your item rows (restored in v2 - the shell had dropped them).
-    MpTrRow(c, leftX + 24.0, colY + 186.0, colW - 48.0, "Arasaka Cyberdeck", "Cyberware", 1);
-    MpTrRow(c, leftX + 24.0, colY + 264.0, colW - 48.0, "Pistol Ammo", "Ammo", 120);
+    // ---- two columns with a vertical divider ----
+    let colTop = by + 82.0;
+    let colBot = by + bh - 96.0;
+    let midX = bx + bw / 2.0;
+    let leftX = bx + 26.0;
+    let rightX = midX + 26.0;
+    let leftW = midX - leftX - 20.0;
+    let rightW = bx + bw - rightX - 26.0;
+    MpCsRect(c, midX, colTop - 4.0, 1.0, colBot - colTop + 8.0, MpTrCyanDim(), 0.5);
 
-    // ------------------------------------------------------------------ noremac offers box
-    MpTrBox(c, rightX, colY, colW, colH);
-    MpCsText(c, rightX + 24.0, colY + 22.0, MpCsSpaced("NOREMAC OFFERS"), 28, n"Medium", MpTrRed());
-    MpCsText(c, rightX + colW - 54.0, colY + 22.0, "3", 28, n"Medium", MpTrRed());
-    MpTrRow(c, rightX + 24.0, colY + 70.0, colW - 48.0, "Militech M-10AF Lexington", "Pistol", 1);
-    MpTrRow(c, rightX + 24.0, colY + 148.0, colW - 48.0, "MaxDoc Mk.2", "Consumable", 6);
-    MpTrRow(c, rightX + 24.0, colY + 226.0, colW - 48.0, "Kiroshi Optics Mk.1", "Cyberware", 1);
-    MpCsText(c, rightX + 24.0, colY + 320.0, "Eddies", 28, n"Medium", MpTrInkDim());
-    MpCsText(c, rightX + colW - 140.0, colY + 320.0, "2,500", 28, n"Medium", MpTrGold());
+    // left: YOU OFFER - eddies stepper, then your inventory rows (mockup content)
+    MpCsText(c, leftX, colTop, MpCsSpaced("YOU OFFER"), 21, n"Medium", MpTrCyan());
+    MpCsText(c, leftX, colTop + 44.0, "Eddies", 20, n"Medium", MpTrGold());
+    MpCsBorder(c, leftX + 106.0, colTop + 38.0, 250.0, 40.0, MpTrCyanDim(), 0.8);
+    MpCsText(c, leftX + 120.0, colTop + 44.0, "-", 24, n"Bold", MpTrInkDim());
+    MpCsText(c, leftX + 168.0, colTop + 46.0, "0", 21, n"Medium", MpTrGold());
+    MpCsText(c, leftX + 214.0, colTop + 44.0, "+", 24, n"Bold", MpTrCyan());
+    MpCsText(c, leftX + 262.0, colTop + 48.0, "/ 20,100", 15, n"Regular", MpTrInkFaint());
+    MpTrRow(c, leftX, colTop + 104.0, leftW, "Nekomata", "Sniper", 1);
+    MpTrRow(c, leftX, colTop + 168.0, leftW, "MaxDoc Mk.1", "Consumable", 12);
+    MpTrRow(c, leftX, colTop + 232.0, leftW, "Scrap Electronics", "Component", 37);
 
-    // ------------------------------------------------------------------ actions box
-    MpTrBox(c, bx, actY, bw, actH);
-    // Confirm LEDs - the two pieces the shell dropped. Red = not confirmed, cyan = confirmed.
-    MpCsRect(c, bx + 24.0, actY + 26.0, 14.0, 14.0, MpTrRed(), 0.9);
-    MpCsText(c, bx + 48.0, actY + 18.0, "You: not confirmed", 24, n"Medium", MpTrInk());
-    MpCsRect(c, bx + 24.0, actY + 62.0, 14.0, 14.0, MpTrCyan(), 0.9);
-    MpCsText(c, bx + 48.0, actY + 54.0, "Noremac: confirmed", 24, n"Medium", MpTrInk());
-    MpCsText(c, bx + 24.0, actY + actH - 30.0,
-             "Any change to either offer clears both confirmations.", 18, n"Regular",
+    // right: NOREMAC OFFERS - their three items, then their eddies
+    MpCsText(c, rightX, colTop, MpCsSpaced("NOREMAC OFFERS"), 21, n"Medium", MpTrRed());
+    MpCsText(c, bx + bw - 46.0, colTop, "3", 21, n"Medium", MpTrRed());
+    MpTrRow(c, rightX, colTop + 44.0, rightW, "Militech M-10AF Lexington", "Pistol", 1);
+    MpTrRow(c, rightX, colTop + 108.0, rightW, "MaxDoc Mk.2", "Consumable", 6);
+    MpTrRow(c, rightX, colTop + 172.0, rightW, "Kiroshi Optics Mk.1", "Cyberware", 1);
+    MpCsText(c, rightX, colTop + 240.0, "Eddies", 20, n"Medium", MpTrInkDim());
+    MpCsText(c, bx + bw - 118.0, colTop + 240.0, "2,500", 21, n"Medium", MpTrGold());
+
+    // ---- footer: divider, confirm LEDs, note, Cancel / Confirm ----
+    let fY = by + bh - 76.0;
+    MpCsRect(c, bx + 18.0, fY - 10.0, bw - 36.0, 1.0, MpTrCyanDim(), 0.6);
+    MpCsRect(c, bx + 24.0, fY + 3.0, 12.0, 12.0, MpTrRed(), 0.9);
+    MpCsText(c, bx + 44.0, fY - 2.0, "You: not confirmed", 19, n"Medium", MpTrInk());
+    MpCsRect(c, bx + 24.0, fY + 31.0, 12.0, 12.0, MpTrCyan(), 0.9);
+    MpCsText(c, bx + 44.0, fY + 26.0, "Noremac: confirmed", 19, n"Medium", MpTrInk());
+    MpCsText(c, bx + 320.0, fY + 40.0,
+             "Any change to either offer clears both confirmations.", 15, n"Regular",
              MpTrInkFaint());
-
-    // Cancel (red) and Confirm (cyan). Drawn as plates; NOT interactive in the shell - clicks
-    // ride with the data path (flag-day A).
-    let btnW = 220.0;
-    let btnH = 52.0;
-    let btnY = actY + 30.0;
-    let cancelX = bx + bw - btnW * 2.0 - 44.0;
+    let btnW = 190.0;
+    let btnH = 44.0;
+    let btnY = fY + 4.0;
+    let cancelX = bx + bw - btnW * 2.0 - 40.0;
     MpCsRect(c, cancelX, btnY, btnW, btnH, MpTrRedDim(), 0.6);
     MpCsBorder(c, cancelX, btnY, btnW, btnH, MpTrRed(), 0.9);
-    MpCsText(c, cancelX + 66.0, btnY + 13.0, MpCsSpaced("CANCEL"), 22, n"Medium", MpTrRed());
-    let confirmX = bx + bw - btnW - 24.0;
+    MpCsText(c, cancelX + 56.0, btnY + 11.0, MpCsSpaced("CANCEL"), 20, n"Medium", MpTrRed());
+    let confirmX = bx + bw - btnW - 20.0;
     MpCsRect(c, confirmX, btnY, btnW, btnH, MpTrCyanDim(), 0.6);
     MpCsBorder(c, confirmX, btnY, btnW, btnH, MpTrCyan(), 0.9);
-    MpCsText(c, confirmX + 60.0, btnY + 13.0, MpCsSpaced("CONFIRM"), 22, n"Medium", MpTrCyan());
+    MpCsText(c, confirmX + 50.0, btnY + 11.0, MpCsSpaced("CONFIRM"), 20, n"Medium", MpTrCyan());
 }
