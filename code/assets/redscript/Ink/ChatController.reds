@@ -39,6 +39,9 @@ public class ChatController extends inkHUDGameController {
     private let m_trZoom: Float;
     private let m_trGap: Float;
     private let m_trTuned: Bool;
+    // True while the trade overlay holds a modal game context (cursor + input + blur). Guards the
+    // push/pop so nudge re-renders do not stack contexts, and so a leak can always be popped.
+    private let m_trModalActive: Bool;
     private let m_nameLabel: wref<inkText>;
 
     protected cb func OnInitialize() -> Bool {
@@ -454,6 +457,20 @@ public class ChatController extends inkHUDGameController {
         // Scale to whatever the root actually measures; a not-yet-laid-out root reports zero,
         // so fall back to 1:1 rather than scaling the composition to nothing. Everything below is
         // driven by the MEASURED root size, so it adapts to any resolution (zeldfep runs 2K).
+        // Enter a modal game context once (cursor + input capture + the frosted modal state).
+        // Guarded by m_trModalActive so the /tr* re-renders do not stack it. Copied from the
+        // server-list modal (MultiplayerGameController.OnServerListSpawned), which raises this
+        // in-game and pops cleanly - the de-risked recipe. MpTrClose reverses every line, and the
+        // cancel/back listener in OnAction is the safety hatch that always pops it.
+        if !this.m_trModalActive {
+            this.m_uiSystem.PushGameContext(UIGameContext.ModalPopup);
+            this.m_uiSystem.RequestNewVisualState(n"inkModalPopupState");
+            this.m_player.RegisterInputListener(this, n"cancel");
+            this.m_player.RegisterInputListener(this, n"back");
+            this.m_player.RegisterInputListener(this, n"proceed");
+            this.m_trModalActive = true;
+        }
+
         // Seed the tunable placement from the defaults on the first open; the /tr* commands
         // nudge these live thereafter.
         if !this.m_trTuned {
@@ -493,6 +510,16 @@ public class ChatController extends inkHUDGameController {
         if IsDefined(this.m_trRoot) {
             this.m_trRoot.RemoveAllChildren();
             this.m_trRoot.SetVisible(false);
+        }
+        // Pop the modal context and unregister input - exactly reversing MpTrOpen. This is what
+        // makes the overlay always escapable: /tradeoff and the Esc/cancel listener both land here.
+        if this.m_trModalActive {
+            this.m_player.UnregisterInputListener(this, n"cancel");
+            this.m_player.UnregisterInputListener(this, n"back");
+            this.m_player.UnregisterInputListener(this, n"proceed");
+            this.m_uiSystem.PopGameContext(UIGameContext.ModalPopup);
+            this.m_uiSystem.RestorePreviousVisualState(n"inkModalPopupState");
+            this.m_trModalActive = false;
         }
         PopupStateUtils.SetBackgroundBlur(this, false);
         FTLog(s"[TradeScreen] closed");
@@ -640,6 +667,22 @@ public class ChatController extends inkHUDGameController {
     protected cb func OnAction(action: ListenerAction, consumer: ListenerActionConsumer) -> Bool {
         let actionName: CName = ListenerAction.GetName(action);
         let actionType: gameinputActionType = ListenerAction.GetType(action);
+
+        // Trade overlay modal input. Esc/cancel is the SAFETY HATCH - it always closes and pops
+        // the context, so a bad modal can never trap the player. Handled before chat so it wins.
+        if this.m_trModalActive {
+            if Equals(actionType, gameinputActionType.BUTTON_RELEASED) {
+                if Equals(actionName, n"cancel") || Equals(actionName, n"back") {
+                    this.MpTrClose();
+                    return true;
+                }
+                if Equals(actionName, n"proceed") {
+                    FTLog(s"[TradeScreen] proceed (confirm) pressed");
+                    return true;
+                }
+            }
+            return false;
+        }
 
         if !this.m_chatInputOpen {
             if Equals(actionName, n"UIEnterChatMessage") && Equals(actionType, gameinputActionType.BUTTON_RELEASED) {
