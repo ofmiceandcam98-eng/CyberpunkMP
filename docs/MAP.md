@@ -996,6 +996,36 @@ fixes — money is not server-authoritative today. See `docs/PHASE5-STAGE6B-MONE
     `CharacterId` — and the branch supplied the missing client panel that draws four slots
     and says which are in use.
 
+- **Puppet release on selector-open is LOAD-BEARING for switch, delete AND appearance — DO
+  NOT UNDO** (zeldfep, 2026-09-14: *"stop breaking this specific part we've looped like 5
+  times over this exact fix"*). The server clears a player's puppet ONLY on disconnect, so a
+  player sitting at the selector still had a live body, and the `is_alive()` guards in
+  `HandleSelectCharacterRequest`, `HandleDeleteCharacterRequest` and the appearance swap all
+  refused. The three read as three unrelated bugs and are ONE. The client never signalled "I
+  left the world" — now it does.
+  - **The signal**: `client.proto` `LeaveWorldRequest` (a flag day when it ships — it moved
+    the proto hash); `NetworkWorldSystem.LeaveWorld()` sends it; `CharacterSelect.reds` calls
+    it on the FIRST open of a selector session (`!m_csOpen`, near line 339). Server side is
+    `ChatSystem::HandleLeaveWorldRequest` — it saves position (as `OnDisconnection` does),
+    `Level::Remove`s the puppet, `destruct()`s it, clears the handle. Both call sites carry a
+    DO-NOT-UNDO banner pointing here.
+  - **Delete is CLICK-triggered and SLOT-EXPLICIT**: the DEL key never reached the handler
+    without a UI context, so the trash-can hit region in `MpCsClickAt` drives it;
+    `DeleteCharacterSlot(m_csCursor)` names the slot on the wire so the server never infers it
+    from the active slot (which a live puppet makes wrong). Reverting to slot-less
+    `DeleteCharacter()` re-opens the loop.
+  - **The store guarantee underneath all of this is LOCKED**:
+    `tools/tests/characterlifecycle_test.cpp` (auto-discovered by Verify) proves delete
+    removes EXACTLY the named slot with siblings intact, retires rather than destroys, keeps
+    slots non-contiguous across a disk reload, and reuses a freed slot without resurrecting
+    the retired character. It rides alongside `characterslots_test.cpp` (create adds, does not
+    replace). A regression has to break a named sentence in one of these, not slip through.
+  - **Per-character appearance works for characters CREATED through the fixed flow.**
+    Pre-existing characters made via the broken flow had the template blob baked in; a fresh
+    character stores and restores its own look (own-restore is client-side —
+    `ApplyStoredAppearance`, server sends the blob). Not a bug in the path; a bug in the data
+    those old rows carry.
+
 - **Character lifecycle state + presence-bit names (`a0346ce`) — BUILT, NOT SHIPPED, on Cam's
   instruction** (build, don't ship). `feat/world-state` only: no release, deliberately not
   pushed to `main` — `main` is the deploy.
