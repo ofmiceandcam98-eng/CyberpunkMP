@@ -478,6 +478,9 @@ public class ChatController extends inkHUDGameController {
 
         MpTrBuild(this.m_trRoot, this.m_trGap);
         this.m_trRoot.SetVisible(true);
+        // Frosted backdrop behind the see-through boxes. Standalone call (no modal context push),
+        // so worst case it simply does not blur - it cannot hide the HUD or trap input.
+        PopupStateUtils.SetBackgroundBlur(this, true);
         FTLog(s"[TradeScreen] opened - root \(rootSize.X)x\(rootSize.Y) scale \(scale) fracX \(this.m_trFracX) fracY \(this.m_trFracY) zoom \(this.m_trZoom) gap \(this.m_trGap)");
     }
 
@@ -486,6 +489,7 @@ public class ChatController extends inkHUDGameController {
             this.m_trRoot.RemoveAllChildren();
             this.m_trRoot.SetVisible(false);
         }
+        PopupStateUtils.SetBackgroundBlur(this, false);
         FTLog(s"[TradeScreen] closed");
     }
 

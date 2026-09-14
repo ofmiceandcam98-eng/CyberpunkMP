@@ -89,9 +89,11 @@ public func MpTrGapDefault() -> Float = 40.0
 // the talk button, 2026-09-14). Bump the alpha a touch over the mockup - a live game frame behind
 // read-size text needs a firmer backing.
 public func MpTrBox(c: ref<inkCanvas>, x: Float, y: Float, w: Float, h: Float) -> Void {
-    MpCsRect(c, x, y, w, h, MpTrPanel(), 0.92);
+    // See-through fill (zeldfep, 2026-09-14: "blur see through") - low alpha so the game reads
+    // behind it; the frosted look comes from SetBackgroundBlur in MpTrOpen.
+    MpCsRect(c, x, y, w, h, MpTrPanel(), 0.5);
     // Bright cyan border so each box reads as a SEPARATE floating box, not one merged panel.
-    MpCsBorder(c, x, y, w, h, MpTrCyan(), 0.75);
+    MpCsBorder(c, x, y, w, h, MpTrCyan(), 0.8);
 }
 
 // ============================================================================ one item row
