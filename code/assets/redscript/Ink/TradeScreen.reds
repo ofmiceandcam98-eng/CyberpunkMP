@@ -62,6 +62,11 @@ public func MpTrPanelY() -> Float = 410.0
 public func MpTrPanelW() -> Float = 900.0
 public func MpTrPanelH() -> Float = 470.0
 
+// Overlay zoom over the authored 1:1 (zeldfep, 2026-09-14: "2x bigger"). MpTrOpen multiplies
+// the fit scale by this and re-centres the panel so a larger factor stays on-screen. Bump this
+// one number to resize the whole overlay - panel, text and chips scale together.
+public func MpTrZoom() -> Float = 2.0
+
 // ============================================================================ one item row
 //
 // A traded item: name, a category chip, and a quantity when more than one. Name and category are
