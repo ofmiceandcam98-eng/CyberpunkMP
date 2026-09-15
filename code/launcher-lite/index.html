@@ -1806,6 +1806,16 @@
     const alreadyOnIt = Boolean(serverState && serverState.online)
 
     btn.style.display = verified && !alreadyOnIt ? 'inline-block' : 'none'
+
+    // The Tools row offers the same invite - same bar (decided 2026-09-06). The main
+    // process refuses non-members regardless; this just stops offering what a click
+    // cannot have. Disabled rather than hidden, so the row still explains itself.
+    const toolBtn = $('openTailscaleInvite')
+    if (toolBtn) {
+      toolBtn.disabled = !verified
+      toolBtn.textContent = verified ? 'Open invite' : 'Members only'
+      toolBtn.title = verified ? '' : 'Sign in and join the Night City Online Discord first.'
+    }
   }
 
   $('joinTailnet').addEventListener('click', async () => {

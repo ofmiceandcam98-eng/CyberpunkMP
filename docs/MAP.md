@@ -996,53 +996,6 @@ fixes — money is not server-authoritative today. See `docs/PHASE5-STAGE6B-MONE
     `CharacterId` — and the branch supplied the missing client panel that draws four slots
     and says which are in use.
 
-- **A freshly-created character is relocated out of the q000 box in the SAME session, not
-  only on the next join.** The arrivals-point relocation (`Level::HandleSpawnCharacterRequest`)
-  is gated on the character's `SpawnedBefore` flag, which lives on the record. A brand-new
-  character spawns with its active slot still EMPTY - the account was pointed at a free slot
-  but the creator's save has not landed - so `FindCharacter` returns null and the old gate
-  (record REQUIRED) skipped relocation, leaving the character in the base-game q000 holding
-  box until they reconnected. Now the spawn relocates a record-less arrival too and sets
-  `PlayerComponent::RelocatedAwaitingRecord`; the creator save that lands moments later writes
-  `SpawnedBefore=true` onto the new record (`ChatSystem::HandleSaveCharacterRequest`). The
-  fire-once guarantee is preserved BOTH ways round the race: save-first, the spawn sees the
-  record and writes the flag directly; spawn-first, the flag rides the component onto the next
-  save. **Do not re-narrow `isNewHere` to require a non-null record** - that is the exact line
-  that trapped new characters in the box; the repeat bug it was guarding against is still
-  covered because a returning player always has a record with `SpawnedBefore=true`. Store-level
-  invariant (defaults false, survives reload once true) locked in
-  `tools/tests/characterlifecycle_test.cpp`. Server-only, no flag day.
-
-- **Puppet release on selector-open is LOAD-BEARING for switch, delete AND appearance — DO
-  NOT UNDO** (zeldfep, 2026-09-14: *"stop breaking this specific part we've looped like 5
-  times over this exact fix"*). The server clears a player's puppet ONLY on disconnect, so a
-  player sitting at the selector still had a live body, and the `is_alive()` guards in
-  `HandleSelectCharacterRequest`, `HandleDeleteCharacterRequest` and the appearance swap all
-  refused. The three read as three unrelated bugs and are ONE. The client never signalled "I
-  left the world" — now it does.
-  - **The signal**: `client.proto` `LeaveWorldRequest` (a flag day when it ships — it moved
-    the proto hash); `NetworkWorldSystem.LeaveWorld()` sends it; `CharacterSelect.reds` calls
-    it on the FIRST open of a selector session (`!m_csOpen`, near line 339). Server side is
-    `ChatSystem::HandleLeaveWorldRequest` — it saves position (as `OnDisconnection` does),
-    `Level::Remove`s the puppet, `destruct()`s it, clears the handle. Both call sites carry a
-    DO-NOT-UNDO banner pointing here.
-  - **Delete is CLICK-triggered and SLOT-EXPLICIT**: the DEL key never reached the handler
-    without a UI context, so the trash-can hit region in `MpCsClickAt` drives it;
-    `DeleteCharacterSlot(m_csCursor)` names the slot on the wire so the server never infers it
-    from the active slot (which a live puppet makes wrong). Reverting to slot-less
-    `DeleteCharacter()` re-opens the loop.
-  - **The store guarantee underneath all of this is LOCKED**:
-    `tools/tests/characterlifecycle_test.cpp` (auto-discovered by Verify) proves delete
-    removes EXACTLY the named slot with siblings intact, retires rather than destroys, keeps
-    slots non-contiguous across a disk reload, and reuses a freed slot without resurrecting
-    the retired character. It rides alongside `characterslots_test.cpp` (create adds, does not
-    replace). A regression has to break a named sentence in one of these, not slip through.
-  - **Per-character appearance works for characters CREATED through the fixed flow.**
-    Pre-existing characters made via the broken flow had the template blob baked in; a fresh
-    character stores and restores its own look (own-restore is client-side —
-    `ApplyStoredAppearance`, server sends the blob). Not a bug in the path; a bug in the data
-    those old rows carry.
-
 - **Character lifecycle state + presence-bit names (`a0346ce`) — BUILT, NOT SHIPPED, on Cam's
   instruction** (build, don't ship). `feat/world-state` only: no release, deliberately not
   pushed to `main` — `main` is the deploy.
@@ -1704,24 +1657,24 @@ fixes — money is not server-authoritative today. See `docs/PHASE5-STAGE6B-MONE
   - Naming note: the new nodes are `nco-server-1` and `nco-test-server-1` in MagicDNS, because
     the retired nodes still hold `nco-server` and `nco-test-server`. Deleting the old devices
     frees the names.
-- **DECIDED 2026-09-06 (zeldfep), NOT BUILT: "Join the server's network" must be gated on
-  DISCORD ROLE.** The invite button lives in the launcher's TOOLS panel and today opens for
-  anyone who clicks — `ipcMain.handle('tailscale:invite')` has no check of any kind. It should
-  hand out an invite only to someone whose Discord role says they belong.
-  - **The launcher already holds everything needed.** It completes Discord OAuth before the
-    tailnet is ever required (the trail logs `token present, name <player>` at launch), and it
-    already resolves roles for the dev panel. So the check is a role test on an identity that
-    is in hand, not new plumbing.
-  - **Client-side alone is NOT the fix, and this is the trap to avoid:** `server.json` is
-    served from `releases/latest/download` with no authentication, so anyone can read the
-    invite out of it whatever the button does. A UI check is a courtesy, not a control.
-  - **The honest architecture is two halves.** (1) The launcher checks the role before
-    offering the button — stops the accidental case. (2) The invite stops being a static field
-    in a public file and is issued per-request by an endpoint that verifies the Discord token,
-    which must live OFF the tailnet, because someone who needs an invite cannot reach anything
-    on it. That endpoint is the piece that does not exist yet and needs public hosting.
-  - **Until both exist, scope is the control, not secrecy** — see the ACL entry above. A
-    leaked invite buys reaching the game servers on two ports, nothing else.
+- **"Join the server's network" is gated on DISCORD MEMBERSHIP (decided 2026-09-06, half
+  built 2026-09-15).** `tailscale:invite` refuses anyone not signed in as a verified member
+  (the same definitive-answer-or-cached verdict the Play gate stands on), and
+  `tailscale:test-invite` refuses non-admins — the gate lives in the MAIN PROCESS, with the
+  UI's hiding/disabling kept as the courtesy it always was. Membership is the bar for the
+  main invite because every legitimate player needs the tailnet; the test invite shares
+  `devKey:fetch`'s dev-role bar.
+  - **Client-side alone is still NOT the full fix, and remains the trap to name:**
+    `server.json` is served from `releases/latest/download` with no authentication, so
+    anyone can read the invite out of it whatever the launcher does. What is built stops
+    the accidental case — the launcher no longer hands the invite to a stranger's click.
+  - **Half (2) stays deferred to open beta by the 2026-09-07 accepted-risk decree below:**
+    the invite stops being a static field in a public file and is issued per-request by an
+    endpoint that verifies the Discord token, OFF the tailnet (someone needing an invite
+    cannot reach anything on it). That endpoint still does not exist and needs public
+    hosting the project does not have.
+  - **Until then, scope is the control, not secrecy** — see the ACL entry above. A leaked
+    invite buys reaching the game servers on two ports, nothing else.
 - **DECIDED 2026-09-07 — published invites are an ACCEPTED RISK while this is a closed alpha.**
   zeldfep, asked directly about both links sitting in a public release asset: *"this is fine
   is closed alpha."* So stop treating it as an open wound. **Both device shares are deliberately
