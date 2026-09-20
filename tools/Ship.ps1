@@ -1060,6 +1060,10 @@ if ($Mod) {
             '--protocol-client', $protoClient,
             '--protocol-server', $protoServer,
             '--payload-zip', $payload,
+            # The curated Nexus list, so the generator can ask whether satisfying any
+            # entry's requires would install something the compatibility section calls
+            # critically incompatible - the 22114 shape, which was caught by hand.
+            '--modlist', (Join-Path $Repo "publish\modlist.json"),
             # The first launcher release that understands manifests. Bump deliberately,
             # never as a side effect - raising it strands older launchers on the legacy
             # path, which is a decision, not housekeeping.
