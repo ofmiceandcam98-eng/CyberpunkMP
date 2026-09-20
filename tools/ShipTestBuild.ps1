@@ -277,6 +277,39 @@ if (-not $WhatIf) {
 
     $size = [math]::Round((Get-Item $payload).Length / 1MB, 1)
     Ok "ModPayload.zip staged ($size MB)"
+
+    # COMPILE WHAT IS ACTUALLY SHIPPING.
+    #
+    # CheckScripts above compiled the REPO, and the repo was always fine - that is precisely
+    # how v0.3.115-.117 shipped a payload that could not compile while the gate reported OK.
+    # redscript aborts the WHOLE mod on one bad file, so a payload-only defect is total: no
+    # menu, no chat, no HUD, and it reads as the mod doing nothing.
+    #
+    # The ZIP is unpacked rather than the stage folder checked, so the thing compiled is the
+    # artifact that will be uploaded. If unpacking fails, the stage is compiled instead and
+    # says so - a check that silently skipped itself would be worse than none.
+    $checkDir = Join-Path $env:TEMP "nco-payload-check"
+    if (Test-Path $checkDir) { Remove-Item $checkDir -Recurse -Force }
+
+    $checkRoot = $null
+    try {
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($payload, $checkDir)
+        $checkRoot = $checkDir
+    } catch {
+        Warn "could not unpack the payload to check it ($($_.Exception.Message)) - compiling the stage instead"
+        $checkRoot = $stage
+    }
+
+    $payloadScripts = Join-Path $checkRoot "assets\redscript"
+    & (Join-Path $PSScriptRoot "CheckScripts.ps1") -ScriptDir $payloadScripts | Out-Null
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host ""
+        & (Join-Path $PSScriptRoot "CheckScripts.ps1") -ScriptDir $payloadScripts   # visibly, so the errors are readable
+        Die "the STAGED PAYLOAD does not compile - not publishing. The repo compiling is a different question from the payload compiling; this is the one players live with."
+    }
+
+    Ok "staged payload compiles"
 } else {
     Warn "would stage ModPayload.zip"
 }

@@ -16,6 +16,15 @@
 param(
     # Defaults to whatever tools\Environment.ps1 resolves. Pass it to override for one run.
     [string]$GameDir,
+
+    # WHICH SCRIPTS TO COMPILE. Defaults to the repo's source tree, which is what the inner
+    # loop wants. The ship passes the STAGED PAYLOAD instead - the .reds a player actually
+    # receives - because nothing in the pipeline had ever compiled that. The repo was always
+    # fine while v0.3.115-.117 shipped a payload that could not compile, and redscript aborts
+    # the WHOLE mod on one bad file: no menu, no chat, no HUD, indistinguishable from the mod
+    # doing nothing.
+    [string]$ScriptDir,
+
     [switch]$Full   # print the whole scc output, not just the errors
 )
 
@@ -37,10 +46,18 @@ New-Item -ItemType Directory -Force -Path $scratch | Out-Null
 # Compile a COPY. distrib is a junction into the game's plugin folder, so checking the
 # deployed scripts would mean writing them to their live location before knowing whether
 # they compile.
+$source = if ($ScriptDir) { $ScriptDir } else { Join-Path $Repo "code\assets\redscript" }
+
+if (-not (Test-Path $source)) {
+    Write-Host "no scripts at $source" -ForegroundColor Red
+    Write-Host "      what   there is nothing to compile - an empty payload would pass a check that never ran" -ForegroundColor DarkYellow
+    exit 2
+}
+
 $staged = Join-Path $scratch "redscript"
 if (Test-Path $staged) { Remove-Item $staged -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $staged | Out-Null
-Copy-Item (Join-Path $Repo "code\assets\redscript\*") $staged -Recurse -Force
+Copy-Item (Join-Path $source "*") $staged -Recurse -Force
 
 # Every path the game compiles, or the check is meaningless: with -compilePathsFile scc
 # compiles ONLY the listed paths and ignores -compile entirely, so leaving the other
