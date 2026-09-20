@@ -91,7 +91,20 @@ const DISCORD_INVITE = 'https://discord.gg/M9NSWsndC7'
 // only confuse players out of their way.
 //
 // Put your own id here. Sign in once and the launcher shows it under your name.
-const ADMIN_DISCORD_IDS = [
+// OPERATORS: set NCO_ADMIN_DISCORD_IDS (comma-separated Discord user ids) to replace the
+// floor below with your own. Someone running their own server should not have to edit this
+// file to get the controls for it - the server's permissions are already fully configurable
+// (Discord.GuildId / OwnerId / Roles in server.json), and this was the last place a
+// launcher's idea of "who is staff" was baked in.
+//
+// The default stays this project's two owners, so nothing changes for anyone who sets
+// nothing, and the reasoning below still applies to them.
+const ADMIN_DISCORD_IDS = (process.env.NCO_ADMIN_DISCORD_IDS || '')
+  .split(',')
+  .map(id => id.trim())
+  .filter(Boolean)
+
+if (ADMIN_DISCORD_IDS.length === 0) ADMIN_DISCORD_IDS.push(
   '566025915839283220',  // Cam
   // zeldfep - the other half of the project. Added after the second live "where did
   // my server buttons go": a transient role-lookup failure (expired OAuth token, or
@@ -99,7 +112,7 @@ const ADMIN_DISCORD_IDS = [
   // Cam never noticed because this floor already carried him. Both owners belong on
   // the floor; the role map governs everyone else.
   '226974251045879808'
-]
+)
 
 const SERVER_EXE = 'Server.Loader.exe'
 
@@ -3653,7 +3666,11 @@ async function launchGame () {
 // a bad day, Cam must not be locked out of the controls for his own server.
 // ---------------------------------------------------------------------------
 
-const ROLES_URL = `https://github.com/${GITHUB_REPO}/releases/latest/download/roles.json`
+// OPERATORS: NCO_ROLES_URL points this at YOUR published role map. The server writes that
+// file (Discord.RolesFile) and the ship publishes it with the release, so a self-hoster
+// needs only to say where theirs is rather than edit this line.
+const ROLES_URL = process.env.NCO_ROLES_URL ||
+  `https://github.com/${GITHUB_REPO}/releases/latest/download/roles.json`
 
 const LEVELS = { player: 0, moderator: 1, admin: 2, owner: 3 }
 
