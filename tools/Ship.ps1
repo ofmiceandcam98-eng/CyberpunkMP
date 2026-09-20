@@ -678,6 +678,38 @@ if ($Mod) {
     [System.IO.Compression.ZipFile]::CreateFromDirectory($stage, $payload,
         [System.IO.Compression.CompressionLevel]::Optimal, $false)
 
+    # COMPILE WHAT IS ACTUALLY SHIPPING, before it is uploaded.
+    #
+    # The earlier CheckScripts compiled the REPO, and the repo was always fine - which is how
+    # v0.3.115-.117 went out with a payload that could not compile while the gate reported OK.
+    # redscript aborts the WHOLE mod on one bad file, so a payload-only defect is total: no
+    # menu, no chat, no HUD, indistinguishable from the mod doing nothing.
+    #
+    # The ZIP is unpacked rather than the stage folder checked, so what is compiled is what
+    # gets uploaded. If unpacking fails, the stage is compiled instead and says so.
+    $checkDir = Join-Path $env:TEMP "nco-ship-payload-check"
+    if (Test-Path $checkDir) { Remove-Item $checkDir -Recurse -Force }
+
+    $checkRoot = $null
+    try {
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($payload, $checkDir)
+        $checkRoot = $checkDir
+    } catch {
+        Warn "could not unpack the payload to check it ($($_.Exception.Message)) - compiling the stage instead"
+        $checkRoot = $stage
+    }
+
+    $payloadScripts = Join-Path $checkRoot "assets\redscript"
+    & (Join-Path $PSScriptRoot "CheckScripts.ps1") -ScriptDir $payloadScripts | Out-Null
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host ""
+        & (Join-Path $PSScriptRoot "CheckScripts.ps1") -ScriptDir $payloadScripts   # visibly, so the errors are readable
+        Die "the STAGED PAYLOAD does not compile - not publishing. The repo compiling is a different question from the payload compiling; this is the one players live with."
+    }
+
+    Ok "staged payload compiles"
+
     $uploads += $payload
     $uploads += (Join-Path $Repo "distrib\launcher\mod\CyberpunkMP.dll")
     Ok "mod payload staged"
