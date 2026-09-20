@@ -191,8 +191,37 @@ public class MpInventory {
 
     if IsDefined(devSystem) {
         let lifePath = devSystem.GetLifePath(player);
-        network.SetLifepath(Cast<Uint32>(EnumInt(lifePath)));
-        network.ScriptLog(s"capture: lifepath \(EnumInt(lifePath))");
+
+        /*
+         * ONLY A REAL LIFEPATH IS REPORTED.
+         *
+         * The FIRST save out of the creator reads gamedataLifePath::Invalid, because
+         * PlayerDevelopmentSystem has not been populated at that instant - measured
+         * 2026-09-14, where it arrived at the server as 4294967295 and the starter kit was
+         * skipped for that save. It self-heals on the next one, so the cost is a briefly
+         * unarmed character and an alarming "unsupported lifepath" line in the log.
+         *
+         * Sending it is worse than saying nothing, and not only cosmetically: 4294967295 is
+         * bit-for-bit the native's kLifepathUnknown sentinel, so "the creator answered
+         * Invalid" and "script never reported one" arrive identical. Skipping keeps the two
+         * apart and leaves any value already captured alone - BeginInventoryCapture
+         * deliberately does not clear the lifepath, so a good one survives a later save
+         * that happens to read Invalid.
+         *
+         * Compared against the enum MEMBERS rather than a numeric range: Invalid reaches
+         * script as -1 while the declaration lists it last, so a range check would be
+         * reasoning about an encoding nobody promised.
+         */
+        let real = Equals(lifePath, gamedataLifePath.Corporate)
+                || Equals(lifePath, gamedataLifePath.Nomad)
+                || Equals(lifePath, gamedataLifePath.StreetKid);
+
+        if real {
+            network.SetLifepath(Cast<Uint32>(EnumInt(lifePath)));
+            network.ScriptLog(s"capture: lifepath \(EnumInt(lifePath))");
+        } else {
+            network.ScriptLog(s"capture: lifepath not chosen yet (\(EnumInt(lifePath))) - not reported, so a good one is not overwritten");
+        }
     } else {
         network.ScriptLog("capture: PlayerDevelopmentSystem missing - no lifepath reported");
     }
