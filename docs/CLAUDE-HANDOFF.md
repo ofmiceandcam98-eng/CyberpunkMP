@@ -78,13 +78,19 @@ failure is silent until somebody asks. Run these; they take seconds:
 | Launcher work | `node -v`, `pnpm -v` | `corepack` is not always on PATH even when pnpm is; call `pnpm` directly |
 | Manifest signing tests | `tweetnacl` in `code\launcher-lite\node_modules` | Per CHECKOUT, not per machine: the signing half of `tools\manifest\selftest.cjs` fails without it |
 | Linux / container build | `docker info` (the CLI existing is not the daemon running) | The only local way to answer "does the server still build for Linux" |
-| Disk headroom | `df -h /c` or Explorer | A ship stages payloads, images and crash dumps; a nearly-full disk fails in ways that read as code faults |
+| Disk headroom | `(Get-PSDrive C).Free/1GB` — **not** `df` | A ship stages payloads, images and crash dumps; a nearly-full disk fails in ways that read as code faults. `df -h /c` under git-bash reported 9 GB and then 59 GB minutes apart on this box while Windows said 47.7 GB — it is not a reliable source for this number |
 
 **Observed 2026-09-20 on Cam's box** (measured, not assumed): game + `scc` + REDmod present;
 `CheckScripts.ps1` answers OK; MSVC present, so Verify's tests run; xmake 3.1.0 with the SDK
 pinned; node 26 and pnpm 9.15.9, but `corepack` NOT on PATH; four .NET SDKs; WolvenKit
 Console unpacked locally; Docker installed but **the daemon was not running**, so the Linux
-build was not attempted; **9 GB free of 931 GB** — treat as full until cleared.
+build was not attempted; **47.7 GB free of 930.5 GB** (`Get-PSDrive`/WMI).
+
+**That last figure was WRONG when this table first landed**, and the mistake is worth keeping
+rather than quietly fixing: it said 9 GB and called it measured, on the strength of a `df -h
+/c` that returned 9 GB and then 59 GB minutes later. Cam was told his disk was nearly full
+when it had ~48 GB free. Measure with the platform's own tool, and when a number decides
+somebody's next action, take it twice.
 
 **Observed 2026-09-14 on zeldfep's box** (his note, not measured here): redscript compiles,
 live-install works, prerequisites verify; no REDmod, no local WolvenKit, no Linux toolchain.
