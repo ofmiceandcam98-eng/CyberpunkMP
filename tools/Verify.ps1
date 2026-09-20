@@ -512,6 +512,26 @@ if (-not $SkipTests) {
             else { Pass "$($t.BaseName): $ok checks" }
         }
     }
+
+    # Lua tests, run through xmake's own interpreter.
+    #
+    # OUTSIDE the MSVC branch on purpose: these need xmake, not a C++ compiler, so a box
+    # without MSVC still gets them rather than skipping the lot. They cover the build
+    # scripts themselves - the post-build install step destroyed a launcher install on
+    # 2026-09-09, and nothing in this file would have noticed.
+    foreach ($t in (Get-ChildItem (Join-Path $PSScriptRoot "tests") -Filter *.lua)) {
+        $r = & $XMake lua $t.FullName 2>&1
+        $luaOk = ($r | Select-String -Pattern "^PASS").Count
+        $luaFailed = $r | Select-String -Pattern "^FAIL"
+
+        if ($luaFailed -or $LASTEXITCODE -ne 0) {
+            Fail -Summary "$($t.BaseName): $($luaFailed.Count) check(s) failing" `
+                 -What "a rule about the BUILD SCRIPTS is no longer true - these guard the steps that touch a real game install" `
+                 -Where (($luaFailed | ForEach-Object { $_.Line.Trim() }) -join ' ;; ') `
+                 -Fix "run it directly for the full output: xmake lua tools\tests\$($t.Name)"
+        }
+        else { Pass "$($t.BaseName): $luaOk checks" }
+    }
 }
 
 # ---------------------------------------------------------------------------

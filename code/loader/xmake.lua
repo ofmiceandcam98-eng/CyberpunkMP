@@ -10,6 +10,24 @@ else
         return string.find(stdout, "Cyberpunk2077.exe")
     end
 
+    -- Installing the built DLL is shared by both targets below and lives in installdll.lua,
+    -- because it used to be two copies of a step that DESTROYED a launcher install: it
+    -- deleted zzzCyberpunkMP before linking, and when the link then failed for want of the
+    -- symlink privilege the install was simply gone (zeldfep's box, 2026-09-09 - a bare
+    -- `xmake -y` left that folder with zero files and the launcher saying "install the mod
+    -- first"). One copy, no delete, and a failure that leaves the install intact.
+    local function install_dll(target)
+        local targetdir = target:targetdir()
+        local clientdir = path.join(os.projectdir(), target:dep("Client"):targetdir())
+
+        local basedir = path.join(targetdir, "..\\..\\")
+        local red4extPlugins = path.join(basedir, "red4ext\\plugins")
+
+        import("installdll", {rootdir = os.scriptdir()})
+
+        return installdll.install_client_dll(clientdir, red4extPlugins, is_game_running(os))
+    end
+
     target("Cyberpunk2077")
         set_kind("binary")
         set_basename("Cyberpunk2077")
@@ -22,32 +40,7 @@ else
         on_link(function(target) end)
         on_install(function(target) end)
         after_build(function(target)
-            local targetdir = target:targetdir()
-            local clientdir = path.join(os.projectdir(), target:dep("Client"):targetdir())
-
-            local basedir = path.join(targetdir, "..\\..\\")
-            local red4extPlugins = path.join(basedir, "red4ext\\plugins")
-
-            local modPath = path.join(red4extPlugins, "zzzCyberpunkMP")
-
-            if is_game_running(os) then
-                print("CyberpunkMP.dll not installed: game is running.")
-                return
-            end
-            if os.exists(modPath) then
-                if os.isdir(modPath) then
-                    os.rmdir(modPath)
-                else
-                    os.rm("zzzCyberpunkMP")
-                end
-            end
-
-            os.mkdir(modPath)
-
-            local client_dll_path = path.join(clientdir, "CyberpunkMP.dll")
-            local symlink_path = path.join(modPath, "CyberpunkMP.dll")
-
-            os.ln(client_dll_path, symlink_path)
+            install_dll(target)
         end)
 
         add_deps("Client")
@@ -64,32 +57,7 @@ else
         on_link(function(target) end)
         on_install(function(target) end)
         after_build(function(target)
-            local targetdir = target:targetdir()
-            local clientdir = path.join(os.projectdir(), target:dep("Client"):targetdir())
-
-            local basedir = path.join(targetdir, "..\\..\\")
-            local red4extPlugins = path.join(basedir, "red4ext\\plugins")
-
-            local modPath = path.join(red4extPlugins, "zzzCyberpunkMP")
-
-            if is_game_running(os) then
-                print("CyberpunkMP.dll not installed: game is running.")
-                return
-            end
-            if os.exists(modPath) then
-                if os.isdir(modPath) then
-                    os.rmdir(modPath)
-                else
-                    os.rm("zzzCyberpunkMP")
-                end
-            end
-
-            os.mkdir(modPath)
-
-            local client_dll_path = path.join(clientdir, "CyberpunkMP.dll")
-            local symlink_path = path.join(modPath, "CyberpunkMP.dll")
-
-            os.ln(client_dll_path, symlink_path)
+            install_dll(target)
         end)
 
         add_deps("Client")
