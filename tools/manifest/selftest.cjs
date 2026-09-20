@@ -227,6 +227,87 @@ try {
       gd.status !== 0 && gd.stderr.includes(needle) && gd.stderr.includes(phrase), gd.stderr)
   }
 
+  // --- curation: a requirement that would install something incompatible -----
+  //
+  // The compatibility entries compare what is PRESENT, so CET-vs-payload is caught only
+  // after a player installs CET. These cover the other question: does anything on our list
+  // REQUIRE a thing the list calls critically incompatible? Mod 22114 was that shape and was
+  // caught by hand. All four directions are planted: component requires it, modlist entry
+  // requires it, an id nobody can resolve, and a merely "minor" note that must NOT refuse.
+  const hostileEntry = {
+    a: { id: 'cyberpunk_multiplayer' },
+    b: { id: 'cyber_engine_tweaks' },
+    status: 'known_incompatible',
+    severity: 'critical',
+    reason: 'selftest: the two cannot share a machine.'
+  }
+
+  const payloadComponent = component({
+    id: 'cyberpunk_multiplayer', name: 'CyberpunkMP', class: 'payload',
+    version: undefined, required: true, networkImpact: 'critical', nexus: undefined
+  })
+
+  const requiresHostile = path.join(pub, 'requires-hostile.json')
+  fs.writeFileSync(requiresHostile, JSON.stringify({
+    game: { id: 'cyberpunk2077', supportedVersion: '2.31', enforce: 'warn' },
+    components: [payloadComponent, component({ id: 'needs_cet', name: 'Needs CET', requires: ['cyber_engine_tweaks'] })],
+    loadRules: [], compatibility: { entries: [hostileEntry] }, policy: { unknownMods: 'warn' }
+  }, null, 2))
+
+  const gh = run('generate-manifest.cjs', ['--staged', staged, '--source', requiresHostile, '--out', path.join(tmp, 'never-hostile.json'),
+    '--release', 'v0.0.1', '--channel', 'development', '--protocol-client', '1', '--protocol-server', '2', '--payload-zip', payloadZip])
+  check('generator: refuses a component requiring something critically incompatible',
+    gh.status !== 0 && gh.stderr.includes('cyber_engine_tweaks') && gh.stderr.includes('needs_cet'), gh.stderr)
+
+  // The same conflict arriving from the curated Nexus list rather than the source.
+  const listSource = path.join(pub, 'list-source.json')
+  fs.writeFileSync(listSource, JSON.stringify({
+    game: { id: 'cyberpunk2077', supportedVersion: '2.31', enforce: 'warn' },
+    components: [payloadComponent, component({ id: 'listed_mod', name: 'Listed Mod', nexus: { modId: 4242 } })],
+    loadRules: [], compatibility: { entries: [hostileEntry] }, policy: { unknownMods: 'warn' }
+  }, null, 2))
+
+  const badModlist = path.join(pub, 'modlist-bad.json')
+  fs.writeFileSync(badModlist, JSON.stringify({
+    version: 1, game: 'cyberpunk2077',
+    mods: [{ nexusModId: 4242, name: 'Listed Mod', required: false, requires: ['cyber_engine_tweaks'] }]
+  }, null, 2))
+
+  const gm = run('generate-manifest.cjs', ['--staged', staged, '--source', listSource, '--out', path.join(tmp, 'never-modlist.json'),
+    '--release', 'v0.0.1', '--channel', 'development', '--protocol-client', '1', '--protocol-server', '2',
+    '--payload-zip', payloadZip, '--modlist', badModlist])
+  check('generator: refuses a modlist entry whose requires pulls in an incompatible mod',
+    gm.status !== 0 && gm.stderr.includes('cyber_engine_tweaks') && gm.stderr.includes('Listed Mod'), gm.stderr)
+
+  // An id nobody can resolve is a WARNING, never a refusal: it may be a typo or a mod we
+  // have not catalogued, and blocking a ship on a guess teaches people to skip the gate.
+  const unknownReq = path.join(pub, 'unknown-req.json')
+  fs.writeFileSync(unknownReq, JSON.stringify({
+    game: { id: 'cyberpunk2077', supportedVersion: '2.31', enforce: 'warn' },
+    components: [payloadComponent, component({ id: 'curious_mod', name: 'Curious Mod', requires: ['something_nobody_catalogued'] })],
+    loadRules: [], compatibility: { entries: [hostileEntry] }, policy: { unknownMods: 'warn' }
+  }, null, 2))
+
+  const gu = run('generate-manifest.cjs', ['--staged', staged, '--source', unknownReq, '--out', path.join(tmp, 'unknown-req-out.json'),
+    '--release', 'v0.0.1', '--channel', 'development', '--protocol-client', '1', '--protocol-server', '2', '--payload-zip', payloadZip])
+  check('generator: warns but does not refuse an unresolvable requirement',
+    gu.status === 0 && gu.stdout.includes('could not be resolved') && gu.stdout.includes('something_nobody_catalogued'),
+    gu.stderr || gu.stdout)
+
+  // Severity is the whole gate: "minor" is advice, and advice must not stop a ship.
+  const minorSource = path.join(pub, 'minor-source.json')
+  fs.writeFileSync(minorSource, JSON.stringify({
+    game: { id: 'cyberpunk2077', supportedVersion: '2.31', enforce: 'warn' },
+    components: [payloadComponent, component({ id: 'needs_cet', name: 'Needs CET', requires: ['cyber_engine_tweaks'] })],
+    loadRules: [],
+    compatibility: { entries: [Object.assign({}, hostileEntry, { severity: 'minor' })] },
+    policy: { unknownMods: 'warn' }
+  }, null, 2))
+
+  const gmin = run('generate-manifest.cjs', ['--staged', staged, '--source', minorSource, '--out', path.join(tmp, 'minor-out.json'),
+    '--release', 'v0.0.1', '--channel', 'development', '--protocol-client', '1', '--protocol-server', '2', '--payload-zip', payloadZip])
+  check('generator: a minor incompatibility is advice, not a refusal', gmin.status === 0, gmin.stderr || gmin.stdout)
+
   // --- keygen + sign + verify roundtrip --------------------------------------
   const keyPath = path.join(tmp, 'signing-key')
   const keyEnv = { NCO_MANIFEST_KEY_FILE: keyPath }

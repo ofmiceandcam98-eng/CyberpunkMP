@@ -33,6 +33,11 @@
             [--min-launcher <ver>]          oldest launcher allowed to verify
             [--payload-zip <path>]          ModPayload.zip, for the archive entry
             [--previous-manifest <path>]    last manifest, for same-day serials
+            [--modlist <modlist.json>]      the curated Nexus list, so an entry whose
+                                            requires would install something the
+                                            compatibility section calls critically
+                                            incompatible is refused HERE rather than
+                                            discovered on a player's machine
 
     Deliberately dependency-free: pure node:crypto does the hashing, so this
     can run anywhere Node 20+ exists - no install step between "checkout" and
@@ -71,7 +76,11 @@ const FLAGS = {
   '--protocol-server': 'protocolServer',
   '--min-launcher': 'minLauncher',
   '--payload-zip': 'payloadZip',
-  '--previous-manifest': 'previousManifest'
+  '--previous-manifest': 'previousManifest',
+  // Optional: the curated Nexus list, checked against the compatibility entries so a
+  // mod whose requires would drag in something critically incompatible is refused on
+  // the list rather than discovered on a player's machine.
+  '--modlist': 'modlist'
 }
 
 const args = {}
@@ -243,6 +252,100 @@ for (const comp of components) {
   }
 }
 
+// WOULD SATISFYING A REQUIREMENT INSTALL SOMETHING WE CALL INCOMPATIBLE?
+//
+// The compatibility entries compare components that are PRESENT, so CET-vs-payload is
+// caught only once a player has already installed CET. Nothing asked the other question at
+// curation time: does anything on our list REQUIRE a thing the list itself calls critically
+// incompatible? Mod 22114 was exactly that shape and was caught by hand.
+//
+// Catching it here costs a ship nothing. Catching it at the door costs a player their
+// evening, halfway through an install of something we should never have recommended.
+//
+// Only error+ severities refuse. A "minor" note is advice; critical means the two cannot
+// be on one machine, and requiring one of them is therefore a curation mistake, not a
+// runtime surprise. Anything that cannot be RESOLVED to a known id is reported as a
+// warning instead of a refusal - an unknown id might be a typo or might be a mod we have
+// never catalogued, and blocking a ship on a guess would train people to skip the gate.
+const REFUSING_SEVERITIES = ['critical', 'error']
+
+const hostilePairs = (source.compatibility && Array.isArray(source.compatibility.entries) ? source.compatibility.entries : [])
+  .filter(e => e && e.status === 'known_incompatible' && REFUSING_SEVERITIES.includes(e.severity))
+  .map(e => ({ a: e.a && e.a.id, b: e.b && e.b.id, severity: e.severity, reason: e.reason }))
+  .filter(p => typeof p.a === 'string' && typeof p.b === 'string')
+
+// Every id this manifest knows about, so "resolves to something we ship" is answerable.
+const componentById = new Map(components.filter(c => c && typeof c.id === 'string').map(c => [c.id, c]))
+const componentByModId = new Map(components.filter(c => c && c.nexus && typeof c.nexus.modId === 'number').map(c => [c.nexus.modId, c]))
+
+// The curated Nexus list, when the caller passes one. Optional on purpose: the generator
+// must keep working from the source alone, and a missing list is a warning, not a refusal.
+let modlist = null
+if (args.modlist) {
+  if (!fs.existsSync(args.modlist)) blocked(`--modlist file not found: ${args.modlist}`)
+  try {
+    modlist = JSON.parse(fs.readFileSync(args.modlist, 'utf8'))
+  } catch (err) {
+    blocked(`${args.modlist} is not valid JSON: ${err.message}`)
+  }
+}
+
+const unresolvedRequirements = []
+
+function checkRequirement (holderLabel, holderId, requirement) {
+  // A requirement is either an id string, a bare number (a Nexus mod id), or an
+  // object carrying one of those - the three shapes the source and the modlist use.
+  let id = null
+  if (typeof requirement === 'string') id = requirement
+  else if (typeof requirement === 'number') id = componentByModId.has(requirement) ? componentByModId.get(requirement).id : `nexus:${requirement}`
+  else if (requirement && typeof requirement === 'object') {
+    if (typeof requirement.id === 'string') id = requirement.id
+    else if (typeof requirement.modId === 'number') id = componentByModId.has(requirement.modId) ? componentByModId.get(requirement.modId).id : `nexus:${requirement.modId}`
+    else if (typeof requirement.nexusModId === 'number') id = componentByModId.has(requirement.nexusModId) ? componentByModId.get(requirement.nexusModId).id : `nexus:${requirement.nexusModId}`
+  }
+
+  if (!id) {
+    unresolvedRequirements.push(`${holderLabel}: a requirement is not an id, a mod id, or an object carrying one (${JSON.stringify(requirement).slice(0, 80)})`)
+    return
+  }
+
+  for (const pair of hostilePairs) {
+    const other = pair.a === id ? pair.b : (pair.b === id ? pair.a : null)
+    if (other === null) continue
+
+    // The requirement IS one side of an incompatibility. It only matters if the other
+    // side is something this manifest ships, or the requirer itself.
+    if (componentById.has(other) || other === holderId) {
+      problem(`${holderLabel} requires "${id}", which is ${pair.severity}ly incompatible with "${other}"` +
+              (componentById.has(other) ? ' (a component this manifest ships)' : '') +
+              ` - satisfying it would install something the compatibility list refuses. ${pair.reason || ''}`.trimEnd())
+      return
+    }
+  }
+
+  // Not hostile, but is it even a thing we know? Only say so for ids that name nothing,
+  // and only as a warning - see the note above.
+  if (!componentById.has(id) && !hostilePairs.some(p => p.a === id || p.b === id)) {
+    unresolvedRequirements.push(`${holderLabel}: requirement "${id}" matches no component and no compatibility entry - cannot judge it`)
+  }
+}
+
+for (const comp of components) {
+  if (!comp || typeof comp.id !== 'string') continue
+  for (const dep of (Array.isArray(comp.dependencies) ? comp.dependencies : [])) checkRequirement(`component ${comp.id}`, comp.id, dep)
+  for (const req of (Array.isArray(comp.requires) ? comp.requires : [])) checkRequirement(`component ${comp.id}`, comp.id, req)
+}
+
+if (modlist && Array.isArray(modlist.mods)) {
+  for (const mod of modlist.mods) {
+    if (!mod) continue
+    const holderComponent = typeof mod.nexusModId === 'number' ? componentByModId.get(mod.nexusModId) : null
+    const holderId = holderComponent ? holderComponent.id : (typeof mod.nexusModId === 'number' ? `nexus:${mod.nexusModId}` : String(mod.name || 'unnamed'))
+    const label = `modlist entry ${mod.name || holderId}`
+    for (const req of (Array.isArray(mod.requires) ? mod.requires : [])) checkRequirement(label, holderId, req)
+  }
+}
+
 // THE HELPER RULE (crew decree, 2026-08-22): content mods are never load-bearing -
 // "they should be there for helping us, not as a variable." The install digest
 // admits every component with required:true + audience:all, and that predicate is
@@ -275,6 +378,15 @@ for (const comp of components) {
       }
     }
   }
+}
+
+// Printed before the refusal check, so they are visible whether the ship stops here or
+// not. These are the requirements that could not be JUDGED - an unknown id is not proof
+// of a conflict, and refusing on one would teach people to route around the gate.
+if (unresolvedRequirements.length > 0) {
+  console.log(`  WARNING: ${unresolvedRequirements.length} requirement(s) could not be resolved to a known component or compatibility entry:`)
+  for (const note of unresolvedRequirements) console.log(`           ${note}`)
+  console.log('           Catalogue them in manifest-source.json (or the compatibility entries) so the next ship can judge them.')
 }
 
 if (problems.length > 0) {
