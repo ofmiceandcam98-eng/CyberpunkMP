@@ -64,9 +64,6 @@ public class MultiplayerGameController extends inkGameController {
 
     // The "you are talking" indicator. Built on first transmission, not at startup.
     private let m_voiceIndicator: wref<inkText>;
-    // The persistent TALK button on the HUD bar (megaphone + Y hint). Built once after the
-    // authored bar spawns, relit whenever the mic opens. Render is in TalkButton.reds.
-    private let m_talkButton: wref<inkCanvas>;
 
     // The ink-probe experiment (Atlas: can-a-cli-authored-inkwidget-be-spawned...).
     // One-shot per session; comes out the moment the question is answered.
@@ -306,8 +303,6 @@ public class MultiplayerGameController extends inkGameController {
     protected cb func OnPositionAnimationFinish(anim: ref<inkAnimProxy>) -> Bool {
         this.m_startupAnimProxy.UnregisterFromAllCallbacks(inkanimEventType.OnFinish);
         this.m_phoneIconWidget.SetVisible(true);
-        // The bar exists and is laid out now, so this is the moment to add the talk button.
-        this.MpBuildTalkButton();
         // And the moment async spawning demonstrably works, which is what the probe needs.
         this.MpInkProbeOnce();
     }
@@ -392,28 +387,6 @@ public class MultiplayerGameController extends inkGameController {
                 }
             }
         }
-    }
-
-    // Build the persistent talk button once and hang it on the HUD root, the same place the
-    // voice indicator places itself. Position is a first guess (the authored bar's button
-    // coordinates are not in script) - sits at the bottom-left under the stats button.
-    private func MpBuildTalkButton() -> Void {
-        if IsDefined(this.m_talkButton) {
-            return;
-        }
-        let root = this.GetRootCompoundWidget();
-        if !IsDefined(root) {
-            return;
-        }
-        let canvas = new inkCanvas();
-        canvas.SetName(n"mp_talk_button");
-        canvas.SetAnchor(inkEAnchor.BottomLeft);
-        canvas.SetAnchorPoint(new Vector2(0.0, 1.0));
-        canvas.SetMargin(new inkMargin(40.0, 0.0, 0.0, 140.0));
-        canvas.SetInteractive(false);
-        canvas.Reparent(root);
-        this.m_talkButton = canvas;
-        MpTalkButtonRender(canvas, this.m_voiceTransmitting);
     }
 
     private cb func OnActivatePhoneElements(element: Uint32) -> Bool {
@@ -501,6 +474,23 @@ public class MultiplayerGameController extends inkGameController {
         evt.AddInputHint(CreateInputHint(n"Emote", n"UIEmote", true), this.m_connectedToServer && !this.m_emoteSelectorOpen);
         evt.AddInputHint(CreateInputHint(n"Cancel Job", n"UIShop", true), this.m_connectedToServer && !this.m_deliveryListOpen && this.m_activeDelivery);
         evt.AddInputHint(CreateInputHint(n"Start Job", n"UIJob", false), this.m_connectedToServer && !this.m_deliveryListOpen && !this.m_activeDelivery);
+
+        // TALK, as a real input hint rather than the hand-drawn megaphone button it replaces.
+        //
+        // That button was a runtime-built box with a horn made of rotated rectangles. It sat
+        // beside these hints without matching them, and the horn read as a diamond blob - and
+        // being positioned in raw pixels it landed differently on zeldfep's 2K screen.
+        //
+        // A hint costs none of that: the game draws it in its own style, at its own place,
+        // with the CURRENT binding rather than a hardcoded "Y" - which matters because the
+        // key is rebindable in the launcher, and the old button always said Y whatever the
+        // player had chosen. Live mic state is not lost either; the [ TALKING ] indicator
+        // already covers that, and it is the thing that must be unmissable.
+        //
+        // Hold, because push-to-talk is the default mode. A player on toggle sees a hold
+        // glyph on a key that toggles - cosmetic, and the mode lives launcher-side where
+        // script cannot read it; worth revisiting if the mode ever crosses to the client.
+        evt.AddInputHint(CreateInputHint(n"Talk", n"VoicePushToTalk", true), this.m_connectedToServer);
 
         this.m_uiSystem.QueueEvent(evt);
     }
@@ -1389,11 +1379,6 @@ public class MultiplayerGameController extends inkGameController {
      * and a widget nobody sees should not cost anything to have.
      */
     private func MpVoiceUpdateIndicator() -> Void {
-        // Keep the persistent talk button in step with the mic (runs before the early return
-        // below, so it relights on the way DOWN too).
-        if IsDefined(this.m_talkButton) {
-            MpTalkButtonRender(this.m_talkButton, this.m_voiceTransmitting);
-        }
         if !this.m_voiceTransmitting {
             if IsDefined(this.m_voiceIndicator) {
                 this.m_voiceIndicator.SetVisible(false);
