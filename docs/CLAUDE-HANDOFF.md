@@ -60,10 +60,37 @@ cutover record.
 docker exec cyberpunkmp-tailscale wget -qO- http://localhost:11778/api/v1/status/
 ```
 
-### 2a. Does THIS machine have the game? Check before you ship
+### 2a. What can THIS machine actually do? Check before you ship
 
 It decides what you can verify yourself, and it has differed per machine — the box this
 was first written on had no game; the machine it was written FOR does.
+
+**Ask about CAPABILITIES, not about "the game", and MEASURE rather than remember.** Routing
+a task to the stream that cannot run it costs a full round trip through the feed, and the
+failure is silent until somebody asks. Run these; they take seconds:
+
+| Capability | Check | Why it decides routing |
+|---|---|---|
+| Game installed | `Test-Path "<GameDir>\bin\x64\Cyberpunk2077.exe"` | Nothing in-game can be tried without it |
+| redscript compiles | `Test-Path "<GameDir>\engine\tools\scc.exe"` then `.\tools\CheckScripts.ps1` | `scc` arrives with the redscript prerequisite, NOT with the game — see below |
+| REDmod | `Test-Path "<GameDir>\tools\redmod\bin\scc.exe"` | Second source of `scc`, and the only local copy of the game's own `.script` sources |
+| C++ tests / Verify | `vcvars64.bat` present | Verify's unit tests are compiled with MSVC; without it they SKIP and say so |
+| Launcher work | `node -v`, `pnpm -v` | `corepack` is not always on PATH even when pnpm is; call `pnpm` directly |
+| Manifest signing tests | `tweetnacl` in `code\launcher-lite\node_modules` | Per CHECKOUT, not per machine: the signing half of `tools\manifest\selftest.cjs` fails without it |
+| Linux / container build | `docker info` (the CLI existing is not the daemon running) | The only local way to answer "does the server still build for Linux" |
+| Disk headroom | `df -h /c` or Explorer | A ship stages payloads, images and crash dumps; a nearly-full disk fails in ways that read as code faults |
+
+**Observed 2026-09-20 on Cam's box** (measured, not assumed): game + `scc` + REDmod present;
+`CheckScripts.ps1` answers OK; MSVC present, so Verify's tests run; xmake 3.1.0 with the SDK
+pinned; node 26 and pnpm 9.15.9, but `corepack` NOT on PATH; four .NET SDKs; WolvenKit
+Console unpacked locally; Docker installed but **the daemon was not running**, so the Linux
+build was not attempted; **9 GB free of 931 GB** — treat as full until cleared.
+
+**Observed 2026-09-14 on zeldfep's box** (his note, not measured here): redscript compiles,
+live-install works, prerequisites verify; no REDmod, no local WolvenKit, no Linux toolchain.
+
+Anything above older than a week is a belief, not a fact — re-run the checks and update the
+two lines above rather than arguing from them.
 
 ```powershell
 Test-Path "<GameDir>\bin\x64\Cyberpunk2077.exe"   # is the GAME here?
