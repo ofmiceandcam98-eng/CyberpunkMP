@@ -321,19 +321,55 @@ public class MpInventory {
      * server's own answer, captured at sign-in, before this spawn: false on the very first
      * spawn of a character and true forever after.
      */
-    let firstSpawn = true;
+    // ASKED THREE WAYS, AND THE DEFAULT IS NOW THE SAFE ONE.
+    //
+    // This used to be: firstSpawn = true, then walk the roster and correct it from the
+    // ACTIVE entry. Every way of finding no active entry - a roster that never arrived, a
+    // list where the server flagged nobody active - therefore left firstSpawn TRUE and sent
+    // the branch below into the one that TAKES MONEY OFF THE PLAYER. A missing answer chose
+    // the destructive reading, which is backwards: Cam's rule is that what a player has must
+    // never vanish, and any strip is one-shot at creation.
+    //
+    // HasCharacterSpawnedBefore() is the better source and was already exposed: the client
+    // stores it at sign-in from the ACTIVE character summary (NetworkService, which falls
+    // back to the first row when the server flags none), before the spawn request goes out.
+    // So it is answered for a returning player whether or not the selector ever ran.
+    //
+    // The roster is kept as corroboration rather than the source - either saying "this
+    // character has played before" is enough to protect the money.
+    let spawnedBefore = network.HasCharacterSpawnedBefore();
     let rosterIndex = 0u;
 
     while rosterIndex < network.GetRosterCount() {
-      if network.IsRosterActive(rosterIndex) {
-        firstSpawn = !network.HasRosterSpawnedBefore(rosterIndex);
+      if network.IsRosterActive(rosterIndex) && network.HasRosterSpawnedBefore(rosterIndex) {
+        spawnedBefore = true;
       }
 
       rosterIndex += 1u;
     }
 
+    /*
+     * Stripping needs POSITIVE evidence that this is the creating spawn, not merely the
+     * absence of evidence that it is not.
+     *
+     * ShouldEquipRestored() is true only for a starter-kit grant, which only a character
+     * being created receives - it is the one unambiguous "this is creation" signal the
+     * client has, and it is still set here because the kit block that clears it runs later
+     * in this function.
+     *
+     * Otherwise: only when the server has actually told us who this character is
+     * (IsCharacterStatusKnown) AND it says they have never spawned. Status unknown means
+     * the client cannot tell a new character from one whose roster simply did not arrive,
+     * and in that case it keeps the money.
+     */
+    let firstSpawn = network.ShouldEquipRestored()
+                  || (network.IsCharacterStatusKnown() && !spawnedBefore);
+
     // [MONEY] boundary 4 of 4: what the restore is about to overwrite, and with what.
-    network.ScriptLog(s"[MONEY] 4 restore: holding \(held), server says \(stored), adjusting by \(owed), firstSpawn \(firstSpawn)");
+    // The INPUTS as well as the verdict. firstSpawn alone could not be argued with after
+    // the fact, and it is the flag that decides whether money is taken.
+    network.ScriptLog(s"[MONEY] 4 restore: holding \(held), server says \(stored), adjusting by \(owed), firstSpawn \(firstSpawn)" +
+      s" (spawnedBefore \(spawnedBefore), statusKnown \(network.IsCharacterStatusKnown()), starterKit \(network.ShouldEquipRestored()), roster \(network.GetRosterCount()))");
 
     // What this pass EXPECTS to be holding when it is done, decided before it acts.
     //
