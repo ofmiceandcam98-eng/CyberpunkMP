@@ -335,6 +335,15 @@ public class MpInventory {
     // [MONEY] boundary 4 of 4: what the restore is about to overwrite, and with what.
     network.ScriptLog(s"[MONEY] 4 restore: holding \(held), server says \(stored), adjusting by \(owed), firstSpawn \(firstSpawn)");
 
+    // What this pass EXPECTS to be holding when it is done, decided before it acts.
+    //
+    // Needed because the honest outcome is not always the server's figure: money the server
+    // has not heard about yet is deliberately KEPT after the first spawn (below), so the
+    // expected balance there is what the player already had. Without this the summary at the
+    // end would report that correct case as a failure, and a summary that cries wolf is one
+    // nobody reads - which is how the blind spot this fixes lasted three days.
+    let expectedMoney = stored;
+
     if owed > 0 {
       transaction.GiveItem(player, MarketSystem.Money(), owed);
     } else {
@@ -366,6 +375,9 @@ public class MpInventory {
           transaction.RemoveItem(player, MarketSystem.Money(), -owed);
           network.ScriptLog(s"[MONEY] 4 restore: first spawn, stripped \(-owed) template eddies");
         } else {
+          // Kept on purpose, so the balance that SHOULD be there afterwards is the one the
+          // player already had, not the server's older figure.
+          expectedMoney = held;
           network.ScriptLog(s"[MONEY] 4 restore: KEPT \(-owed) eddies the server had not heard about yet");
         }
       }
@@ -671,7 +683,42 @@ public class MpInventory {
     MpVehicles.Restore(network);
     MpInventory.EquipCyberware(network, player, transaction);
 
-    network.ScriptLog(s"restore DONE: \(restored) stack(s) given, \(removed) stack(s) taken back, money \(held) -> \(stored)");
+    /*
+     * WHAT IT ACTUALLY DID - measured after the fact, not what it set out to do.
+     *
+     * This line used to read "money \(held) -> \(stored)", and both numbers were read
+     * BEFORE anything was applied: `held` at the top, `stored` straight off the wire. So a
+     * restore applied into a world that quietly refused it printed exactly what a working
+     * one printed. That is the starter-kit money bug: the server granted 20000, this line
+     * said 300 -> 20000, the player had 300, and the map recorded the grant as "fictional"
+     * for three days. It was applied into a world that was not ready (the settle latch, see
+     * NetworkWorldSystem.cpp), and no log could tell the two apart.
+     *
+     * So the balance and the stack count are READ AGAIN here, and the summary reports the
+     * difference plus what was expected. A restore that changes nothing can no longer look
+     * like one that worked.
+     *
+     * The caveat, stated rather than hidden: unequip is a QUEUED request, so items removed
+     * from slots may still be counted here. The backpack, the strip and the money are all
+     * immediate, which is where the bugs have been.
+     */
+    let moneyAfter = transaction.GetItemQuantity(player, MarketSystem.Money());
+
+    let afterList: array<wref<gameItemData>>;
+    transaction.GetItemList(player, afterList);
+
+    let stacksBefore = ArraySize(existing);
+    let stacksAfter = ArraySize(afterList);
+
+    network.ScriptLog(s"restore DONE: \(restored) stack(s) given, \(removed) taken back, stacks \(stacksBefore) -> \(stacksAfter), money \(held) -> \(moneyAfter) (expected \(expectedMoney), server said \(stored))");
+
+    if moneyAfter != expectedMoney {
+      network.ScriptLog(s"restore MISMATCH: money should be \(expectedMoney) and is \(moneyAfter) - the adjustment did NOT land. The world was probably not ready to accept it; compare with [MONEY] 4 above.");
+    }
+
+    if count > 0u && restored == 0 && removed == 0 && moneyAfter == held {
+      network.ScriptLog(s"restore NO-OP: the server listed \(count) stack(s) and nothing changed - neither given, taken nor money. Treat this as a FAILED restore, not a tidy one.");
+    }
   }
 
   /**
