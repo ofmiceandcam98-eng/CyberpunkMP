@@ -41,6 +41,14 @@ param(
     # should be fixed rather than routed around.
     [switch]$SkipVerify,
 
+    # Clear the OTHER stream's test builds too.
+    #
+    # The prune normally leaves a build the other stream shipped, because deleting it has
+    # twice taken a build somebody was still using (2026-09-12: test.38 superseded Cam's PvP
+    # test.36, which then had to be re-shipped as test.39). Pass this when the lane really
+    # should be emptied - after a combined build, say - and it behaves as it always did.
+    [switch]$PruneAll,
+
     [switch]$WhatIf
 )
 
@@ -326,6 +334,20 @@ if ($WhatIf) {
     exit 0
 }
 
+# WHO SHIPPED THIS, recorded on the release itself.
+#
+# Both streams ship into ONE lane and the prune below used to clear every other test build,
+# so whoever shipped second silently took the first one's away - measured 2026-09-12, when
+# test.38 superseded Cam's PvP test.36 and it had to be re-shipped as test.39.
+#
+# The identity is the same one the nightly premise checker uses (~/.atlas-host), so nothing
+# new has to be configured on either box; NCO_STREAM overrides it for a one-off. Unknown is
+# allowed and behaves as before - an unstamped build is prunable, which keeps the original
+# "no stale rows" promise for everything shipped before this existed.
+$stream = if ($env:NCO_STREAM) { $env:NCO_STREAM.Trim() }
+          elseif (Test-Path (Join-Path $HOME '.atlas-host')) { (Get-Content (Join-Path $HOME '.atlas-host') -Raw).Trim() }
+          else { 'unknown' }
+
 $notes = @"
 Test build - **not a release**. Players never receive this; it only appears under
 Settings > DEV > Test builds for people with the dev role.
@@ -334,6 +356,8 @@ $Name
 
 Install swaps in this build's mod payload (DLL, redscript and Rpc together) and keeps
 the shipped one. Restore puts the current release back.
+
+shipped-by: $stream
 "@
 
 # The build NUMBER goes in the title, not just the tag.
@@ -420,7 +444,8 @@ else {
 Step "Prune superseded test builds"
 
 if ($WhatIf) {
-    Write-Host "  (WhatIf) would delete every worldstate-test prerelease except $Tag" -ForegroundColor DarkGray
+    Write-Host "  (WhatIf) would delete this stream's worldstate-test prereleases except $Tag" -ForegroundColor DarkGray
+    Write-Host "  (WhatIf) builds stamped 'shipped-by:' another stream are kept unless -PruneAll" -ForegroundColor DarkGray
 }
 else {
     $releases = gh release list --repo $GhRepo --limit 100 --json tagName,isPrerelease | ConvertFrom-Json
@@ -431,6 +456,37 @@ else {
     }
     else {
         foreach ($r in $stale) {
+            # WHOSE BUILD IS THIS? Read it off the release rather than assuming.
+            #
+            # Both streams ship into one lane. Clearing everything took Cam's PvP test.36
+            # away on 2026-09-12 (re-shipped as test.39), and the same shape would take the
+            # emote proof away today. A build stamped by ANOTHER stream is left alone and
+            # said out loud; -PruneAll is there for when the lane really should be emptied.
+            $meta = (& gh release view $r.tagName --repo $GhRepo --json body,author 2>$null | ConvertFrom-Json)
+            $owner = if ($meta.body -match '(?m)^shipped-by:\s*(\S+)') { $Matches[1] } else { '' }
+
+            # NO STAMP? FALL BACK TO WHO PUBLISHED IT.
+            #
+            # Every build shipped before this change is unstamped, including the one on the
+            # lane right now - so a marker-only rule would protect nothing today and would
+            # have deleted the emote proof on the next ship. GitHub already records the
+            # publishing account, and the two streams use different ones.
+            if (-not $owner) {
+                $publisher = $meta.author.login
+                $me = (& gh api user -q .login 2>$null)
+
+                if ($publisher -and $me -and $publisher -ne $me) {
+                    $owner = $publisher
+                }
+            }
+
+            if (-not $PruneAll -and $owner -and $owner -ne $stream) {
+                Warn "kept $($r.tagName) - shipped by '$owner', not this stream ('$stream')"
+                Write-Host "      what   both streams ship into one lane; clearing it would take a build somebody may still be testing" -ForegroundColor DarkYellow
+                Write-Host "      fix    ask them, or re-run with -PruneAll once the lane should be empty" -ForegroundColor DarkYellow
+                continue
+            }
+
             & gh release delete $r.tagName --repo $GhRepo --yes 2>$null
             if ($LASTEXITCODE -eq 0) {
                 Ok "cleared $($r.tagName) from the launcher (git tag kept)"
