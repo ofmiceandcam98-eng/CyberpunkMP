@@ -37,11 +37,21 @@ import CyberpunkMP.World.NetworkWorldSystem
  * So the unpause now waits. The menu gets its frames, the mode event is consumed, the menu
  * is on screen and interactive - and only then does time start again underneath it.
  *
- * A HONEST LIMIT. DelaySystem callbacks are driven by the game, and a paused game may not
- * drive them - in which case this never fires, the menu still works, and the world still
- * pauses. That is the safe way round: the failure mode is the stock game, not a missing
- * menu. If the world still freezes, the pause has to be attacked somewhere other than
- * here, and this file is not the place that changes.
+ * THE LIMIT THIS NOTE USED TO WARN ABOUT DOES NOT HOLD - measured 2026-09-20.
+ *
+ * It said DelaySystem callbacks are driven by the game, so a paused game might not drive
+ * them, leaving the menu working and the world frozen. zeldfep's 2026-09-14 session settles
+ * it: "pause menu: open, and the world is still running behind it" appears three times
+ * (13:21:01, 13:21:13, 13:21:14), and that line prints ONLY from Call() below. The callback
+ * is scheduled as the game is being paused and fires a quarter second later regardless.
+ *
+ * The flag is why: DelayCallback's third parameter is isAffectedByTimeDilation
+ * (delaySystem.script:59) and this passes false, so the delay runs on real time.
+ *
+ * STILL UNSEEN, and it is a different question: whether the world VISIBLY keeps moving
+ * behind the menu. UnpauseGame was called; nobody has watched an NPC behind an open pause
+ * menu. One glance in any session settles that, and if it turns out the world still
+ * freezes, the pause has to be attacked somewhere other than here.
  */
 public class MpUnpauseBehindMenu extends DelayCallback {
   /*
