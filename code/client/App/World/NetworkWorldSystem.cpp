@@ -2108,6 +2108,10 @@ void NetworkWorldSystem::EnterWorld()
         return;
 
     spdlog::info("[Character] entering the world - sending the spawn held back at the selector");
+
+    // The capture at connect time said no, because this connection began at the menu. This
+    // is the yes: a character has been chosen and there is a world to stand in.
+    service->AuthorizeSpawn();
     service->SendSpawnCharacterRequest();
 }
 
@@ -3832,7 +3836,15 @@ void NetworkWorldSystem::Connect()
     // A denial describes the attempt it refused, never the one about to be made.
     ClearConnectionDenial();
 
-    Core::Container::Get<NetworkService>()->Connect(address);
+    const auto& service = Core::Container::Get<NetworkService>();
+
+    // BEFORE the dial, not after. This records whether the player is already in the world
+    // at the moment they asked to connect, which is what decides whether authentication is
+    // allowed to spawn them - see CaptureSpawnIntent. Asked afterwards it becomes a race
+    // against whatever else the press set in motion.
+    service->CaptureSpawnIntent();
+
+    service->Connect(address);
 }
 
 void NetworkWorldSystem::SetConnectionDenial(const uint32_t aCode, const std::string& acMessage,
