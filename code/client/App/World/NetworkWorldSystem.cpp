@@ -3419,6 +3419,53 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
                                        spdlog::default_logger()->flush();
                                    }
 
+                                   /*
+                                    * THE ADDRESS ABOVE NAMES NOBODY, so the first few get a stack.
+                                    *
+                                    * For a C++ throw the ExceptionAddress is the runtime's throw
+                                    * site - the SAME value for every throw in the process. An
+                                    * Atlas item spent a fortnight on "a fixed address means one
+                                    * identifiable site, symbolicate it"; it cannot be
+                                    * symbolicated into anything but the thrower. zeldfep's
+                                    * 2026-09-14 logs show all twenty lines inside 250ms of
+                                    * startup across a dozen engine threads - routine engine
+                                    * noise, and the log could not say so.
+                                    *
+                                    * A short backtrace CAN say so: the frame above the throw is
+                                    * the code that threw. Three occurrences only, because this
+                                    * runs inside a vectored handler on every throw in the
+                                    * process and the game throws routinely - the point is to
+                                    * characterise the noise once per session, not to trace it.
+                                    */
+                                   if (n <= 3)
+                                   {
+                                       void* frames[8]{};
+                                       const auto captured = CaptureStackBackTrace(1, 8, frames, nullptr);
+
+                                       for (USHORT frame = 0; frame < captured; ++frame)
+                                       {
+                                           HMODULE mod{};
+                                           if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                                                      GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                                                  static_cast<LPCSTR>(frames[frame]), &mod) &&
+                                               mod)
+                                           {
+                                               char path[MAX_PATH]{};
+                                               GetModuleFileNameA(mod, path, MAX_PATH);
+                                               const auto rva = reinterpret_cast<uint64_t>(frames[frame]) -
+                                                                reinterpret_cast<uint64_t>(mod);
+                                               spdlog::warn("[Crash]   #{} frame {}: {}+0x{:X}", n, frame, path, rva);
+                                           }
+                                           else
+                                           {
+                                               spdlog::warn("[Crash]   #{} frame {}: 0x{:016X} (no module)", n, frame,
+                                                            reinterpret_cast<uint64_t>(frames[frame]));
+                                           }
+                                       }
+
+                                       spdlog::default_logger()->flush();
+                                   }
+
                                    return EXCEPTION_CONTINUE_SEARCH;
                                }
 
