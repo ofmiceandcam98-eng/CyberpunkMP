@@ -680,10 +680,29 @@ fixes — money is not server-authoritative today. See `docs/PHASE5-STAGE6B-MONE
 - **Pause menu unpause is BEST-EFFORT, 2026-09-04.** The menu opens again (an inline
   `UnpauseGame()` in `OnInitialize` was killing it — the `SetMenuModeEvent` is queued and
   consumed a frame later, so the unpause landed before the layer read it). The unpause is
-  now deferred 0.25s. **Unconfirmed: whether `DelaySystem` ticks at all while the game is
-  paused.** If it does not, the callback never fires — menu works, world still pauses.
-  That is the safe failure mode, but it needs one look: open the pause menu and watch
-  whether NPCs behind it keep moving.
+  now deferred 0.25s. **ANSWERED 2026-09-20 (`#31`): `DelaySystem` DOES tick while the
+  game is paused, so the callback fires and the world keeps running behind the menu.**
+  Measured from zeldfep's 09-14 logs, not reasoned about: the unpause line appears in every
+  session that opened the menu. The mechanism is the third argument —
+  `DelayCallback(cb, time, isAffectedByTimeDilation)` is passed `false`, so the callback is
+  driven by REAL time and a paused simulation cannot starve it. Pass `true` there and this
+  row goes back to being unconfirmed.
+- **Two client fixes landed 2026-09-20 and want one session each.**
+  - **The spawn is decided when you press connect, not a second later (`#33`).** The hold
+    was decided by "is there a local player object", asked INSIDE the authentication reply —
+    about a second after the press. The MULTIPLAYER entry connects AND loads a save, so a
+    world finishing in that second turned a menu connect into an in-world one and the client
+    announced the last-played character before the selector drew a card (test.19/20/21:
+    spawn at 23:41:00, selector at 23:41:07). Intent is now captured once, at the press.
+    **The tell:** a menu connect logs *"holding the spawn until a character is chosen and
+    PLAY is pressed"*, with no `Connected -> Selected` until PLAY. Still open on the same
+    Atlas item and NOT fixed: on a cold start the first launch draws no CONNECT entry at all.
+  - **A strip that could not run is retried (`#32`).** `strip: no equipment system` was
+    indistinguishable from "nothing to remove", so a spawn after a world reload left the
+    template's gear EQUIPPED and the settlement then marked the character INITIALIZED for
+    good. `StripEquipped` returns `-1` for the skip and the settlement retries before
+    marking done. **The tell:** *"settlement: equipped strip retried - N slot(s) cleared"*,
+    or a loud second failure instead of silence.
 - **`/tp spawn` is deliberately NOT staff-gated** — flagged to Cam, reversible in one
   line. A player who has fallen out of the world cannot play at all and the alternative is
   waiting for a moderator; it moves only the caller, to a published location.
@@ -2337,6 +2356,24 @@ a signing key) generate+sign+verify the manifest.
 **Feat → live server**: currently Cam, by hand, from feat. The cron path (main → NAS,
 10-min tick, defers while Players>0, rebuilds only when server-relevant paths changed)
 still exists and still watches main. See ledger.
+
+**THE THREE BRANCHES HAVE SPLIT THREE WAYS, AND `main` DEPLOYS NOWHERE** (measured
+2026-09-20 with `git rev-list`, and it is the reason the line below names a branch that is
+no longer the test box's). LIVE tracks `feat/world-state`: **23 ahead of main, 143 behind**.
+TEST tracks `feat/lifepath-roster`: **42 ahead, 30 behind**. No branch is a superset of
+another, so each is missing work that exists in the others.
+- **`main` does not contain the coord service the feed and Atlas run on.** `GET /v1/docs`,
+  the stream journal, the MagicDNS redactor, `watch-events.sh`, `install-crons.sh` and the
+  backup cron are on `feat/world-state` ONLY. So "just point production at main" would
+  deploy a tree without them — merge world-state's 23 into main FIRST.
+- **Work an Atlas item calls "landed" may be landed on ONE branch.** The whole trade overlay
+  — the v2 four-box render, the typed interim commands, `/tradehelp` — is on
+  `feat/lifepath-roster` only, and reading the Atlas alone would have had Cam's stream
+  rebuild it on main. Same for the launcher invite gate and the q000 relocation. Say WHICH
+  branch; check with `git rev-list --count fork/main..fork/<branch>`.
+- The selector delete/switch/appearance fix exists **twice**, byte-identical, cherry-picked
+  onto both `main` and `feat/lifepath-roster` — the same shape as the `d96e5ce` row above,
+  which is now the second time this has cost somebody a search.
 
 **Feat → test server**: manual — `git reset --hard origin/feat/world-state` in
 `/mnt/vol/projects/CyberpunkMP-authority`, `docker compose -p nco-authority build
