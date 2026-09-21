@@ -67,6 +67,16 @@ public:
     // this is called again once the world is up.
     void SendSpawnCharacterRequest();
 
+    // Decide, AT THE MOMENT SOMEBODY ASKS TO CONNECT, whether this connection may announce
+    // the player by itself.
+    //
+    // Called immediately before Connect(). The timing is the whole point - see the banner
+    // over the implementation.
+    void CaptureSpawnIntent();
+
+    // "The player has now asked to be in the world." Said by EnterWorld(), which is PLAY.
+    void AuthorizeSpawn();
+
     // Is a spawn still owed? True between authenticating at the menu and entering the
     // world.
     bool IsSpawnDeferred() const { return m_spawnDeferred; }
@@ -87,6 +97,10 @@ private:
 
     // Authenticated, but with no world to spawn into yet - the character selector state.
     bool m_spawnDeferred = false;
+
+    // May this connection announce the player on its own when authentication comes back?
+    // Captured when the connect is ASKED FOR, never inferred from the world a second later.
+    bool m_spawnAuthorized = false;
     bool m_isPaused = false;
     entt::dispatcher m_dispatcher;
     uint64_t m_lastCharacterUpdate{};

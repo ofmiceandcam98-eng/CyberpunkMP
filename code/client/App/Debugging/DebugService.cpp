@@ -39,7 +39,15 @@ namespace App
                     // own machine and seeing an empty server.
                     const auto address = fmt::format("{}:{}", Settings::Get().ip, Settings::Get().port);
                     spdlog::info("[Debug] Connect pressed - dialling {}", address);
-                    Core::Container::Get<NetworkService>()->Connect(address);
+
+                    const auto& service = Core::Container::Get<NetworkService>();
+
+                    // Same pairing as the real connect path: say where this connect is
+                    // coming from before dialling, or authentication has no basis on which
+                    // to decide whether it may spawn us. This button is pressed from inside
+                    // the world, so it captures a yes and behaves exactly as it always has.
+                    service->CaptureSpawnIntent();
+                    service->Connect(address);
 
                     /*auto handle = Red::GetGameSystem<NetworkWorldSystem>();
                     Red::EntityID id;

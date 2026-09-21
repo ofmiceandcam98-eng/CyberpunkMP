@@ -101,6 +101,12 @@ void NetworkService::OnDisconnected(EDisconnectReason aReason)
     pWorldSystem->OnDisconnected(aReason);
 
     m_authenticated = false;
+
+    // Both of these describe a connection that no longer exists. Leaving the authorization
+    // set would carry one session's "yes" into the next dial - and the next dial can be a
+    // reconnect from the main menu, which is precisely the case that must not spawn.
+    m_spawnAuthorized = false;
+    m_spawnDeferred = false;
 }
 
 void NetworkService::OnUpdate()
@@ -309,8 +315,70 @@ void NetworkService::HandleAuthentication(const PacketEvent<server::Authenticati
     SendSpawnCharacterRequest();
 }
 
+/**
+ * Whether this connection may announce the player by itself, decided WHEN THE CONNECT IS
+ * ASKED FOR.
+ *
+ * The question is "did this connect come from inside the world, or from the main menu?",
+ * and the honest moment to ask it is the moment somebody presses the button. It used to be
+ * asked a second later instead, inside the authentication reply, as "is there a player
+ * object right now" - and in that second the answer can change underneath us. The MULTIPLAYER
+ * entry connects AND loads a save; a world that finishes loading before the reply lands
+ * turns a menu connect into an in-world one, and the client announces a character nobody
+ * picked. That is the test.19/20/21 report: spawned into the world first, selector arriving
+ * on top of it seconds later - which is the selector's whole purpose defeated, on the first
+ * thing every new player does.
+ *
+ * So the answer is taken once, at the press, and kept. A menu connect stays a menu connect
+ * however fast the machine is.
+ */
+void NetworkService::CaptureSpawnIntent()
+{
+    const auto system = Red::GetGameSystem<Game::PlayerSystem>();
+    Red::Handle<Red::GameObject> player;
+
+    if (system)
+        system->GetLocalPlayerControlledGameObject(player);
+
+    m_spawnAuthorized = static_cast<bool>(player);
+
+    spdlog::info("[Spawn] connect asked for from {} - the spawn {}",
+                 m_spawnAuthorized ? "inside the world" : "the main menu",
+                 m_spawnAuthorized ? "goes out with authentication"
+                                   : "is held until the player enters the world");
+}
+
+/**
+ * PLAY, said in one word.
+ *
+ * EnterWorld() is the only caller, and it is reached only once the player has chosen a
+ * character and the world is up. Without this the held spawn could never be released, since
+ * the capture above deliberately said no.
+ */
+void NetworkService::AuthorizeSpawn()
+{
+    m_spawnAuthorized = true;
+}
+
 void NetworkService::SendSpawnCharacterRequest()
 {
+    /*
+     * NOBODY ASKED TO BE IN THE WORLD YET.
+     *
+     * Checked BEFORE the player lookup below, and that order is the fix. The lookup answers
+     * "is there a world", this answers "was one wanted" - and a connect from the main menu
+     * can find a world that arrived on its own (the MULTIPLAYER entry loads a save while
+     * this connection is still authenticating). Asking only the first question let that
+     * case spawn the last-played character before the selector had drawn a single card.
+     */
+    if (!m_spawnAuthorized)
+    {
+        spdlog::info("[Spawn] connected from the menu - holding the spawn until a character "
+                     "is chosen and PLAY is pressed");
+        m_spawnDeferred = true;
+        return;
+    }
+
     client::SpawnCharacterRequest request;
     request.set_is_player(true);
 
