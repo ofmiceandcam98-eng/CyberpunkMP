@@ -476,6 +476,10 @@ public class MpInventory {
     // back still touches nothing.
     let removed = 0;
 
+    // Set when the equipped half could not run at all - read again when the settlement is
+    // armed, so the miss is retried rather than becoming permanent.
+    let equipStripSkipped = false;
+
     if network.IsCharacterStatusKnown() {
       let moneyTdbid = ItemID.GetTDBID(MarketSystem.Money());
 
@@ -628,60 +632,27 @@ public class MpInventory {
       // Read through the paperdoll, the same way AppearanceSystem.reds already reads what
       // a player is wearing, then unequip before removing: RemoveItem on something still
       // in a slot leaves the slot pointing at an item that no longer exists.
-      let equipData = EquipmentSystem.GetData(player);
-      let equipment = EquipmentSystem.GetInstance(player);
+      // The pass itself is StripEquipped below, because the settlement has to be able to
+      // run it a second time - see the skip case.
+      let equippedStripped = MpInventory.StripEquipped(network, player, transaction);
 
-      if IsDefined(equipData) && IsDefined(equipment) {
-        let areas: array<gamedataEquipmentArea> = [gamedataEquipmentArea.Outfit];
-        let paperdoll: array<SEquipArea> = equipData.GetPaperDollEquipAreas();
-
-        let p = 0;
-        while p < ArraySize(paperdoll) {
-          ArrayPush(areas, paperdoll[p].areaType);
-          p += 1;
-        }
-
-        let stripped = 0;
-        let q = 0;
-
-        while q < ArraySize(areas) {
-          let area = areas[q];
-
-          // The body is not loot - same three slots the backpack pass protects. Taking
-          // what sits in RightArm is what left Cam with no arms and a floating pistol.
-          let isBody = Equals(area, gamedataEquipmentArea.RightArm)
-                    || Equals(area, gamedataEquipmentArea.LeftArm)
-                    || Equals(area, gamedataEquipmentArea.BaseFists);
-
-          if !isBody {
-            let equipped = equipData.GetVisualItemInSlot(area);
-            let equippedTdbid = ItemID.GetTDBID(equipped);
-
-            // ServerWants covers the starter kit, so the clothes and gun just handed over
-            // are not stripped straight back off again.
-            if TDBID.IsValid(equippedTdbid)
-               && MpInventory.ServerWants(network, TDBID.ToNumber(equippedTdbid)) <= 0 {
-              let unequip = new UnequipRequest();
-              unequip.owner = player;
-              unequip.areaType = area;
-              unequip.slotIndex = 0;
-              equipment.QueueRequest(unequip);
-
-              let held = transaction.GetItemQuantity(player, equipped);
-              if held > 0 {
-                transaction.RemoveItem(player, equipped, held);
-              }
-
-              stripped += 1;
-            }
-          }
-
-          q += 1;
-        }
-
-        network.ScriptLog(s"strip: \(stripped) equipped item(s) removed from slots");
+      if equippedStripped >= 0 {
+        network.ScriptLog(s"strip: \(equippedStripped) equipped item(s) removed from slots");
       } else {
-        network.ScriptLog("strip: no equipment system - equipped items left alone");
+        /*
+         * THE SKIP IS NOW REMEMBERED, because it used to be permanent.
+         *
+         * Measured in zeldfep's 2026-09-14 log at 13:18:47, on a spawn right after a world
+         * reload: "strip: no equipment system - equipped items left alone". The restore
+         * carried on, the settlement armed and later marked the character INITIALIZED, and
+         * nothing ever took the template's equipped gear off them - the one pass that could
+         * have was skipped, and the flag that says "this character is done" does not care.
+         *
+         * So the settlement retries it. It already polls seconds later, waiting for the
+         * engine's own grant, by which time the equipment system is up.
+         */
+        equipStripSkipped = true;
+        network.ScriptLog("strip: no equipment system - equipped items left alone, the settlement will retry");
       }
     }
 
@@ -736,6 +707,9 @@ public class MpInventory {
       settle.stable = 0;
       settle.sawGrant = false;
       settle.attempts = 0;
+      // Carried so the one pass that could not run gets a second chance before this
+      // character is marked done forever.
+      settle.equipStripPending = equipStripSkipped;
       GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(settle, 2.0, false);
 
       network.ScriptLog(s"settlement: armed, watching for the engine's starting loadout (baseline \(ArraySize(settleList)) stack(s))");
@@ -784,6 +758,81 @@ public class MpInventory {
     if count > 0u && restored == 0 && removed == 0 && moneyAfter == held {
       network.ScriptLog(s"restore NO-OP: the server listed \(count) stack(s) and nothing changed - neither given, taken nor money. Treat this as a FAILED restore, not a tidy one.");
     }
+  }
+
+  /**
+   * Takes off everything EQUIPPED that the server does not say this character owns.
+   *
+   * Its own function because two callers need it: the restore, and the settlement when the
+   * restore could not run it. GetItemList enumerates carried items only - equipped weapons
+   * and installed cyberware live in slots and are invisible to it, which is why a
+   * "stripped" character once finished holding an assault rifle, a shotgun, an SMG and
+   * three pieces of chrome while the log reported no cyberware present.
+   *
+   * Returns the number of slots cleared, or -1 when the equipment system was not available
+   * - a genuinely different answer from "nothing to remove", and the caller must be able to
+   * tell them apart or a skipped pass reads as a clean one.
+   */
+  public static func StripEquipped(network: ref<NetworkWorldSystem>, player: ref<GameObject>,
+                                   transaction: ref<TransactionSystem>) -> Int32 {
+    let equipData = EquipmentSystem.GetData(player);
+    let equipment = EquipmentSystem.GetInstance(player);
+
+    if !IsDefined(equipData) || !IsDefined(equipment) {
+      return -1;
+    }
+
+    // Read through the paperdoll, the same way AppearanceSystem.reds reads what a player is
+    // wearing, then unequip BEFORE removing: RemoveItem on something still in a slot leaves
+    // the slot pointing at an item that no longer exists.
+    let areas: array<gamedataEquipmentArea> = [gamedataEquipmentArea.Outfit];
+    let paperdoll: array<SEquipArea> = equipData.GetPaperDollEquipAreas();
+
+    let p = 0;
+    while p < ArraySize(paperdoll) {
+      ArrayPush(areas, paperdoll[p].areaType);
+      p += 1;
+    }
+
+    let stripped = 0;
+    let q = 0;
+
+    while q < ArraySize(areas) {
+      let area = areas[q];
+
+      // The body is not loot - same three slots the backpack pass protects. Taking what
+      // sits in RightArm is what left Cam with no arms and a floating pistol.
+      let isBody = Equals(area, gamedataEquipmentArea.RightArm)
+                || Equals(area, gamedataEquipmentArea.LeftArm)
+                || Equals(area, gamedataEquipmentArea.BaseFists);
+
+      if !isBody {
+        let equipped = equipData.GetVisualItemInSlot(area);
+        let equippedTdbid = ItemID.GetTDBID(equipped);
+
+        // ServerWants covers the starter kit, so the clothes and gun just handed over are
+        // not stripped straight back off again.
+        if TDBID.IsValid(equippedTdbid)
+           && MpInventory.ServerWants(network, TDBID.ToNumber(equippedTdbid)) <= 0 {
+          let unequip = new UnequipRequest();
+          unequip.owner = player;
+          unequip.areaType = area;
+          unequip.slotIndex = 0;
+          equipment.QueueRequest(unequip);
+
+          let held = transaction.GetItemQuantity(player, equipped);
+          if held > 0 {
+            transaction.RemoveItem(player, equipped, held);
+          }
+
+          stripped += 1;
+        }
+      }
+
+      q += 1;
+    }
+
+    return stripped;
   }
 
   /**
@@ -1055,6 +1104,11 @@ public class MpStarterSettlement extends DelayCallback {
 
     public let sawGrant: Bool;
 
+    // The restore could not run the equipped-slot strip - no equipment system at that
+    // moment. Seen live 2026-09-14 13:18:47 after a world reload. Retried in Call() below,
+    // because this character is about to be marked INITIALIZED and never cleaned again.
+    public let equipStripPending: Bool;
+
     // Hard stop. Three minutes of polling, then give up quietly - an armed cleanup that
     // never fires is a bug; one that fires an hour into a session is a disaster.
     public let attempts: Int32;
@@ -1103,6 +1157,28 @@ public class MpStarterSettlement extends DelayCallback {
         if !this.sawGrant || this.stable < 2 {
             this.Reschedule();
             return;
+        }
+
+        /*
+         * THE RETRY, before the character is marked done forever.
+         *
+         * If the restore could not reach the equipment system, the equipped half of the
+         * strip never ran and the template's gear is still being worn. MpSettleStarterLoadout
+         * below ends with "this character is now INITIALIZED and will never be cleaned
+         * again", so this is the last moment anything can put that right.
+         *
+         * By now the systems are up: this callback has been polling for seconds, waiting for
+         * the engine's own grant. Still reported either way - a retry that also fails is
+         * something somebody needs to see, not swallow.
+         */
+        if this.equipStripPending {
+            let again = MpInventory.StripEquipped(network, player, transaction);
+
+            if again >= 0 {
+                network.ScriptLog(s"settlement: equipped strip retried - \(again) slot(s) cleared that the restore could not reach");
+            } else {
+                network.ScriptLog("settlement: equipped strip retried and the equipment system is STILL missing - template gear may remain equipped on this character");
+            }
         }
 
         MpSettleStarterLoadout(network, player, transaction);
