@@ -290,6 +290,14 @@ let m_mpDetail: wref<inkText>;
 @addField(SingleplayerMenuGameController)
 let m_mpDeleteArmed: Bool;
 
+// Cold-start guard. On the first launch after starting the game, the mod's
+// NetworkWorldSystem can still be undefined when the main menu first populates, so the wrap
+// falls through to the vanilla menu with no CONNECT and nothing ever rebuilds it (a relaunch
+// "fixes" it because the system is up by then). Set while a poll is waiting for the system to
+// come up, so only one poll is ever in flight across the many menu rebuilds.
+@addField(SingleplayerMenuGameController)
+let m_mpMenuReadyArmed: Bool;
+
 @addMethod(SingleplayerMenuGameController)
 public func MpBuildPanel() -> Void {
     if IsDefined(this.m_mpPanel) {
@@ -402,9 +410,76 @@ public func MpUpdatePanel() -> Void {
 
 
 
+/*
+ * Cold-start recovery: wait for the mod's NetworkWorldSystem to come up, then rebuild the
+ * menu so CONNECT appears - without the player having to relaunch. See the Atlas issue
+ * "on a cold start the main-menu injection is not ready, so CONNECT is missing".
+ *
+ * Bounded on purpose. A genuine vanilla launch - plain Cyberpunk, never through the launcher -
+ * has NO NetworkWorldSystem at all, ever, so the poll must give up and leave the vanilla menu
+ * exactly as it drew it. ~5s of ticks is far longer than the sub-second the system needs on a
+ * real cold start and short enough not to churn a menu nobody is waiting on.
+ *
+ * Only rebuilds; it does not itself add anything. The rebuild re-runs PopulateMenuItemList,
+ * which now sees a defined system and takes the mod branch - and does not re-arm, because the
+ * arm condition is "undefined" and the system is no longer undefined.
+ */
+public class MpMenuReadyPoll extends DelayCallback {
+    public let controller: wref<SingleplayerMenuGameController>;
+    public let attempts: Int32;
+
+    public func Call() -> Void {
+        if !IsDefined(this.controller) {
+            return;
+        }
+
+        let network = GameInstance.GetNetworkWorldSystem();
+        if IsDefined(network) {
+            this.controller.m_mpMenuReadyArmed = false;
+            this.controller.MpRefreshMenu();
+            return;
+        }
+
+        this.attempts += 1;
+
+        if this.attempts >= 20 {
+            this.controller.m_mpMenuReadyArmed = false;
+            MpCsLog("cold-start: NetworkWorldSystem never came up - leaving the vanilla menu (not a mod client)");
+            return;
+        }
+
+        let again = new MpMenuReadyPoll();
+        again.controller = this.controller;
+        again.attempts = this.attempts;
+        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(again, 0.25, false);
+    }
+}
+
+@addMethod(SingleplayerMenuGameController)
+public func MpArmMenuReadyPoll() -> Void {
+    // One poll at a time. PopulateMenuItemList runs on every menu rebuild, so without this
+    // guard a cold start would spawn a fresh poll each rebuild until the system came up.
+    if this.m_mpMenuReadyArmed {
+        return;
+    }
+    this.m_mpMenuReadyArmed = true;
+
+    let poll = new MpMenuReadyPoll();
+    poll.controller = this;
+    poll.attempts = 0;
+    GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(poll, 0.25, false);
+}
+
 @wrapMethod(SingleplayerMenuGameController)
 private func PopulateMenuItemList() -> Void {
     let network = GameInstance.GetNetworkWorldSystem();
+
+    // Unconditional, so a first-launch log answers "did this wrap run at all". If this line is
+    // ABSENT from a cold-launch log, the mod's scripts had not compiled when the menu first
+    // drew - a load-order problem in the C++ layer, not here, and the poll below cannot help
+    // (it lives in the same scripts that did not load). If the line is PRESENT with
+    // defined=false, this is the cold-start timing case the poll below fixes.
+    MpCsLog(s"PopulateMenuItemList - network defined=\(IsDefined(network))");
 
     /*
      * NOT LAUNCHED THROUGH NIGHT CITY ONLINE: the mod is not here.
@@ -419,6 +494,13 @@ private func PopulateMenuItemList() -> Void {
      * trace of the mod on it.
      */
     if !IsDefined(network) || !network.IsModEnabled() {
+        // Cold start vs genuine vanilla: an UNDEFINED system might still be coming up (a
+        // launcher client whose menu drew a beat early), so arm the recovery poll to rebuild
+        // once it lands. A system that is defined but not mod-enabled is an honest vanilla
+        // launch and will never change - no poll.
+        if !IsDefined(network) {
+            this.MpArmMenuReadyPoll();
+        }
         wrappedMethod();
         return;
     }
