@@ -6,6 +6,9 @@ on:
     branches:
       - main
       - dev
+      # The deploy branches the self-updating servers pull from - see linux.yml for why.
+      - feat/world-state
+      - feat/lifepath-roster
     paths-ignore:
       - 'publish/**'
       - 'tools/**'
