@@ -135,6 +135,22 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   (RELEASE deleted, git TAG kept so the number sequence never rewinds), so the list can no
   longer grow a stale row (`2bcdc5b`). The "consolidate on the ledger" half stays a human
   step - deciding a build is validated is a judgement, not a file check.
+  - **THE PRUNE ONLY SPARES THE OTHER STREAM'S BUILD IF THE *SHIPPING* BRANCH CARRIES THE
+    FIX** (measured 2026-09-22, and it cost a build). `23d40d4` taught the prune to keep a
+    build another stream shipped - it reads `shipped-by: <stream>` from the release body,
+    falls back to the publishing GitHub account for older builds, and prints a what/fix line
+    when it keeps one. That landed on `main`. It does NOT exist on `feat/lifepath-roster`,
+    which is 30 commits behind, so a ship from that branch still runs the OLD prune and
+    deletes everything: test.60 removed Cam's test.59 exactly that way, an hour after the
+    test checklist started pointing people at it.
+    - **So the guarantee is per-BRANCH, not per-lane**, and the Atlas item was closed reading
+      as though it were per-lane. Before relying on it, check the branch you are shipping
+      FROM: `git log <branch> --oneline -1 -- tools/ShipTestBuild.ps1`, or
+      `git rev-list --count fork/main..fork/<branch>` for how far behind it is.
+    - **The general form, which is the part worth keeping:** a safety fix on `main` protects
+      nothing on a branch that has not merged it. While the three-way split stands (see the
+      block above the pipelines section), "we fixed that" is only ever true of a BRANCH,
+      never of the repo.
 
 - **FOUND IT? FLAG IT ON THE ATLAS, THEN CARRY ON** (zeldfep, 2026-09-08): *"Hard rule to
   ledger when we find new issues flag them on atlas so we can come back to 'what we find'
