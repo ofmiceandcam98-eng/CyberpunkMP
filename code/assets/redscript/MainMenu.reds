@@ -402,9 +402,53 @@ public func MpUpdatePanel() -> Void {
 
 
 
+/**
+ * How many times this controller has built its menu. Only the probe below reads it.
+ *
+ * Per-controller rather than per-session, because that is the question being asked: the
+ * FIRST build is the one that came up vanilla, and a later build on the same controller
+ * coming up correct would mean the systems arrived late rather than never.
+ */
+@addField(SingleplayerMenuGameController)
+let m_mpPopulates: Int32;
+
 @wrapMethod(SingleplayerMenuGameController)
 private func PopulateMenuItemList() -> Void {
     let network = GameInstance.GetNetworkWorldSystem();
+
+    /*
+     * THE COLD-START PROBE, and why it logs unconditionally.
+     *
+     * On a cold start the first launch has drawn the VANILLA main menu with no CONNECT
+     * entry, and a relaunch in the same sitting works (Cam, test.19, 2026-09-09; his log has
+     * no "Connecting to" line at all, because there was no way to start one). The screenshot
+     * cannot tell us which of two very different things happened:
+     *
+     *   1. This hook never ran - scripts were not loaded in time. Then NOTHING below prints.
+     *   2. This hook ran and took the vanilla branch, because the NetworkWorldSystem was not
+     *      up yet. Then the line prints and says which half was missing.
+     *
+     * The early return below is silent and both causes look identical from outside it. One
+     * cold boot with this in now separates them.
+     *
+     * READ redscript.log, NOT the mod log, for case 2. MpCsLog only reaches the mod's own
+     * log through network.ScriptLog, which is exactly the thing that is missing here - so
+     * the FTLog half in redscript.log is the only copy that survives. Looking in
+     * CyberpunkMP_<date>.log and finding nothing would wrongly read as case 1.
+     */
+    this.m_mpPopulates += 1;
+
+    let sysState = "MISSING";
+    if IsDefined(network) {
+        sysState = "present";
+    }
+
+    let modState = "off";
+    if IsDefined(network) && network.IsModEnabled() {
+        modState = "enabled";
+    }
+
+    MpCsLog(s"menu build #\(this.m_mpPopulates): network system \(sysState), mod \(modState)");
 
     /*
      * NOT LAUNCHED THROUGH NIGHT CITY ONLINE: the mod is not here.
@@ -419,6 +463,11 @@ private func PopulateMenuItemList() -> Void {
      * trace of the mod on it.
      */
     if !IsDefined(network) || !network.IsModEnabled() {
+        // Named, because this is the branch that produces the reported symptom. A plain
+        // Cyberpunk launch takes it every time and that is correct; a LAUNCHER launch taking
+        // it is the bug, and the line above says which half was missing when it did.
+        MpCsLog(s"menu build #\(this.m_mpPopulates): drawing the VANILLA menu - no CONNECT entry");
+
         wrappedMethod();
         return;
     }
@@ -521,6 +570,11 @@ private func PopulateMenuItemList() -> Void {
             this.MpCsClose();
 
             this.AddMenuItem("CONNECT", n"OnMultiplayerCharacters");
+
+            // The positive half of the probe. Seeing this on build #1 of a cold start is
+            // what closes the item; seeing it only on #2 or later says the injection is
+            // late rather than absent, which is a different fix.
+            MpCsLog(s"menu build #\(this.m_mpPopulates): CONNECT drawn");
 
             // Creation stays reachable without a connection, because it runs the game's own
             // New Game flow and arms the join on the way through - somebody with no
