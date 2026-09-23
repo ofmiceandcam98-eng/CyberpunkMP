@@ -38,8 +38,13 @@ other Claude is documented in `docs/LLM-COMMS.md`.
      be `<old-live-server>` on the NAS, and that address is DEAD, not relocated: the migration
      onto new hardware gave every node a new tailnet identity. The old LAN fallback
      (`<nas-host>`) is gone with it, because the feed no longer runs on the NAS.
-     `GET /v1/updates?limit=N` to read, `POST /v1/updates` with
-     `Authorization: Bearer <key>` to post.
+     `GET /v1/updates?limit=N` to read and `POST /v1/updates` to post - **both need
+     `Authorization: Bearer <key>`**. Reading is NOT keyless, and this line used to imply
+     it was: every `/v1/*` route goes through one gate at the top of `handleApi`, which
+     401s with *"Unknown or missing key"* before any route is matched. That gate has been
+     there since the coord-api's first commit (`c8c12f7`) and those lines have never been
+     edited - so a 401 on a read is the original design and the docs were wrong, not a
+     regression to chase. Only `GET /health` sits outside it.
    - **Two diagnosis rules that still apply.** A route can fail while the service is
      healthy (measured 2026-09-04: tailnet timed out, `tx 1560 rx 0` via a relay, while a
      second path answered instantly) — so from the server host over SSH,

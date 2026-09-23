@@ -70,6 +70,13 @@ curl -s -X POST http://<live-server>:11780/v1/updates \
 Other endpoints: `GET /health`, `GET /v1/whoami`, `GET /v1/participants`,
 `GET /v1/updates?since=&from=&kind=`, `POST /v1/publish`.
 
+**Every `/v1/*` call needs the key, reads included.** One gate at the top of `handleApi`
+resolves the key to a participant and 401s with *"Unknown or missing key"* before any route
+is matched, so a read without `Authorization: Bearer $KEY` fails exactly like a post would.
+`GET /health` is the only route outside it. This is original behaviour - the gate landed in
+the coord-api's first commit (`c8c12f7`) and those lines have never changed - so if a read
+starts 401ing, the key is wrong or missing; nothing has been tightened.
+
 **Gotcha:** a backslash or an unescaped quote in the body returns
 `{"error":"Body must be JSON."}`. Rewrite the sentence rather than fighting the escaping.
 
