@@ -6,6 +6,88 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.123
+
+Another launcher-reliability release. **No gameplay change** — the mod itself is untouched.
+
+- **Mods zipped with an extra folder now install instead of doing nothing.** A common way
+  authors package a mod is to leave a wrapper folder inside the zip (`ModName/archive/pc/
+  mod/...`). The launcher used to write that verbatim, so the files landed one level too
+  deep where the game never looks — it reported success and the mod did nothing, with no
+  error to chase. The launcher now strips a single wrapper folder so the files land where
+  the game reads them, or, if an archive contains nothing the game recognises, refuses it
+  plainly instead of installing a silent no-op.
+- **A good prerequisite is no longer mistaken for a tampered one.** If the release's file
+  list had just changed, the launcher could reject a perfectly good bundled prerequisite as
+  "not what the manifest approved." It now re-fetches the current list and only refuses if
+  that fresh list still disagrees — the same fix already made for the main download.
+- **Under the hood:** the checks that decide whether an install is recorded are now covered
+  by tests, and a developer's own local files are kept across updates rather than deleted.
+
+If you hit a crash, send the log — `tools\CollectCrash.ps1` gathers it in one step. Run it
+**before** relaunching; relaunching overwrites the evidence.
+
+## What changed — v0.3.122
+
+This is a launcher-reliability release. **There is no gameplay change** — nothing in the
+mod itself moved, so if something in-game has been off, this build does not change it.
+
+- **A failed version stamp no longer disappears in silence.** When the launcher records which
+  build is on disk, that write could fail without anything noticing — leaving the launcher and
+  the folder disagreeing, and a clean official install reading as "built by hand". If the write
+  fails now, it says so in the launcher log, names the file, and tells you it will re-stamp.
+- **Installing while you are on a test build is clearer.** For anyone using the Dev test-build
+  lane: Update and "install everything" no longer quietly bounce you off a test build, the test
+  build shows what it is for in place, and the launcher stops treating a test build as an
+  out-of-date release. Removing the test build returns you to the normal update path.
+- **A batch of smaller launcher fixes** from a pre-release review — a failed cleanup now reports
+  itself instead of failing quietly, a refused install is logged, and a dev-only Tools entry
+  opens the coordination board without anyone typing an address.
+
+If you hit a crash, send the log — `tools\CollectCrash.ps1` gathers it in one step. Run it
+**before** relaunching; relaunching overwrites the evidence.
+
+## What changed — v0.3.121
+
+- **The launcher could refuse a perfectly good update.** It keeps the signed manifest in
+  memory for ten minutes. If a release had its files replaced during that window — which
+  happened to v0.3.120 — the launcher compared the new download against the older manifest,
+  decided the two disagreed and refused to install, saying the download did not match what
+  the manifest approved. The download was fine every time. A mismatch now costs a fresh
+  check of the manifest before it is allowed to fail, so the safety check keeps all of its
+  teeth against a genuinely bad file without crying wolf over a stale note to itself.
+- **Installs that quietly did nothing now say why.** Before extracting an update the launcher
+  clears out the folders the mod owns. If that clearing failed, nothing recorded it — the
+  update went on to fail its own check, the install was not recorded, and you were told to
+  remove and reinstall the whole mod with no way to find out what was actually wrong. The
+  failure is now written to the launcher log with the reason, the refused install names the
+  exact files involved, and when the clearing was the cause the message says so and tells
+  you what to close.
+- **Dev-role only: a test build no longer reads as an out-of-date mod.** Installing one left
+  the launcher permanently insisting the mod was out of date, which greyed out JACK IN — so
+  the only way into the game was to start it outside the launcher, which meant no server
+  address and no sign-in and a single-player session asking you to /connect by hand. A test
+  build now counts as current, the status line names the build you are on instead of a
+  release you are not, and Update stays available as the way back.
+- **Smaller things in Settings.** The section rail down the right-hand side now lights the
+  last section when you scroll to the bottom — its number used to lead nowhere — and it
+  keeps up when a tab grows past the room the rail has, showing the ends and the part you
+  are in. The expand arrow on test-build rows sits centred instead of drifting.
+
+Nothing in the game itself changed in this release. The mod is rebuilt from the same code as
+v0.3.120 and behaves identically — this is a launcher-only update.
+## What changed — v0.3.120
+
+- **Test builds now say what they are for.** If you have the dev role, the Test builds list in
+  Tools used to show one truncated line per build — four rows that all read the same, with no
+  way to tell which was which. Each row now opens: click it and you get what the build is
+  for, what to look for, and anything knowingly broken in it, with a link to the full notes.
+  Nothing changes for anyone without the dev role; players never see that list.
+
+Nothing in the game itself changed in this release. The mod is rebuilt from the same code as
+v0.3.119 and behaves identically — this is a launcher-only update, and it is safe to skip if
+you do not use test builds.
+
 ## What changed — v0.3.119
 
 - **The phone stops ringing when you answer.** A call you picked up, dealt with and hung up
