@@ -518,19 +518,29 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
     // to false so it is sent to the start point without anything having to reset it.
     const auto* pExistingCharacter = GServer->GetPlayerStore().FindCharacter(pComponent->DiscordId);
 
-    // A character record is REQUIRED, not optional, and that is the fire-once guarantee.
+    // The fire-once flag lives on the character record. TWO cases put a not-yet-placed
+    // player here, and the difference is whether that record exists yet:
     //
-    // This used to also fire when there was no character record at all - and the flag that
-    // stops it repeating is written onto that record, so with no record there was nothing
-    // to write it to: the arrivals teleport fired again on the NEXT join, and the next,
-    // and the next. The comment ten lines up warns about exactly this failure ("would
-    // teleport everybody to the arrivals point on every single join") while the code below
-    // left one path open to it.
+    //   * a RETURNING new character - it was created in an earlier session, so the record is
+    //     present with SpawnedBefore=false. Write the flag straight onto it (below).
     //
-    // Nothing is lost by requiring the record. Somebody with no character is about to go
-    // through the creator, which makes one with SpawnedBefore=false - so they still get
-    // the arrivals point, on the join after, once, with a record to remember it by.
-    const bool isNewHere = (pExistingCharacter != nullptr) && !pExistingCharacter->SpawnedBefore;
+    //   * a BRAND-NEW character mid-creation - the account was pointed at a free slot but the
+    //     creator's save has not landed, so the active slot is still EMPTY and FindCharacter
+    //     returns null. This is the case that used to be excluded, and excluding it is why a
+    //     freshly made character sat in the q000 box until they reconnected: relocation could
+    //     only ever fire "the join after". We relocate them now and set a per-connection flag
+    //     that the creator save (arriving moments later) consumes to write SpawnedBefore=true
+    //     onto the new record - see PlayerComponent::RelocatedAwaitingRecord and
+    //     ChatSystem::HandleSaveCharacterRequest.
+    //
+    // The repeat bug the old comment warned about ("teleport everybody to the arrivals point
+    // on every single join") is still guarded: a returning player ALWAYS has a record in
+    // their active slot with SpawnedBefore=true, so isNewHere is false for them. Only an empty
+    // active slot - which is a character being born, not a returning one - reaches the
+    // record-less branch, and the flag it sets lands on the record the very next save.
+    const bool hasUnplacedRecord = (pExistingCharacter != nullptr) && !pExistingCharacter->SpawnedBefore;
+    const bool bornThisSession = (pExistingCharacter == nullptr);
+    const bool isNewHere = hasUnplacedRecord || bornThisSession;
 
     bool placedAtStart = false;
 
@@ -556,12 +566,21 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
                      pComponent->Username, startPosition.x, startPosition.y, startPosition.z);
 
         // Recorded straight away, so this happens once per character rather than on every
-        // join. Written through with the rest of the character. Unconditional now - the
-        // record is guaranteed by isNewHere above, and making the write conditional is
-        // what let the repeat happen.
-        auto updated = *pExistingCharacter;
-        updated.SpawnedBefore = true;
-        GServer->GetPlayerStore().SaveCharacter(pComponent->DiscordId, pComponent->Username, updated);
+        // join. When the record already exists, write the flag onto it now. When the
+        // character is being born (no record yet), there is nothing to write to - so hand the
+        // flag to the creator save through the component, and it lands on the new record the
+        // moment it is created. Either way the flag ends up on the record, which is the
+        // fire-once guarantee; the only difference is which handler writes it.
+        if (pExistingCharacter)
+        {
+            auto updated = *pExistingCharacter;
+            updated.SpawnedBefore = true;
+            GServer->GetPlayerStore().SaveCharacter(pComponent->DiscordId, pComponent->Username, updated);
+        }
+        else
+        {
+            pComponent->RelocatedAwaitingRecord = true;
+        }
 
         // Say it out loud, to the person it happened to.
         //

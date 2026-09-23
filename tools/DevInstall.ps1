@@ -236,6 +236,24 @@ if (-not (Test-Path (Join-Path $modDir "assets\redscript"))) {
 
 Ok "real DLL, $([math]::Round($liveSize/1MB,1)) MB, with assets\redscript beside it"
 
+# Record what this dev install placed under the mod folder, so the launcher's post-install
+# audit treats these as dev leftovers - KEPT and named - rather than mystery orphans it
+# deletes or refuses the update over. That is the failure that bit zeldfep on 2026-09-09,
+# when the payload dropped a file DevInstall had written. One forward-slash relative path
+# per line; manifest.js auditPayloadInstall reads it from <modDir>\.nco-devinstall. Written
+# UTF-8 without a BOM so the first line is not prefixed by one.
+$placed = New-Object System.Collections.Generic.List[string]
+$placed.Add('CyberpunkMP.dll')
+$redsRoot = Join-Path $modDir 'assets\redscript'
+if (Test-Path $redsRoot) {
+    Get-ChildItem $redsRoot -Recurse -File | ForEach-Object {
+        $placed.Add(($_.FullName.Substring($modDir.Length).TrimStart('\') -replace '\\', '/'))
+    }
+}
+$recordPath = Join-Path $modDir '.nco-devinstall'
+[System.IO.File]::WriteAllLines($recordPath, $placed, (New-Object System.Text.UTF8Encoding($false)))
+Ok "recorded $($placed.Count) dev-placed file(s) in .nco-devinstall (kept across launcher updates)"
+
 Write-Host "`nInstalled. Launch through the Night City Online launcher." -ForegroundColor Green
 Write-Host "If the main menu comes up stock, read red4ext\logs\red4ext-*.log - a plugin that" -ForegroundColor DarkGray
 Write-Host "fails during Load unloads itself and takes every mod script with it, silently." -ForegroundColor DarkGray

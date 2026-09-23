@@ -4,6 +4,18 @@
 #include "App/ChatMessageEvent.h"
 #include "App/Settings.h"
 #include <RED4ext/Scripting/Natives/Generated/game/ui/IGameSystemUI.hpp>
+#include <filesystem>
+#include <fstream>
+#include <cstdlib>
+
+// Where the trade placement persists. Next to the user profile (writable, survives relaunch and
+// reinstall) rather than under Program Files. Mirrors the marker-file spots Settings::Load uses.
+static std::filesystem::path TradePlacementPath()
+{
+    if (const auto home = std::getenv("USERPROFILE"))
+        return std::filesystem::path(home) / "nco-trade-placement.txt";
+    return std::filesystem::current_path() / "nco-trade-placement.txt";
+}
 
 void ChatSystem::OnWorldAttached(RED4ext::world::RuntimeScene* aScene)
 {
@@ -51,4 +63,34 @@ RED4ext::CString ChatSystem::GetUsername()
     // the one Discord vouched for once verification is enabled.
     const auto& name = Settings::Get().discordName;
     return RED4ext::CString(name.empty() ? "Player" : name.c_str());
+}
+
+void ChatSystem::SaveTradePlacement(float aX, float aY, float aZoom, float aGap)
+{
+    try
+    {
+        std::ofstream file(TradePlacementPath(), std::ios::trunc);
+        file << aX << ' ' << aY << ' ' << aZoom << ' ' << aGap << '\n';
+    }
+    catch (...)
+    {
+        // Non-load-bearing: if the file cannot be written the overlay just uses defaults.
+    }
+}
+
+RED4ext::Vector4 ChatSystem::LoadTradePlacement()
+{
+    // (0,0,0,0) means "no saved placement" - the redscript side keeps its defaults then. A real
+    // save always has zoom > 0, which is the sentinel the caller checks.
+    RED4ext::Vector4 placement{0.f, 0.f, 0.f, 0.f};
+    try
+    {
+        std::ifstream file(TradePlacementPath());
+        if (file)
+            file >> placement.X >> placement.Y >> placement.Z >> placement.W;
+    }
+    catch (...)
+    {
+    }
+    return placement;
 }

@@ -1,4 +1,12 @@
 <#
+    DEPRECATED 2026-09-12 - superseded by tools/deploy/backup-gamedata.sh (server-side cron).
+
+    This script backed up FROM a dev's Windows box TO the NAS, which had two problems: it
+    only ran when that PC was on, and its target ($NasUser/$NasHost) is the PRE-MIGRATION
+    NAS, dead since 2026-09-06. The replacement runs on the SERVER itself from cron, so the
+    data is protected without any other machine involved. Kept here only as reference for the
+    file set it protects; do not run it, and do not resurrect the NAS target.
+
     BackupServerData.ps1 - snapshot the server's character data, locally and to the NAS.
 
     Usage:

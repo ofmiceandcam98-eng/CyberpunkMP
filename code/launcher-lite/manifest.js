@@ -15,7 +15,8 @@
  */
 
 import crypto from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync, readdirSync, rmSync } from 'node:fs'
+import path from 'node:path'
 // Pure JS ed25519, no native build step - the same reason 7zip-bin and
 // node-unrar-js were chosen over their faster native cousins. Ship.ps1 signs
 // with this library; verifying with the same one means the two sides can never
@@ -665,4 +666,124 @@ export function sha256Hex (buffer) {
  */
 export function hashFileSha256 (path) {
   return sha256Hex(readFileSync(path))
+}
+
+/**
+ * Did a payload extract actually land? Asked of the disk, not of the extractor - so it can
+ * catch what extractPayloadClean's directory wipe was supposed to make impossible. (One
+ * install on 2026-09-07 held THREE generations of payload at once - duplicate Ink class
+ * definitions make redscript refuse the whole mod - and every update in between reported
+ * success.) Two questions: is everything the zip carried on disk, and is anything ELSE in
+ * the directories the zip owns? aZip is anything with a getEntries(); pure fs/path, no
+ * Electron - which is why it lives here and manifest.selftest.mjs exercises it.
+ */
+export function auditPayloadInstall (aModDir, aZip) {
+  const shipped = new Set()
+  const ownedDirs = new Set()
+
+  for (const entry of aZip.getEntries()) {
+    if (entry.isDirectory) continue
+    const rel = entry.entryName.split('\\').join('/')
+    shipped.add(rel)
+    if (rel.includes('/')) ownedDirs.add(rel.split('/')[0])
+  }
+
+  const missing = []
+  for (const rel of shipped) {
+    if (!existsSync(path.join(aModDir, rel.split('/').join(path.sep)))) missing.push(rel)
+  }
+
+  // Files DevInstall placed, recorded one forward-slash relative path per line at
+  // <modDir>/.nco-devinstall. An orphan the DEV install wrote is a dev leftover, not a
+  // stale release file - separated out so the update path can KEEP it (and name it)
+  // instead of deleting a dev's own work the moment the payload stops shipping that file.
+  let devPlaced = new Set()
+  try {
+    devPlaced = new Set(readFileSync(path.join(aModDir, '.nco-devinstall'), 'utf8')
+      .split('\n').map((l) => l.trim().split('\\').join('/')).filter(Boolean))
+  } catch { /* no dev install recorded here - every leftover is a plain orphan */ }
+
+  // Only inside directories the payload owns. The mod folder legitimately holds things the
+  // zip never carried - logs/, .nco-version, config written at runtime - and calling those
+  // orphans would make the check cry wolf on every healthy install.
+  const orphans = []
+  const devLeftovers = []
+  const walk = (dir, prefix) => {
+    let entries
+    try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const e of entries) {
+      const rel = prefix ? prefix + '/' + e.name : e.name
+      if (e.isDirectory()) walk(path.join(dir, e.name), rel)
+      else if (!shipped.has(rel)) (devPlaced.has(rel) ? devLeftovers : orphans).push(rel)
+    }
+  }
+  for (const dir of ownedDirs) walk(path.join(aModDir, dir), dir)
+
+  return { missing, orphans, devLeftovers }
+}
+
+/**
+ * Wipe the top-level directories a payload zip carries before extracting it, so a file the
+ * payload no longer ships cannot survive under a directory it owns. Returns the dirs whose
+ * wipe FAILED (each {dir, message}) so the caller can blame the cause, not the symptom - a
+ * clean that fails does NOT stop the extract from succeeding, so a swallowed failure is how
+ * a leftover archive failed eight consecutive updates with nothing recorded (2026-09-09).
+ * force:true already makes "not there" a success, so anything thrown here is real.
+ */
+export function extractPayloadClean (aModDir, aZip) {
+  const shippedDirs = new Set()
+  for (const entry of aZip.getEntries()) {
+    const name = entry.entryName
+    if (name.includes('/')) shippedDirs.add(name.split('/')[0])
+  }
+  const cleanFailures = []
+  for (const dir of shippedDirs) {
+    try {
+      // maxRetries makes a transient hold (an antivirus scan, an Explorer window mid-
+      // enumeration) survivable: rmSync retries EBUSY/EPERM/ENOTEMPTY with a pause. A hard
+      // lock still fails and is still reported - this widens nothing about success.
+      rmSync(path.join(aModDir, dir), { recursive: true, force: true, maxRetries: 3, retryDelay: 120 })
+    } catch (err) {
+      cleanFailures.push({ dir, message: err.code ? `${err.code}: ${err.message}` : String(err.message || err) })
+    }
+  }
+  aZip.extractAllTo(aModDir, true)
+  return cleanFailures
+}
+
+// The top-level folders the game and its mod loaders actually read. A real mod archive's
+// paths begin with one of these; a wrapper folder an author left in (ModName/archive/pc/
+// mod/...) does not - which is how such an archive installs a silent no-op.
+export const GAME_ROOTS = ['archive', 'r6', 'red4ext', 'bin', 'mods', 'engine', 'plugins', 'tools']
+
+/**
+ * Decide how a mod archive's files map onto the game folder, so a wrapper folder cannot
+ * make the whole install a no-op. relPaths are forward-slash file/dir paths from the zip.
+ *   { ok: true,  strip: '' }         - files already land on a real surface, install as-is
+ *   { ok: true,  strip: 'Wrapper/' } - one wrapper dir hides the surface; strip that prefix
+ *   { ok: false, reason }            - nothing lands on a surface, even after stripping one
+ */
+export function resolveArchiveStrip (relPaths) {
+  const files = (relPaths || []).filter((p) => p && !p.endsWith('/'))
+  if (files.length === 0) return { ok: false, strip: '', reason: 'the archive contains no files' }
+
+  const landsInGame = (p) => GAME_ROOTS.includes(p.split('/')[0].toLowerCase())
+
+  if (files.some(landsInGame)) return { ok: true, strip: '' }
+
+  // Everything under a single top-level dir? Strip it and re-check - that catches the
+  // common ModName/<surface>/... wrapper without touching anything already laid out right.
+  const tops = new Set(files.map((p) => p.split('/')[0]))
+  if (tops.size === 1) {
+    const top = [...tops][0]
+    if (files.every((p) => p.length > top.length + 1) &&
+        files.map((p) => p.slice(top.length + 1)).some(landsInGame)) {
+      return { ok: true, strip: top + '/' }
+    }
+  }
+
+  return {
+    ok: false, strip: '',
+    reason: 'no file lands in a folder the game reads (archive/, r6/, red4ext/, bin/, mods/, ...)'
+  }
 }

@@ -94,6 +94,10 @@ public class MultiplayerGameController extends inkGameController {
     private let m_jobListWidget: wref<inkWidget>;
     private let m_deliveryListWidget: wref<inkWidget>;
     private let m_emoteSelectorWidget: wref<inkWidget>;
+    // Registry of client HUD overlays (see PluginOverlay.reds). OnAction dispatches input to
+    // these instead of naming each feature, so an overlay is a self-contained class rather
+    // than another hardcoded branch here.
+    private let m_overlays: array<ref<MpPluginOverlay>>;
     private let m_messageController: wref<ListController>;
     private let m_scrollArea: wref<inkScrollArea>;
     private let m_scrollController: wref<inkScrollController>;
@@ -130,6 +134,10 @@ public class MultiplayerGameController extends inkGameController {
         GameInstance.GetNetworkWorldSystem().GetAppearanceSystem().m_controller = this;
 
         FTLog(s"[MultiplayerGameController] OnInitialize");
+
+        // Build the overlay registry once. Adding a HUD overlay is a new MpPluginOverlay
+        // subclass plus a line in MpBuildOverlayRegistry - not another branch in OnAction.
+        this.m_overlays = MpBuildOverlayRegistry();
 
         this.m_comDeviceBBDef = GetAllBlackboardDefs().UI_ComDevice;
         this.m_comDeviceBB = this.GetBlackboardSystem().Get(this.m_comDeviceBBDef);
@@ -303,8 +311,18 @@ public class MultiplayerGameController extends inkGameController {
     protected cb func OnPositionAnimationFinish(anim: ref<inkAnimProxy>) -> Bool {
         this.m_startupAnimProxy.UnregisterFromAllCallbacks(inkanimEventType.OnFinish);
         this.m_phoneIconWidget.SetVisible(true);
-        // And the moment async spawning demonstrably works, which is what the probe needs.
-        this.MpInkProbeOnce();
+        // The ink probe is DISABLED, and its being disabled IS the verdict: on 2026-09-13 it
+        // HARD-CRASHED the client a few seconds after spawn, every session. AsyncSpawnFromExternal
+        // of the CLI-authored character_select.inkwidget takes the game down - so a CLI-authored
+        // inkwidget is NOT safely spawnable this way; the selector stays runtime-built. Do not
+        // re-arm this in a build anyone plays. See atlas:can-a-cli-authored-inkwidget-be-spawned.
+        // this.MpInkProbeOnce();
+        //
+        // RECONCILE 2026-09-22: the two branches disagreed here and the merge keeps the safe
+        // half of each. lifepath disabled the probe (above) - kept, because an active probe
+        // crashes the client. main replaced the hand-drawn talk button with a real input hint
+        // (30fe295) and REMOVED MpBuildTalkButton, so lifepath's MpBuildTalkButton() call is
+        // NOT re-added - it would not compile, and TALK is the input hint now.
     }
 
     /**
@@ -883,7 +901,29 @@ public class MultiplayerGameController extends inkGameController {
 
 // Emote Selector
 
-    private final func ShowEmoteSelector(show: Bool) -> Void {
+    // Offer a HUD input action to each registered overlay in turn; the first to consume it
+    // wins. This is what replaces the per-feature UIEmote (and, later, the other) branches in
+    // OnAction - the controller no longer names the feature, it just walks the registry.
+    private final func MpDispatchOverlays(actionName: CName, actionType: gameinputActionType) -> Bool {
+        let i = 0;
+        while i < ArraySize(this.m_overlays) {
+            if this.m_overlays[i].HandleAction(this, actionName, actionType) {
+                return true;
+            }
+            i += 1;
+        }
+        return false;
+    }
+
+    // Read by MpEmoteOverlay so the registry dispatch can gate open/close on the same state
+    // the old inline OnAction branches used.
+    public final func IsEmoteSelectorOpen() -> Bool {
+        return this.m_emoteSelectorOpen;
+    }
+
+    // Public so a registry overlay (MpEmoteOverlay) can drive the wheel without the controller
+    // hardcoding the UIEmote branch. The body is unchanged.
+    public final func ShowEmoteSelector(show: Bool) -> Void {
         if (show) {
             this.AsyncSpawnFromLocal(this.GetRootWidget(), n"emote_selector", this, n"OnEmoteSelectorSpawned");
             // if IsDefined(this.m_phoneIconAnimProxy) {
@@ -1663,11 +1703,7 @@ public class MultiplayerGameController extends inkGameController {
             if Equals(actionName, n"UIDisconnectFromServer") && Equals(actionType, gameinputActionType.BUTTON_HOLD_COMPLETE) {
                 GameInstance.GetNetworkWorldSystem().Disconnect();
                 return true;
-            } else if Equals(actionName, n"UIEmote") && Equals(actionType, gameinputActionType.BUTTON_PRESSED) && !this.m_emoteSelectorOpen {
-                this.ShowEmoteSelector(true);
-                return true;
-            } else if Equals(actionName, n"UIEmote") && Equals(actionType, gameinputActionType.BUTTON_RELEASED) && this.m_emoteSelectorOpen {
-                this.ShowEmoteSelector(false);
+            } else if this.MpDispatchOverlays(actionName, actionType) {
                 return true;
             } else if Equals(actionName, n"UIShop") && Equals(actionType, gameinputActionType.BUTTON_HOLD_COMPLETE) && this.m_activeDelivery {
                 DeliveryServer.CancelDelivery();

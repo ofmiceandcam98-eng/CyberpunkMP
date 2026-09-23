@@ -62,12 +62,17 @@ future: a committed template now lives at `docs/deploy/docker-compose.authority.
 `publish/`, which ships as a public release asset.
 
 ### 2e. Cron
+The schedule now lives in the repo, not in this doc — the hand-list here drifted (it named
+two of the four jobs). One command installs all of them, idempotently:
 ```
-*/10 * * * * /bin/bash <live deploy>/tools/deploy/update-server.sh <live deploy>
-0    * * * * /bin/bash <live deploy>/tools/deploy/update-wolvenkit.sh
+/bin/bash <live deploy>/tools/deploy/install-crons.sh            # install what is missing
+/bin/bash <live deploy>/tools/deploy/install-crons.sh --dry-run  # show, touch nothing
 ```
-Always via `/bin/bash` — TrueNAS mounts `/home` noexec, where direct execution fails
-silently with exit 126.
+It carries the four NCO jobs — `update-server` (*/10), `update-wolvenkit` (hourly),
+`watch-events` (*/5), `backup-gamedata` (04:00) — pointed at wherever the checkout is, and
+re-running never duplicates a line. All are invoked via `/bin/bash`, because TrueNAS mounts
+`/home` noexec, where direct execution fails silently with exit 126. To confirm on a running
+box: `crontab -l | grep tools/deploy`.
 
 ### 2f. Tailscale
 Each deployment's sidecar is a tailnet NODE. A new box gets new node identities, so the

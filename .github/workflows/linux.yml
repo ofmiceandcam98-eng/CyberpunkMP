@@ -6,6 +6,13 @@ on:
     branches:
       - main
       - dev
+      # The deploy branches the self-updating servers pull from. Without these, a
+      # server-side commit pushed straight here is deployed by cron with the container
+      # never having been CI-built - the exact failure the container job guards against
+      # (Atlas: the-container-gate-never-runs-on-the-branches-that-actually). paths-ignore
+      # below still skips launcher- and docs-only pushes, so this does not spam builds.
+      - feat/world-state
+      - feat/lifepath-roster
     paths-ignore:
       - 'publish/**'
       - 'tools/**'

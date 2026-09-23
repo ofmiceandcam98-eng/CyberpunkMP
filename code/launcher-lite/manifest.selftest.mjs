@@ -13,7 +13,7 @@
  */
 
 import crypto from 'node:crypto'
-import { writeFileSync, unlinkSync, mkdtempSync, rmSync } from 'node:fs'
+import { writeFileSync, unlinkSync, mkdtempSync, rmSync, mkdirSync, existsSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import nacl from 'tweetnacl'
@@ -33,7 +33,10 @@ import {
   sha256Hex,
   hashFileSha256,
   checkMinLauncher,
-  normalizeOwnedPath
+  normalizeOwnedPath,
+  auditPayloadInstall,
+  extractPayloadClean,
+  resolveArchiveStrip
 } from './manifest.js'
 
 let passed = 0
@@ -555,6 +558,133 @@ try {
 }
 
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Payload clean + audit (pure fs/path helpers, moved out of main.js so they can
+// be exercised here without Electron).
+// ---------------------------------------------------------------------------
+
+// A minimal stand-in for the AdmZip these helpers take: getEntries() yields
+// { entryName, isDirectory }, and extractAllTo(dir) writes each file entry.
+function mockZip (paths) {
+  return {
+    getEntries: () => paths.map((p) => ({ entryName: p, isDirectory: p.endsWith('/') })),
+    extractAllTo: (dir) => {
+      for (const p of paths) {
+        if (p.endsWith('/')) continue
+        const full = path.join(dir, p.split('/').join(path.sep))
+        mkdirSync(path.dirname(full), { recursive: true })
+        writeFileSync(full, 'x')
+      }
+    }
+  }
+}
+
+{
+  // A clean that removes a leftover: an owned dir is wiped before the extract, so a file
+  // the payload no longer ships does not survive - and a clean run reports no failures.
+  const d = mkdtempSync(path.join(os.tmpdir(), 'nco-clean-'))
+  try {
+    mkdirSync(path.join(d, 'archive'), { recursive: true })
+    writeFileSync(path.join(d, 'archive', 'leftover.archive'), 'old')
+    const failures = extractPayloadClean(d, mockZip(['archive/new.archive']))
+    check('extractPayloadClean: wipes a leftover from an owned dir',
+      existsSync(path.join(d, 'archive', 'leftover.archive')), false)
+    check('extractPayloadClean: extracts the shipped file',
+      existsSync(path.join(d, 'archive', 'new.archive')), true)
+    check('extractPayloadClean: reports no failures on a clean run',
+      failures.length, 0)
+  } finally { try { rmSync(d, { recursive: true, force: true }) } catch { /* best effort */ } }
+}
+
+// A clean that FAILS and reports it (rmSync throwing -> a {dir, message} in the returned
+// array) is deliberately not unit-tested here: forcing rmSync to throw deterministically
+// needs an fs mock or a platform-specific illegal path, neither worth the fragility. The
+// no-failures assertion above covers the same return-shape on the success side.
+
+{
+  // An audit with a missing file: a shipped path that never landed on disk is reported.
+  const d = mkdtempSync(path.join(os.tmpdir(), 'nco-missing-'))
+  try {
+    mkdirSync(path.join(d, 'archive'), { recursive: true })
+    writeFileSync(path.join(d, 'archive', 'there.archive'), 'x')
+    const audit = auditPayloadInstall(d, mockZip(['archive/there.archive', 'archive/gone.archive']))
+    check('auditPayloadInstall: reports a shipped file that never landed',
+      audit.missing.join(','), 'archive/gone.archive')
+    check('auditPayloadInstall: does not flag a present file as missing',
+      audit.missing.includes('archive/there.archive'), false)
+  } finally { try { rmSync(d, { recursive: true, force: true }) } catch { /* best effort */ } }
+}
+
+{
+  // An audit with an orphan: a stray file inside a dir the payload OWNS is an orphan; a
+  // runtime file outside any owned dir (logs, .nco-version) is not.
+  const d = mkdtempSync(path.join(os.tmpdir(), 'nco-orphan-'))
+  try {
+    mkdirSync(path.join(d, 'archive'), { recursive: true })
+    writeFileSync(path.join(d, 'archive', 'ours.archive'), 'x')
+    writeFileSync(path.join(d, 'archive', 'stray.archive'), 'x')
+    writeFileSync(path.join(d, '.nco-version'), 'v1')
+    const audit = auditPayloadInstall(d, mockZip(['archive/ours.archive']))
+    check('auditPayloadInstall: flags a stray file in an owned dir as an orphan',
+      audit.orphans.join(','), 'archive/stray.archive')
+    check('auditPayloadInstall: does not flag a runtime file outside owned dirs',
+      audit.orphans.includes('.nco-version'), false)
+  } finally { try { rmSync(d, { recursive: true, force: true }) } catch { /* best effort */ } }
+}
+
+{
+  // A DevInstall leftover: an orphan listed in .nco-devinstall is a dev leftover - reported
+  // separately and kept, not a mystery orphan the update path would delete or refuse over.
+  const d = mkdtempSync(path.join(os.tmpdir(), 'nco-devleftover-'))
+  try {
+    mkdirSync(path.join(d, 'archive'), { recursive: true })
+    writeFileSync(path.join(d, 'archive', 'ours.archive'), 'x')
+    writeFileSync(path.join(d, 'archive', 'devwip.archive'), 'x')
+    writeFileSync(path.join(d, '.nco-devinstall'), 'CyberpunkMP.dll\narchive/devwip.archive\n')
+    const audit = auditPayloadInstall(d, mockZip(['archive/ours.archive']))
+    check('auditPayloadInstall: a DevInstall-placed leftover is a devLeftover, not an orphan',
+      (audit.devLeftovers || []).join(','), 'archive/devwip.archive')
+    check('auditPayloadInstall: the dev leftover is NOT counted as an orphan',
+      audit.orphans.includes('archive/devwip.archive'), false)
+  } finally { try { rmSync(d, { recursive: true, force: true }) } catch { /* best effort */ } }
+}
+
+// ---------------------------------------------------------------------------
+// resolveArchiveStrip - wrapper-folder detection for mod archives
+// ---------------------------------------------------------------------------
+
+{
+  // Already laid out on real surfaces: install as-is, no strip.
+  const r = resolveArchiveStrip(['archive/pc/mod/x.archive', 'r6/scripts/y.reds'])
+  check('resolveArchiveStrip: a correctly-shaped archive needs no strip', `${r.ok}/${r.strip}`, 'true/')
+}
+{
+  // The wrapper case this branch exists for: ModName/<surface>/... - strip the wrapper.
+  const r = resolveArchiveStrip(['MyMod/archive/pc/mod/x.archive', 'MyMod/red4ext/plugins/z.dll'])
+  check('resolveArchiveStrip: strips a single wrapper folder hiding a surface',
+    `${r.ok}/${r.strip}`, 'true/MyMod/')
+}
+{
+  // A directory entry for the wrapper is filtered out and does not defeat detection.
+  const r = resolveArchiveStrip(['MyMod/', 'MyMod/archive/pc/mod/x.archive'])
+  check('resolveArchiveStrip: ignores the wrapper dir entry itself',
+    `${r.ok}/${r.strip}`, 'true/MyMod/')
+}
+{
+  // Nothing lands on a surface even after stripping - refuse rather than install a no-op.
+  const r = resolveArchiveStrip(['docs/readme.txt', 'MyMod/notes.md'])
+  check('resolveArchiveStrip: refuses an archive with no mod surface', r.ok, false)
+}
+{
+  // Empty archive is refused, not silently accepted.
+  check('resolveArchiveStrip: refuses an empty archive', resolveArchiveStrip([]).ok, false)
+}
+{
+  // A wrapper whose stripped paths STILL do not reach a surface is refused (only one strip).
+  const r = resolveArchiveStrip(['Outer/Inner/archive/pc/mod/x.archive'])
+  check('resolveArchiveStrip: does not strip more than one level', r.ok, false)
+}
 
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exitCode = failed === 0 ? 0 : 1

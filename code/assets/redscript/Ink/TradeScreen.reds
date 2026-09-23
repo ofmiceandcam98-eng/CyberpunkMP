@@ -57,90 +57,172 @@ public func MpTrVoid() -> HDRColor = new HDRColor(0.031, 0.031, 0.047, 1.0)   //
 // at left:60 with the same bottom line - it is the game's own chat, already on screen, and this
 // overlay deliberately does not redraw it.
 
-public func MpTrPanelX() -> Float = 730.0
-public func MpTrPanelY() -> Float = 410.0
-public func MpTrPanelW() -> Float = 900.0
-public func MpTrPanelH() -> Float = 470.0
+// v2 (zeldfep, 2026-09-14): four FLOATING boxes, not one plate - so this rect is the overall
+// BOUNDING box of the composition (header + two offer columns + actions), used by MpTrOpen to
+// re-centre the whole thing on screen. Authored large: item text sits at the 28px HUD anchor.
+public func MpTrPanelX() -> Float = 690.0
+public func MpTrPanelY() -> Float = 200.0
+public func MpTrPanelW() -> Float = 1120.0
+public func MpTrPanelH() -> Float = 560.0
+
+// Overlay zoom over the authored 1:1. v2 authors the composition large (four floating boxes,
+// 28px item text), so the base fit is already HUD-sized and this stays 1.0. Bump this one
+// number to grow the whole overlay.
+public func MpTrZoom() -> Float = 2.6
+
+// Overlay position, as a FRACTION of the chat root's MEASURED size (root.GetSize()) - so it is
+// resolution-independent (zeldfep runs 2K; must adapt to any display). The chat box owns the
+// bottom-left of this root, so the composition's top-left lands at (fracX, fracY) of the root,
+// putting the overlay to the RIGHT of the chat box (zeldfep, 2026-09-14: "move them right past
+// the chat box; dynamic to monitor size"). Nudge these two: +X right, +Y down, range 0..1.
+public func MpTrShiftFracX() -> Float = 1.04
+public func MpTrShiftFracY() -> Float = 0.12
+
+// Default gap between the four floating boxes, authored px. Bigger than the first pass (16 read
+// as one merged block at scale). Live-tunable via /trgap.
+public func MpTrGapDefault() -> Float = 40.0
+
+// ============================================================================ a floating box
+//
+// v2 is FOUR separate boxes floating on the HUD, not one plate. Each is a fill + border, drawn
+// clean (no clipped-corner notch: zeldfep read the notch diamonds as clutter on the selector and
+// the talk button, 2026-09-14). Bump the alpha a touch over the mockup - a live game frame behind
+// read-size text needs a firmer backing.
+public func MpTrBox(c: ref<inkCanvas>, x: Float, y: Float, w: Float, h: Float) -> Void {
+    // See-through fill (zeldfep, 2026-09-14: "blur see through") - low alpha so the game reads
+    // behind it; the frosted look comes from SetBackgroundBlur in MpTrOpen.
+    MpCsRect(c, x, y, w, h, MpTrPanel(), 0.5);
+    // Bright cyan border so each box reads as a SEPARATE floating box, not one merged panel.
+    MpCsBorder(c, x, y, w, h, MpTrCyan(), 0.8);
+}
 
 // ============================================================================ one item row
 //
-// A traded item: name, a category chip, and a quantity when more than one. Name and category are
-// placeholders in the shell; with the wire they come from resolving the item's TweakDBID.
+// A traded item at the v2 anchor (28px name = the HUD character-name / Y key-hint size). Square
+// bullet, name, a category chip under it, and a gold quantity on the right when more than one.
+// Name and category are placeholders in the shell; with the wire they resolve from the TweakDBID.
+public func MpTrRow(parent: ref<inkCompoundWidget>, x: Float, y: Float, w: Float, name: String,
+                    category: String, qty: Int32) -> Void {
+    // Square bullet (mockup's .ic), name, a category chip under it, gold quantity on the right.
+    MpCsRect(parent, x, y + 3.0, 14.0, 14.0, MpTrCyan(), 0.85);
+    MpCsText(parent, x + 24.0, y, name, 21, n"Medium", MpTrInk());
 
-public func MpTrItemRow(parent: ref<inkCompoundWidget>, x: Float, y: Float, name: String,
-                        category: String, qty: Int32) -> Void {
-    MpCsText(parent, x, y, name, 18, n"Medium", MpTrInk());
-
-    let chipW = 12.0 + Cast<Float>(StrLen(category)) * 8.0;
-    MpCsBorder(parent, x, y + 26.0, chipW, 20.0, MpTrCyanDim(), 0.8);
-    MpCsText(parent, x + 6.0, y + 28.0, category, 12, n"Regular", MpTrInkDim());
+    let chipW = 16.0 + Cast<Float>(StrLen(category)) * 8.0;
+    MpCsBorder(parent, x + 24.0, y + 28.0, chipW, 22.0, MpTrCyanDim(), 0.8);
+    MpCsText(parent, x + 32.0, y + 30.0, category, 13, n"Regular", MpTrInkDim());
 
     if qty > 1 {
-        MpCsText(parent, x + 360.0, y, s"x\(qty)", 18, n"Medium", MpTrGold());
+        MpCsText(parent, x + w - 66.0, y, s"x\(qty)", 21, n"Medium", MpTrGold());
     }
 }
 
 // ============================================================================ the render
 
-public func MpTrBuild(c: ref<inkCanvas>) -> Void {
-    let px = MpTrPanelX();
-    let py = MpTrPanelY();
-    let pw = MpTrPanelW();
-    let ph = MpTrPanelH();
+// The /tradehelp overlay - a command reference drawn on top of the panel. Typed commands are the
+// working interface (the nav keys do not reach a HUD controller without a UI context).
+public func MpTrHelp(c: ref<inkCanvas>) -> Void {
+    let x = MpTrPanelX() + 70.0;
+    let y = MpTrPanelY() + 78.0;
+    let w = MpTrPanelW() - 140.0;
+    let h = 384.0;
+    MpCsRect(c, x, y, w, h, MpTrVoid(), 0.95);
+    MpCsBorder(c, x, y, w, h, MpTrCyan(), 1.0);
+    MpCsGlowText(c, x + 26.0, y + 18.0, MpCsSpaced("TRADE COMMANDS"), 26, n"Bold", MpTrCyan());
 
-    // ------------------------------------------------------------------ plate
-    MpCsRect(c, px, py, pw, ph, MpTrPanel(), 0.82);
-    MpCsBorder(c, px, py, pw, ph, MpTrCyanDim(), 0.9);
-    // The clipped corners: top-right and bottom-left, the design-language signature.
-    MpCsNotch(c, px + pw, py, 30.0, MpTrVoid());
-    MpCsNotch(c, px, py + ph, 30.0, MpTrVoid());
+    let lx = x + 26.0;
+    let dx = x + 250.0;
+    let ly = y + 64.0;
+    let step = 29.0;
+    MpCsText(c, lx, ly,             "/tradeui",  20, n"Medium", MpTrGold());  MpCsText(c, dx, ly,             "open the trade menu",         20, n"Regular", MpTrInk());
+    MpCsText(c, lx, ly + step,      "/tradeoff", 20, n"Medium", MpTrGold());  MpCsText(c, dx, ly + step,      "close it",                    20, n"Regular", MpTrInk());
+    MpCsText(c, lx, ly + step*2.0,  "/tr+  /tr-",20, n"Medium", MpTrGold());  MpCsText(c, dx, ly + step*2.0,  "offer more / less eddies",    20, n"Regular", MpTrInk());
+    MpCsText(c, lx, ly + step*3.0,  "/trok",     20, n"Medium", MpTrGold());  MpCsText(c, dx, ly + step*3.0,  "confirm",                     20, n"Regular", MpTrInk());
+    MpCsText(c, lx, ly + step*4.0,  "/trright /trleft", 20, n"Medium", MpTrGold()); MpCsText(c, dx, ly + step*4.0, "move the menu sideways",   20, n"Regular", MpTrInk());
+    MpCsText(c, lx, ly + step*5.0,  "/trup /trdown",    20, n"Medium", MpTrGold()); MpCsText(c, dx, ly + step*5.0, "move the menu up / down",  20, n"Regular", MpTrInk());
+    MpCsText(c, lx, ly + step*6.0,  "/trbig /trsmall",  20, n"Medium", MpTrGold()); MpCsText(c, dx, ly + step*6.0, "resize the menu",          20, n"Regular", MpTrInk());
+    MpCsText(c, lx, ly + step*7.0,  "/trgap",    20, n"Medium", MpTrGold());  MpCsText(c, dx, ly + step*7.0,  "spacing",                     20, n"Regular", MpTrInk());
+    MpCsText(c, lx, ly + step*8.0,  "/trsave",   20, n"Medium", MpTrGold());  MpCsText(c, dx, ly + step*8.0,  "save this position",          20, n"Regular", MpTrInk());
+    MpCsText(c, lx, ly + step*9.0,  "/trreset",  20, n"Medium", MpTrGold());  MpCsText(c, dx, ly + step*9.0,  "reset to default position",   20, n"Regular", MpTrInk());
+    MpCsText(c, lx, ly + step*10.0, "/tradehelp",18, n"Regular", MpTrInkFaint()); MpCsText(c, dx, ly + step*10.0, "show / hide this list",    18, n"Regular", MpTrInkFaint());
+}
 
-    // ------------------------------------------------------------------ header
-    // Title reads as lit (chromatic aberration), partner named beside it, the overall eddies
-    // readout parked on the right - "weight and eddies stay in the header".
-    MpCsGlowText(c, px + 24.0, py + 14.0, MpCsSpaced("TRADE"), 26, n"Bold", MpTrCyan());
-    MpCsText(c, px + 170.0, py + 21.0, "with Noremac", 18, n"Regular", MpTrInkDim());
-    MpCsText(c, px + pw - 250.0, py + 14.0, MpCsSpaced("EDDIES"), 12, n"Regular", MpTrInkFaint());
-    MpCsText(c, px + pw - 250.0, py + 30.0, "5,000 / 8,500", 18, n"Medium", MpTrGold());
-    MpCsRect(c, px + 20.0, py + 56.0, pw - 40.0, 1.0, MpTrCyanDim(), 0.7);
+public func MpTrBuild(c: ref<inkCanvas>, gap: Float, sel: Int32, eddies: Int32) -> Void {
+    let bx = MpTrPanelX();
+    let by = MpTrPanelY();
+    let bw = MpTrPanelW();
+    let bh = MpTrPanelH();
 
-    // ------------------------------------------------------------------ two columns
-    let colTop = py + 78.0;
-    let leftX = px + 30.0;
-    let rightX = px + 470.0;
+    // ---- ONE cohesive panel (the mockup: "read as one strip, not two floating windows") ----
+    // See-through fill; the frosted look comes from SetBackgroundBlur in MpTrOpen.
+    MpCsRect(c, bx, by, bw, bh, MpTrPanel(), 0.5);
+    MpCsBorder(c, bx, by, bw, bh, MpTrCyan(), 0.8);
 
-    MpCsRect(c, px + 450.0, py + 70.0, 1.0, 320.0, MpTrCyanDim(), 0.5); // divider
+    // ---- header: title, partner, weight + eddies, close X, divider ----
+    MpCsGlowText(c, bx + 24.0, by + 16.0, MpCsSpaced("TRADE"), 32, n"Bold", MpTrCyan());
+    MpCsText(c, bx + 200.0, by + 24.0, "with Noremac", 22, n"Regular", MpTrInkDim());
+    MpCsText(c, bx + bw - 420.0, by + 16.0, MpCsSpaced("WEIGHT"), 15, n"Regular", MpTrInkFaint());
+    MpCsText(c, bx + bw - 420.0, by + 36.0, "6 / 200", 21, n"Medium", MpTrInk());
+    MpCsText(c, bx + bw - 250.0, by + 16.0, MpCsSpaced("EDDIES"), 15, n"Regular", MpTrInkFaint());
+    MpCsText(c, bx + bw - 250.0, by + 36.0, "20,100", 21, n"Medium", MpTrGold());
+    MpCsBorder(c, bx + bw - 56.0, by + 16.0, 34.0, 34.0, MpTrRed(), 0.85);
+    MpCsText(c, bx + bw - 46.0, by + 19.0, "X", 24, n"Bold", MpTrRed());
+    if sel == 2 { MpCsBorder(c, bx + bw - 60.0, by + 12.0, 42.0, 42.0, MpTrGold(), 1.0); }
+    MpCsRect(c, bx + 18.0, by + 62.0, bw - 36.0, 1.0, MpTrCyanDim(), 0.7);
 
-    MpCsText(c, leftX, colTop, MpCsSpaced("YOU OFFER"), 15, n"Medium", MpTrCyan());
-    MpCsText(c, rightX, colTop, MpCsSpaced("NOREMAC OFFERS"), 15, n"Medium", MpTrRed());
+    // ---- two columns with a vertical divider ----
+    let colTop = by + 82.0;
+    let colBot = by + bh - 96.0;
+    let midX = bx + bw / 2.0;
+    let leftX = bx + 26.0;
+    let rightX = midX + 26.0;
+    let leftW = midX - leftX - 20.0;
+    let rightW = bx + bw - rightX - 26.0;
+    MpCsRect(c, midX, colTop - 4.0, 1.0, colBot - colTop + 8.0, MpTrCyanDim(), 0.5);
 
-    // Eddies line at the top of each column, then items. Mock content mirrors the mockup.
-    let rowTop = colTop + 34.0;
-    MpCsText(c, leftX, rowTop, "Eddies", 18, n"Medium", MpTrInkDim());
-    MpCsText(c, leftX + 360.0, rowTop, "5,000", 18, n"Medium", MpTrGold());
+    // left: YOU OFFER - eddies stepper, then your inventory rows (mockup content)
+    MpCsText(c, leftX, colTop, MpCsSpaced("YOU OFFER"), 21, n"Medium", MpTrCyan());
+    MpCsText(c, leftX, colTop + 44.0, "Eddies", 20, n"Medium", MpTrGold());
+    MpCsBorder(c, leftX + 106.0, colTop + 38.0, 250.0, 40.0, MpTrCyanDim(), 0.8);
+    MpCsText(c, leftX + 120.0, colTop + 44.0, "-", 24, n"Bold", MpTrInkDim());
+    MpCsText(c, leftX + 168.0, colTop + 46.0, s"\(eddies)", 21, n"Medium", MpTrGold());
+    MpCsText(c, leftX + 214.0, colTop + 44.0, "+", 24, n"Bold", MpTrCyan());
+    MpCsText(c, leftX + 262.0, colTop + 48.0, "/ 20,100", 15, n"Regular", MpTrInkFaint());
+    MpTrRow(c, leftX, colTop + 104.0, leftW, "Nekomata", "Sniper", 1);
+    MpTrRow(c, leftX, colTop + 168.0, leftW, "MaxDoc Mk.1", "Consumable", 12);
+    MpTrRow(c, leftX, colTop + 232.0, leftW, "Scrap Electronics", "Component", 37);
 
-    MpCsText(c, rightX, rowTop, "Eddies", 18, n"Medium", MpTrInkDim());
-    MpCsText(c, rightX + 360.0, rowTop, "8,500", 18, n"Medium", MpTrGold());
+    // right: NOREMAC OFFERS - their three items, then their eddies
+    MpCsText(c, rightX, colTop, MpCsSpaced("NOREMAC OFFERS"), 21, n"Medium", MpTrRed());
+    MpCsText(c, bx + bw - 46.0, colTop, "3", 21, n"Medium", MpTrRed());
+    MpTrRow(c, rightX, colTop + 44.0, rightW, "Militech M-10AF Lexington", "Pistol", 1);
+    MpTrRow(c, rightX, colTop + 108.0, rightW, "MaxDoc Mk.2", "Consumable", 6);
+    MpTrRow(c, rightX, colTop + 172.0, rightW, "Kiroshi Optics Mk.1", "Cyberware", 1);
+    MpCsText(c, rightX, colTop + 240.0, "Eddies", 20, n"Medium", MpTrInkDim());
+    MpCsText(c, bx + bw - 118.0, colTop + 240.0, "2,500", 21, n"Medium", MpTrGold());
 
-    // Left offers eddies only in the mockup; right offers three items with categories.
-    MpTrItemRow(c, rightX, rowTop + 54.0, "Militech M-10AF Lexington", "Weapon", 1);
-    MpTrItemRow(c, rightX, rowTop + 118.0, "MaxDoc Mk.2", "Consumable", 3);
-    MpTrItemRow(c, rightX, rowTop + 182.0, "Kiroshi Optics Mk.1", "Cyberware", 1);
+    // ---- footer: divider, confirm LEDs, note, Cancel / Confirm ----
+    let fY = by + bh - 76.0;
+    MpCsRect(c, bx + 18.0, fY - 10.0, bw - 36.0, 1.0, MpTrCyanDim(), 0.6);
+    MpCsRect(c, bx + 24.0, fY + 3.0, 12.0, 12.0, MpTrRed(), 0.9);
+    MpCsText(c, bx + 44.0, fY - 2.0, "You: not confirmed", 19, n"Medium", MpTrInk());
+    MpCsRect(c, bx + 24.0, fY + 31.0, 12.0, 12.0, MpTrCyan(), 0.9);
+    MpCsText(c, bx + 44.0, fY + 26.0, "Noremac: confirmed", 19, n"Medium", MpTrInk());
+    MpCsText(c, bx + 300.0, fY + 40.0,
+             "Type  /tradehelp  for all commands      /tr+  /tr- eddies    /trok confirm    /tradeoff exit",
+             14, n"Regular", MpTrInkFaint());
+    let btnW = 190.0;
+    let btnH = 44.0;
+    let btnY = fY + 4.0;
+    let cancelX = bx + bw - btnW * 2.0 - 40.0;
+    MpCsRect(c, cancelX, btnY, btnW, btnH, MpTrRedDim(), 0.6);
+    MpCsBorder(c, cancelX, btnY, btnW, btnH, MpTrRed(), 0.9);
+    MpCsText(c, cancelX + 56.0, btnY + 11.0, MpCsSpaced("CANCEL"), 20, n"Medium", MpTrRed());
+    let confirmX = bx + bw - btnW - 20.0;
+    MpCsRect(c, confirmX, btnY, btnW, btnH, MpTrCyanDim(), 0.6);
+    MpCsBorder(c, confirmX, btnY, btnW, btnH, MpTrCyan(), 0.9);
+    MpCsText(c, confirmX + 50.0, btnY + 11.0, MpCsSpaced("CONFIRM"), 20, n"Medium", MpTrCyan());
 
-    // ------------------------------------------------------------------ footer
-    // Confirmations clear on any change - the server's version-stamped rule, surfaced.
-    MpCsText(c, px + 30.0, py + ph - 88.0,
-             "Any change to either offer clears both confirmations.", 13, n"Regular",
-             MpTrInkFaint());
-
-    let btnY = py + ph - 60.0;
-    // Cancel (red) and Confirm (cyan). Drawn as plates with a label; not interactive in the
-    // shell - clicks are wired with the data path.
-    MpCsRect(c, px + 30.0, btnY, 200.0, 40.0, MpTrRedDim(), 0.6);
-    MpCsBorder(c, px + 30.0, btnY, 200.0, 40.0, MpTrRed(), 0.9);
-    MpCsText(c, px + 96.0, btnY + 9.0, MpCsSpaced("CANCEL"), 15, n"Medium", MpTrRed());
-
-    MpCsRect(c, px + pw - 230.0, btnY, 200.0, 40.0, MpTrCyanDim(), 0.6);
-    MpCsBorder(c, px + pw - 230.0, btnY, 200.0, 40.0, MpTrCyan(), 0.9);
-    MpCsText(c, px + pw - 168.0, btnY + 9.0, MpCsSpaced("CONFIRM"), 15, n"Medium", MpTrCyan());
+    // Selection highlight (Tab cycles it): gold ring around the chosen footer control.
+    if sel == 0 { MpCsBorder(c, cancelX - 4.0, btnY - 4.0, btnW + 8.0, btnH + 8.0, MpTrGold(), 1.0); }
+    if sel == 1 { MpCsBorder(c, confirmX - 4.0, btnY - 4.0, btnW + 8.0, btnH + 8.0, MpTrGold(), 1.0); }
 }

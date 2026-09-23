@@ -104,13 +104,23 @@ static void DriveEntity(const DriverComponent& aDriver, const EntityComponent& a
                         const glm::vec3& aPosition, float aYaw, float aSpeed, uint32_t aLocomotion,
                         float aFrameDeltaMs)
 {
+    const auto now = std::chrono::steady_clock::now();
+
     // Vehicle-exit grace. The engine rebuilds the puppet's components over several
     // frames after an unmount, and this path writing transforms plus re-binding into
     // that rebuild is the prime suspect for every 2026-08-19 exit crash. Stand down
     // completely until the deadline passes; the puppet holds still for the moment,
     // which beats a dead game.
-    if (aDriver.SuppressUntil > std::chrono::steady_clock::now())
+    if (aDriver.SuppressUntil > now)
+    {
+        // Remember we were frozen this grace, so the first frame past it eases out of the
+        // held position instead of teleporting. The flag lives on the PuppetDriver, which
+        // stays mutable through the shared_ptr - DriverComponent arrives const here, the
+        // same reason FirstWriteLogged/GateLogged live there rather than on the component.
+        if (aDriver.Driver)
+            aDriver.Driver->WasSuppressed = true;
         return;
+    }
 
     const auto pSystem = Red::GetGameSystem<NetworkWorldSystem>();
     const auto entityHandle = pSystem->GetEntity(aEntityComponent.Id);
@@ -137,11 +147,48 @@ static void DriveEntity(const DriverComponent& aDriver, const EntityComponent& a
         return;
     }
 
+    // Ease out of the exit-grace freeze instead of teleporting. All state lives on the
+    // PuppetDriver (mutable via the shared_ptr; DriverComponent is const here), and this
+    // runs only AFTER the grace - past the component rebuild - so it never writes into the
+    // crash window the stand-down above guards. With no ease armed it is a plain
+    // pass-through of the live position.
+    constexpr float cExitEaseMs = 250.f;
+    glm::vec3 writePos = aPosition;
+    if (auto* pDriver = aDriver.Driver.get())
+    {
+        // First frame past the grace: arm a short ease FROM where the puppet was frozen,
+        // fired once by clearing the was-suppressed flag.
+        if (pDriver->WasSuppressed)
+        {
+            pDriver->WasSuppressed = false;
+            if (pDriver->HasLastPosition)
+            {
+                pDriver->ExitEaseFrom = pDriver->LastPosition;
+                pDriver->ExitEaseUntil = now + std::chrono::milliseconds(static_cast<int>(cExitEaseMs));
+            }
+        }
+
+        if (pDriver->HasLastPosition && pDriver->ExitEaseUntil > now)
+        {
+            const float remainMs = std::chrono::duration<float, std::milli>(pDriver->ExitEaseUntil - now).count();
+            const float ratio = std::clamp(1.f - remainMs / cExitEaseMs, 0.f, 1.f);
+            writePos = Lerp(pDriver->ExitEaseFrom, aPosition, ratio);
+        }
+    }
+
     Red::WorldTransform transform{};
-    transform.Position = Red::WorldPosition(Red::Vector4{aPosition.x, aPosition.y, aPosition.z, 0.f});
+    transform.Position = Red::WorldPosition(Red::Vector4{writePos.x, writePos.y, writePos.z, 0.f});
     transform.Orientation = Game::ToRed(glm::quat(glm::vec3{0.f, 0.f, aYaw}));
 
     PlacedComponent_SetTransform(entityHandle->placedComponent, transform);
+
+    // Remember what we actually drew, so a later exit eases out of the real on-screen
+    // position rather than a stale sample.
+    if (aDriver.Driver)
+    {
+        aDriver.Driver->LastPosition = writePos;
+        aDriver.Driver->HasLastPosition = true;
+    }
 
     if (aDriver.Driver)
     {
@@ -227,8 +274,19 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
     //
     // The rule from here on: absolute ticks stay integer, and only DIFFERENCES - which
     // are small - are allowed to become float.
+    // Widen the buffer for THIS remote by a bounded margin sized to its own arrival jitter,
+    // on top of the session-wide base delay. A jittery connection stops starving its buffer
+    // (and dead-reckoning for every observer) while a clean one is untouched, so the worst
+    // link in the session no longer sets everyone's visual quality. Only DIFFERENCES become
+    // float, per the integer-tick rule above. Bounded so a pathological link cannot run the
+    // delay away. Client-only; addresses jitter-driven starvation - a steady high-latency
+    // link with near-zero jitter would still need server-sent ping (the flag-day option).
+    constexpr float cJitterMargin = 2.f;      // cover ~2x the smoothed jitter
+    constexpr float cMaxJitterMargin = 200.f; // never add more than this many ms of delay
+    const float jitterExtra = std::clamp(cJitterMargin * aInterpolation.ArrivalJitter, 0.f, cMaxJitterMargin);
     const int64_t renderTick =
-        static_cast<int64_t>(NetworkWorldSystem::GetTick()) - static_cast<int64_t>(aSimulationDelay);
+        static_cast<int64_t>(NetworkWorldSystem::GetTick()) -
+        static_cast<int64_t>(aSimulationDelay + jitterExtra);
 
     TraceDriverless(aEntity, aEntityComponent, aInterpolation, renderTick, "enter");
 
@@ -752,6 +810,20 @@ void InterpolationSystem::HandleNotifyEntityMove(const PacketEvent<server::Notif
         pInterpolation->LastAuthorityEpoch = aMessage.get_authority_epoch();
         pInterpolation->HasAuthorityEpoch = true;
     }
+
+    // Arrival-jitter estimate for the per-remote adaptive interpolation margin (see
+    // InterpolationComponent). transit is the sample's age at arrival on the shared render
+    // clock; only its frame-to-frame change feeds the estimate, so the clock offset cancels.
+    const int64_t transit = static_cast<int64_t>(NetworkWorldSystem::GetTick()) -
+                            static_cast<int64_t>(aMessage.get_tick());
+    if (pInterpolation->HasTransit)
+    {
+        const int64_t diff = transit - pInterpolation->LastTransit;
+        const float d = static_cast<float>(diff < 0 ? -diff : diff);
+        pInterpolation->ArrivalJitter += (d - pInterpolation->ArrivalJitter) / 16.f;
+    }
+    pInterpolation->LastTransit = transit;
+    pInterpolation->HasTransit = true;
 
     if (Settings::Get().syncTrace)
     {
