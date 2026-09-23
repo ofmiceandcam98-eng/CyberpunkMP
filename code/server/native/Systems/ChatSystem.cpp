@@ -496,6 +496,21 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
     // default: a new field survives unless a save deliberately changes it.
     CharacterRecord character = pExisting ? *pExisting : CharacterRecord{};
 
+    // Carry the start-point placement onto the new record. When a brand-new character spawns
+    // before its creator save has landed, the spawn handler cannot write SpawnedBefore onto a
+    // record that does not exist yet, so it relocated them to the arrivals point and left this
+    // flag for the save that creates the record - which is this one. Writing it here is what
+    // makes the fire-once guarantee hold for a character born and played in one session; the
+    // next spawn sees SpawnedBefore=true and does not send them to the arrivals point again.
+    // See Level::HandleSpawnCharacterRequest and PlayerComponent::RelocatedAwaitingRecord.
+    // Idempotent and safe whichever save consumes it: SpawnedBefore=true is the correct state
+    // for a player who was placed at the start, and clearing the flag stops it carrying on.
+    if (pPlayer->RelocatedAwaitingRecord)
+    {
+        character.SpawnedBefore = true;
+        pPlayer->RelocatedAwaitingRecord = false;
+    }
+
     /*
      * THE SAVE LANDS IN THE ACTIVE SLOT, which is what makes a second character possible.
      *

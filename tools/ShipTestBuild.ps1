@@ -164,6 +164,25 @@ if (-not $WhatIf -and -not (Test-Path (Join-Path $Repo "distrib\launcher\mod\Rpc
 
 Step "Client mod"
 
+# Fresh-checkout prerequisite, checked BEFORE the multi-minute compile + Verify + build.
+#
+# The Payload step below copies distrib\launcher\mod\Rpc into the build. Those bindings are
+# produced by RpcGenerator (it launches the game with --rpc), NOT by this build - so a fresh
+# or rebuilt checkout has never generated them. Without this guard the ship runs the whole
+# redscript compile, Verify and client build, THEN dies at a raw Copy-Item on the missing
+# Rpc dir with nothing published (Cam stream, 2026-09-12). Fail here, with the recipe.
+$rpcDir = Join-Path $Repo "distrib\launcher\mod\Rpc"
+if (-not (Test-Path $rpcDir)) {
+    Die ("RPC bindings missing - nothing was built, fix this first.`n" +
+         "  where  $rpcDir does not exist.`n" +
+         "  what   the payload needs distrib\launcher\mod\Rpc; RpcGenerator produces it by`n" +
+         "         launching the game with --rpc, and a fresh/rebuilt checkout has never run it.`n" +
+         "  fix    regenerate with RpcGenerator, OR carry the Rpc files from a known-good`n" +
+         "         checkout's distrib\launcher\mod\Rpc (the set the last good test build shipped),`n" +
+         "         then re-run. See MAP.md 'Rpc' and the fresh-checkout-ship-prerequisites Atlas item.")
+}
+Ok "RPC bindings present"
+
 # Redscript first. A test build whose scripts do not compile takes the game down entirely
 # for whoever installs it - one bad file aborts ALL compilation and the game starts with
 # no scripts at all, which looks exactly like the mod doing nothing.
@@ -376,7 +395,13 @@ $shortNum = if ($Tag -match 'test\.(\d+)') { $Matches[1] } else { '?' }
 # the artifact matched no commit for several minutes; saying so on the release is cheaper
 # than refusing to ship and is honest about what was built.
 $sha = (& git rev-parse --short HEAD 2>$null)
-$dirty = if ((& git status --porcelain 2>$null)) { "+dirty" } else { "" }
+# +dirty reflects whether the PAYLOAD's sources are uncommitted, not the whole tree. The
+# working tree here is almost always dirty from docs/MAP.md's CRLF phantom and the other
+# stream's WIP (docs/, publish/) - none of which is in the client payload (DLL, redscript,
+# Rpc, assets - all built from code/). Scoping to code/ makes +dirty mean "this artifact
+# matches no commit" (the actual concern, e.g. test.18's uncommitted code/protocol fix)
+# instead of firing on every single ship and so meaning nothing.
+$dirty = if ((& git status --porcelain -- code 2>$null)) { "+dirty" } else { "" }
 
 $title = "test.$shortNum - $Name ($sha$dirty)"
 

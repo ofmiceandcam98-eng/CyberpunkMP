@@ -31,6 +31,21 @@ public class ChatController extends inkHUDGameController {
     // TradeScreen.reds for the render; kept here because the overlay lives on this HUD
     // controller and only a real field on the class can hold it (annotations cannot).
     private let m_trRoot: wref<inkCanvas>;
+    // Live-tunable trade overlay placement (position as a fraction of the measured root, zoom,
+    // and box gap). Seeded from the MpTr* defaults on first open, then nudged in-game via the
+    // /tr* chat commands so the overlay can be placed without a ship per tweak.
+    private let m_trFracX: Float;
+    private let m_trFracY: Float;
+    private let m_trZoom: Float;
+    private let m_trGap: Float;
+    private let m_trTuned: Bool;
+    // Trade overlay keyboard state: whether it is up (gates input + guards listener register/
+    // unregister), which footer button is selected (0=Cancel, 1=Confirm, 2=Exit), and the eddies
+    // amount the +/- keys adjust.
+    private let m_trOpen: Bool;
+    private let m_trSel: Int32;
+    private let m_trEddies: Int32;
+    private let m_trHelp: Bool;
     private let m_nameLabel: wref<inkText>;
 
     protected cb func OnInitialize() -> Bool {
@@ -444,17 +459,62 @@ public class ChatController extends inkHUDGameController {
         }
 
         // Scale to whatever the root actually measures; a not-yet-laid-out root reports zero,
-        // so fall back to 1:1 rather than scaling the composition to nothing.
+        // so fall back to 1:1 rather than scaling the composition to nothing. Everything below is
+        // driven by the MEASURED root size, so it adapts to any resolution (zeldfep runs 2K).
+        // Interim keyboard nav (until the menu-controller cursor). Register the nav actions once -
+        // NO game-context push (that broke chat typing, reverted test.50), so this cannot trap the
+        // player; if an action needs a UI context to fire, it simply does nothing and the typed
+        // /tr+ /tr- /trok /tradeoff fallbacks still work. Unregistered in MpTrClose.
+        if !this.m_trOpen {
+            this.m_player.RegisterInputListener(this, n"back");
+            this.m_player.RegisterInputListener(this, n"navigate_up");
+            this.m_player.RegisterInputListener(this, n"navigate_down");
+            this.m_player.RegisterInputListener(this, n"popup_moveLeft");
+            this.m_player.RegisterInputListener(this, n"popup_moveRight");
+            this.m_player.RegisterInputListener(this, n"proceed");
+            this.m_trOpen = true;
+        }
+
+        // Seed the tunable placement from the defaults on the first open; the /tr* commands
+        // nudge these live thereafter.
+        if !this.m_trTuned {
+            this.m_trFracX = MpTrShiftFracX();
+            this.m_trFracY = MpTrShiftFracY();
+            this.m_trZoom = MpTrZoom();
+            this.m_trGap = MpTrGapDefault();
+            this.m_trSel = 3; // no footer ring by default (nav keys do not fire without a UI context)
+            // A /trsave'd placement overrides the baked default; (0,0,0,0) = nothing saved.
+            let saved = GameInstance.GetNetworkWorldSystem().GetChatSystem().LoadTradePlacement();
+            if saved.Z > 0.0 {
+                this.m_trFracX = saved.X;
+                this.m_trFracY = saved.Y;
+                this.m_trZoom = saved.Z;
+                this.m_trGap = saved.W;
+            }
+            this.m_trTuned = true;
+        }
+
         let rootSize = root.GetSize();
         let scale = 1.0;
         if rootSize.X > 1.0 {
-            scale = rootSize.X / 1920.0;
+            scale = (rootSize.X / 1920.0) * this.m_trZoom;
+            // Land the composition's authored top-left at a FRACTION of the measured root, so the
+            // overlay sits to the RIGHT of the chat box (which owns the bottom-left) on any display.
+            this.m_trRoot.SetMargin(new inkMargin(
+                rootSize.X * this.m_trFracX - MpTrPanelX() * scale,
+                rootSize.Y * this.m_trFracY - MpTrPanelY() * scale, 0.0, 0.0));
         }
         this.m_trRoot.SetScale(new Vector2(scale, scale));
 
-        MpTrBuild(this.m_trRoot);
+        MpTrBuild(this.m_trRoot, this.m_trGap, this.m_trSel, this.m_trEddies);
+        if this.m_trHelp {
+            MpTrHelp(this.m_trRoot);
+        }
         this.m_trRoot.SetVisible(true);
-        FTLog(s"[TradeScreen] opened - root \(rootSize.X)x\(rootSize.Y), scaled \(scale)");
+        // Frosted backdrop behind the see-through boxes. Standalone call (no modal context push),
+        // so worst case it simply does not blur - it cannot hide the HUD or trap input.
+        PopupStateUtils.SetBackgroundBlur(this, true);
+        FTLog(s"[TradeScreen] opened - root \(rootSize.X)x\(rootSize.Y) scale \(scale) fracX \(this.m_trFracX) fracY \(this.m_trFracY) zoom \(this.m_trZoom) gap \(this.m_trGap)");
     }
 
     public final func MpTrClose() -> Void {
@@ -462,7 +522,31 @@ public class ChatController extends inkHUDGameController {
             this.m_trRoot.RemoveAllChildren();
             this.m_trRoot.SetVisible(false);
         }
+        if this.m_trOpen {
+            this.m_player.UnregisterInputListener(this, n"back");
+            this.m_player.UnregisterInputListener(this, n"navigate_up");
+            this.m_player.UnregisterInputListener(this, n"navigate_down");
+            this.m_player.UnregisterInputListener(this, n"popup_moveLeft");
+            this.m_player.UnregisterInputListener(this, n"popup_moveRight");
+            this.m_player.UnregisterInputListener(this, n"proceed");
+            this.m_trOpen = false;
+        }
+        PopupStateUtils.SetBackgroundBlur(this, false);
         FTLog(s"[TradeScreen] closed");
+    }
+
+    private final func MpTrEddies(delta: Int32) -> Void {
+        this.m_trEddies += delta;
+        if this.m_trEddies < 0 { this.m_trEddies = 0; }
+        if this.m_trEddies > 20100 { this.m_trEddies = 20100; }
+        this.MpTrOpen();
+    }
+
+    private final func MpTrActivate() -> Void {
+        // Cancel (0) and Exit (2) just close; Confirm (1) will commit once the trade data wire
+        // exists - for now it logs and closes like the others.
+        if this.m_trSel == 1 { FTLog(s"[TradeScreen] confirm (mock)"); }
+        this.MpTrClose();
     }
 
     private final func SendChat() -> Void {
@@ -479,6 +563,40 @@ public class ChatController extends inkHUDGameController {
         if Equals(textEntered, "/tradeoff") {
             this.m_input.SetText("");
             this.MpTrClose();
+            return;
+        }
+        // Live placement nudges - open with /tradeui first, then move/scale the overlay in-game
+        // until it sits right. Each re-renders and logs the values; read the final fracX/fracY/
+        // zoom/gap off the "[TradeScreen] opened" line and they get baked as the new defaults.
+        if Equals(textEntered, "/trright") { this.m_input.SetText(""); this.m_trFracX += 0.04; this.MpTrOpen(); return; }
+        if Equals(textEntered, "/trleft")  { this.m_input.SetText(""); this.m_trFracX -= 0.04; this.MpTrOpen(); return; }
+        if Equals(textEntered, "/trup")    { this.m_input.SetText(""); this.m_trFracY -= 0.03; this.MpTrOpen(); return; }
+        if Equals(textEntered, "/trdown")  { this.m_input.SetText(""); this.m_trFracY += 0.03; this.MpTrOpen(); return; }
+        if Equals(textEntered, "/trbig")   { this.m_input.SetText(""); this.m_trZoom += 0.1;  this.MpTrOpen(); return; }
+        if Equals(textEntered, "/trsmall") { this.m_input.SetText(""); this.m_trZoom -= 0.1;  this.MpTrOpen(); return; }
+        if Equals(textEntered, "/trgap")   { this.m_input.SetText(""); this.m_trGap += 8.0;   this.MpTrOpen(); return; }
+        if Equals(textEntered, "/trreset") { this.m_input.SetText(""); this.m_trTuned = false; this.MpTrOpen(); return; }
+        // /trsave - persist the current placement to a file so it survives relaunch (no numbers,
+        // no ship needed). LoadTradePlacement on next open picks it up.
+        if Equals(textEntered, "/trsave") {
+            this.m_input.SetText("");
+            GameInstance.GetNetworkWorldSystem().GetChatSystem().SaveTradePlacement(this.m_trFracX, this.m_trFracY, this.m_trZoom, this.m_trGap);
+            return;
+        }
+        // Typed fallbacks for the trade controls - guaranteed since typing always works. Eddies
+        // -/+ and confirm; exit is /tradeoff.
+        if Equals(textEntered, "/tr+") { this.m_input.SetText(""); this.MpTrEddies(500); return; }
+        if Equals(textEntered, "/tr-") { this.m_input.SetText(""); this.MpTrEddies(-500); return; }
+        if Equals(textEntered, "/trok") { this.m_input.SetText(""); this.m_trSel = 1; this.MpTrActivate(); return; }
+        if Equals(textEntered, "/tradehelp") { this.m_input.SetText(""); this.m_trHelp = !this.m_trHelp; this.MpTrOpen(); return; }
+        // /trade <player> - the real-player trigger. Open the overlay WITH the modal cursor, and
+        // forward the command to the server's /trade flow. Data stays mock until the NotifyTrade
+        // wire (flag-day A); this makes the cursor trigger on a real trade, not just /tradeui.
+        let trParts = StrSplit(textEntered, " ");
+        if ArraySize(trParts) >= 2 && Equals(trParts[0], "/trade") {
+            this.MpTrOpen();
+            GameInstance.GetNetworkWorldSystem().GetChatSystem().Send(textEntered);
+            this.m_input.SetText("");
             return;
         }
         if NotEquals(textEntered, "") {
@@ -596,6 +714,21 @@ public class ChatController extends inkHUDGameController {
     protected cb func OnAction(action: ListenerAction, consumer: ListenerActionConsumer) -> Bool {
         let actionName: CName = ListenerAction.GetName(action);
         let actionType: gameinputActionType = ListenerAction.GetType(action);
+
+        // Trade overlay keyboard nav. Only while the overlay is up and the chat field is not
+        // focused, so it never eats typing. navigate = cycle the footer button (Tab), popup move
+        // left/right = eddies -/+, proceed = activate, back = close. If these actions do not reach
+        // us in gameplay (no UI context), nothing fires and the typed /tr fallbacks still work.
+        if this.m_trOpen && !this.m_chatInputOpen {
+            if Equals(actionType, gameinputActionType.BUTTON_RELEASED) {
+                if Equals(actionName, n"back") { this.MpTrClose(); return true; }
+                if Equals(actionName, n"navigate_down") { this.m_trSel = (this.m_trSel + 1) % 3; this.MpTrOpen(); return true; }
+                if Equals(actionName, n"navigate_up") { this.m_trSel = (this.m_trSel + 2) % 3; this.MpTrOpen(); return true; }
+                if Equals(actionName, n"popup_moveLeft") { this.MpTrEddies(-500); return true; }
+                if Equals(actionName, n"popup_moveRight") { this.MpTrEddies(500); return true; }
+                if Equals(actionName, n"proceed") { this.MpTrActivate(); return true; }
+            }
+        }
 
         if !this.m_chatInputOpen {
             if Equals(actionName, n"UIEnterChatMessage") && Equals(actionType, gameinputActionType.BUTTON_RELEASED) {

@@ -807,7 +807,7 @@ fixes — money is not server-authoritative today. See `docs/PHASE5-STAGE6B-MONE
 
 - **zeldfep's nxm:// hand-off**: broken only on his PC, works for everyone else. v0.3.103
   writes the whole story to his trail — after his next Mod Manager Download click, read
-  `logs/clients/zeldfep/launcher-trail.log` on the NAS: no arrival line = browser/registry
+  `logs/clients/zeldfep/launcher-trail.log` on the server: no arrival line = browser/registry
   on his machine (browser protocol-block most likely); arrival + failure = the reason is
   in the line.
 
@@ -1150,9 +1150,15 @@ fixes — money is not server-authoritative today. See `docs/PHASE5-STAGE6B-MONE
   vehicles and realistically cannot. Anywhere a brief says "server-authoritative physics",
   what is achievable is server-authoritative STATE with validated client motion.
 
-- **Design call nobody has made:** the phone lists MODELS and cannot list instances, so
-  "summon my second Quadra" has no native expression. The server must decide which instance
-  a model-summon resolves to - nearest stored, last driven, or explicit via /garage.
+- **DECIDED 2026-09-12 (zeldfep): the INSTANCE is the ownable unit.** A player owns a
+  SPECIFIC car - this Quadra, plate ABC-123 - not "a Quadra". The persistence already backs
+  it: id, owner, plate, price and the sale lock are per-instance today. What is missing is
+  player-facing - the phone lists MODELS, so it needs a per-car garage list before ownership
+  features can address one car. Ownership features (sell, gift, park a specific car) target a
+  vehicle id; a bare "summon my car" resolves to a single instance (last driven, nearest
+  stored as fallback) and /garage is the explicit picker. Not built yet - this records the
+  unit so the phone list and every ownership feature are designed against instances, not
+  models. Stop re-asking whether instances are addressable: they are.
 
 ### The cell grid does not actually cull anything (measured 2026-09-04)
 - **`kCellSize = 6000` is larger than Night City, so the spatial partition is inert as a
@@ -1213,8 +1219,10 @@ fixes — money is not server-authoritative today. See `docs/PHASE5-STAGE6B-MONE
   a matching update applies clothing and leaves customization alone. **VEHICLES ARE
   EXONERATED** - the 90s cadence ran for ten minutes before the first mount, and the
   `[Interpolation] movement for id N but no puppet is registered - this is a frozen
-  remote player` warning is MISLABELLED: those ids were VEHICLES (each followed by
-  `OnVehicleReady: mounting queued character ... into vehicle N`). Rename that warning.
+  remote player` warning WAS MISLABELLED: those ids were VEHICLES (each followed by
+  `OnVehicleReady: mounting queued character ... into vehicle N`). RENAMED 3b05ab9 - the
+  warning now says nothing is registered under the id yet, names players AND vehicles as
+  candidates, and logs once per id.
 - **WRONG CHARACTER = the real root cause, still open (ledger fault A).** Cam picked
   MALE; every other client renders him FEMALE. Proof in zeldfep's log: `remote state
   produced 24 customization key(s), male=0`, applying `t2_formal_04_q000_corpo_&Female`
@@ -1318,20 +1326,16 @@ fixes — money is not server-authoritative today. See `docs/PHASE5-STAGE6B-MONE
   (`tools/hackid.py` never applied here — 22114 is a Nexus id, not a hack id. WebFetch
   gets a Cloudflare 403 on Nexus; a real browser reads the page fine.)
 
-- **The installer strips no wrapper folder — a whole class of Nexus archive installs
-  one level too deep and silently does nothing (CONFIRMED by code read, 2026-09-08).**
-  `main.js:6410-6421` writes every zip entry verbatim to `path.join(gameDir, relative)`.
-  The only guard is `..` path-climbing; there is no common-prefix strip and no check
-  that an entry lands in a real mod surface (`archive/pc/mod`, `r6/scripts`,
-  `red4ext/plugins`, `bin/x64/plugins`). So an archive shaped
-  `ModName/archive/pc/mod/x.archive` — a common way authors zip their work — installs
-  to `<game>/ModName/archive/pc/mod/x.archive`, which the game never reads.
-  **The nasty part is that verify agrees with it**: the record lists the files it wrote,
-  the files are there, per-file hashes match, so verification PASSES while the mod does
-  nothing at all. Nobody gets an error to chase. Fix direction: detect a single top-level
-  directory that contains a known surface and strip it at install, and/or refuse an
-  archive whose entries land in no known surface — refusing loudly beats installing a
-  no-op. Affects any current list entry whose upstream re-zips with a wrapper.
+- **FIXED 6299e89: the installer strips a wrapper folder, or refuses.** A whole class of
+  Nexus archive used to install one level too deep and silently do nothing — an archive
+  shaped `ModName/archive/pc/mod/x.archive` (a common way authors zip their work) landed at
+  `<game>/ModName/...`, which the game never reads, and verify AGREED (the record listed the
+  files, they were there, per-file hashes matched) so nobody got an error to chase.
+  `installModArchive` now runs `resolveArchiveStrip` (manifest.js, selftested): install
+  as-is when files already land on a game root (`archive`, `r6`, `red4ext`, `bin`, `mods`,
+  `engine`, ...), strip a single wrapper dir when that reveals a surface, else refuse loudly
+  rather than write a no-op. The strip is applied in both the ownership-clash check and the
+  write loop so they agree on where each file lands.
 
 - **Death-respawn loop for creator-flow players** (ashencorridor 17, rimtek 59 respawns).
   Mechanism: immortality blocks death but not damage; the health floor fires "downed",
@@ -1491,7 +1495,7 @@ fixes — money is not server-authoritative today. See `docs/PHASE5-STAGE6B-MONE
   Still loses to `vehicle_dr`, which remains the right candidate to port - `adaptive`
   was never meant for vehicles, it's just no longer lying about it. NEXT:
   capture real traces — launch a far player's client with `-sync-trace` (dev flag,
-  hand-added; writes NDJSON into the mod's logs, ships to the NAS automatically),
+  hand-added; writes NDJSON into the mod's logs, ships to the server automatically),
   then `replay.py --trace file --validate` to prove the lab's baseline matches the
   shipped C++ before promoting any candidate to InterpolationSystem.cpp.
   Real-roads pipeline is ready: `paths/` banks recorded drives as reusable truth
@@ -1702,24 +1706,24 @@ fixes — money is not server-authoritative today. See `docs/PHASE5-STAGE6B-MONE
   - Naming note: the new nodes are `nco-server-1` and `nco-test-server-1` in MagicDNS, because
     the retired nodes still hold `nco-server` and `nco-test-server`. Deleting the old devices
     frees the names.
-- **DECIDED 2026-09-06 (zeldfep), NOT BUILT: "Join the server's network" must be gated on
-  DISCORD ROLE.** The invite button lives in the launcher's TOOLS panel and today opens for
-  anyone who clicks — `ipcMain.handle('tailscale:invite')` has no check of any kind. It should
-  hand out an invite only to someone whose Discord role says they belong.
-  - **The launcher already holds everything needed.** It completes Discord OAuth before the
-    tailnet is ever required (the trail logs `token present, name <player>` at launch), and it
-    already resolves roles for the dev panel. So the check is a role test on an identity that
-    is in hand, not new plumbing.
-  - **Client-side alone is NOT the fix, and this is the trap to avoid:** `server.json` is
-    served from `releases/latest/download` with no authentication, so anyone can read the
-    invite out of it whatever the button does. A UI check is a courtesy, not a control.
-  - **The honest architecture is two halves.** (1) The launcher checks the role before
-    offering the button — stops the accidental case. (2) The invite stops being a static field
-    in a public file and is issued per-request by an endpoint that verifies the Discord token,
-    which must live OFF the tailnet, because someone who needs an invite cannot reach anything
-    on it. That endpoint is the piece that does not exist yet and needs public hosting.
-  - **Until both exist, scope is the control, not secrecy** — see the ACL entry above. A
-    leaked invite buys reaching the game servers on two ports, nothing else.
+- **"Join the server's network" is gated on DISCORD MEMBERSHIP (decided 2026-09-06, half
+  built 2026-09-15).** `tailscale:invite` refuses anyone not signed in as a verified member
+  (the same definitive-answer-or-cached verdict the Play gate stands on), and
+  `tailscale:test-invite` refuses non-admins — the gate lives in the MAIN PROCESS, with the
+  UI's hiding/disabling kept as the courtesy it always was. Membership is the bar for the
+  main invite because every legitimate player needs the tailnet; the test invite shares
+  `devKey:fetch`'s dev-role bar.
+  - **Client-side alone is still NOT the full fix, and remains the trap to name:**
+    `server.json` is served from `releases/latest/download` with no authentication, so
+    anyone can read the invite out of it whatever the launcher does. What is built stops
+    the accidental case — the launcher no longer hands the invite to a stranger's click.
+  - **Half (2) stays deferred to open beta by the 2026-09-07 accepted-risk decree below:**
+    the invite stops being a static field in a public file and is issued per-request by an
+    endpoint that verifies the Discord token, OFF the tailnet (someone needing an invite
+    cannot reach anything on it). That endpoint still does not exist and needs public
+    hosting the project does not have.
+  - **Until then, scope is the control, not secrecy** — see the ACL entry above. A leaked
+    invite buys reaching the game servers on two ports, nothing else.
 - **DECIDED 2026-09-07 — published invites are an ACCEPTED RISK while this is a closed alpha.**
   zeldfep, asked directly about both links sitting in a public release asset: *"this is fine
   is closed alpha."* So stop treating it as an open wound. **Both device shares are deliberately
@@ -2414,7 +2418,7 @@ launcher state machine (valid/rollback/invalid/cached/absent) → launch args at
 server checks at the door.
 
 **Evidence back from the field**: every launcher POSTs session logs + trail to the
-server (`/api/v1/logs/`) → NAS `logs/clients/<player>/`, newest 10 + trail. First stop
+server (`/api/v1/logs/`) → the server's `logs/clients/<player>/`, newest 10 + trail. First stop
 for any "it broke on my machine". The coordination feed is where both Claude streams
 announce flag-days, ships, pulls, and diagnoses — check it before shipping or deploying.
 

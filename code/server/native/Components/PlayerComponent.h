@@ -17,6 +17,18 @@ struct PlayerComponent
     // back. The reply carries no idea what the player typed, so it is remembered here.
     std::string PendingCharacterName;
 
+    // A brand-new character spawns with its active slot still EMPTY - SelectCharacterSlot
+    // aimed the account at a free slot, but the creator's save has not landed yet, so at
+    // spawn time there is no record to carry the "already sent to the start point" flag. The
+    // spawn relocates them anyway (see Level::HandleSpawnCharacterRequest) and sets this, so
+    // the creator save that arrives moments later writes SpawnedBefore=true onto the new
+    // record. That is what keeps the fire-once guarantee intact for a character born and
+    // played in a single session - without it, the relocation could only ever fire "the join
+    // after", and a freshly created character sat in the q000 box until they reconnected.
+    // Per-connection and in memory: a reconnect resets it, but by then the record exists with
+    // SpawnedBefore=true and the record-based guard takes over.
+    bool RelocatedAwaitingRecord{false};
+
     // Kept so membership and roles can be re-checked while the player is connected.
     // Without this, a Discord ban would only take effect the next time they tried to
     // join - which is no use at all if they are already in and causing the problem.

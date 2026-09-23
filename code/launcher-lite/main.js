@@ -5807,11 +5807,23 @@ ipcMain.handle('tailscale:download', async () => {
  * edit rather than a new launcher for everybody - which matters, because an invite link
  * that cannot be rotated is one you can never take back.
  *
- * The button is only shown to people the launcher has verified are in the Discord. That is
- * a courtesy, not a wall: server.json is a public release asset, so anyone determined to
- * find the link can. Treat this as "saves Cam sending it by hand", not as access control.
+ * GATED ON VERIFIED DISCORD MEMBERSHIP (decided 2026-09-06, map: tailnet section).
+ * Membership is the bar because every legitimate player needs the tailnet - and the
+ * verdict is the same definitive-answer-or-cached one the Play gate stands on, resolved
+ * at sign-in. This is half (1) of that decision: it stops the accidental case at the
+ * IPC layer, not just in the UI. Half (2) - a per-request invite endpoint off the
+ * tailnet - is deferred to open beta (2026-09-07 accepted-risk decree): server.json is
+ * a public release asset either way, so what is built here is a gate on the launcher's
+ * hand, not a wall around the link.
  */
 ipcMain.handle('tailscale:invite', async () => {
+  if (!currentUser) {
+    return { ok: false, error: 'Sign in with Discord first - the network invite is for members.' }
+  }
+  if (!currentUser.isMember) {
+    return { ok: false, error: 'The network invite is for Night City Online members. Join the Discord, sign in again, and it opens.' }
+  }
+
   const published = await fetchPublishedServer()
   const invite = published?.tailscaleInvite
 
@@ -5834,6 +5846,13 @@ ipcMain.handle('tailscale:invite', async () => {
  * main one.
  */
 ipcMain.handle('tailscale:test-invite', async () => {
+  // Same decision, dev flavour: the dev panel already hides this button from
+  // non-admins, but hiding is a courtesy - the handler is the gate (same bar as
+  // devKey:fetch, which shares the audience).
+  if (!isAdmin()) {
+    return { ok: false, error: 'The test-server network is for people with the dev role.' }
+  }
+
   const published = await fetchPublishedServer()
   const invite = published?.tailscaleTestInvite
 

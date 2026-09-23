@@ -207,6 +207,44 @@ int main()
               "deleting from an account that does not exist is false, not a crash");
     }
 
+    // ------------------------------------------------ SpawnedBefore is the arrivals-point gate
+    //
+    // The start-point relocation fires once per character and remembers it did with
+    // SpawnedBefore on the record. A brand-new character MUST default to false (so it is sent
+    // to the arrivals point), and once true it MUST survive a reload (so it is never sent
+    // again). The create-session relocation fix (spawn sets a pending flag, the creator save
+    // writes SpawnedBefore=true onto the new record) leans entirely on this field behaving.
+    {
+        const auto path = dir / "spawnedbefore.json";
+
+        {
+            PlayerStore store;
+            store.Load(path);
+
+            // Born: the default is false, which is what routes a new character to the start.
+            store.SaveCharacter("99", "cam", MakeCharacter(0, "Fresh"));
+            const auto* pFresh = store.FindCharacter("99", 0);
+            Check(pFresh && !pFresh->SpawnedBefore,
+                  "a brand-new character defaults to SpawnedBefore=false");
+
+            // Placed: the save that consumes the pending flag sets it true.
+            auto placed = *pFresh;
+            placed.SpawnedBefore = true;
+            store.SaveCharacter("99", "cam", placed);
+            const auto* pPlaced = store.FindCharacter("99", 0);
+            Check(pPlaced && pPlaced->SpawnedBefore,
+                  "SpawnedBefore=true is stored once the character is placed");
+        }
+
+        // And it survives the disk round-trip - otherwise the arrivals teleport would fire
+        // again on the next join, which is the exact repeat the flag exists to stop.
+        PlayerStore reloaded;
+        reloaded.Load(path);
+        const auto* pReloaded = reloaded.FindCharacter("99", 0);
+        Check(pReloaded && pReloaded->SpawnedBefore,
+              "SpawnedBefore survives a reload - the arrivals point fires once, not every join");
+    }
+
     std::filesystem::remove_all(dir);
 
     std::printf("\n%s\n", failures == 0 ? "characterlifecycle_test: all checks passed"
