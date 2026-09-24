@@ -14,6 +14,18 @@
 param(
     [Parameter(Mandatory = $true, Position = 0)][string]$Path,
     [string]$Repo = 'ofmiceandcam98-eng/CyberpunkMP',
+
+    # Replace the whole embed title, instead of "Server Update - Patch <version>".
+    #
+    # The default is right for a patch, where the heading is a version number. It is wrong
+    # for anything else: the weekly community post came out as "Server Update - Patch Weekly
+    # - 23 Sep 2026", with a footer reading "vWeekly - 23 Sep 2026". The heading is still
+    # what names the file's section structure; this only changes what Discord shows.
+    [string]$Title,
+
+    # Footer text, when the heading is not a version. Defaults to "v<heading>".
+    [string]$Footer,
+
     [switch]$Download,
     [switch]$DryRun
 )
@@ -101,10 +113,10 @@ if ($body.Length -gt $limit) {
 }
 
 $notifyArgs = @{
-    Title   = "Server Update - Patch $version"
+    Title   = if ($Title) { $Title } else { "Server Update - Patch $version" }
     Message = $body
     Level   = 'info'
-    Footer  = "v$version"
+    Footer  = if ($Footer) { $Footer } else { "v$version" }
 }
 if ($DryRun) { $notifyArgs.DryRun = $true }
 
