@@ -82,4 +82,10 @@ struct InterpolationComponent
     // dies with the entity. Rate limited by tick, because this runs every frame.
     int64_t LastTraceTick{0};
     uint32_t TraceCount{0};
+
+    // One-shot latch for the runaway WARN in TraceDriverless. A vehicle that never receives
+    // an interpolation sample is abnormal, and the crash log that first showed it carried
+    // ~960 indistinguishable heartbeat lines - so the abnormality is said ONCE, loudly,
+    // rather than becoming a second heartbeat.
+    bool RunawayLogged{false};
 };
