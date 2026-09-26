@@ -678,7 +678,69 @@ function findNxmRegistration () {
   } catch { return null /* no key, or reg unavailable */ }
 }
 
+/*
+ * IS THE GAME RUNNING - and a corpse is not running.
+ *
+ * THE BUG THIS EXISTS FOR (2026-09-26, Cam's box, cost an evening). This used to shell out
+ * to `tasklist` and treat any matching row as "running". **tasklist lists ZOMBIES**: a
+ * process that has already exited but whose process object is still held open by somebody
+ * else's handle stays in that list indefinitely. Cam's game exited at 17:41 and the row was
+ * still there long after - `taskkill` answered "There is no running instance of the task"
+ * while `tasklist` kept printing it, and Get-Process reported HasExited=True.
+ *
+ * Every launcher action guarding on this then became permanently impossible: Play said
+ * "Cyberpunk 2077 is already running", and installing a test build said the game was holding
+ * the mod files open. Nothing the user could do fixed it, because the game genuinely was
+ * closed. The only cure was a reboot, and the only evidence was a process list disagreeing
+ * with itself.
+ *
+ * Get-Process exposes what tasklist cannot: HasExited. An exited-but-unreaped process
+ * answers True, so filtering on it tells a live game from a corpse. Verified against the
+ * real stuck process: tasklist printed one row, this counted zero.
+ *
+ * FALLING BACK TO THE OLD BEHAVIOUR ON ERROR, deliberately. If PowerShell cannot run we are
+ * back to not knowing, and the conservative answer is right there - better to wrongly refuse
+ * to launch than to extract over a DLL the game really does hold open, which fails with a
+ * permission error that reads like a corrupt download.
+ */
 function isGameRunning () {
+  return new Promise((resolve) => {
+    const script = '@(Get-Process -Name Cyberpunk2077 -ErrorAction SilentlyContinue |' +
+                   ' Where-Object { -not $_.HasExited }).Count'
+
+    const check = spawn('powershell',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+      { windowsHide: true })
+
+    let out = ''
+    let settled = false
+    const done = (v) => { if (!settled) { settled = true; resolve(v) } }
+
+    check.stdout.on('data', (c) => { out += c.toString() })
+
+    check.on('close', (code) => {
+      const n = parseInt(out.trim(), 10)
+      // A non-zero exit or unparseable output means we did not get an answer - fall back
+      // rather than guess, because "0" and "no idea" must not look the same.
+      if (code !== 0 || Number.isNaN(n)) return done(isGameRunningViaTasklist())
+      done(n > 0)
+    })
+
+    check.on('error', () => done(isGameRunningViaTasklist()))
+
+    // PowerShell start-up is not instant and this sits in front of Play. If it has not
+    // answered in five seconds, fall back rather than hang the button.
+    setTimeout(() => {
+      if (settled) return
+      try { check.kill() } catch { /* already gone */ }
+      done(isGameRunningViaTasklist())
+    }, 5000)
+  })
+}
+
+// The original check, kept as the fallback only. It cannot tell a zombie from a live game -
+// that is the whole reason for the function above - so it is never the first answer.
+function isGameRunningViaTasklist () {
   return new Promise((resolve) => {
     const check = spawn('tasklist', ['/FI', 'IMAGENAME eq Cyberpunk2077.exe', '/NH'], { windowsHide: true })
     let out = ''
