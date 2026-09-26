@@ -243,6 +243,39 @@ static void TraceDriverless(flecs::entity aEntity, const EntityComponent& aEntit
     spdlog::info("[OrphanVehicle] {:x} #{} {} - samples {}, prevTick {}, renderTick {}",
                  aEntityComponent.Id.hash, aInterpolation.TraceCount, aStage,
                  aInterpolation.TimePoints.size(), aInterpolation.PreviousFrame.Tick, aRenderTick);
+
+    /*
+     * THE RUNAWAY, SAID ONCE AND LOUDLY.
+     *
+     * The heartbeat above is working as designed, and that is exactly the problem when
+     * reading a crash log: the session before the 2026-09-10 access violation carried ~960
+     * identical [OrphanVehicle] lines, and nothing in them said "this is abnormal". A
+     * vehicle that never receives a single interpolation sample is not a slow vehicle, it
+     * is a vehicle that does not exist on the server the way this client thinks it does -
+     * the duplicate-of-your-own-car case (see [VehicleDup] in VehicleSystem.cpp).
+     *
+     * So the condition gets one WARN, the first time it is unmistakable, naming what to go
+     * and look at. One line, because a warning printed 960 times is another heartbeat.
+     *
+     * Deliberately NOT a bail-out. This netcode is frozen/reference (docs/MAP.md) and the
+     * crash is not yet understood; changing what the interpolator DOES on this path would
+     * be a fix written before the diagnosis. This only makes the diagnosis arrive.
+     */
+    constexpr uint32_t cRunawayAt = 40; // ~10s of heartbeat, far past any legitimate stall
+
+    if (!aInterpolation.RunawayLogged && aInterpolation.TraceCount >= cRunawayAt &&
+        aInterpolation.TimePoints.empty())
+    {
+        aInterpolation.RunawayLogged = true;
+        spdlog::warn("[OrphanVehicle] {:x} RUNAWAY - {} traces and STILL zero interpolation "
+                     "samples (prevTick {} frozen while renderTick {} advances). This vehicle "
+                     "has never been told where it is. Look for a [VehicleDup] line naming the "
+                     "same spawn, and for a second car of the same model at the same spot: the "
+                     "suspected cause is the local player's own car replicated back as a remote "
+                     "copy. Atlas: two-player-vehicle-crash-first-session",
+                     aEntityComponent.Id.hash, aInterpolation.TraceCount,
+                     aInterpolation.PreviousFrame.Tick, aRenderTick);
+    }
 }
 
 void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComponent, InterpolationComponent& aInterpolation, float aSimulationDelay, Red::vehicle::IMoveSystem* apMoveSystem)

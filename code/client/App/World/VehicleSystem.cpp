@@ -348,6 +348,48 @@ bool VehicleSystem::HandleVehicleLoadMessage(const PacketEvent<server::NotifyVeh
         return true;
     }
 
+    /*
+     * IS THE SERVER HANDING US OUR OWN CAR BACK?
+     *
+     * Diagnosis only - nothing below changes what is spawned. This exists because the
+     * two-player crash (Atlas: two-player-vehicle-crash-first-session) has a specific
+     * suspected mechanism that nothing currently prints: you summon your own car, the
+     * server replicates a SECOND copy of it back as a remote vehicle, the dedup above
+     * misses it because it keys on server id, and that duplicate has no interpolation
+     * samples - because it is really your local car. It then becomes the [OrphanVehicle]
+     * with "samples 0" that ran away ~960 times before a crash at a heap address (a called
+     * function pointer, i.e. something dereferenced through a corrupted object).
+     *
+     * The dedup above answers "have I seen this SERVER ID". These three fields are the only
+     * memory the client has of its OWN car, so they are what can answer "is this actually
+     * mine, arriving under a different identity". If one of them matches here, the echo
+     * hypothesis is confirmed on the first reproduction rather than the second night.
+     */
+    const auto ownEcho =
+        (m_lastOwnVehicleServerId && *m_lastOwnVehicleServerId == aMessage.get_id()) ||
+        (m_mountedServerId && *m_mountedServerId == aMessage.get_id()) ||
+        (m_vehicleRemoteId && *m_vehicleRemoteId == aMessage.get_id());
+
+    if (ownEcho)
+    {
+        spdlog::warn("[VehicleDup] about to spawn server vehicle {} as REMOTE, but it matches "
+                     "a remembered OWN-car id (lastOwn {}, mounted {}, remote {} - 0 means unset) - this is "
+                     "the duplicate-of-your-own-car path the two-player crash is blamed on",
+                     aMessage.get_id(),
+                     m_lastOwnVehicleServerId.value_or(0), m_mountedServerId.value_or(0),
+                     m_vehicleRemoteId.value_or(0));
+    }
+
+    // Printed for EVERY spawn, not only the suspicious ones, because the duplicate may
+    // arrive under an id we have never seen - in which case the id comparison above cannot
+    // catch it and only two spawns of the same model at the same spot will show it. Two of
+    // these lines close together, same tweak id, near-identical position, is the signature.
+    spdlog::info("[VehicleDup] spawning server vehicle {} - tweak {:016x} at ({:.1f}, {:.1f}, {:.1f}), "
+                 "own-echo {}",
+                 aMessage.get_id(), aMessage.get_tweak_id(),
+                 aMessage.get_position().get_x(), aMessage.get_position().get_y(),
+                 aMessage.get_position().get_z(), ownEcho ? "YES" : "no");
+
     const auto handle = Red::Handle(this);
     Red::EntityID id;
     Red::ScriptGameInstance game;
