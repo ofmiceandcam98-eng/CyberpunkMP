@@ -2975,7 +2975,14 @@
           return
         }
 
-        setSettingsStatus(`Test build ${installed.tag} installed. Point Server at the test server and launch.`, 'good')
+        // A DevInstall symlink can park the build we just installed behind it, so the game
+        // loads vanilla while everything on disk reads correct. main reports that as a
+        // warning rather than silent success - surface it LOUDLY here instead of "installed".
+        if (installed.warning) {
+          setSettingsStatus(`Test build ${installed.tag} installed, but it will NOT load: ${installed.warning}`, 'bad')
+        } else {
+          setSettingsStatus(`Test build ${installed.tag} installed. Point Server at the test server and launch.`, 'good')
+        }
         refreshPrereleases()
       })
 

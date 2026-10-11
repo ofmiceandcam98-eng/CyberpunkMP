@@ -78,8 +78,31 @@ RED4EXT_C_EXPORT bool Main(RED4ext::PluginHandle aHandle, RED4ext::EMainReason a
         App::GApplication->Bootstrap();
 
         const auto scriptPath = GCyberpunkMpLocation / TP_REDSCRIPT_LOCATION;
-        const wchar_t* scriptLocation = canonical(scriptPath).c_str();
-        aSdk->scripts->Add(aHandle, scriptLocation);
+
+        // Name the directory BEFORE canonical() throws on it. GCyberpunkMpLocation follows a
+        // symlink to its target (see the module-path block above), so a leftover DevInstall
+        // symlink points it into the build output tree - which has no assets/redscript (that
+        // directory holds a web bundle). canonical() then throws std::filesystem_error, Main
+        // returns via the exception, and RED4ext reports only "cannot find <path> ... did not
+        // initialize properly, unloading" - the game runs VANILLA and it looks like a
+        // regression. One line here turns an evening of diagnosis into a log line.
+        // See atlas:a-dev-symlink-silently-beats-every-installed-test-build.
+        std::error_code scriptEc;
+        if (!std::filesystem::exists(scriptPath, scriptEc))
+        {
+            aSdk->logger->ErrorF(aHandle,
+                                 "CyberpunkMP cannot find its redscript at '%s' - the mod will NOT load. "
+                                 "This usually means CyberpunkMP.dll is a DevInstall symlink pointing at a "
+                                 "build tree that has no assets/redscript. Remove the dev link, or install "
+                                 "the shipped build (launcher: Tools > Test builds > Restore).",
+                                 scriptPath.string().c_str());
+        }
+
+        // Stored, not .c_str()'d off a temporary: canonical() returns a temporary fs::path, so
+        // taking its c_str() here and using it in the next statement read freed memory (UB that
+        // happened to work). The path must outlive the Add() call.
+        const auto scriptLocation = canonical(scriptPath);
+        aSdk->scripts->Add(aHandle, scriptLocation.c_str());
 
         ArchiveXL::RegisterArchives(canonical(GCyberpunkMpLocation / TP_ARCHIVES_LOCATION));
         TweakXL::RegisterTweaks(canonical(GCyberpunkMpLocation / TP_TWEAKS_LOCATION));
@@ -88,8 +111,9 @@ RED4EXT_C_EXPORT bool Main(RED4ext::PluginHandle aHandle, RED4ext::EMainReason a
         void(*pInputLoaderAdd)(RED4ext::PluginHandle, const wchar_t*);
         if (inputLoaderModule != nullptr && (pInputLoaderAdd = reinterpret_cast<decltype(pInputLoaderAdd)>(GetProcAddress(inputLoaderModule, "Add"))))
         {
-            const wchar_t* input_path = canonical(GCyberpunkMpLocation / TP_INPUTS_LOCATION).c_str();
-            pInputLoaderAdd(aHandle, input_path);
+            // Stored, not .c_str()'d off a temporary - same UB as scriptLocation above.
+            const auto inputPath = canonical(GCyberpunkMpLocation / TP_INPUTS_LOCATION);
+            pInputLoaderAdd(aHandle, inputPath.c_str());
         }
         else
         {

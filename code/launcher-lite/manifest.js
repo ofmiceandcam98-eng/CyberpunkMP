@@ -751,6 +751,31 @@ export function extractPayloadClean (aModDir, aZip) {
   return cleanFailures
 }
 
+/**
+ * Will the installed CyberpunkMP.dll actually LOAD, or has a DevInstall symlink parked it?
+ *
+ * installdll.lua (the dev build step) replaces the DLL with a symbolic link into the build
+ * output tree. That link BEATS any build the launcher installs: RED4ext loads through it,
+ * the DLL resolves its assets RELATIVE TO THE LINK TARGET (the build tree, which has no
+ * assets/redscript - that directory holds a web bundle), throws on load and is unloaded, and
+ * the game runs VANILLA while the launcher reported a clean install and .nco-version reads the
+ * new build. From outside it is indistinguishable from the cold-start CONNECT bug, so it gets
+ * misreported as a regression - which is why the install and the launch must SAY it out loud.
+ * See atlas:a-dev-symlink-silently-beats-every-installed-test-build.
+ *
+ * Pure on purpose: the caller gathers the facts (lstat / realpath) and passes them in, so this
+ * stays testable without creating a real symlink - which needs Developer Mode on Windows and
+ * would make the selftest flaky. Returns a human-readable warning, or null when the DLL is a
+ * plain file that will load.
+ */
+export function dllLoadWarning ({ isSymlink, linkTarget } = {}) {
+  if (!isSymlink) return null
+  return 'CyberpunkMP.dll is a DevInstall symlink' +
+    (linkTarget ? ` pointing at ${linkTarget}` : '') +
+    ' - the installed build is parked behind it and will NOT load; the game runs vanilla ' +
+    'while the launcher reports success. Remove the dev link (or restore the shipped DLL) before launching.'
+}
+
 // The top-level folders the game and its mod loaders actually read. A real mod archive's
 // paths begin with one of these; a wrapper folder an author left in (ModName/archive/pc/
 // mod/...) does not - which is how such an archive installs a silent no-op.

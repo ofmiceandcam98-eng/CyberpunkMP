@@ -15,7 +15,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } from 'electron'
 import electronUpdater from 'electron-updater'
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, rmdirSync, statSync, copyFileSync, unlinkSync, realpathSync, appendFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, rmdirSync, statSync, lstatSync, copyFileSync, unlinkSync, realpathSync, appendFileSync } from 'node:fs'
 import fsp from 'node:fs/promises'
 import AdmZip from 'adm-zip'
 // 7-Zip's standalone extractor, because Nexus main files are as often .7z or .rar as
@@ -1228,6 +1228,24 @@ function findModDir () {
   }
 
   return null
+}
+
+// The facts ManifestKit.dllLoadWarning() needs: is the installed CyberpunkMP.dll a DevInstall
+// symlink, and where does it point. lstatSync (NOT statSync) so the link itself is inspected
+// rather than its target. Any failure reads as "not a link" - a DLL we cannot lstat is a
+// different problem the install's own existence checks already catch.
+// See atlas:a-dev-symlink-silently-beats-every-installed-test-build.
+function devDllLinkInfo (modDir) {
+  if (!modDir) return { isSymlink: false }
+  const dllPath = path.join(modDir, 'CyberpunkMP.dll')
+  try {
+    if (!lstatSync(dllPath).isSymbolicLink()) return { isSymlink: false }
+    let linkTarget = null
+    try { linkTarget = realpathSync(dllPath) } catch { /* dangling or unreadable link */ }
+    return { isSymlink: true, linkTarget }
+  } catch {
+    return { isSymlink: false }
+  }
 }
 
 /**
@@ -3173,6 +3191,18 @@ async function launchGame () {
     // against a newer server is the sort of mismatch that produces bug reports nobody
     // can reproduce, so it is refused outright.
     throw new Error('Your game files are out of date. Press Update first.')
+  }
+
+  // A DevInstall symlink at CyberpunkMP.dll parks the installed build behind a link into the
+  // dev build tree, so the game loads VANILLA - the DLL cannot find its assets there. NOT
+  // fatal (a developer may want exactly this layout, and only they know), so this warns
+  // rather than refuses. But it is the single most misdiagnosed state - it looks like the mod
+  // silently not working, or a regression of the cold-start CONNECT bug - so name it in the
+  // trail, where that diagnosis will look.
+  // See atlas:a-dev-symlink-silently-beats-every-installed-test-build.
+  const launchDllWarning = ManifestKit.dllLoadWarning(devDllLinkInfo(findModDir()))
+  if (launchDllWarning) {
+    launcherLog(`[launch] WARNING: ${launchDllWarning}`)
   }
 
   // Do not send players to a server that is not there. They would sit at a black
@@ -6192,7 +6222,17 @@ ipcMain.handle('prerelease:install', async (_event, tag) => {
       launcherLog(`[prerelease] could not record the version marker at ${modDir}\\.nco-version - ${err.message} - this test build will read as the shipped release until it is re-stamped`)
     }
 
-    return { ok: true, tag, payload: Boolean(payload) }
+    // A DevInstall symlink at CyberpunkMP.dll BEATS this install: the build we just wrote is
+    // parked behind the link, the game loads VANILLA, and nothing above would have noticed -
+    // the folder, the files and .nco-version all read correct. Say it LOUDLY (the trail AND
+    // the result the UI shows) rather than reporting a clean install that silently did nothing.
+    // See atlas:a-dev-symlink-silently-beats-every-installed-test-build.
+    const dllWarning = ManifestKit.dllLoadWarning(devDllLinkInfo(modDir))
+    if (dllWarning) {
+      launcherLog(`[prerelease] WARNING: test build ${tag} installed, but ${dllWarning}`)
+    }
+
+    return { ok: true, tag, payload: Boolean(payload), warning: dllWarning || undefined }
   } catch (err) {
     return { ok: false, error: err.message }
   }
