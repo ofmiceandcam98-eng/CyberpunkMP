@@ -36,6 +36,7 @@ import {
   normalizeOwnedPath,
   auditPayloadInstall,
   extractPayloadClean,
+  dllLoadWarning,
   resolveArchiveStrip
 } from './manifest.js'
 
@@ -601,6 +602,22 @@ function mockZip (paths) {
 // array) is deliberately not unit-tested here: forcing rmSync to throw deterministically
 // needs an fs mock or a platform-specific illegal path, neither worth the fragility. The
 // no-failures assertion above covers the same return-shape on the success side.
+
+// dllLoadWarning: a DevInstall symlink parks the installed build and the install/launch must
+// say so loudly instead of reporting success. Tested on the decision, not on a real symlink
+// (creating one needs Developer Mode on Windows).
+check('dllLoadWarning: a plain DLL is fine (null)', dllLoadWarning({ isSymlink: false }), null)
+check('dllLoadWarning: no facts is fine (null)', dllLoadWarning(), null)
+{
+  const w = dllLoadWarning({ isSymlink: true, linkTarget: 'C:\\dev\\build\\x64\\release\\CyberpunkMP.dll' })
+  check('dllLoadWarning: a symlink returns a warning string', typeof w === 'string' && w.length > 0, true)
+  check('dllLoadWarning: the warning names the link target',
+    w.includes('C:\\dev\\build\\x64\\release\\CyberpunkMP.dll'), true)
+  check('dllLoadWarning: the warning says the build will NOT load / runs vanilla',
+    /will NOT load/.test(w) && /vanilla/.test(w), true)
+  check('dllLoadWarning: a symlink with no known target still warns',
+    typeof dllLoadWarning({ isSymlink: true }) === 'string', true)
+}
 
 {
   // An audit with a missing file: a shipped path that never landed on disk is reported.
