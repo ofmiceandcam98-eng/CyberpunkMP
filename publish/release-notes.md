@@ -6,6 +6,24 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.124
+
+A launcher-reliability release. **No gameplay change** — the mod itself is untouched.
+
+- **Voice push-to-talk now defaults to Y, not V.** V is the game's vehicle-summon key, so a
+  fresh install used to summon your car when you tried to talk. If you never picked a key
+  yourself in Settings > Voice, you are moved from V to Y once, automatically. A key you
+  chose on that page yourself is respected — V included — and is never changed again.
+- **"Install everything" no longer silently replaces a test build.** Pressing it while a
+  test build was installed used to quietly reinstall the public release over it — the next
+  connection to a test server then failed with no hint why. It now refuses and names the
+  deliberate routes instead: Tools > Test builds to move between test builds, Restore to
+  return to the public release.
+- **A leftover developer link can no longer fake a working install.** On developer machines,
+  a stale link could leave the game running with no mod at all while the launcher reported a
+  successful install. The launcher now says so in red at install time and warns again in its
+  trail at launch, instead of reporting success.
+
 ## What changed — v0.3.123
 
 Another launcher-reliability release. **No gameplay change** — the mod itself is untouched.
