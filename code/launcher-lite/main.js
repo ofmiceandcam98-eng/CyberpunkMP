@@ -969,6 +969,69 @@ function manifestCachePath () {
   return path.join(app.getPath('userData'), 'manifest-cache.json')
 }
 
+/*
+ * WHAT VERSION OF THE GAME IS ACTUALLY INSTALLED.
+ *
+ * ProductVersion on the exe is the same string RED4ext reports ("2.31"), so it is the one
+ * to compare against the manifest. FileVersion is a different scheme entirely (3.0.80.x)
+ * and matching on it would compare apples to a build number.
+ *
+ * Returns null when it cannot tell, and EVERY caller treats null as "do not block" - a
+ * launcher that refuses to start the game because its own version probe failed is worse
+ * than the mismatch it was guarding against.
+ */
+function readGameProductVersion (aExe) {
+  try {
+    const out = spawnSync('powershell',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
+       '(Get-Item -LiteralPath $env:NCO_EXE).VersionInfo.ProductVersion'],
+      { windowsHide: true, encoding: 'utf8', timeout: 8000, env: { ...process.env, NCO_EXE: aExe } })
+
+    if (out.status !== 0) return null
+    const v = String(out.stdout || '').trim()
+    return v || null
+  } catch { return null }
+}
+
+/*
+ * THE GAME-VERSION GATE - and why it reads the manifest instead of a constant.
+ *
+ * Cyberpunk auto-updates through Steam. On patch day every player's game moves underneath
+ * a mod built against the previous one, and the failure is not graceful: 113 redscript
+ * hooks attach to game classes and they all compile as ONE unit, so a single changed
+ * signature takes every script with it. What the player sees is a game that boots to a
+ * vanilla menu with no CONNECT, or a wall of script validation errors - neither of which
+ * says "the game updated".
+ *
+ * The manifest already declared game.supportedVersion and game.enforce, and
+ * MANIFEST-ARCHITECTURE.md calls that field canonical. Nothing read it. This reads it.
+ *
+ * READING IT FROM THE MANIFEST IS THE WHOLE POINT: the manifest is fetched from the latest
+ * release, so a patch can be blessed - or blocked - WITHOUT shipping a launcher. On the day
+ * 2.5 lands we can set enforce to "block" and nobody walks into a broken session; when the
+ * mod is rebuilt we bump supportedVersion and everyone is let through. Neither needs an
+ * update to reach anybody.
+ *
+ *   enforce "block" - refuse, with the reason
+ *   enforce "warn"  - the default: log it, let them through, let them find out
+ *   enforce "off"   - say nothing
+ *
+ * Unknown version, missing manifest or missing field all mean "do not block".
+ */
+function gameVersionVerdict (aExe) {
+  const manifest = loadCachedManifest()
+  const want = manifest?.game?.supportedVersion
+  const enforce = String(manifest?.game?.enforce || 'warn').toLowerCase()
+
+  if (!want || enforce === 'off') return { ok: true, reason: 'no supported version declared' }
+
+  const have = readGameProductVersion(aExe)
+  if (!have) return { ok: true, reason: 'could not read the game version - not blocking on a failed probe' }
+  if (have === want) return { ok: true, have, want, reason: 'match' }
+
+  return { ok: false, have, want, enforce }
+}
+
 function loadCachedManifest () {
   try {
     const raw = JSON.parse(readFileSync(manifestCachePath(), 'utf8'))
@@ -3528,6 +3591,45 @@ async function launchGame () {
     }
 
     launcherLog('steam guard: steam.exe running - proceeding')
+  }
+
+  /*
+   * GAME VERSION, checked before anything is launched.
+   *
+   * Deliberately after the Steam guard and before the spawn: by here we know which exe we
+   * are about to start, and nothing has happened yet that would have to be undone.
+   */
+  const version = gameVersionVerdict(exe)
+
+  if (!version.ok) {
+    launcherLog(`game version: installed ${version.have}, supported ${version.want} (enforce: ${version.enforce})`)
+
+    if (version.enforce === 'block') {
+      throw new Error(`Cyberpunk 2077 updated to ${version.have}. Night City Online supports ${version.want}, ` +
+                      'and the mod will not load on this version - the game would start with no CONNECT ' +
+                      'entry, or fail with script errors. This block lifts automatically once the mod is ' +
+                      'rebuilt for the new patch; nothing to reinstall.')
+    }
+
+    // "warn" is the default and it does not stop anybody - but it must be IMPOSSIBLE to miss,
+    // because the symptom (a vanilla main menu) looks exactly like the mod not being installed
+    // and has already been reported as a mod bug once.
+    const answer = dialog.showMessageBoxSync(mainWindow, {
+      type: 'warning',
+      buttons: ['Launch anyway', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      title: 'The game has updated',
+      message: `Cyberpunk 2077 is on ${version.have}; Night City Online supports ${version.want}.`,
+      detail: 'The mod is very likely to fail on this version. If it does, the game boots to the ' +
+              'normal Cyberpunk menu with no CONNECT entry - that is the update, not a broken install, ' +
+              'so there is nothing to reinstall. Launching is safe to try and safe to lose.'
+    })
+
+    if (answer === 1) throw new Error('Launch cancelled - the game is on a version the mod does not support yet.')
+    launcherLog('game version: user chose to launch anyway')
+  } else if (version.have) {
+    launcherLog(`game version: ${version.have} - supported`)
   }
 
   // Boot policy self-heal, deliberately not awaited: an installed Fast Launch is a
