@@ -25,6 +25,60 @@
 --   "link-failed"   the link could not be created; the existing install is INTACT
 --   "no-dll"        the build produced no DLL to install
 --
+-- IS THE GAME RUNNING - and a corpse is not running.
+--
+-- Lives HERE rather than in xmake.lua because it needs `try` and a full `os`, and both
+-- exist in script scope and in an imported module, but NOT in xmake's description scope.
+-- A `local function` there has neither: the first attempt died with "attempt to call a
+-- nil value (global 'try')", the same class of fault as the import and os.iorunv
+-- failures that preceded it.
+--
+-- WHY NOT tasklist. tasklist LISTS ZOMBIES - a process that has exited but whose process
+-- object is still held open by somebody else's handle stays listed indefinitely. Measured
+-- on Cam's box 2026-09-26: tasklist printed a row while `taskkill /F` answered "There is
+-- no running instance of the task" and Get-Process reported HasExited=True, for over an
+-- hour. Here that means install_client_dll is told the game is running and SKIPS
+-- INSTALLING THE DLL, silently, leaving a stale one behind while the build reports
+-- success. The launcher had the identical bug in isGameRunning and it bricked Play until
+-- a reboot.
+--
+-- Get-Process exposes what tasklist cannot: HasExited. Counting processes that have NOT
+-- exited distinguishes a live game from a corpse.
+--
+-- FALLS BACK to tasklist on any failure, deliberately: without an answer the conservative
+-- one is correct, because copying over a DLL the game really does hold open fails. "0" and
+-- "no idea" must never look the same.
+function is_game_running()
+    local live = nil
+
+    try
+    {
+        function ()
+            local out = os.iorunv("powershell", {"-NoProfile", "-NonInteractive",
+                "-ExecutionPolicy", "Bypass", "-Command",
+                "@(Get-Process -Name Cyberpunk2077 -ErrorAction SilentlyContinue | Where-Object { -not $_.HasExited }).Count"})
+
+            live = tonumber((out or ""):gsub("%s+", ""))
+        end
+    }
+
+    if live ~= nil then
+        return live > 0
+    end
+
+    local fallback = false
+
+    try
+    {
+        function ()
+            local out = os.iorunv("tasklist", {"/FI", "IMAGENAME eq Cyberpunk2077.exe"})
+            fallback = string.find(out or "", "Cyberpunk2077.exe") ~= nil
+        end
+    }
+
+    return fallback
+end
+
 function install_client_dll(clientdir, red4ext_plugins, game_is_running)
     local mod_path = path.join(red4ext_plugins, "zzzCyberpunkMP")
     local dll_source = path.join(clientdir, "CyberpunkMP.dll")

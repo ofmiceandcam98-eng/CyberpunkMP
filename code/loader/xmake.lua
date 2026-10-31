@@ -1,15 +1,6 @@
 if not os.isfile(get_config("game")) then
     print("Please set the path to Cyberpunk2077.exe using the xmake f --game=<path> command")
 else
-    local function is_game_running(os)
-        if not is_plat("windows") then
-            return false
-        end
-        local stdout, stderr = os.iorunv("tasklist", {"/FI", "IMAGENAME eq Cyberpunk2077.exe"})
-
-        return string.find(stdout, "Cyberpunk2077.exe")
-    end
-
     -- Installing the built DLL is shared by both targets below and lives in installdll.lua,
     -- because it used to be two copies of a step that DESTROYED a launcher install: it
     -- deleted zzzCyberpunkMP before linking, and when the link then failed for want of the
@@ -50,12 +41,11 @@ else
         after_build(function(target)
             -- Imported HERE because this is script scope, where `import` exists.
             import("installdll", {rootdir = path.join(os.projectdir(), "code", "loader")})
-            -- is_game_running takes `os` as a parameter precisely so the caller can hand it
-            -- the right one. Description scope has an `os` WITHOUT iorunv, so calling it from
-            -- install_dll died with "attempt to call a nil value (field 'iorunv')". Here in
-            -- script scope `os` is the full module, so the answer is computed here and the
-            -- boolean - not the table - is what travels.
-            install_dll(target, installdll, is_game_running(os))
+            -- The answer is computed in the MODULE, and only the boolean travels.
+            -- Everything that check needs - `try`, a full `os` - exists in script scope and
+            -- the imported module, and in neither case in xmake's description scope. Three
+            -- faults in a row here (import, os.iorunv, then try) were all that same lesson.
+            install_dll(target, installdll, is_plat("windows") and installdll.is_game_running() or false)
         end)
 
         add_deps("Client")
@@ -74,12 +64,11 @@ else
         after_build(function(target)
             -- Imported HERE because this is script scope, where `import` exists.
             import("installdll", {rootdir = path.join(os.projectdir(), "code", "loader")})
-            -- is_game_running takes `os` as a parameter precisely so the caller can hand it
-            -- the right one. Description scope has an `os` WITHOUT iorunv, so calling it from
-            -- install_dll died with "attempt to call a nil value (field 'iorunv')". Here in
-            -- script scope `os` is the full module, so the answer is computed here and the
-            -- boolean - not the table - is what travels.
-            install_dll(target, installdll, is_game_running(os))
+            -- The answer is computed in the MODULE, and only the boolean travels.
+            -- Everything that check needs - `try`, a full `os` - exists in script scope and
+            -- the imported module, and in neither case in xmake's description scope. Three
+            -- faults in a row here (import, os.iorunv, then try) were all that same lesson.
+            install_dll(target, installdll, is_plat("windows") and installdll.is_game_running() or false)
         end)
 
         add_deps("Client")
