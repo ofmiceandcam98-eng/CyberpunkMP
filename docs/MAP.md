@@ -1608,7 +1608,7 @@ fixes — money is not server-authoritative today. See `docs/PHASE5-STAGE6B-MONE
   natives). The launcher now refuses that half-state: Remove is blocked while the
   game runs, a partial deletion keeps the record instead of orphaning survivors, and
   emptied folders are pruned. Re-add conditions in modlist.json `_pulled`:
-  verify their RED4ext/Codeware needs against our pins (RED4ext 1.30.0 / Codeware
+  verify their RED4ext/Codeware needs against our pins (RED4ext 1.31.0 / Codeware
   1.18.0) on a TEST install, and encode 12001→14139 in `requires`.
 - **Unconfirmed ids: NONE LEFT (2026-09-08).** Every entry on the list now carries a
   name somebody has read off the Nexus page. 22114 was the last one: it is **"YOU ARE
@@ -2499,8 +2499,9 @@ wrong question — the useful one is "which of these does it have".
   "answered from a runtime dump", which is the distinction that has decided several of the
   entries above.
 - **Prerequisite versions match their pins EXACTLY**, verified against
-  `publish/manifest-source.json`: RED4ext **1.30.0**, Codeware **1.18.0**, ArchiveXL
-  **1.26.0**, TweakXL **1.11.1**. Also present: `input_loader`, `zzzCyberpunkMP`.
+  `publish/manifest-source.json`: RED4ext **1.31.0**, Codeware **1.21.2**, ArchiveXL
+  **1.28.6**, TweakXL **1.12.0**, redscript **0.5.32**, input_loader **0.2.6** - the whole set
+  moved together for game patch 2.5. Also present: `input_loader`, `zzzCyberpunkMP`.
 - **The game has not been RUN since the mod was installed** — `red4ext\logs` is empty. So
   the install is unproven, and the first launch is the test. First diagnostic if the mod
   appears to do nothing is that log, per the symlinked-plugin entry.

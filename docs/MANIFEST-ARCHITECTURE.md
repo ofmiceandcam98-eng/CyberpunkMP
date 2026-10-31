@@ -91,7 +91,7 @@ Verified per mechanism:
 - **redscript**: one global compilation, all-or-nothing. There is no order; the
   invariant is *the set compiles*. One broken mod = game boots with NO scripts
   (main.js:1132-1138; the compiler config ships inside
-  publish/fullinstall-base/prerequisites/redscript-0.5.31.zip as
+  publish/fullinstall-base/prerequisites/redscript-0.5.32.zip as
   `r6/config/cybercmd/scc.toml` — a game-install file, not a repo file).
 - **Archives**: ArchiveXL processes registered dirs in registration order with
   an unsorted directory iterator (vendor/ArchiveXL ArchiveService.cpp:24-107);
