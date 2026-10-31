@@ -64,42 +64,42 @@
       "name": "RED4ext",
       "types": ["native_dll"],
       "class": "bundled",
-      "version": "1.30.0",
+      "version": "1.31.0",
       "required": true,
       "networkImpact": "critical",
       "audience": "all",
       "author": "WopsS",
       "source": "https://github.com/WopsS/RED4ext",
       "license": "MIT",
-      "archive": { "name": "RED4ext-1.30.0.zip" }
+      "archive": { "name": "RED4ext-1.31.0.zip" }
     },
     {
       "id": "redscript",
       "name": "redscript",
       "types": ["redscript"],
       "class": "bundled",
-      "version": "0.5.31",
+      "version": "0.5.32",
       "required": true,
       "networkImpact": "critical",
       "audience": "all",
       "author": "jac3km4",
       "source": "https://github.com/jac3km4/redscript",
       "license": "MIT",
-      "archive": { "name": "redscript-0.5.31.zip" }
+      "archive": { "name": "redscript-0.5.32.zip" }
     },
     {
       "id": "codeware",
       "name": "Codeware",
       "types": ["red4ext_plugin", "redscript"],
       "class": "bundled",
-      "version": "1.18.0",
+      "version": "1.21.2",
       "required": true,
       "networkImpact": "critical",
       "audience": "all",
       "author": "psiberx",
       "source": "https://github.com/psiberx/cp2077-codeware",
       "license": "MIT",
-      "archive": { "name": "Codeware-1.18.0.zip" },
+      "archive": { "name": "Codeware-1.21.2.zip" },
       "dependencies": [
         { "id": "red4ext", "version": ">=1.29.0" }
       ]
@@ -109,14 +109,14 @@
       "name": "ArchiveXL",
       "types": ["red4ext_plugin"],
       "class": "bundled",
-      "version": "1.26.0",
+      "version": "1.28.6",
       "required": true,
       "networkImpact": "critical",
       "audience": "all",
       "author": "psiberx",
       "source": "https://github.com/psiberx/cp2077-archive-xl",
       "license": "MIT",
-      "archive": { "name": "ArchiveXL-1.26.0.zip" },
+      "archive": { "name": "ArchiveXL-1.28.6.zip" },
       "dependencies": [
         { "id": "red4ext", "version": ">=1.29.0" }
       ]
@@ -126,14 +126,14 @@
       "name": "TweakXL",
       "types": ["red4ext_plugin"],
       "class": "bundled",
-      "version": "1.11.1",
+      "version": "1.12.0",
       "required": true,
       "networkImpact": "critical",
       "audience": "all",
       "author": "psiberx",
       "source": "https://github.com/psiberx/cp2077-tweak-xl",
       "license": "MIT",
-      "archive": { "name": "TweakXL-1.11.1.zip" },
+      "archive": { "name": "TweakXL-1.12.0.zip" },
       "dependencies": [
         { "id": "red4ext", "version": ">=1.29.0" }
       ]
@@ -143,14 +143,14 @@
       "name": "Input Loader",
       "types": ["red4ext_plugin", "input"],
       "class": "bundled",
-      "version": "0.2.3",
+      "version": "0.2.6",
       "required": true,
       "networkImpact": "critical",
       "audience": "all",
       "author": "jac3km4",
-      "source": "https://github.com/jac3km4/cp2077-input-loader",
+      "source": "https://github.com/jackhumbert/cyberpunk2077-input-loader",
       "license": "MIT",
-      "archive": { "name": "InputLoader-0.2.3.zip" },
+      "archive": { "name": "InputLoader-0.2.6.zip" },
       "dependencies": [
         { "id": "red4ext" }
       ]

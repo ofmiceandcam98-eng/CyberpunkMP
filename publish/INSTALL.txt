@@ -49,12 +49,12 @@
   order. Each one is a zip - extract it into your Cyberpunk 2077 folder so its
   contents merge with what is already there.
 
-      1. RED4ext-1.30.0.zip
-      2. redscript-0.5.31.zip
-      3. Codeware-1.18.0.zip
-      4. ArchiveXL-1.26.0.zip
-      5. TweakXL-1.11.1.zip
-      6. InputLoader-0.2.3.zip
+      1. RED4ext-1.31.0.zip
+      2. redscript-0.5.32.zip
+      3. Codeware-1.21.2.zip
+      4. ArchiveXL-1.28.6.zip
+      5. TweakXL-1.12.0.zip
+      6. InputLoader-0.2.6.zip
 
   Your game folder is wherever Cyberpunk2077.exe lives, for example:
       C:\Program Files (x86)\Steam\steamapps\common\Cyberpunk 2077
