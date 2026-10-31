@@ -6,6 +6,23 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.125
+
+A launcher-reliability release for the Cyberpunk 2.5 transition. **No gameplay change** —
+the mod itself is untouched and still targets game patch 2.31.
+
+- **The launcher now tells you when the game updated past the mod.** Cyberpunk 2.5 landed
+  on October 22 and every Steam install moved to it automatically — on 2.5 the mod cannot
+  load yet, and the game boots to the ordinary Cyberpunk menu with no CONNECT entry. That
+  looks exactly like a broken install, and it is not: **it is the game update, there is
+  nothing to reinstall.** The launcher now checks your game version before launching and
+  says precisely that in a dialog instead of letting you find out from a silent menu. The
+  2.5 port is in progress; the launcher will let you straight through again once it ships.
+- **Play can no longer be bricked by a ghost of the game.** Windows sometimes keeps an
+  exited game in its process list; the launcher used to read that as "Cyberpunk is already
+  running" and refuse to launch or install, forever, until a reboot. It now checks whether
+  the process is actually alive.
+
 ## What changed — v0.3.124
 
 A launcher-reliability release. **No gameplay change** — the mod itself is untouched.
