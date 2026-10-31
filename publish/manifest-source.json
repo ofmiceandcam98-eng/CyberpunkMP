@@ -64,14 +64,14 @@
       "name": "RED4ext",
       "types": ["native_dll"],
       "class": "bundled",
-      "version": "1.29.1",
+      "version": "1.30.0",
       "required": true,
       "networkImpact": "critical",
       "audience": "all",
       "author": "WopsS",
       "source": "https://github.com/WopsS/RED4ext",
       "license": "MIT",
-      "archive": { "name": "RED4ext-1.29.1.zip" }
+      "archive": { "name": "RED4ext-1.30.0.zip" }
     },
     {
       "id": "redscript",
