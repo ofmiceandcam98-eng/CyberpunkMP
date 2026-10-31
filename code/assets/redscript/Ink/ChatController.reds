@@ -225,7 +225,15 @@ public class ChatController extends inkHUDGameController {
 
     // The server wants a name for this character.
     protected cb func OnCharacterNameRequest(evt: ref<CharacterNameRequest>) -> Bool {
-        FTLog(s"[ChatController] character name requested (currently '\(evt.m_current)')");
+        // ScriptLog, NOT FTLog, for the same reason as ForceVisible above: FTLog reaches no
+        // file this project collects. These three naming lines (prompt opened / read back /
+        // committed) are the evidence chain for the name-mangling diagnosis - comparing them
+        // with what the server stored is how a typo is told apart from dropped keystrokes,
+        // and on FTLog they were printing into the void.
+        let network = GameInstance.GetNetworkWorldSystem();
+        if IsDefined(network) {
+            network.ScriptLog(s"[ChatController] character name requested (currently '\(evt.m_current)')");
+        }
 
         this.m_namePromptOpen = true;
         this.m_pendingName = "";
@@ -327,7 +335,11 @@ public class ChatController extends inkHUDGameController {
         notice.message = s"You typed \"\(wanted)\" (\(spelled)). Names are permanent - press Enter again to keep it, or fix it first.";
         this.QueueEvent(notice);
 
-        FTLog(s"[ChatController] name read back for confirmation '\(wanted)'");
+        // Collected log (see OnCharacterNameRequest) - this is the middle of the evidence chain.
+        let network = GameInstance.GetNetworkWorldSystem();
+        if IsDefined(network) {
+            network.ScriptLog(s"[ChatController] name read back for confirmation '\(wanted)'");
+        }
         return false;
     }
 
@@ -346,7 +358,13 @@ public class ChatController extends inkHUDGameController {
         // Sent as the ordinary /name command. The server already validates, truncates to 32
         // and writes it through to the character record, so this reuses that rather than
         // adding a second path to the same field.
-        FTLog(s"[ChatController] naming this character '\(wanted)'");
+        // Collected log (see OnCharacterNameRequest) - the end of the evidence chain: this
+        // exact string went to the server, so any difference from what the server stored
+        // happened on the wire or in ChatSystem, not in the input box.
+        let network = GameInstance.GetNetworkWorldSystem();
+        if IsDefined(network) {
+            network.ScriptLog(s"[ChatController] naming this character '\(wanted)'");
+        }
         GameInstance.GetNetworkWorldSystem().GetChatSystem().Send("/name " + wanted);
     }
 
