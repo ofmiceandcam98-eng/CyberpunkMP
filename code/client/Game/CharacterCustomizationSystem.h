@@ -74,7 +74,31 @@ constexpr auto ScheduleSynchronizedAppearanceChanges = Core::RawFunc<386815609UL
 
 // could use game::ui::CharacterCustomizationState::Serialize to pass data to server
 
-inline Handle<game::ui::CharacterCustomizationState> * GetCustomizationState(game::ui::CharacterCustomizationSystem * self) 
+// The creator's state, read raw at +0x78 - an offset decoded on the 2.31 layout (class size 0x388)
+// and never re-decoded. Game 2.5 grew the class to 0x3D8 and the slot stopped being empty in
+// ordinary play: the 90-second automatic save, which relies on "no state outside the creator",
+// serialised the default body and stored it over the player's character every time it ran
+// (zeldfep's Pajeet, 2026-11-01). On any other layout this answers "no state" - creator and
+// ripperdoc saves stop, which is recoverable; overwriting somebody's face is not.
+inline Handle<game::ui::CharacterCustomizationState> * GetCustomizationState(game::ui::CharacterCustomizationSystem * self)
 {
+    constexpr uint32_t kDecodedLayoutSize = 0x388;
+
+    static Handle<game::ui::CharacterCustomizationState> s_none;
+    static const bool s_layoutKnown = []
+    {
+        const auto* pClass = Red::GetClass("gameuiCharacterCustomizationSystem");
+        const auto size = pClass ? pClass->size : 0u;
+        const bool known = size == kDecodedLayoutSize;
+        if (!known)
+            spdlog::warn("[Character] CharacterCustomizationSystem is 0x{:X} bytes, the +0x78 creator-state read was "
+                         "decoded on 0x{:X} - creator and ripperdoc appearance saves are OFF on this game version",
+                         size, kDecodedLayoutSize);
+        return known;
+    }();
+
+    if (!self || !s_layoutKnown)
+        return &s_none;
+
     return reinterpret_cast<Handle<game::ui::CharacterCustomizationState> *>((uintptr_t)self + 0x78);
 }
