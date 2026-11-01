@@ -28,10 +28,22 @@ Client::Client(uint64_t aClientIdentifier, uint64_t aServerIdentifier) noexcept
 
 Client::~Client()
 {
+    // Not Close(): it reports OnDisconnected, and inside a base destructor the derived half is
+    // already gone - the virtual resolves to Client's own pure slot and _purecall aborts. That
+    // was the crash on quitting the game while connected. A dying client has nobody to tell
+    // (the client's handler reaches into game systems that unload before plugins do), so the
+    // connection is just closed. The pending request is cancelled before its loop is freed.
+    if (m_connection != k_HSteamNetConnection_Invalid)
+    {
+        m_pInterface->CloseConnection(m_connection, 0, nullptr, true);
+        m_connection = k_HSteamNetConnection_Invalid;
+    }
+
+    if (m_pHandle != nullptr)
+        uv_cancel(static_cast<uv_req_t*>(m_pHandle));
+
     uv_loop_close(static_cast<uv_loop_t*>(m_pLoop));
     Allocator::Get()->Free(m_pLoop);
-
-    Client::Close();
 
     SteamInterface::Release();
 }
