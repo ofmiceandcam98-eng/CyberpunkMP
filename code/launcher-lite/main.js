@@ -2005,6 +2005,10 @@ async function installEverything (onProgress = () => {}) {
   // with the right names exist. Only when the manifest describes THIS release; a cached
   // older manifest must not fail a newer install it knows nothing about.
   const info = await checkForUpdates()
+  // Bound here, not assumed from an outer scope: this function never had a `manifest`, so
+  // the check below threw "manifest is not defined" on EVERY fresh install from v0.3.101
+  // to v0.3.125 - after the files landed, before the install was recorded or verified.
+  const manifest = usableManifest()
   if (manifest && manifest.release === info.version && manifest.client?.payload?.files?.length) {
     onProgress('Verifying against the manifest...')
     const bad = manifest.client.payload.files.filter((f) => {
