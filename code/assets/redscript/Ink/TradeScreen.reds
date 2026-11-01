@@ -20,8 +20,12 @@
 // THIS IS THE SHELL: it renders the mockup from MOCK data. Wiring it to real trade state is
 // flag-day A (a NotifyTrade protocol message + server emit + client RTTI). The wire carries item
 // IDs and quantities; the overlay resolves names and categories from the TweakDBID client-side,
-// because item names are a client-side convenience the server does not hold. Until that lands
-// the buttons draw but do not act - input wiring rides with the data wiring.
+// because item names are a client-side convenience the server does not hold.
+//
+// INPUT IS WIRED (keyboard): arrows move the ring / step eddies, Enter activates, Backspace
+// closes - our own UIBase actions from CyberpunkMP.xml, handled in ChatController.OnAction.
+// What Confirm COMMITS still waits on the data wire; mouse clicking waits on the
+// menu-controller build (a HUD widget gets no cursor without the half-capturing modal push).
 
 module CyberpunkMP.Ink
 
@@ -124,15 +128,20 @@ public func MpTrHelp(c: ref<inkCanvas>) -> Void {
     let x = MpTrPanelX() + 70.0;
     let y = MpTrPanelY() + 78.0;
     let w = MpTrPanelW() - 140.0;
-    let h = 384.0;
+    let h = 442.0;
     MpCsRect(c, x, y, w, h, MpTrVoid(), 0.95);
     MpCsBorder(c, x, y, w, h, MpTrCyan(), 1.0);
-    MpCsGlowText(c, x + 26.0, y + 18.0, MpCsSpaced("TRADE COMMANDS"), 26, n"Bold", MpTrCyan());
+    MpCsGlowText(c, x + 26.0, y + 18.0, MpCsSpaced("TRADE CONTROLS"), 26, n"Bold", MpTrCyan());
 
     let lx = x + 26.0;
     let dx = x + 250.0;
     let ly = y + 64.0;
     let step = 29.0;
+    // Keys first - they are the primary controls now; the typed commands below stay as the
+    // guaranteed fallback (typing always works).
+    MpCsText(c, lx, ly,             "ARROWS",    20, n"Medium", MpTrCyan());  MpCsText(c, dx, ly,             "move the ring / step eddies", 20, n"Regular", MpTrInk());
+    MpCsText(c, lx, ly + step,      "ENTER / BKSP", 20, n"Medium", MpTrCyan()); MpCsText(c, dx, ly + step,    "activate / close",            20, n"Regular", MpTrInk());
+    ly += step * 2.0;
     MpCsText(c, lx, ly,             "/tradeui",  20, n"Medium", MpTrGold());  MpCsText(c, dx, ly,             "open the trade menu",         20, n"Regular", MpTrInk());
     MpCsText(c, lx, ly + step,      "/tradeoff", 20, n"Medium", MpTrGold());  MpCsText(c, dx, ly + step,      "close it",                    20, n"Regular", MpTrInk());
     MpCsText(c, lx, ly + step*2.0,  "/tr+  /tr-",20, n"Medium", MpTrGold());  MpCsText(c, dx, ly + step*2.0,  "offer more / less eddies",    20, n"Regular", MpTrInk());
@@ -208,7 +217,7 @@ public func MpTrBuild(c: ref<inkCanvas>, gap: Float, sel: Int32, eddies: Int32) 
     MpCsRect(c, bx + 24.0, fY + 31.0, 12.0, 12.0, MpTrCyan(), 0.9);
     MpCsText(c, bx + 44.0, fY + 26.0, "Noremac: confirmed", 19, n"Medium", MpTrInk());
     MpCsText(c, bx + 300.0, fY + 40.0,
-             "Type  /tradehelp  for all commands      /tr+  /tr- eddies    /trok confirm    /tradeoff exit",
+             "ARROWS move / eddies    ENTER select    BKSP close      /tradehelp for typed commands",
              14, n"Regular", MpTrInkFaint());
     let btnW = 190.0;
     let btnH = 44.0;
