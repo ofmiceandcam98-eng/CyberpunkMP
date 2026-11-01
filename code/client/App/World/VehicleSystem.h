@@ -72,7 +72,11 @@ private:
     uint32_t m_authorityEpoch{0};
 };
 
-RTTI_DEFINE_CLASS(VehicleSystem, { 
+// An explicit native name, never the bare type name: 2.5 made the GAME's VehicleSystem a native
+// class (base IVehicleSystem, the summon natives), and ours registered under the same name made
+// the script validator check the game's declaration against our class - nine errors and RED4ext
+// closed the game. Scripts reach ours through the alias, which is unchanged.
+RTTI_DEFINE_CLASS(VehicleSystem, "CyberpunkMPVehicleSystem", {
     RTTI_ALIAS("CyberpunkMP.World.VehicleSystem");
     RTTI_METHOD(OnVehicleEnter);
     RTTI_METHOD(OnVehicleExit);
