@@ -1,0 +1,28 @@
+#pragma once
+
+// clang-format off
+
+// This file is generated from the Game's Reflection data
+
+#include <cstdint>
+#include <RED4ext/Common.hpp>
+#include <RED4ext/Scripting/Natives/Generated/game/PrereqState.hpp>
+
+namespace RED4ext
+{
+namespace game
+{
+struct EquippedPrereqState : game::PrereqState
+{
+    static constexpr const char* NAME = "gameEquippedPrereqState";
+    static constexpr const char* ALIAS = "EquippedPrereqState";
+
+    uint8_t unk100[0x110 - 0x100]; // 100
+};
+RED4EXT_ASSERT_SIZE(EquippedPrereqState, 0x110);
+} // namespace game
+using gameEquippedPrereqState = game::EquippedPrereqState;
+using EquippedPrereqState = game::EquippedPrereqState;
+} // namespace RED4ext
+
+// clang-format on
