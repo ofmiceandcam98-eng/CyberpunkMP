@@ -3359,15 +3359,8 @@ void NetworkWorldSystem::UpdatePlayerLocation() const
     // }
 }
 
-void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
+void InstallCrashReporter()
 {
-    spdlog::info("[OnInitialize]");
-
-    IGameSystem::OnInitialize(aJob);
-
-    if (Settings::IsDisabled())
-        return;
-
     // Our own crash reporter, because the game's has stopped producing one.
     //
     // Every termination since the instrumented flecs build went in has written NO minidump,
@@ -3624,6 +3617,19 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
 
                        spdlog::info("[Crash] vectored handler + terminate/abort hooks installed");
                    });
+}
+
+void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
+{
+    spdlog::info("[OnInitialize]");
+
+    IGameSystem::OnInitialize(aJob);
+
+    if (Settings::IsDisabled())
+        return;
+
+    // Usually installed already, right after plugin load (Main.cpp); call_once makes this a no-op then.
+    InstallCrashReporter();
 
     // Let flecs speak. Nothing was listening, which is why the crashes are silent.
     //

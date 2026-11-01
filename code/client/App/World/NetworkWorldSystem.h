@@ -11,6 +11,9 @@
 #include "AppearanceSystem.h"
 #include "App/Voice/VoiceAudioManager.h"
 #include "App/Voice/VoiceClient.h"
+
+// Vectored crash handler + terminate/abort hooks. Idempotent; see the definition.
+void InstallCrashReporter();
 #include "ChatSystem.h"
 #include "InterpolationSystem.h"
 #include "VehicleSystem.h"

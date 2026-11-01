@@ -38,6 +38,7 @@ void Initialize()
 }
 
 #include "App/Application.h"
+#include "App/World/NetworkWorldSystem.h"
 
 // The game version this build has actually been tested against. Bump when the mod
 // is verified on a newer patch.
@@ -76,6 +77,12 @@ RED4EXT_C_EXPORT bool Main(RED4ext::v1::PluginHandle aHandle, RED4ext::v1::EMain
 
         App::GApplication = MakeUnique<App::Application>(aHandle, aSdk);
         App::GApplication->Bootstrap();
+
+        // Here, not only at game init: from plugin load through script compile and the first
+        // frames, a crash used to leave nothing but "[Boot] logger up" - the 2.5 first-light
+        // crashes all died in that window. Report-only, so it also runs on a session that
+        // turns out to be offline (Settings are not loaded yet to tell).
+        InstallCrashReporter();
 
         const auto scriptPath = GCyberpunkMpLocation / TP_REDSCRIPT_LOCATION;
 
