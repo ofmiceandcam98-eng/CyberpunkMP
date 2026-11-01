@@ -453,7 +453,10 @@ public class ChatController extends inkHUDGameController {
     public final func MpTrOpen() -> Void {
         let root = this.GetRootCompoundWidget();
         if !IsDefined(root) {
-            FTLog(s"[TradeScreen] no root compound widget - cannot open");
+            let network = GameInstance.GetNetworkWorldSystem();
+            if IsDefined(network) {
+                network.ScriptLog("[TradeScreen] no root compound widget - cannot open");
+            }
             return;
         }
 
@@ -479,17 +482,20 @@ public class ChatController extends inkHUDGameController {
         // Scale to whatever the root actually measures; a not-yet-laid-out root reports zero,
         // so fall back to 1:1 rather than scaling the composition to nothing. Everything below is
         // driven by the MEASURED root size, so it adapts to any resolution (zeldfep runs 2K).
-        // Interim keyboard nav (until the menu-controller cursor). Register the nav actions once -
-        // NO game-context push (that broke chat typing, reverted test.50), so this cannot trap the
-        // player; if an action needs a UI context to fire, it simply does nothing and the typed
-        // /tr+ /tr- /trok /tradeoff fallbacks still work. Unregistered in MpTrClose.
+        // Keyboard nav on OUR OWN input actions (TradeNavUp/Down, TradeOfferLess/More,
+        // TradeAccept, TradeExit) - declared in CyberpunkMP.xml and appended to UIBase, the
+        // same mechanism that makes push-to-talk and the chat hotkey fire in gameplay. The
+        // menu actions tried first (navigate_*/proceed) need a UI context a HUD widget never
+        // has, so they never fired (the test.40 "cannot click anything"). Still NO
+        // game-context push (that broke chat typing, reverted test.50) - the typed /tr*
+        // fallbacks keep working regardless. Unregistered in MpTrClose.
         if !this.m_trOpen {
-            this.m_player.RegisterInputListener(this, n"back");
-            this.m_player.RegisterInputListener(this, n"navigate_up");
-            this.m_player.RegisterInputListener(this, n"navigate_down");
-            this.m_player.RegisterInputListener(this, n"popup_moveLeft");
-            this.m_player.RegisterInputListener(this, n"popup_moveRight");
-            this.m_player.RegisterInputListener(this, n"proceed");
+            this.m_player.RegisterInputListener(this, n"TradeNavUp");
+            this.m_player.RegisterInputListener(this, n"TradeNavDown");
+            this.m_player.RegisterInputListener(this, n"TradeOfferLess");
+            this.m_player.RegisterInputListener(this, n"TradeOfferMore");
+            this.m_player.RegisterInputListener(this, n"TradeAccept");
+            this.m_player.RegisterInputListener(this, n"TradeExit");
             this.m_trOpen = true;
         }
 
@@ -500,7 +506,7 @@ public class ChatController extends inkHUDGameController {
             this.m_trFracY = MpTrShiftFracY();
             this.m_trZoom = MpTrZoom();
             this.m_trGap = MpTrGapDefault();
-            this.m_trSel = 3; // no footer ring by default (nav keys do not fire without a UI context)
+            this.m_trSel = 3; // no footer ring until the player navigates (arrows) or presses Enter
             // A /trsave'd placement overrides the baked default; (0,0,0,0) = nothing saved.
             let saved = GameInstance.GetNetworkWorldSystem().GetChatSystem().LoadTradePlacement();
             if saved.Z > 0.0 {
@@ -532,7 +538,13 @@ public class ChatController extends inkHUDGameController {
         // Frosted backdrop behind the see-through boxes. Standalone call (no modal context push),
         // so worst case it simply does not blur - it cannot hide the HUD or trap input.
         PopupStateUtils.SetBackgroundBlur(this, true);
-        FTLog(s"[TradeScreen] opened - root \(rootSize.X)x\(rootSize.Y) scale \(scale) fracX \(this.m_trFracX) fracY \(this.m_trFracY) zoom \(this.m_trZoom) gap \(this.m_trGap)");
+        // ScriptLog, not FTLog: the opened line is the evidence a live session collects
+        // (placement values to bake as defaults, and now that the overlay was up at all
+        // when diagnosing the keys). FTLog reaches no collected file - the naming saga.
+        let network = GameInstance.GetNetworkWorldSystem();
+        if IsDefined(network) {
+            network.ScriptLog(s"[TradeScreen] opened - root \(rootSize.X)x\(rootSize.Y) scale \(scale) fracX \(this.m_trFracX) fracY \(this.m_trFracY) zoom \(this.m_trZoom) gap \(this.m_trGap)");
+        }
     }
 
     public final func MpTrClose() -> Void {
@@ -541,16 +553,23 @@ public class ChatController extends inkHUDGameController {
             this.m_trRoot.SetVisible(false);
         }
         if this.m_trOpen {
-            this.m_player.UnregisterInputListener(this, n"back");
-            this.m_player.UnregisterInputListener(this, n"navigate_up");
-            this.m_player.UnregisterInputListener(this, n"navigate_down");
-            this.m_player.UnregisterInputListener(this, n"popup_moveLeft");
-            this.m_player.UnregisterInputListener(this, n"popup_moveRight");
-            this.m_player.UnregisterInputListener(this, n"proceed");
+            this.m_player.UnregisterInputListener(this, n"TradeNavUp");
+            this.m_player.UnregisterInputListener(this, n"TradeNavDown");
+            this.m_player.UnregisterInputListener(this, n"TradeOfferLess");
+            this.m_player.UnregisterInputListener(this, n"TradeOfferMore");
+            this.m_player.UnregisterInputListener(this, n"TradeAccept");
+            this.m_player.UnregisterInputListener(this, n"TradeExit");
             this.m_trOpen = false;
         }
+        // Forget the ring so a reopened overlay cannot be confirmed by a single leftover
+        // Enter - TradeAccept has to walk there again (or land there via its own two-press
+        // guard in MpTrActivate).
+        this.m_trSel = 3;
         PopupStateUtils.SetBackgroundBlur(this, false);
-        FTLog(s"[TradeScreen] closed");
+        let network = GameInstance.GetNetworkWorldSystem();
+        if IsDefined(network) {
+            network.ScriptLog("[TradeScreen] closed");
+        }
     }
 
     private final func MpTrEddies(delta: Int32) -> Void {
@@ -560,10 +579,40 @@ public class ChatController extends inkHUDGameController {
         this.MpTrOpen();
     }
 
+    private final func MpTrNav(delta: Int32) -> Void {
+        // From the no-selection state (3) the first press lands on CANCEL going down and the
+        // X going up; after that it cycles CANCEL (0) -> CONFIRM (1) -> X (2).
+        if this.m_trSel > 2 {
+            if delta > 0 {
+                this.m_trSel = 0;
+            } else {
+                this.m_trSel = 2;
+            }
+        } else {
+            this.m_trSel = (this.m_trSel + delta + 3) % 3;
+        }
+        this.MpTrOpen();
+    }
+
     private final func MpTrActivate() -> Void {
+        // Nothing selected yet: the first Enter only puts the ring on CONFIRM and asks for a
+        // second press - the name prompt's read-back pattern. A trade must never commit on a
+        // single keystroke (see the ApplyTrade non-idempotence note on the Atlas trade branch).
+        if this.m_trSel > 2 {
+            this.m_trSel = 1;
+            this.MpTrOpen();
+            return;
+        }
         // Cancel (0) and Exit (2) just close; Confirm (1) will commit once the trade data wire
-        // exists - for now it logs and closes like the others.
-        if this.m_trSel == 1 { FTLog(s"[TradeScreen] confirm (mock)"); }
+        // exists - for now it logs and closes like the others. ScriptLog, not FTLog: this line
+        // is the evidence a live session collects that the key fired (the naming-saga lesson -
+        // FTLog reaches no collected file).
+        if this.m_trSel == 1 {
+            let network = GameInstance.GetNetworkWorldSystem();
+            if IsDefined(network) {
+                network.ScriptLog("[TradeScreen] confirm (mock) via TradeAccept");
+            }
+        }
         this.MpTrClose();
     }
 
@@ -733,18 +782,19 @@ public class ChatController extends inkHUDGameController {
         let actionName: CName = ListenerAction.GetName(action);
         let actionType: gameinputActionType = ListenerAction.GetType(action);
 
-        // Trade overlay keyboard nav. Only while the overlay is up and the chat field is not
-        // focused, so it never eats typing. navigate = cycle the footer button (Tab), popup move
-        // left/right = eddies -/+, proceed = activate, back = close. If these actions do not reach
-        // us in gameplay (no UI context), nothing fires and the typed /tr fallbacks still work.
+        // Trade overlay keyboard nav, on our own UIBase actions (see MpTrOpen for why these
+        // and not the menu actions). Only while the overlay is up and the chat field is not
+        // focused, so it never eats typing. Arrows up/down move the gold ring, left/right
+        // step the eddies offer, Enter activates, Backspace closes. Press only - the XML
+        // accepts nothing else, so a tap acts once (the VoiceCycleRange rule).
         if this.m_trOpen && !this.m_chatInputOpen {
-            if Equals(actionType, gameinputActionType.BUTTON_RELEASED) {
-                if Equals(actionName, n"back") { this.MpTrClose(); return true; }
-                if Equals(actionName, n"navigate_down") { this.m_trSel = (this.m_trSel + 1) % 3; this.MpTrOpen(); return true; }
-                if Equals(actionName, n"navigate_up") { this.m_trSel = (this.m_trSel + 2) % 3; this.MpTrOpen(); return true; }
-                if Equals(actionName, n"popup_moveLeft") { this.MpTrEddies(-500); return true; }
-                if Equals(actionName, n"popup_moveRight") { this.MpTrEddies(500); return true; }
-                if Equals(actionName, n"proceed") { this.MpTrActivate(); return true; }
+            if Equals(actionType, gameinputActionType.BUTTON_PRESSED) {
+                if Equals(actionName, n"TradeExit") { this.MpTrClose(); return true; }
+                if Equals(actionName, n"TradeNavDown") { this.MpTrNav(1); return true; }
+                if Equals(actionName, n"TradeNavUp") { this.MpTrNav(-1); return true; }
+                if Equals(actionName, n"TradeOfferLess") { this.MpTrEddies(-500); return true; }
+                if Equals(actionName, n"TradeOfferMore") { this.MpTrEddies(500); return true; }
+                if Equals(actionName, n"TradeAccept") { this.MpTrActivate(); return true; }
             }
         }
 

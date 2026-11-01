@@ -76,6 +76,36 @@
 	<mapping name="ChatBottom_Button" type="Button" >
 		<button id="IK_PageDown" />
     </mapping>
+
+	<!-- Trade overlay keys. These exist because the overlay is a HUD widget: the menu
+	     actions (navigate_up, proceed...) never dispatch without a UI context, and pushing
+	     one half-captures input (the reverted test.50 modal). So the overlay gets plain
+	     buttons in the gameplay chain instead - same mechanism as push-to-talk above.
+	     Arrows/Enter/Backspace are unbound in gameplay, so nothing double-acts; the
+	     listeners only register while the overlay is open (ChatController.MpTrOpen). -->
+	<mapping name="TradeNavUp_Button" type="Button" >
+		<button id="IK_Up" />
+    </mapping>
+
+	<mapping name="TradeNavDown_Button" type="Button" >
+		<button id="IK_Down" />
+    </mapping>
+
+	<mapping name="TradeOfferLess_Button" type="Button" >
+		<button id="IK_Left" />
+    </mapping>
+
+	<mapping name="TradeOfferMore_Button" type="Button" >
+		<button id="IK_Right" />
+    </mapping>
+
+	<mapping name="TradeAccept_Button" type="Button" >
+		<button id="IK_Enter" />
+    </mapping>
+
+	<mapping name="TradeExit_Button" type="Button" >
+		<button id="IK_Backspace" />
+    </mapping>
     
     <context name="UI_Multiplayer" >
 		<include name="UINotifications" />
@@ -158,6 +188,31 @@
 		<event name="BUTTON_PRESSED" />
 	</acceptedEvents>
 
+	<!-- Trade keys: press only, same reasoning - a tap acts once. -->
+	<acceptedEvents action="TradeNavUp">
+		<event name="BUTTON_PRESSED" />
+	</acceptedEvents>
+
+	<acceptedEvents action="TradeNavDown">
+		<event name="BUTTON_PRESSED" />
+	</acceptedEvents>
+
+	<acceptedEvents action="TradeOfferLess">
+		<event name="BUTTON_PRESSED" />
+	</acceptedEvents>
+
+	<acceptedEvents action="TradeOfferMore">
+		<event name="BUTTON_PRESSED" />
+	</acceptedEvents>
+
+	<acceptedEvents action="TradeAccept">
+		<event name="BUTTON_PRESSED" />
+	</acceptedEvents>
+
+	<acceptedEvents action="TradeExit">
+		<event name="BUTTON_PRESSED" />
+	</acceptedEvents>
+
     <context name="UIBase" append="true">
         <action name="VoicePushToTalk" map="VoicePushToTalk_Button" />
         <action name="VoiceCycleRange" map="VoiceCycleRange_Button" />
@@ -167,6 +222,12 @@
         <action name="UIEmote" map="UIEmote_Button" />
         <action name="UIShop" map="UIShop_Button" />
         <action name="UIJob" map="UIJob_Button" />
+        <action name="TradeNavUp" map="TradeNavUp_Button" />
+        <action name="TradeNavDown" map="TradeNavDown_Button" />
+        <action name="TradeOfferLess" map="TradeOfferLess_Button" />
+        <action name="TradeOfferMore" map="TradeOfferMore_Button" />
+        <action name="TradeAccept" map="TradeAccept_Button" />
+        <action name="TradeExit" map="TradeExit_Button" />
     </context>
 
 </bindings>
