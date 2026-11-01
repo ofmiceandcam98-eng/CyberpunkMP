@@ -11,9 +11,9 @@
 #include "App/Settings.h"
 
 
-RpcService::RpcService(RED4ext::PluginHandle aPlugin, const RED4ext::Sdk* aSdk)
+RpcService::RpcService(RED4ext::v1::PluginHandle aPlugin, const RED4ext::v1::Sdk* aSdk)
 {
-    RED4ext::GameState state{nullptr, nullptr, nullptr};
+    RED4ext::v1::GameState state{nullptr, nullptr, nullptr};
     state.OnExit = &PrepareRpc;
 
     aSdk->gameStates->Add(aPlugin, RED4ext::EGameStateType::Initialization, &state);

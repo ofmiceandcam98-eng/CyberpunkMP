@@ -24,7 +24,7 @@ template <> struct std::hash<RpcId>
 
 struct RpcService : Core::Feature, Core::HookingAgent
 {
-    RpcService(RED4ext::PluginHandle aPlugin, const RED4ext::Sdk* aSdk);
+    RpcService(RED4ext::v1::PluginHandle aPlugin, const RED4ext::v1::Sdk* aSdk);
     ~RpcService() override;
 
     void OnInitialize() override;

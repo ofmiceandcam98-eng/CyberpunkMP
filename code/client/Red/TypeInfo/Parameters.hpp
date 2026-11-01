@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Common.hpp"
+#include "Construction.hpp"
 #include "Resolving.hpp"
 
 namespace Red
@@ -111,24 +112,45 @@ concept IsOptional = Detail::Specialization<U>::value
 template<typename T>
 struct ScriptRef
 {
-    explicit ScriptRef(bool aAllocate = false)
+    explicit ScriptRef(bool aAllocate)
         : unk00(nullptr)
-        , unk08(nullptr)
+        , managed(false)
         , type(nullptr)
         , ref(nullptr)
     {
-        if (aAllocate)
+        if (managed)
         {
             AllocateValue();
         }
     }
 
+    ScriptRef(T* aRef)
+        : unk00(nullptr)
+        , managed(false)
+        , type(GetType<T>())
+        , ref(aRef)
+    {
+    }
+
+    ScriptRef(T& aRef)
+        : unk00(nullptr)
+        , managed(false)
+        , type(GetType<T>())
+        , ref(&aRef)
+    {
+    }
+
+    ScriptRef()
+        : unk00(nullptr)
+        , managed(false)
+        , type(nullptr)
+        , ref(nullptr)
+    {
+    }
+
     ~ScriptRef()
     {
-        if (!name && ref)
-        {
-            Destruct(ref);
-        }
+        FreeValue();
     }
 
     inline explicit operator bool()
@@ -146,12 +168,12 @@ struct ScriptRef
         return ref;
     }
 
-    auto operator[](size_t aIndex)
+    inline auto operator[](size_t aIndex)
     {
         return (*ref)[aIndex];
     }
 
-    ScriptRef& operator=(const T& aValue) noexcept
+    inline ScriptRef& operator=(const T& aValue) noexcept
     {
         if (ref)
         {
@@ -161,7 +183,7 @@ struct ScriptRef
         return *this;
     }
 
-    ScriptRef& operator=(T&& aValue) noexcept
+    inline ScriptRef& operator=(T&& aValue) noexcept
     {
         if (ref)
         {
@@ -171,14 +193,27 @@ struct ScriptRef
         return *this;
     }
 
-    void AllocateValue()
+    inline void AllocateValue()
     {
-        type = GetType<T>();
-        ref = Construct<T>();
+        if (!managed)
+        {
+            managed = true;
+            type = GetType<T>();
+            ref = Construct<T>();
+        }
+    }
+
+    inline void FreeValue()
+    {
+        if (managed)
+        {
+            managed = false;
+            Destruct(ref);
+        }
     }
 
     void* unk00;         // 00 - VFT
-    void* unk08;         // 08
+    bool managed;        // 08 - Actually a pointer, but never used
     CBaseRTTIType* type; // 10
     T* ref;              // 18
     CName name;          // 20

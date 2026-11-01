@@ -2,14 +2,14 @@
 
 #include "App/Settings.h"
 #include "RED4ext/GameStates.hpp"
-#include "RED4ext/Api/Sdk.hpp"
+#include "RED4ext/Api/v1/Sdk.hpp"
 
-Core::Application::Application(RED4ext::PluginHandle aPlugin, const RED4ext::Sdk* aSdk)
+Core::Application::Application(RED4ext::v1::PluginHandle aPlugin, const RED4ext::v1::Sdk* aSdk)
     : m_plugin(aPlugin),
       m_sdk(aSdk)
 {
-    RED4ext::GameState loadingState{nullptr, nullptr, nullptr};
-    RED4ext::GameState runningState{nullptr, nullptr, nullptr};
+    RED4ext::v1::GameState loadingState{nullptr, nullptr, nullptr};
+    RED4ext::v1::GameState runningState{nullptr, nullptr, nullptr};
     loadingState.OnEnter = &RunLoad;
     runningState.OnUpdate = &RunUpdate;
 

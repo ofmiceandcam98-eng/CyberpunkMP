@@ -5,7 +5,7 @@
 #include <RED4ext/LaunchParameters.hpp>
 #include <BuildInfo.h>
 
-#include "RED4ext/Api/EMainReason.hpp"
+#include "RED4ext/Api/v1/EMainReason.hpp"
 
 std::filesystem::path GCyberpunkMpLocation;
 
@@ -44,12 +44,12 @@ void Initialize()
 constexpr uint8_t kSupportedGameMajor = 2;
 constexpr uint16_t kSupportedGameMinor = 31;
 
-RED4EXT_C_EXPORT bool Main(RED4ext::PluginHandle aHandle, RED4ext::EMainReason aReason, const RED4ext::Sdk* aSdk)
+RED4EXT_C_EXPORT bool Main(RED4ext::v1::PluginHandle aHandle, RED4ext::v1::EMainReason aReason, const RED4ext::v1::Sdk* aSdk)
 {
 
     switch (aReason)
     {
-    case RED4ext::EMainReason::Load:
+    case RED4ext::v1::EMainReason::Load:
     {
         // Report the game version, and say plainly when it isn't one we've tested.
         // Without this, an unsupported patch shows up as a wall of script validation
@@ -108,7 +108,7 @@ RED4EXT_C_EXPORT bool Main(RED4ext::PluginHandle aHandle, RED4ext::EMainReason a
         TweakXL::RegisterTweaks(canonical(GCyberpunkMpLocation / TP_TWEAKS_LOCATION));
 
         const auto inputLoaderModule = LoadLibrary("input_loader");
-        void(*pInputLoaderAdd)(RED4ext::PluginHandle, const wchar_t*);
+        void(*pInputLoaderAdd)(RED4ext::v1::PluginHandle, const wchar_t*);
         if (inputLoaderModule != nullptr && (pInputLoaderAdd = reinterpret_cast<decltype(pInputLoaderAdd)>(GetProcAddress(inputLoaderModule, "Add"))))
         {
             // Stored, not .c_str()'d off a temporary - same UB as scriptLocation above.
@@ -134,7 +134,7 @@ RED4EXT_C_EXPORT bool Main(RED4ext::PluginHandle aHandle, RED4ext::EMainReason a
 
         break;
     }
-    case RED4ext::EMainReason::Unload:
+    case RED4ext::v1::EMainReason::Unload:
     {
         if (Settings::IsDisabled())
             return false;
@@ -148,7 +148,7 @@ RED4EXT_C_EXPORT bool Main(RED4ext::PluginHandle aHandle, RED4ext::EMainReason a
     return true;
 }
 
-RED4EXT_C_EXPORT void Query(RED4ext::PluginInfo* aInfo)
+RED4EXT_C_EXPORT void Query(RED4ext::v1::PluginInfo* aInfo)
 {
     aInfo->name = L"CyberpunkMP";
     aInfo->author = L"Tilted Phoques SRL";
@@ -156,13 +156,13 @@ RED4EXT_C_EXPORT void Query(RED4ext::PluginInfo* aInfo)
     // Stamped from the release at ship time (BuildInfo.h, via NCO_BUILD_VERSION). This
     // sat frozen at 0.1.0 for the project's whole life, which meant the one version
     // surface RED4ext itself displays never matched anything anyone shipped.
-    aInfo->version = RED4EXT_SEMVER(BUILD_VERSION_MAJOR, BUILD_VERSION_MINOR, BUILD_VERSION_PATCH);
+    aInfo->version = RED4EXT_V1_SEMVER(BUILD_VERSION_MAJOR, BUILD_VERSION_MINOR, BUILD_VERSION_PATCH);
 
-    aInfo->runtime = RED4EXT_V0_RUNTIME_INDEPENDENT;
-    aInfo->sdk = RED4EXT_SDK_LATEST;
+    aInfo->runtime = RED4EXT_V1_RUNTIME_VERSION_INDEPENDENT;
+    aInfo->sdk = RED4EXT_V1_SDK_VERSION_CURRENT;
 }
 
 RED4EXT_C_EXPORT uint32_t Supports()
 {
-    return RED4EXT_API_VERSION_LATEST;
+    return RED4EXT_API_VERSION_1;
 }
