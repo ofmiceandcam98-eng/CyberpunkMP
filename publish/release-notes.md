@@ -8,9 +8,20 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 ## What changed — v0.3.125
 
-A launcher-reliability release for the Cyberpunk 2.5 transition. **No gameplay change** —
-the mod itself is untouched and still targets game patch 2.31.
+A launcher-reliability release for the Cyberpunk 2.5 transition, now carrying the
+refreshed mod payload for that transition too.
 
+- **The dependency stack is now 2.5-ready.** (Added in the mod refresh of this release.)
+  The payload moves to RED4ext 1.31.0, redscript 0.5.32, Codeware 1.21.2, ArchiveXL
+  1.28.6, TweakXL 1.12.0 and Input Loader 0.2.6 — the versions built for Cyberpunk 2.5.
+  On a 2.5 game the old stack crashed at launch; the new one boots cleanly. The mod's own
+  multiplayer code still targets 2.31 while the port is finished, so on 2.5 you will see
+  the ordinary menu without CONNECT — the launcher's dialog explains exactly that. This
+  update is what makes the rest of the 2.5 port deliverable.
+- **The trade overlay takes keyboard input.** Arrow keys move the selection and step the
+  eddies offer, Enter activates (confirm always asks for a second press), Backspace
+  closes. The typed /tr* commands still work as before. Trading data itself is still in
+  development — the overlay shows sample content until that ships.
 - **The launcher now tells you when the game updated past the mod.** Cyberpunk 2.5 landed
   on October 22 and every Steam install moved to it automatically — on 2.5 the mod cannot
   load yet, and the game boots to the ordinary Cyberpunk menu with no CONNECT entry. That
