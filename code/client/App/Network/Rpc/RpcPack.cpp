@@ -134,7 +134,7 @@ struct ClassArgumentPack : BaseArgumentPack
     void Read(void* pDest, Buffer::Reader& aReader) override
     {
         const auto type = static_cast<Red::CClass*>(m_pRtti);
-        const auto count = type->props.size;
+        const auto count = type->props.Size();
         for (auto i = 0; i < count; ++i)
         {
             const auto prop = type->props[i];
@@ -146,7 +146,7 @@ struct ClassArgumentPack : BaseArgumentPack
     void Write(void* pSrc, Buffer::Writer& aWriter) override
     {
         const auto type = static_cast<Red::CClass*>(m_pRtti);
-        const auto count = type->props.size;
+        const auto count = type->props.Size();
         for (auto i = 0; i < count; ++i)
         {
             const auto prop = type->props[i];

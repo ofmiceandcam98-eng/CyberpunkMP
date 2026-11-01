@@ -109,7 +109,7 @@ void AppearanceSystem::AddEntity(const Red::EntityID entityID, const Red::DynArr
     // carrying is the first thing worth knowing when they look wrong, and it has earned
     // its place several times since.
     spdlog::info("[Appearance] entity {:x}: {} equipment item(s), {} bytes of ccstate",
-                 entityID.hash, items.size, ccstate.size());
+                 entityID.hash, items.Size(), ccstate.size());
 
     {
         std::lock_guard lock(m_mapLock);
@@ -121,7 +121,7 @@ void AppearanceSystem::AddEntity(const Red::EntityID entityID, const Red::DynArr
     // against the matching 'apply' line - see HashBytes above.
     spdlog::info("[Identity] add   entity {:x}: ccstate {} bytes hash={:016x}, equipment {} items hash={:016x}",
                  entityID.hash, ccstate.size(), HashBytes(ccstate.data(), ccstate.size()),
-                 items.size, HashEquipment(items));
+                 items.Size(), HashEquipment(items));
 
 }
 
@@ -305,7 +305,7 @@ bool AppearanceSystem::ApplyAppearance(Red::Handle<Red::game::Object> object)
     // downstream of us - in the engine's appearance changer. If they differ, it is ours.
     spdlog::info("[Identity] apply entity {:x}: ccstate {} bytes hash={:016x}, equipment {} items hash={:016x}, name '{}'",
                  object.instance->id.hash, bytes.size(), HashBytes(bytes.data(), bytes.size()),
-                 items.size, HashEquipment(items), name);
+                 items.Size(), HashEquipment(items), name);
 
     // The name on the puppet.
     //
@@ -542,7 +542,7 @@ bool AppearanceSystem::ApplyAppearance(Red::Handle<Red::game::Object> object)
         // Guessing between those two means editing native appearance code blind, and a
         // wrong guess here crashes the game on spawn rather than failing visibly.
         spdlog::info("[Appearance] remote state produced {} customization key(s), male={}",
-                     keys.size, stateHandle.instance->isBodyGenderMale);
+                     keys.Size(), stateHandle.instance->isBodyGenderMale);
 
         auto changer = Red::GetRuntimeSystem<Red::world::RuntimeSystemEntityAppearanceChanger>();
         Red::WeakHandle<Red::game::Object> weakHandle = object;
@@ -563,8 +563,8 @@ bool AppearanceSystem::ApplyAppearance(Red::Handle<Red::game::Object> object)
         // engine's read regardless of when that read happens.
         auto keysStorage = std::make_shared<Red::DynArray<Red::world::EntityAppearanceChangeParameter::Key>>(std::move(keys));
         Span<Red::world::EntityAppearanceChangeParameter::Key> new_keys = {
-            .start = keysStorage->entries,
-            .end = &keysStorage->entries[keysStorage->size]
+            .start = keysStorage->Data(),
+            .end = &keysStorage->Data()[keysStorage->Size()]
         };
         const std::function<void (void)> callback = [stateHandle = std::move(stateHandle), object = std::move(object), keysStorage](void)
         {
