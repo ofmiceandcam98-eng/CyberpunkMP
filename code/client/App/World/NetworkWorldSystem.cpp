@@ -3813,6 +3813,16 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
 
 void NetworkWorldSystem::Connect()
 {
+    ConnectAs(false);
+}
+
+void NetworkWorldSystem::ConnectFromMenu()
+{
+    ConnectAs(true);
+}
+
+void NetworkWorldSystem::ConnectAs(const bool aFromMenu)
+{
     /**
      * NOT THROUGH THE LAUNCHER, NOT CONNECTING. Cam's rule, 2026-09-03.
      *
@@ -3848,7 +3858,7 @@ void NetworkWorldSystem::Connect()
     // at the moment they asked to connect, which is what decides whether authentication is
     // allowed to spawn them - see CaptureSpawnIntent. Asked afterwards it becomes a race
     // against whatever else the press set in motion.
-    service->CaptureSpawnIntent();
+    service->CaptureSpawnIntent(aFromMenu);
 
     service->Connect(address);
 }

@@ -40,6 +40,9 @@ public class MpTakeDriverSeatCallback extends DelayCallback {
 
 public native class NetworkWorldSystem extends IGameSystem {
     public native func Connect() -> Void;
+    // The main menu's connects. Never spawns on its own: on 2.5 the menu stands on a live
+    // world, so "is there a player" cannot tell a menu press from an in-world one.
+    public native func ConnectFromMenu() -> Void;
     public native func Disconnect() -> Void;
     public native func RequestJoin() -> Void;
 
