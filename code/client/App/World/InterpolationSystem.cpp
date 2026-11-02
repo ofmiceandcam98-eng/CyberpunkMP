@@ -706,6 +706,13 @@ void InterpolationSystem::OnConnected()
     const auto pSystem = Red::GetGameSystem<NetworkWorldSystem>();
     const auto pMoveSystem = Red::GetGameSystem<RED4ext::vehicle::IMoveSystem>();
 
+    // Called again from NetworkWorldSystem::OnWorldAttached when a world loads under a live
+    // connection (see there), so never stack a second interpolator on a first.
+    if (m_interpolator)
+        m_interpolator.destruct();
+
+    spdlog::info("[InterpolationSystem] interpolator started");
+
     m_interpolator = pSystem->system<const EntityComponent, InterpolationComponent>().each(
         [cSimulationDelay, pMoveSystem](flecs::entity aEntity, const EntityComponent& aEntityComponent, InterpolationComponent& aInterpolation)
         {

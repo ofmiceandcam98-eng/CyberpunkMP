@@ -181,8 +181,15 @@ void NetworkWorldSystem::DeSpawn(uint64_t aServerId) const
 
     const auto entity = GetEntityByServerId(aServerId);
 
+    // Said out loud. A remote player who left and rejoined showed up as a "ghost" - their old
+    // body still standing beside the new one (2026-11-01 23:40, his first puppet spawned five
+    // seconds before that connection ended) - and this function was silent whether it ran,
+    // found nothing, or failed, so the log could not say which.
     if (!entity)
+    {
+        spdlog::warn("[Spawn] unload for server id {} - nothing registered under it, nothing removed", aServerId);
         return;
+    }
 
     if (auto* pEntity = entity.get<EntityComponent>())
     {
@@ -190,7 +197,9 @@ void NetworkWorldSystem::DeSpawn(uint64_t aServerId) const
         App::PuppetRegistry::RemoveDriver(pEntity->Id.hash);
         App::ServerIdRegistry::Remove(pEntity->Id.hash);
         const auto handle = Red::GetGameSystem<NetworkWorldSystem>();
-        Red::CallFunction(handle, m_pDeletePuppet, pEntity->Id);
+        const bool deleted = Red::CallFunction(handle, m_pDeletePuppet, pEntity->Id);
+        spdlog::info("[Spawn] unload for server id {} - puppet {:x} delete {}", aServerId, pEntity->Id.hash,
+                     deleted ? "called" : "FAILED");
     }
     else if (auto* pEntity = entity.get<SpawningComponent>())
     {
@@ -198,7 +207,9 @@ void NetworkWorldSystem::DeSpawn(uint64_t aServerId) const
         App::PuppetRegistry::RemoveDriver(pEntity->Id.hash);
         App::ServerIdRegistry::Remove(pEntity->Id.hash);
         const auto handle = Red::GetGameSystem<NetworkWorldSystem>();
-        Red::CallFunction(handle, m_pDeletePuppet, pEntity->Id);
+        const bool deleted = Red::CallFunction(handle, m_pDeletePuppet, pEntity->Id);
+        spdlog::info("[Spawn] unload for server id {} - still-spawning puppet {:x} delete {}", aServerId,
+                     pEntity->Id.hash, deleted ? "called" : "FAILED");
     }
 
     entity.destruct();
@@ -490,6 +501,18 @@ void NetworkWorldSystem::OnWorldAttached(RED4ext::world::RuntimeScene* aScene)
     m_appearanceSystem->OnWorldAttached(aScene);
     m_interpolationSystem->OnWorldAttached(aScene);
     m_vehicleSystem->OnWorldAttached(aScene);
+
+    // A world that loads UNDER a live connection gets its interpolator back.
+    //
+    // The interpolator is created on connect and destroyed by every detach's stand-down.
+    // While the connect happened inside the world, that order was fine. Since CONNECT moved to
+    // the main menu (c4085596), the connection comes FIRST and loading the world detaches the
+    // menu scene afterwards - so the stand-down destroyed the interpolator seconds after it was
+    // made, nothing ever recreated it, and no remote player moved for the whole session. Every
+    // two-player run on 2026-11-01 was a room of statues for this reason, under four builds
+    // aimed at 2.5 offsets that the frame never reached.
+    if (const auto& service = Core::Container::Get<NetworkService>(); service && service->IsConnected())
+        m_interpolationSystem->OnConnected();
 
     m_ready = true;
 
