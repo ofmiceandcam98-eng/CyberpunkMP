@@ -101,6 +101,43 @@ inline void SetSimpleMovement(Red::vehicle::IMoveSystem* apMoveSystem, const Red
 static Core::RawFunc<1828854026UL, void (*)(Red::IPlacedComponent*, const Red::WorldTransform&)>
     PlacedComponent_SetTransform;
 
+// Moves a remote puppet through the game's TeleportationFacility - the transform-only (off
+// 2.31) half of DriveEntity.
+//
+// A placed-transform write does not visibly move an NPC-record puppet on 2.5 - its own
+// movement component puts the position back - and the teleport goes through that component.
+// Teleport is not a per-frame call, so: at most 10 a second per puppet, and only once it has
+// moved 2cm. Needs only the entity, so it also runs for a puppet with no placedComponent.
+static void TeleportPuppet(NetworkWorldSystem* apSystem, const Red::Handle<Red::Entity>& aEntity,
+                           uint64_t aIdHash, const glm::vec3& aPosition, float aYaw,
+                           std::chrono::steady_clock::time_point aNow)
+{
+    struct LastTeleport
+    {
+        std::chrono::steady_clock::time_point At{};
+        glm::vec3 Position{};
+    };
+    static std::unordered_map<uint64_t, LastTeleport> s_lastTeleport;
+
+    constexpr auto cTeleportInterval = std::chrono::milliseconds(100);
+    constexpr float cMinMoveSq = 0.02f * 0.02f;
+
+    auto& last = s_lastTeleport[aIdHash];
+    const auto delta = aPosition - last.Position;
+    if (aNow - last.At < cTeleportInterval || glm::dot(delta, delta) < cMinMoveSq)
+        return;
+
+    const bool first = last.At == std::chrono::steady_clock::time_point{};
+    last.At = aNow;
+    last.Position = aPosition;
+
+    Red::CallVirtual(apSystem, "MpTeleportPuppet", aEntity,
+                     Red::Vector4{aPosition.x, aPosition.y, aPosition.z, 0.f}, aYaw);
+
+    if (first)
+        spdlog::info("[Driver] puppet {:x} first teleport (TeleportationFacility, off 2.31)", aIdHash);
+}
+
 // Place a driver-puppet and advance its animation for this frame.
 static void DriveEntity(const DriverComponent& aDriver, const EntityComponent& aEntityComponent,
                         const glm::vec3& aPosition, float aYaw, float aSpeed, uint32_t aLocomotion,
@@ -128,24 +165,35 @@ static void DriveEntity(const DriverComponent& aDriver, const EntityComponent& a
     const auto entityHandle = pSystem->GetEntity(aEntityComponent.Id);
 
     // Every early-out logs ONCE per puppet: a frozen puppet must name its gate.
+    //
+    // Including in transform-only mode, where there is no PuppetDriver to hold GateLogged.
+    // These gates used to log only through it, so on 2.5 all three went silent and test.77
+    // showed a remote player standing still with no line saying which gate stopped him.
+    const auto gateOnce = [&aDriver, &aEntityComponent]
+    {
+        if (aDriver.Driver)
+            return !std::exchange(aDriver.Driver->GateLogged, true);
+
+        static std::unordered_set<uint64_t> s_gated;
+        return s_gated.insert(aEntityComponent.Id.hash).second;
+    };
+
     if (!entityHandle)
     {
-        if (aDriver.Driver && !aDriver.Driver->GateLogged)
-        {
-            aDriver.Driver->GateLogged = true;
+        if (gateOnce())
             spdlog::warn("[Driver] puppet {:x} has no engine entity - cannot move it", aEntityComponent.Id.hash);
-        }
         return;
     }
 
     if (!entityHandle->placedComponent)
     {
-        if (aDriver.Driver && !aDriver.Driver->GateLogged)
-        {
-            aDriver.Driver->GateLogged = true;
-            spdlog::warn("[Driver] puppet {:x} has no placedComponent - transform writes have nowhere to go",
-                         aEntityComponent.Id.hash);
-        }
+        if (gateOnce())
+            spdlog::warn("[Driver] puppet {:x} has no placedComponent - transform writes have nowhere to go{}",
+                         aEntityComponent.Id.hash, aDriver.Driver ? "" : " (teleporting it instead)");
+
+        // Transform-only mode still has the teleport, which needs only the entity.
+        if (!aDriver.Driver)
+            TeleportPuppet(pSystem, entityHandle, aEntityComponent.Id.hash, aPosition, aYaw, now);
         return;
     }
 
@@ -215,36 +263,7 @@ static void DriveEntity(const DriverComponent& aDriver, const EntityComponent& a
             spdlog::info("[Driver] puppet {:x} first transform write (transform only, no animation) -> ({:.1f}, {:.1f}, {:.1f})",
                          aEntityComponent.Id.hash, aPosition.x, aPosition.y, aPosition.z);
 
-        // The placed-transform write above does not visibly move an NPC-record puppet on 2.5
-        // (test.75: transform writes running, remote player still standing still) - its own
-        // movement component puts the position back. So also teleport it through the game's
-        // TeleportationFacility, which moves it via that component. Teleport is not a
-        // per-frame call, so: at most 10 a second per puppet, and only once it has moved.
-        struct LastTeleport
-        {
-            std::chrono::steady_clock::time_point At{};
-            glm::vec3 Position{};
-        };
-        static std::unordered_map<uint64_t, LastTeleport> s_lastTeleport;
-
-        constexpr auto cTeleportInterval = std::chrono::milliseconds(100);
-        constexpr float cMinMoveSq = 0.02f * 0.02f;
-
-        auto& last = s_lastTeleport[aEntityComponent.Id.hash];
-        const auto delta = writePos - last.Position;
-        if (now - last.At >= cTeleportInterval && glm::dot(delta, delta) >= cMinMoveSq)
-        {
-            const bool first = last.At == std::chrono::steady_clock::time_point{};
-            last.At = now;
-            last.Position = writePos;
-
-            Red::CallVirtual(pSystem, "MpTeleportPuppet", entityHandle,
-                             Red::Vector4{writePos.x, writePos.y, writePos.z, 0.f}, aYaw);
-
-            if (first)
-                spdlog::info("[Driver] puppet {:x} first teleport (TeleportationFacility, off 2.31)",
-                             aEntityComponent.Id.hash);
-        }
+        TeleportPuppet(pSystem, entityHandle, aEntityComponent.Id.hash, writePos, aYaw, now);
     }
 }
 
@@ -646,8 +665,14 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
             // Movement is arriving and there is nothing to hand it to. This is exactly how a
             // remote player stands still while 30 packets a second come in, and it used to
             // say nothing. Once per entity - this runs every frame.
+            //
+            // Not for a puppet registered as a driver: its DriverComponent is set by a deferred
+            // command and can land a frame after EntityComponent, so it passes through here
+            // once on its way to the driver path. test.77 printed this for exactly that frame
+            // and it read as the cause.
             static std::unordered_set<uint64_t> reported;
-            if (reported.insert(aEntityComponent.Id.hash).second)
+            if (!App::PuppetRegistry::IsDriver(aEntityComponent.Id.hash) &&
+                reported.insert(aEntityComponent.Id.hash).second)
                 spdlog::warn("[Interpolation] puppet {:x} has movement but no controller - the idle hook never "
                              "attached one, so it will not move", aEntityComponent.Id.hash);
         }
