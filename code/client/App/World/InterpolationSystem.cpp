@@ -205,6 +205,15 @@ static void DriveEntity(const DriverComponent& aDriver, const EntityComponent& a
         aDriver.Driver->EnsureAttached(entityHandle.GetPtr(), aEntityComponent.Id.hash);
         aDriver.Driver->Tick(aFrameDeltaMs * 0.001f, aSpeed, aLocomotion);
     }
+    else
+    {
+        // Transform-only mode (off 2.31 - see the DriverComponent set in NetworkWorldSystem).
+        // Once per puppet, so a 2.5 log says whether the writes are happening at all.
+        static std::unordered_set<uint64_t> reported;
+        if (reported.insert(aEntityComponent.Id.hash).second)
+            spdlog::info("[Driver] puppet {:x} first transform write (transform only, no animation) -> ({:.1f}, {:.1f}, {:.1f})",
+                         aEntityComponent.Id.hash, aPosition.x, aPosition.y, aPosition.z);
+    }
 }
 
 // Traces a DRIVERLESS network vehicle through this function, to bisect the join crash.

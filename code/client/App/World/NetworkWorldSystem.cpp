@@ -128,8 +128,15 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
     // Player-record puppets never enter the NPC idle-controller pipeline the legacy
     // path hooks - they are driven by the mod-owned PuppetDriver instead. The flag
     // routes EVERYTHING through the driver for A/B testing the old path's retirement.
+    //
+    // Off 2.31, EVERY puppet takes the driver path. The legacy path plugs MultiMovementController -
+    // a C++ mimic of a 2.31 engine movement controller - into the engine through AttachController,
+    // and on 2.5 the engine called into it and crashed the observing client 2.2s after the attach
+    // (0xC0000005 writing into Cyberpunk2077.exe's image, 2026-11-01 23:39). Driver puppets are
+    // never handed to the engine's controller pipeline; the idle hook skips them.
     const bool usesDriver = Settings::Get().puppetDriverAll ||
-                            record.rfind("Character.Player_Puppet", 0) == 0;
+                            record.rfind("Character.Player_Puppet", 0) == 0 ||
+                            !IsGame231Layout();
 
     // Register BEFORE the entity finishes assembling. The animation-thread hook
     // identifies our puppets through this registry instead of reading the entity's
@@ -4057,9 +4064,22 @@ void NetworkWorldSystem::OnConnected()
                 // a mount rebuilds the component later.
                 if (aSpawning.UsesDriver)
                 {
-                    auto pDriver = std::make_shared<PuppetDriver>();
-                    pDriver->EnsureAttached(pEntity.GetPtr(), aEntity.raw_id());
-                    aEntity.set<DriverComponent>({std::move(pDriver)});
+                    // Off 2.31 the driver moves the puppet by transform ONLY, with no animation
+                    // writer. PuppetDriver's AnimationDriver hands a mimic of a 2.31 engine struct
+                    // to engine functions (Attach/SendParameters) - the same class of decode that
+                    // has crashed 2.5 twice tonight. A null Driver is the transform-only mode:
+                    // DriveEntity guards every use of it. The puppet glides without a walk cycle;
+                    // a gliding player beats a crashed game.
+                    if (IsGame231Layout())
+                    {
+                        auto pDriver = std::make_shared<PuppetDriver>();
+                        pDriver->EnsureAttached(pEntity.GetPtr(), aEntity.raw_id());
+                        aEntity.set<DriverComponent>({std::move(pDriver)});
+                    }
+                    else
+                    {
+                        aEntity.set<DriverComponent>({nullptr});
+                    }
                 }
 
                 aEntity.remove<SpawningComponent>();

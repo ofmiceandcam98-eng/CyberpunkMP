@@ -74,6 +74,26 @@ constexpr auto ScheduleSynchronizedAppearanceChanges = Core::RawFunc<386815609UL
 
 // could use game::ui::CharacterCustomizationState::Serialize to pass data to server
 
+// Whether this is the game build the client's hand-decoded internals were read from.
+//
+// Every raw offset, hand-numbered vtable slot and engine-struct mimic in the client was
+// decoded on 2.31 and carried into the 2.5 SDK merge unverified - and on 2.5 they have
+// overwritten a character, crashed every client dressing a remote player, and crashed every
+// client moving one. There is no direct way to ask the engine which build it is, so this
+// uses a fingerprint: gameuiCharacterCustomizationSystem is 0x388 bytes on 2.31 and 0x3D8
+// on 2.5. A code path that depends on a 2.31 decode asks this and takes a safer route when
+// the answer is no.
+inline bool IsGame231Layout()
+{
+    static const bool s_is231 = []
+    {
+        const auto* pClass = Red::GetClass("gameuiCharacterCustomizationSystem");
+        return pClass && pClass->size == 0x388;
+    }();
+
+    return s_is231;
+}
+
 // The creator's state, read raw at +0x78 - an offset decoded on the 2.31 layout (class size 0x388)
 // and never re-decoded. Game 2.5 grew the class to 0x3D8 and the slot stopped being empty in
 // ordinary play: the 90-second automatic save, which relies on "no state outside the creator",
