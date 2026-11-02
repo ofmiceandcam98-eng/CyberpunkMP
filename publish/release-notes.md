@@ -1,10 +1,44 @@
-Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) for **Cyberpunk 2077 patch 2.31**, plus the fixes needed to make it run on that patch. Upstream targets 2.2 and will not start on current game versions.
+Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) for **Cyberpunk 2077 patch 2.5**, plus the fixes needed to make it run on that patch. Upstream targets 2.2 and will not start on current game versions.
 
 **⬇ Download:** [NightCityOnline-Setup.exe](https://github.com/ofmiceandcam98-eng/CyberpunkMP/releases/latest/download/NightCityOnline-Setup.exe) — one click, always the newest; the launcher handles the rest.
 
 **Discord — Night City Online:** https://discord.gg/M9NSWsndC7
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
+
+## What changed — v0.3.126
+
+**Night City Online runs on Cyberpunk 2.5.** This is the first release built for the new
+patch: connect, pick your character, spawn, keep your inventory, money, attributes and
+perks, drive. It does NOT run on 2.31 any more - the launcher will tell you if your game
+is on the wrong version.
+
+- **CONNECT works again on 2.5.** On the 2.5 main menu the game now has a world loaded
+  behind it, which made the mod think you were already in the city: it spawned you, then
+  the character screen opened on top and released you again, leaving you standing on an
+  empty map with nothing to click. CONNECT now always shows your characters first, and
+  you enter the city when you press PLAY.
+- **Quitting the game while connected no longer crashes it.** This one was older than 2.5 -
+  closing the game without disconnecting first ended in a crash on the way out.
+- **The server you connect to is up to date again.** The public server had been left on
+  older code since September, so recent launcher builds could not talk to it. It now runs
+  the same code as this release.
+- **Trading: the eddies offer moves by 1 per press** instead of 500.
+- **"Install everything" works on a fresh install again.** Since v0.3.101 it stopped with
+  "manifest is not defined" right after copying the files, before recording the install.
+
+**Still broken on 2.5 - known, and being worked on:**
+
+- **You look like the default character to yourself.** Your saved look is applied but does
+  not show on your own body yet. Your look is SAFE on the server - an early 2.5 test build
+  was saving the default body over characters, and this release is built so that cannot
+  happen. Until this is fixed, changing your look at a mirror or ripperdoc, and the look of
+  a brand-new character, are not saved on 2.5.
+- **No voice chat and no on-screen key hints in the city.** The part of the mod that draws
+  them does not load on 2.5 yet, so push-to-talk, the Talk / Emote / Disconnect hints and
+  the job keys are missing. Text chat works.
+- **Two new start-up screens** (the CD PROJEKT RED account prompt and one more) now appear
+  before the menu. Skip them; we will make the launcher skip them again.
 
 ## What changed — v0.3.125
 

@@ -43,7 +43,7 @@ void Initialize()
 // The game version this build has actually been tested against. Bump when the mod
 // is verified on a newer patch.
 constexpr uint8_t kSupportedGameMajor = 2;
-constexpr uint16_t kSupportedGameMinor = 31;
+constexpr uint16_t kSupportedGameMinor = 5;
 
 RED4EXT_C_EXPORT bool Main(RED4ext::v1::PluginHandle aHandle, RED4ext::v1::EMainReason aReason, const RED4ext::v1::Sdk* aSdk)
 {
