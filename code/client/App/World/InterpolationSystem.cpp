@@ -138,6 +138,30 @@ static void TeleportPuppet(NetworkWorldSystem* apSystem, const Red::Handle<Red::
         spdlog::info("[Driver] puppet {:x} first teleport (TeleportationFacility, off 2.31)", aIdHash);
 }
 
+// The puppet's DriverComponent - or, for a puppet the registry says is a driver but which has
+// none, a shared transform-only stand-in (no PuppetDriver, no exit grace).
+//
+// The registry is written at spawn on the main thread and is the authority on driver-ness; the
+// component is set later, by the spawn promotion. test.78 had driver-registered puppets reach
+// the interpolator with no DriverComponent at all, so they took neither path and stood still
+// with nothing in the log. Falling back to the registry means that can never freeze one again.
+static const DriverComponent* FindDriver(flecs::entity aEntity, const EntityComponent& aEntityComponent)
+{
+    if (const auto* pDriver = aEntity.get<DriverComponent>())
+        return pDriver;
+
+    if (!App::PuppetRegistry::IsDriver(aEntityComponent.Id.hash))
+        return nullptr;
+
+    static std::unordered_set<uint64_t> s_reported;
+    if (s_reported.insert(aEntityComponent.Id.hash).second)
+        spdlog::warn("[Driver] puppet {:x} is registered as a driver but has no DriverComponent - "
+                     "driving it transform-only anyway", aEntityComponent.Id.hash);
+
+    static const DriverComponent s_transformOnly{};
+    return &s_transformOnly;
+}
+
 // Place a driver-puppet and advance its animation for this frame.
 static void DriveEntity(const DriverComponent& aDriver, const EntityComponent& aEntityComponent,
                         const glm::vec3& aPosition, float aYaw, float aSpeed, uint32_t aLocomotion,
@@ -422,7 +446,9 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
     //
     // Logged once per entity. This runs every frame for every remote player, so an
     // unconditional line would be thousands a minute and would bury what it reveals.
-    if (!aEntity.has<DriverComponent>())
+    const DriverComponent* const pDriverComponent = FindDriver(aEntity, aEntityComponent);
+
+    if (!pDriverComponent)
     {
         const auto pEntityStubSystem = Red::GetGameSystem<Red::game::IEntityStubSystem>();
         const auto* pStub = pEntityStubSystem->FindStub(aEntityComponent.Id);
@@ -504,7 +530,7 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
                     aInterpolation.LastRenderTick = renderTick;
             }
         }
-        else if (const auto* pDriver = aEntity.get<DriverComponent>())
+        else if (const auto* pDriver = pDriverComponent)
         {
             const float frameDelta = (aInterpolation.LastRenderTick > 0)
                                          ? static_cast<float>(std::max(
@@ -642,7 +668,7 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
         const auto deltaAngle{DeltaAngle(first.Rotation.z, second.Rotation.z, true) * ratio};
         const auto direction = Mod(first.Rotation.z + deltaAngle, 2.f * static_cast<float>(Pi));
 
-        if (const auto* pDriver = aEntity.get<DriverComponent>())
+        if (const auto* pDriver = pDriverComponent)
         {
             // Driver path FIRST - it outranks any controller a hook race may have
             // attached before the suppressor registered this puppet as driver-owned.

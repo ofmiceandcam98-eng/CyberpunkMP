@@ -4069,7 +4069,16 @@ void NetworkWorldSystem::OnConnected()
                 if (pOwner->tags.Contains(Red::CName("CyberpunkMP.Vehicle")))
                     return;
 
-                aEntity.emplace<EntityComponent>(aSpawning.Id, false, aSpawning.Controller);
+                // Copied BEFORE the first structural change. aSpawning is a reference into this
+                // entity's SpawningComponent column, and emplace/add below can move the entity to
+                // another archetype - after which reading aSpawning.UsesDriver reads wherever the
+                // column used to be. test.78, both clients: a puppet registered as a driver came
+                // out of here with no DriverComponent and never reached the driver path.
+                const auto spawnId = aSpawning.Id;
+                auto* const pController = aSpawning.Controller;
+                const bool usesDriver = aSpawning.UsesDriver;
+
+                aEntity.emplace<EntityComponent>(spawnId, false, pController);
 
                 // Added here rather than by an OnAdd observer - see InterpolationSystem.cpp
                 // for why that observer was removed. The interpolator matches
@@ -4085,7 +4094,10 @@ void NetworkWorldSystem::OnConnected()
                 // Driver puppets get their animation writer bound here, on the main
                 // thread, with no engine hook involved - the driver re-binds itself if
                 // a mount rebuilds the component later.
-                if (aSpawning.UsesDriver)
+                spdlog::info("[Spawn] puppet {:x} promoted - driver {}", spawnId.hash,
+                             usesDriver ? (IsGame231Layout() ? "yes" : "yes (transform only)") : "no (legacy controller)");
+
+                if (usesDriver)
                 {
                     // Off 2.31 the driver moves the puppet by transform ONLY, with no animation
                     // writer. PuppetDriver's AnimationDriver hands a mimic of a 2.31 engine struct
