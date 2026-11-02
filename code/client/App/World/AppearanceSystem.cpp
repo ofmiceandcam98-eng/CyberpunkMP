@@ -149,6 +149,25 @@ std::string AppearanceSystem::GetEntityName(Red::EntityID entityID) const
     return it == m_playerNames.end() ? std::string() : it->second;
 }
 
+// Whether the ITransactionSystem vtable slots AddItems calls through were decoded on THIS
+// game build. There is no direct way to ask a vtable which build it came from, so this uses
+// the fingerprint the creator-state guard already relies on: gameuiCharacterCustomizationSystem
+// is 0x388 bytes on 2.31, the build every hand-decoded offset here was read from, and 0x3D8 on
+// 2.5. Anything other than 2.31 takes the script path - see the call site in ApplyAppearance.
+static bool IsDecodedTransactionLayout()
+{
+    constexpr uint32_t kDecodedOn231 = 0x388;
+    static const bool s_decoded = [] {
+        const auto* pClass = Red::GetClass("gameuiCharacterCustomizationSystem");
+        const auto size = pClass ? pClass->size : 0u;
+        const bool decoded = size == kDecodedOn231;
+        if (!decoded)
+            spdlog::warn("[Appearance] not the 2.31 layout (CharacterCustomizationSystem 0x{:X}) - remote players "
+                         "are dressed through the script TransactionSystem API, not the native vtable path", size);
+        return decoded; }();
+    return s_decoded;
+}
+
 void AddItems(Red::Handle<Red::game::Object> & object, Red::DynArray<Red::TweakDBID> const & items, game::ui::CharacterCustomizationState const * state)
 {
     auto system = Red::GetGameSystem<Red::game::ITransactionSystem>();
@@ -377,7 +396,25 @@ bool AppearanceSystem::ApplyAppearance(Red::Handle<Red::game::Object> object)
     //     items.PushBack("Items.MuppetWaHead");
     // }
     // items.PushBack("Items.MuppetArms");
-    AddItems(object, items, stateHandle.instance);
+    //
+    // Native dressing only on the layout it was decoded on.
+    //
+    // AddItems reaches GiveItem and AddItemToSlot through hand-numbered ITransactionSystem
+    // vtable slots (0x250 and on) that were read off 2.31 and carried to 2.5 unverified. On
+    // 2.5 that call lands somewhere else: a new tester's game died every time, 16 seconds
+    // after joining, the instant it dressed the one other player in the world (0xC0000005
+    // reading 0xFFFFFFFF in Cyberpunk2077.exe right after the "[Appearance] holstered_default"
+    // line, 2026-11-01 23:05 and 23:08). Any client seeing anybody with a stored look crashed.
+    //
+    // The script version calls the same two operations through TransactionSystem's
+    // declared API, which the redscript compiler checks against the installed game - so it
+    // survives a patch that moves the vtable. It does not pass a garment appearance name,
+    // so a remote outfit can render with the item's default variant; a plain outfit is
+    // recoverable, a client that crashes on contact is not.
+    if (IsDecodedTransactionLayout())
+        AddItems(object, items, stateHandle.instance);
+    else
+        Red::CallVirtual(this, "AddItems", object);
 
     // spdlog::info("head groups read:");
     // for (auto &group : stateHandle.instance->unk70) 
