@@ -23,6 +23,12 @@ inline WeakHandle<U> ToWeakHandle(T* aInstance)
     return AsWeakHandle(aInstance);
 }
 
+template<typename T, typename U = T>
+inline WeakHandle<U> ToWeakHandle(const Handle<T>& aInstance)
+{
+    return aInstance;
+}
+
 template<typename T>
 inline Handle<T> ToHandle(T* aInstance)
 {
@@ -56,9 +62,29 @@ inline Handle<T> ToHandle(U* aInstance)
     }
 }
 
-template<typename T = IScriptable>
+template<typename T = ISerializable>
+inline Handle<T> MakeScriptedHandle(const CClass* aType)
+{
+    return Handle<T>(reinterpret_cast<T*>(aType->CreateInstance(true)));
+}
+
+template<typename T = ISerializable>
 inline Handle<T> MakeScriptedHandle(CName aTypeName)
 {
-    return Handle<T>(reinterpret_cast<T*>(GetClass(aTypeName)->CreateInstance(true)));
+    auto classType = GetClass(aTypeName);
+    if (!classType)
+        return {};
+
+    return Handle<T>(reinterpret_cast<T*>(classType->CreateInstance(true)));
+}
+
+template<typename T>
+inline Handle<T> MakeScriptedHandle()
+{
+    auto classType = GetClass<T>();
+    if (!classType)
+        return {};
+
+    return Handle<T>(reinterpret_cast<T*>(classType->CreateInstance(true)));
 }
 }

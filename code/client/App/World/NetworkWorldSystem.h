@@ -11,6 +11,9 @@
 #include "AppearanceSystem.h"
 #include "App/Voice/VoiceAudioManager.h"
 #include "App/Voice/VoiceClient.h"
+
+// Vectored crash handler + terminate/abort hooks. Idempotent; see the definition.
+void InstallCrashReporter();
 #include "ChatSystem.h"
 #include "InterpolationSystem.h"
 #include "VehicleSystem.h"
@@ -45,6 +48,10 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     void OnInitialize(const RED4ext::JobHandle& aJob) override;
 
     void Connect();
+    // The main menu's CONNECT and PLAY: never spawns on authentication, because on 2.5 a
+    // player object exists behind the menu and the in-world test cannot tell the difference.
+    void ConnectFromMenu();
+    void ConnectAs(bool aFromMenu);
     void Disconnect();
     void OnConnected();
     void OnDisconnected(Client::EDisconnectReason);
@@ -906,6 +913,7 @@ private:
 RTTI_DEFINE_CLASS(NetworkWorldSystem, { 
     RTTI_ALIAS("CyberpunkMP.World.NetworkWorldSystem");
     RTTI_METHOD(Connect);
+    RTTI_METHOD(ConnectFromMenu);
     RTTI_METHOD(Disconnect);
     RTTI_METHOD(RequestJoin);
     RTTI_METHOD(MarkNewCharacter);

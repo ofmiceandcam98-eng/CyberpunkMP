@@ -20,6 +20,7 @@ RTTI_MAP_TYPE_NAME(CName, "CName");
 RTTI_MAP_TYPE_NAME(TweakDBID, "TweakDBID");
 RTTI_MAP_TYPE_NAME(ItemID, "gameItemID");
 RTTI_MAP_TYPE_NAME(NodeRef, "NodeRef");
+RTTI_MAP_TYPE_NAME(GlobalNodeRef, "worldGlobalNodeRef");
 RTTI_MAP_TYPE_NAME(Variant, "Variant");
 
 RTTI_MAP_TYPE_PREFIX(DynArray, "array:");
@@ -27,6 +28,11 @@ RTTI_MAP_TYPE_PREFIX(Handle, "handle:");
 RTTI_MAP_TYPE_PREFIX(WeakHandle, "whandle:");
 RTTI_MAP_TYPE_PREFIX(ResourceReference, "rRef:");
 RTTI_MAP_TYPE_PREFIX(ResourceAsyncReference, "raRef:");
+RTTI_MAP_TYPE_PREFIX(CurveData, "curveData:");
 
 RTTI_MAP_TYPE_NAME(char, "Uint8");
+RTTI_MAP_TYPE_NAME(ResourcePath, "redResourceReferenceScriptToken");
+// LOCAL PATCH: upstream maps RTTI_MAP_TYPE_WRAPPER(TDataBuffer, DataBuffer) here, but
+// TDataBuffer exists only in psiberx's SDK fork (ed1d1fbb), not upstream WopsS master, which
+// this build pins. Restore the line once WopsS master carries TDataBuffer.
 }

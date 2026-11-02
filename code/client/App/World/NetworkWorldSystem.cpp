@@ -78,7 +78,7 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
     Red::ScriptGameInstance game;
 
     spdlog::info("[Spawn] remote id {} - ccstate {} bytes, {} equipment item(s)", aServerId, aCcstate.size(),
-                 aEquipment.size);
+                 aEquipment.Size());
 
     if (!m_pCreatePuppet)
     {
@@ -104,7 +104,7 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
         ? acRecord
         : std::string((isBodyGenderMale ? Settings::Get().puppetRecordMale : Settings::Get().puppetRecordFemale).c_str());
 
-    if (!Red::Detail::CallFunctionWithArgs(m_pCreatePuppet, handle, id, aPosition, aRotation, isBodyGenderMale,
+    if (!Red::CallFunction(handle, m_pCreatePuppet, id, aPosition, aRotation, isBodyGenderMale,
                                            Red::CString(record.c_str())))
     {
         spdlog::error("[Spawn] CreatePuppet call failed for remote id {}", aServerId);
@@ -183,7 +183,7 @@ void NetworkWorldSystem::DeSpawn(uint64_t aServerId) const
         App::PuppetRegistry::RemoveDriver(pEntity->Id.hash);
         App::ServerIdRegistry::Remove(pEntity->Id.hash);
         const auto handle = Red::GetGameSystem<NetworkWorldSystem>();
-        Red::Detail::CallFunctionWithArgs(m_pDeletePuppet, handle, pEntity->Id);
+        Red::CallFunction(handle, m_pDeletePuppet, pEntity->Id);
     }
     else if (auto* pEntity = entity.get<SpawningComponent>())
     {
@@ -191,7 +191,7 @@ void NetworkWorldSystem::DeSpawn(uint64_t aServerId) const
         App::PuppetRegistry::RemoveDriver(pEntity->Id.hash);
         App::ServerIdRegistry::Remove(pEntity->Id.hash);
         const auto handle = Red::GetGameSystem<NetworkWorldSystem>();
-        Red::Detail::CallFunctionWithArgs(m_pDeletePuppet, handle, pEntity->Id);
+        Red::CallFunction(handle, m_pDeletePuppet, pEntity->Id);
     }
 
     entity.destruct();
@@ -1047,7 +1047,7 @@ void NetworkWorldSystem::DumpCustomizationApi() const
             continue;
         }
 
-        spdlog::info("[CCApi] === {} : {} function(s) ===", name, pClass->funcs.size);
+        spdlog::info("[CCApi] === {} : {} function(s) ===", name, pClass->funcs.Size());
 
         for (auto* pFunc : pClass->funcs)
         {
@@ -3159,7 +3159,7 @@ bool NetworkWorldSystem::AcquirePsmBlackboard(const Red::Handle<Red::GameObject>
         || !m_psmBlackboard)
         return false;
 
-    m_pPsmGetInt = Red::Detail::GetFunction(m_psmBlackboard->GetType(), "GetInt");
+    m_pPsmGetInt = Red::GetFunction(m_psmBlackboard->GetType(), "GetInt");
     m_psmOwner = acPlayer->id;
 
     if (m_pPsmGetInt)
@@ -3184,8 +3184,8 @@ void NetworkWorldSystem::ReadPlayerState(const Red::Handle<Red::GameObject>& acP
 
     int32_t locomotion = 0;
     int32_t upperBody = 0;
-    Red::Detail::CallFunctionWithArgs(m_pPsmGetInt, m_psmBlackboard, locomotion, m_psmLocomotionId);
-    Red::Detail::CallFunctionWithArgs(m_pPsmGetInt, m_psmBlackboard, upperBody, m_psmUpperBodyId);
+    Red::CallFunction(m_psmBlackboard, m_pPsmGetInt, locomotion, m_psmLocomotionId);
+    Red::CallFunction(m_psmBlackboard, m_pPsmGetInt, upperBody, m_psmUpperBodyId);
 
     aLocomotion = static_cast<uint32_t>(locomotion);
     aUpperBody = static_cast<uint32_t>(upperBody);
@@ -3359,15 +3359,8 @@ void NetworkWorldSystem::UpdatePlayerLocation() const
     // }
 }
 
-void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
+void InstallCrashReporter()
 {
-    spdlog::info("[OnInitialize]");
-
-    IGameSystem::OnInitialize(aJob);
-
-    if (Settings::IsDisabled())
-        return;
-
     // Our own crash reporter, because the game's has stopped producing one.
     //
     // Every termination since the instrumented flecs build went in has written NO minidump,
@@ -3624,6 +3617,19 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
 
                        spdlog::info("[Crash] vectored handler + terminate/abort hooks installed");
                    });
+}
+
+void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
+{
+    spdlog::info("[OnInitialize]");
+
+    IGameSystem::OnInitialize(aJob);
+
+    if (Settings::IsDisabled())
+        return;
+
+    // Usually installed already, right after plugin load (Main.cpp); call_once makes this a no-op then.
+    InstallCrashReporter();
 
     // Let flecs speak. Nothing was listening, which is why the crashes are silent.
     //
@@ -3789,8 +3795,8 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
 
     m_remotePlayerId = std::nullopt;
 
-    m_pCreatePuppet = Red::Detail::GetFunction(GetType(), "CreatePuppet");
-    m_pDeletePuppet = Red::Detail::GetFunction(GetType(), "DeletePuppet");
+    m_pCreatePuppet = Red::GetFunction(GetType(), "CreatePuppet");
+    m_pDeletePuppet = Red::GetFunction(GetType(), "DeletePuppet");
 
     m_interpolationSystem = RED4ext::MakeHandle<InterpolationSystem>();
     m_interpolationSystem->OnInitialize(aJob);
@@ -3806,6 +3812,16 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
 }
 
 void NetworkWorldSystem::Connect()
+{
+    ConnectAs(false);
+}
+
+void NetworkWorldSystem::ConnectFromMenu()
+{
+    ConnectAs(true);
+}
+
+void NetworkWorldSystem::ConnectAs(const bool aFromMenu)
 {
     /**
      * NOT THROUGH THE LAUNCHER, NOT CONNECTING. Cam's rule, 2026-09-03.
@@ -3842,7 +3858,7 @@ void NetworkWorldSystem::Connect()
     // at the moment they asked to connect, which is what decides whether authentication is
     // allowed to spawn them - see CaptureSpawnIntent. Asked afterwards it becomes a race
     // against whatever else the press set in motion.
-    service->CaptureSpawnIntent();
+    service->CaptureSpawnIntent(aFromMenu);
 
     service->Connect(address);
 }
@@ -4020,7 +4036,7 @@ void NetworkWorldSystem::OnConnected()
 
             if (const auto pOwner = Red::Cast<Red::GameObject>(pEntity))
             {
-                if (pOwner->tags.Contains("CyberpunkMP.Vehicle"))
+                if (pOwner->tags.Contains(Red::CName("CyberpunkMP.Vehicle")))
                     return;
 
                 aEntity.emplace<EntityComponent>(aSpawning.Id, false, aSpawning.Controller);
@@ -4048,7 +4064,7 @@ void NetworkWorldSystem::OnConnected()
 
                 aEntity.remove<SpawningComponent>();
 
-                pOwner->tags.Add("CyberpunkMP.Puppet");
+                pOwner->tags.Add(Red::CName("CyberpunkMP.Puppet"));
             }
         });
 

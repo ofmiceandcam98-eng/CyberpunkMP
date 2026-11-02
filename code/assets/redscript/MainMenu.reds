@@ -687,7 +687,7 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
         // exact old behaviour if the server has not answered within 2.5 seconds, so a down
         // or slow server costs a short pause instead of a session.
         if !network.IsConnected() {
-            network.Connect();
+            network.ConnectFromMenu();
         }
 
         let poll = new MpSelectorPoll();
@@ -737,7 +737,7 @@ protected func HandleMenuItemActivate(data: ref<PauseMenuListItemData>) -> Bool 
         }
 
         if !network.IsConnected() {
-            network.Connect();
+            network.ConnectFromMenu();
         }
 
         let poll = new MpSelectorPoll();

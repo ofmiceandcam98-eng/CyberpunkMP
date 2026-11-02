@@ -114,10 +114,56 @@ bool ValidateType(Set<RED4ext::CName>& knownTypes, Game::ScriptType* type, Game:
     return true;
 }
 
+// ScriptFunction past `name` is Codeware's 2.5 decode with every field shifted by the 0x28 that
+// ScriptDefinition grew - but Codeware asserts none of it, and ScriptClass's own 2.5 growth was NOT
+// a uniform shift. So the layout is checked against back-pointers before anything is trusted:
+// a misread there is a silent "Missing native function" for every RPC, which is how 2.5 test.67
+// failed with nothing in our log to say why.
+bool LayoutLooksRight(const Game::ScriptClass* klass, const Game::ScriptFunction* func)
+{
+    if (func->parent != klass)
+        return false;
+
+    if (func->params.size() > 64)
+        return false;
+
+    for (const auto param : func->params)
+    {
+        if (!param || param->function != func)
+            return false;
+    }
+
+    return true;
+}
+
+bool IsNativeFunction(const Game::ScriptClass* klass, const Game::ScriptFunction* func)
+{
+    if (func->flags.isNative)
+        return true;
+
+    // A ServerRpc subclass is a native class of static native functions by construction; the
+    // class flag (0xD1) is asserted by Codeware, the function flag (0xC0) is not.
+    if (klass->flags.isNative && LayoutLooksRight(klass, func))
+    {
+        spdlog::warn(
+            "[Rpc] {}::{} - isNative bit at 0xC0 reads clear (raw flags 0x{:08X}) in a native class; trusting the class",
+            klass->name.ToString(), func->name.ToString(), *reinterpret_cast<const uint32_t*>(&func->flags));
+        return true;
+    }
+
+    return false;
+}
+
 bool ValidateFunction(Game::ScriptClass* klass, Game::ScriptFunction* func, Game::ScriptReport* apReporter)
 {
-    if (!func->flags.isNative)
+    if (!IsNativeFunction(klass, func))
+    {
+        spdlog::error(
+            "[Rpc] {}::{} skipped - not native (raw flags 0x{:08X}, layout {}) - the game will report it as a missing native function",
+            klass->name.ToString(), func->name.ToString(), *reinterpret_cast<const uint32_t*>(&func->flags),
+            LayoutLooksRight(klass, func) ? "ok" : "MISREAD");
         return false;
+    }
 
     Set<RED4ext::CName> knownTypes;
 
@@ -137,7 +183,12 @@ bool ValidateFunction(Game::ScriptClass* klass, Game::ScriptFunction* func, Game
         }
 
         if (!ValidateType(knownTypes, param->type, klass, func, apReporter))
+        {
+            spdlog::error(
+                "[Rpc] {}::{} skipped - parameter '{}' has a type the RPC layer cannot carry", klass->name.ToString(),
+                func->name.ToString(), param->name.ToString());
             return false;
+        }
     }
 
     return true;
@@ -149,12 +200,17 @@ bool HookScriptValidator_Validate(void* apThis, Game::ScriptBundle* apBundler, G
     apReporter->fillErrors = true;
 
     constexpr Red::CName parentName("CyberpunkMP.ServerRpc");
+    uint32_t rpcClasses = 0;
     for (const auto klass : apBundler->classes)
     {
-        std::string name = klass->name.ToString();
         if (klass->parent && klass->parent->name == parentName)
         {
+            ++rpcClasses;
             const auto pClass = Red::GetClass(klass->name);
+            spdlog::info(
+                "[Rpc] validator: {} ({} functions, class native={}) {}", klass->name.ToString(), klass->functions.size(),
+                static_cast<bool>(klass->flags.isNative), pClass ? "ALREADY IN RTTI - left as is" : "registering");
+
             if (!pClass)
             {
                 using Descriptor = Red::ClassDescriptorDefaultImpl<RpcMock>;
@@ -177,6 +233,10 @@ bool HookScriptValidator_Validate(void* apThis, Game::ScriptBundle* apBundler, G
             }
         }
     }
+
+    // Zero means the walk itself is misreading the bundle (classes / parent / name offsets), not
+    // that a function was rejected - the two need very different fixes.
+    spdlog::info("[Rpc] validator: {} classes in bundle, {} extend CyberpunkMP.ServerRpc", apBundler->classes.size(), rpcClasses);
 
     return RealScriptValidator_Validate(apThis, apBundler, apReporter);
 }

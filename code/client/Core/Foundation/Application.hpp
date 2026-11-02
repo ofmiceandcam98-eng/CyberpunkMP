@@ -17,7 +17,7 @@ public:
         return Registry<Feature>::Register<T>(std::forward<Args>(aArgs)...);
     }
 
-    Application(RED4ext::PluginHandle aPlugin, const RED4ext::Sdk* aSdk = nullptr);
+    Application(RED4ext::v1::PluginHandle aPlugin, const RED4ext::v1::Sdk* aSdk = nullptr);
     virtual ~Application();
     void Bootstrap();
     void Shutdown();
@@ -40,8 +40,8 @@ protected:
     virtual void OnStopped() {}
 
 private:
-    RED4ext::PluginHandle m_plugin;
-    const RED4ext::Sdk* m_sdk;
+    RED4ext::v1::PluginHandle m_plugin;
+    const RED4ext::v1::Sdk* m_sdk;
     bool m_booted = false;
 
     inline static Vector<AutoDiscoveryCallback> s_discoveryCallbacks;
