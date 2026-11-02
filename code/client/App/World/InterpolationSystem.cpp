@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <atomic>
 #include <unordered_set>
 
 #include <App/Settings.h>
@@ -599,6 +600,16 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
             const auto pos = Red::Vector4{position.x, position.y, position.z, 0.f};
             aEntityComponent.Controller->SetTransform(pos, direction, speed, second.Locomotion);
         }
+        else
+        {
+            // Movement is arriving and there is nothing to hand it to. This is exactly how a
+            // remote player stands still while 30 packets a second come in, and it used to
+            // say nothing. Once per entity - this runs every frame.
+            static std::unordered_set<uint64_t> reported;
+            if (reported.insert(aEntityComponent.Id.hash).second)
+                spdlog::warn("[Interpolation] puppet {:x} has movement but no controller - the idle hook never "
+                             "attached one, so it will not move", aEntityComponent.Id.hash);
+        }
     }
 
     aInterpolation.LastRenderTick = renderTick;
@@ -874,9 +885,21 @@ static Core::RawFunc<4018412273UL, float (*)(Red::move::Component*, MultiMovemen
 void (*RealIdleController_SetAnimation)(Game::Controller*, AnimationData&);
 void HookIdleController_SetAnimation(Game::Controller* apController, AnimationData& data)
 {
+    // Proof of life, once. On 2.5 two players stood side by side and neither moved, and no
+    // line in either log said whether this hook ran at all - so "the hook never fires" and
+    // "the hook fires but never matches our puppet" were indistinguishable.
+    static std::atomic_bool s_firedLogged{false};
+    if (!s_firedLogged.exchange(true))
+        spdlog::info("[Interpolation] idle-controller hook is firing");
+
     auto* pMoveComponent = apController->MoveComponent;
-    Game::EntityPtr entity(pMoveComponent);
-    if (const auto pOwner = Red::Cast<Red::GameObject>(entity.GetValuePtr()))
+
+    // The owner through the SDK's IComponent::owner, which the 2.5 headers assert at 0x50,
+    // not the hand offset Game::EntityPtr (0x90) that was read off 2.31 and is past the end
+    // of IComponent on 2.5. A wrong owner here means no puppet ever matches the registry
+    // below, no multi controller is ever attached, and remote players stand still.
+    auto* pEntity = pMoveComponent ? pMoveComponent->owner : nullptr;
+    if (const auto pOwner = Red::Cast<Red::GameObject>(pEntity))
     {
         // This hook runs on the game's ANIMATION thread. Reading pOwner->tags here
         // walks a heap DynArray on an entity the main thread may still be building,
@@ -988,7 +1011,13 @@ void HookIdleController_SetAnimation(Game::Controller* apController, AnimationDa
 
 void InterpolationSystem::OnInitialize(const RED4ext::JobHandle& aJob)
 {
-    Hook<Game::IdleController_SetAnimation>(&HookIdleController_SetAnimation, &RealIdleController_SetAnimation);
+    // Checked, not assumed. If this does not attach, no remote player can ever move - and
+    // the return value used to be thrown away, so that failure was silent.
+    if (!Hook<Game::IdleController_SetAnimation>(&HookIdleController_SetAnimation, &RealIdleController_SetAnimation))
+        spdlog::error("[Interpolation] idle-controller hook FAILED to attach - remote players will not move "
+                      "(Game::IdleController_SetAnimation did not resolve on this game version)");
+    else
+        spdlog::info("[Interpolation] idle-controller hook attached");
 
     const auto pNetworkService = Core::Container::Get<NetworkService>();
     pNetworkService->RegisterHandler<&InterpolationSystem::HandleNotifyEntityMove>(this);
