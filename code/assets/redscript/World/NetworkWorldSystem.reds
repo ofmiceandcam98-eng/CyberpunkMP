@@ -671,6 +671,32 @@ public native class NetworkWorldSystem extends IGameSystem {
         this.DoTeleport(position, yaw);
     }
 
+    /**
+     * Moves a REMOTE player's puppet, called from native off 2.31 (InterpolationSystem's
+     * transform-only driver path).
+     *
+     * A placed-transform write alone does not visibly move an NPC-record puppet: its own
+     * movement component writes the position back every frame. The teleportation facility
+     * goes through that component, and it is the game's declared, compiler-checked API - so
+     * it survives a patch the way the hand-decoded 2.31 movement controller did not.
+     * Throttled native-side; this does no bookkeeping of its own.
+     */
+    public func MpTeleportPuppet(entity: ref<Entity>, position: Vector4, yaw: Float) -> Void {
+        let puppet = entity as GameObject;
+        if !IsDefined(puppet) {
+            return;
+        }
+
+        // Same convention as DoTeleport below: radians on the wire, degrees in EulerAngles,
+        // built field by field.
+        let angles = new EulerAngles();
+        angles.Roll = 0.0;
+        angles.Pitch = 0.0;
+        angles.Yaw = yaw * 57.2957795;
+
+        GameInstance.GetTeleportationFacility(GetGameInstance()).Teleport(puppet, position, angles);
+    }
+
     public func DoTeleport(position: Vector4, yaw: Float) -> Void {
         let player = GetPlayer(GetGameInstance());
         if !IsDefined(player) {

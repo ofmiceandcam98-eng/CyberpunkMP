@@ -4,6 +4,7 @@
 #include <cmath>
 #include <fstream>
 #include <atomic>
+#include <unordered_map>
 #include <unordered_set>
 
 #include <App/Settings.h>
@@ -213,6 +214,37 @@ static void DriveEntity(const DriverComponent& aDriver, const EntityComponent& a
         if (reported.insert(aEntityComponent.Id.hash).second)
             spdlog::info("[Driver] puppet {:x} first transform write (transform only, no animation) -> ({:.1f}, {:.1f}, {:.1f})",
                          aEntityComponent.Id.hash, aPosition.x, aPosition.y, aPosition.z);
+
+        // The placed-transform write above does not visibly move an NPC-record puppet on 2.5
+        // (test.75: transform writes running, remote player still standing still) - its own
+        // movement component puts the position back. So also teleport it through the game's
+        // TeleportationFacility, which moves it via that component. Teleport is not a
+        // per-frame call, so: at most 10 a second per puppet, and only once it has moved.
+        struct LastTeleport
+        {
+            std::chrono::steady_clock::time_point At{};
+            glm::vec3 Position{};
+        };
+        static std::unordered_map<uint64_t, LastTeleport> s_lastTeleport;
+
+        constexpr auto cTeleportInterval = std::chrono::milliseconds(100);
+        constexpr float cMinMoveSq = 0.02f * 0.02f;
+
+        auto& last = s_lastTeleport[aEntityComponent.Id.hash];
+        const auto delta = writePos - last.Position;
+        if (now - last.At >= cTeleportInterval && glm::dot(delta, delta) >= cMinMoveSq)
+        {
+            const bool first = last.At == std::chrono::steady_clock::time_point{};
+            last.At = now;
+            last.Position = writePos;
+
+            Red::CallVirtual(pSystem, "MpTeleportPuppet", entityHandle,
+                             Red::Vector4{writePos.x, writePos.y, writePos.z, 0.f}, aYaw);
+
+            if (first)
+                spdlog::info("[Driver] puppet {:x} first teleport (TeleportationFacility, off 2.31)",
+                             aEntityComponent.Id.hash);
+        }
     }
 }
 
