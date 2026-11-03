@@ -84,6 +84,7 @@ void SyncTraceOut(const uint64_t aId, const int64_t aRenderTick, const glm::vec3
 #include "App/Components/InterpolationComponent.h"
 #include "App/Components/SpawningComponent.h"
 #include "Game/Utils.h"
+#include "Game/CharacterCustomizationSystem.h" // IsGame231Layout
 #include "Game/Movement.h"
 #include "Game/Animation/AnimationData.h"
 #include "Game/Animation/MultiMovementController.h"
@@ -201,12 +202,22 @@ static void SteerPuppet(NetworkWorldSystem* apSystem, const Red::Handle<Red::Ent
         state.SnapPending = true;
     }
 
+    // What the engine thinks of the body - attached, appearance, AI LOD and state - because test.80
+    // steered a body right next to each player for 30s and nobody could see it, and nothing in the
+    // log could say why.
+    const auto describe = [&]
+    {
+        Red::CString description;
+        Red::CallVirtual(apSystem, "MpDescribePuppet", description, aEntity);
+        return std::string(description.c_str());
+    };
+
     if (!state.Logged)
     {
         state.Logged = true;
         state.WindowStart = aNow;
-        spdlog::info("[Driver] puppet {:x} first steer (AI move command, off 2.31) - body {:.1f}m from target{}",
-                     aIdHash, gap, snapped ? ", snapped" : "");
+        spdlog::info("[Driver] puppet {:x} first steer (AI move command, off 2.31) - body {:.1f}m from target{} - {}",
+                     aIdHash, gap, snapped ? ", snapped" : "", describe());
         return;
     }
 
@@ -222,10 +233,10 @@ static void SteerPuppet(NetworkWorldSystem* apSystem, const Red::Handle<Red::Ent
     if (window >= cSummaryWindow)
     {
         spdlog::info("[Driver] puppet {:x} steering: {} command(s), {} snap(s) ({} landed) in {}s - body ({:.1f}, {:.1f}, {:.1f}) "
-                     "is {:.1f}m from target ({:.1f}, {:.1f}, {:.1f}), worst {:.1f}m",
+                     "is {:.1f}m from target ({:.1f}, {:.1f}, {:.1f}), worst {:.1f}m - {}",
                      aIdHash, state.Commands, state.Snaps, state.SnapsLanded,
                      std::chrono::duration_cast<std::chrono::seconds>(window).count(), state.Body.x, state.Body.y,
-                     state.Body.z, gap, aPosition.x, aPosition.y, aPosition.z, state.WorstGap);
+                     state.Body.z, gap, aPosition.x, aPosition.y, aPosition.z, state.WorstGap, describe());
         state.WindowStart = aNow;
         state.Commands = 0;
         state.Snaps = 0;
@@ -1104,8 +1115,17 @@ void HookIdleController_SetAnimation(Game::Controller* apController, AnimationDa
             // driver (interpolation preferred a non-null Controller) and froze every
             // driver puppet solid - the 2026-08-19 live failure. Total silence for
             // them: no attach, and no vanilla idle writes either.
+            //
+            // Except off 2.31. There no PuppetDriver writes animation - the body is steered by
+            // AI move commands and has to be animated by the engine like any other NPC, and
+            // silencing its vanilla idle left it with no idle pose from anyone. test.80: a body
+            // the AI walked within 2m of each player for 30s, and neither player ever saw it.
             if (App::PuppetRegistry::IsDriver(pOwner->id.hash))
+            {
+                if (!IsGame231Layout())
+                    RealIdleController_SetAnimation(apController, data);
                 return;
+            }
 
             // A vehicle exit rebuilds this puppet's components over the next several
             // frames, and the engine hands it a fresh idle controller mid-teardown.

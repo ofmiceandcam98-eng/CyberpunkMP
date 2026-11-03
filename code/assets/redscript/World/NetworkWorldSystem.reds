@@ -698,6 +698,34 @@ public native class NetworkWorldSystem extends IGameSystem {
     }
 
     /**
+     * One line about a remote body for the native steering log: what the ENGINE thinks of it.
+     *
+     * test.80 steered a body to within 2m of each player for 30 seconds and neither player ever
+     * saw it - and nothing logged could say whether it was detached, had no appearance, or had
+     * been dropped to a low AI LOD. This says which.
+     */
+    public func MpDescribePuppet(entity: ref<Entity>) -> String {
+        let puppet = entity as ScriptedPuppet;
+        if !IsDefined(puppet) {
+            return "no puppet";
+        }
+
+        let line = "attached=" + ToString(puppet.IsAttached())
+            + " active=" + ToString(puppet.IsActive())
+            + " appearance=" + NameToString(puppet.GetCurrentAppearanceName());
+
+        let ai = puppet.GetAIControllerComponent();
+        if IsDefined(ai) {
+            line += " aiLod=" + ToString(ai.GetLOD())
+                + " highLevel=" + ToString(EnumInt(ai.GetHighLevelState()));
+        } else {
+            line += " ai=none";
+        }
+
+        return line;
+    }
+
+    /**
      * Steers a REMOTE player's puppet toward where they really are, called from native off 2.31
      * (InterpolationSystem's SteerPuppet, which decides when and how often).
      *
