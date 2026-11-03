@@ -37,6 +37,7 @@ import {
   auditPayloadInstall,
   extractPayloadClean,
   dllLoadWarning,
+  newerTestBuild,
   resolveArchiveStrip
 } from './manifest.js'
 
@@ -617,6 +618,28 @@ check('dllLoadWarning: no facts is fine (null)', dllLoadWarning(), null)
     /will NOT load/.test(w) && /vanilla/.test(w), true)
   check('dllLoadWarning: a symlink with no known target still warns',
     typeof dllLoadWarning({ isSymlink: true }) === 'string', true)
+}
+
+// newerTestBuild: what the main Update button offers a dev on a test build. Shaped like
+// prerelease:list rows. The 2026-11-02 case: test.78 installed, test.79 published, and an
+// old test.62 still on GitHub - Update showed and could only print a refusal.
+{
+  const t62 = { tag: 'v0.3.123-worldstate-test.62', installable: true, publishedAt: '2026-09-26T18:09:58Z' }
+  const t79 = { tag: 'v0.3.125-worldstate-test.79', installable: true, publishedAt: '2026-11-02T06:39:41Z' }
+  check('newerTestBuild: on retired test.78, offers test.79 (not the older test.62)',
+    newerTestBuild([t62, t79], 'v0.3.125-worldstate-test.78'), t79.tag)
+  check('newerTestBuild: newest by publish time, not by list order',
+    newerTestBuild([t79, t62], 'v0.3.125-worldstate-test.78'), t79.tag)
+  check('newerTestBuild: already on the newest -> null (button hidden)',
+    newerTestBuild([t62, t79], t79.tag), null)
+  check('newerTestBuild: on an older test build that is still listed -> offers the newest',
+    newerTestBuild([t62, t79], t62.tag), t79.tag)
+  check('newerTestBuild: a newer build with nothing installable attached is skipped',
+    newerTestBuild([t62, { ...t79, installable: false }], t62.tag), null)
+  check('newerTestBuild: the synthetic retired row (no publishedAt) never wins',
+    newerTestBuild([{ tag: 'v0.3.125-worldstate-test.78', installable: true, publishedAt: null }], 'x'), null)
+  check('newerTestBuild: nothing published -> null', newerTestBuild([], 'x'), null)
+  check('newerTestBuild: no list at all -> null', newerTestBuild(undefined, 'x'), null)
 }
 
 {

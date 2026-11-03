@@ -1810,6 +1810,8 @@ async function verifyInstall () {
     redscriptCount,
     outOfDate,
     version: update.version,
+    // Carried so Verify does not rewrite the mod row as "up to date - <release>" on a test build.
+    testBuildTag: update.testBuildTag || null,
     problems
   }
 }
@@ -6256,6 +6258,10 @@ ipcMain.handle('prerelease:list', async () => {
         active: r.tag_name === activeTag
       }))
 
+    // What the main Update button offers while a test build is installed. Computed before
+    // the retired row below joins the list - that row is the installed build, not a target.
+    const newer = activeTag ? ManifestKit.newerTestBuild(prereleases, activeTag) : null
+
     // A test build can be retired from GitHub while still INSTALLED on this machine -
     // superseded builds get deleted so there is only ever one to pick. Without this
     // row, the installed build simply vanished from the list, taking its Uninstall
@@ -6271,7 +6277,7 @@ ipcMain.handle('prerelease:list', async () => {
       })
     }
 
-    return { ok: true, prereleases, activeTag }
+    return { ok: true, prereleases, activeTag, newer }
   } catch (err) {
     return { ok: false, error: err.message }
   }
