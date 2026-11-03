@@ -735,11 +735,12 @@ public native class NetworkWorldSystem extends IGameSystem {
      * never finishes on arrival, so one is always active and the body holds its spot instead of
      * the brain filling the gap.
      *
-     * band: 0 stand, 1 walk, 2 run, 3 sprint. allowSnap: the native side permits one snap per 2s.
-     * Returns where the body was BEFORE acting, with W = 1 when it was snapped instead of steered
-     * and W = -1 when there was no puppet.
+     * The native side makes every decision; this only carries it out. band: 0 stand, 1 walk,
+     * 2 run, 3 sprint (already raised when the body is behind). mode: 0 pathfind to the target,
+     * 1 straight line to it, 2 snap there. Returns where the body was BEFORE acting, W = -1 when
+     * there was no puppet.
      */
-    public func MpSteerPuppet(entity: ref<Entity>, position: Vector4, yaw: Float, band: Int32, allowSnap: Bool) -> Vector4 {
+    public func MpSteerPuppet(entity: ref<Entity>, position: Vector4, yaw: Float, band: Int32, mode: Int32) -> Vector4 {
         let result: Vector4;
         result.W = -1.0;
 
@@ -754,30 +755,30 @@ public native class NetworkWorldSystem extends IGameSystem {
         result.Z = bodyPosition.Z;
         result.W = 0.0;
 
-        let gap = Vector4.Distance(bodyPosition, position);
         let ai = puppet.GetAIControllerComponent();
 
         if !IsDefined(ai) {
             this.MpTeleportPuppet(entity, position, yaw);
-            result.W = 1.0;
             return result;
         }
 
-        // Too far behind to walk back - a spawn, a respawn, a path it could not take. Snap it
-        // through the AI's OWN teleport, which the behaviour tree carries out instead of resisting:
-        // test.80 snapped through TeleportationFacility and not one of hundreds moved the body.
-        // Between snaps it falls through to the move below and sprints after the target, so a snap
-        // that fails still recovers.
-        if gap > 6.0 && allowSnap {
+        // Snap through the AI's OWN teleport, which the behaviour tree carries out instead of
+        // resisting: test.80 snapped through TeleportationFacility and not one of hundreds moved
+        // the body.
+        if mode == 2 {
             ai.CancelOrInterruptCommand(n"AIMoveToCommand", true, true);
+            ai.CancelOrInterruptCommand(n"AITeleportCommand", true, true);
             let teleport = new AITeleportCommand();
             teleport.position = position;
             teleport.rotation = yaw * 57.2957795;
             teleport.doNavTest = false;
             ai.SendCommand(teleport);
-            result.W = 1.0;
             return result;
         }
+
+        // A teleport still pending by now is not going to land, and left in the queue it blocked
+        // every move behind it - test.82 had a body frozen at a constant 12-15m for over a minute.
+        ai.CancelOrInterruptCommand(n"AITeleportCommand", true, true);
 
         let targetPosition: WorldPosition;
         WorldPosition.SetVector4(targetPosition, position);
@@ -788,16 +789,13 @@ public native class NetworkWorldSystem extends IGameSystem {
         command.movementTarget = target;
         command.desiredDistanceFromTarget = 0.25;
         command.finishWhenDestinationReached = false;
-        // Straight at the target only when it is right there. Further off, the navmesh walks it
-        // round walls and down stairs - a straight line is how a body that fell behind in test.80
-        // could walk itself into geometry or off a ledge and never come back.
-        command.ignoreNavigation = gap < 2.0;
+        command.ignoreNavigation = mode == 1;
         command.ignoreInCombat = false;
         command.removeAfterCombat = false;
         command.useStart = false;
         command.useStop = band == 0;
 
-        if band >= 3 || gap > 6.0 {
+        if band >= 3 {
             command.movementType = moveMovementType.Sprint;
         } else {
             if band == 2 {

@@ -122,28 +122,49 @@ static Core::RawFunc<1828854026UL, void (*)(Red::IPlacedComponent*, const Red::W
 // and at least once a second regardless, so a command is never missing long enough for the
 // brain to take over.
 //
-// A body more than 6m behind is snapped - at most once every 2s, through the AI's own
-// AITeleportCommand, and left alone for half a second so the teleport is not cancelled by the
-// next move. test.80 snapped through TeleportationFacility and NONE of hundreds landed: the
-// gap sat at exactly 13.5m for minutes, and because a far body only ever snapped, it never
-// walked back either. Between snaps it now sprints toward the target, so a snap that fails
-// still recovers.
+// Every decision is made HERE from the last measured body position; the script only carries
+// it out (mode 0 pathfind, 1 straight line, 2 snap). Tuned from test.82's two logs:
+//
+//   - Aim ahead. The body chased where the player WAS and trailed by design; the target now
+//     leads by 0.4s of their measured horizontal velocity, capped at 3m.
+//   - Catch up by running, not jumping. One gait faster past 2.5m behind, sprint past 5m.
+//   - Snap only as a last resort: more than 8m behind for a full second, or 20m at once, at most
+//     every 2s. A brief spike no longer teleports the body, which is what read as "jumps".
+//   - Straight line inside 3m. The pathfinder counts ~2m as arrived, and the old 2m cut-over
+//     left a stopped body parked 2.2-2.5m short of the player for minutes.
+//   - Unstick. A body that has not gained 0.5m in 1.5s while more than 2m off goes straight
+//     at the target instead of trusting a path it is not following.
+//
+// Snaps go through the AI's own AITeleportCommand (TeleportationFacility moved nothing on 2.5,
+// test.80) and get 0.5s to land before the next move; every move cancels a teleport still
+// pending, because a dead one sat in the queue and froze the body at a constant 12-15m (test.82).
 static void SteerPuppet(NetworkWorldSystem* apSystem, const Red::Handle<Red::Entity>& aEntity,
                         uint64_t aIdHash, const glm::vec3& aPosition, float aYaw, float aSpeed,
                         std::chrono::steady_clock::time_point aNow)
 {
+    using Clock = std::chrono::steady_clock;
+
     struct SteerState
     {
-        std::chrono::steady_clock::time_point At{};
-        std::chrono::steady_clock::time_point LastSnapAt{};
-        std::chrono::steady_clock::time_point WindowStart{};
+        Clock::time_point At{};
+        Clock::time_point LastSnapAt{};
+        Clock::time_point WindowStart{};
+        Clock::time_point FarSince{};
+        Clock::time_point ProgressAt{};
+        Clock::time_point SampleAt{};
         glm::vec3 Target{};
         glm::vec3 Body{};
+        glm::vec3 SamplePosition{};
+        glm::vec3 Velocity{};
+        float ProgressGap{0.f};
         int32_t Band{-1};
         uint32_t Commands{0};
         uint32_t Snaps{0};
         uint32_t SnapsLanded{0};
+        uint32_t Unsticks{0};
         float WorstGap{0.f};
+        bool HasBody{false};
+        bool HasSample{false};
         bool SnapPending{false};
         bool Logged{false};
     };
@@ -153,15 +174,48 @@ static void SteerPuppet(NetworkWorldSystem* apSystem, const Red::Handle<Red::Ent
     constexpr auto cMaxInterval = std::chrono::milliseconds(1000);
     constexpr auto cSnapSettle = std::chrono::milliseconds(500);
     constexpr auto cSnapInterval = std::chrono::seconds(2);
+    constexpr auto cFarFor = std::chrono::seconds(1);
+    constexpr auto cStuckFor = std::chrono::milliseconds(1500);
     constexpr auto cSummaryWindow = std::chrono::seconds(10);
     constexpr float cRetargetSq = 0.75f * 0.75f;
     constexpr float cLandedGap = 3.f;
-
-    // Gait from the mover's real speed in m/s: stand, walk, run, sprint. Standing is its own band
-    // so the body stops and turns to face their way instead of walking on the spot.
-    const int32_t band = aSpeed < 0.3f ? 0 : aSpeed < 2.5f ? 1 : aSpeed < 5.5f ? 2 : 3;
+    constexpr float cLeadSeconds = 0.4f;
+    constexpr float cMaxLead = 3.f;
+    constexpr float cDirectGap = 3.f;
+    constexpr float cRunGap = 2.5f;
+    constexpr float cSprintGap = 5.f;
+    constexpr float cFarGap = 8.f;
+    constexpr float cHugeGap = 20.f;
+    constexpr float cProgressStep = 0.5f;
 
     auto& state = s_steer[aIdHash];
+
+    // Velocity from the interpolated positions, every frame and smoothed - the lead needs it even
+    // on frames that send nothing. A respawn or snap makes a huge one-frame jump; the lead is
+    // capped, so that costs at most a moment of aiming 3m off.
+    if (!state.HasSample)
+    {
+        state.HasSample = true;
+        state.SamplePosition = aPosition;
+        state.SampleAt = aNow;
+    }
+    else if (const float dt = std::chrono::duration<float>(aNow - state.SampleAt).count(); dt >= 0.05f)
+    {
+        state.Velocity = glm::mix(state.Velocity, (aPosition - state.SamplePosition) / dt, 0.4f);
+        state.SamplePosition = aPosition;
+        state.SampleAt = aNow;
+    }
+
+    // Distance from the last measured body to the TRUE position (never the lead).
+    const float lastGap = state.HasBody ? glm::distance(state.Body, aPosition) : 0.f;
+
+    // Gait from the mover's real speed in m/s - stand, walk, run, sprint - raised when behind.
+    int32_t band = aSpeed < 0.3f ? 0 : aSpeed < 2.5f ? 1 : aSpeed < 5.5f ? 2 : 3;
+    if (lastGap > cSprintGap)
+        band = 3;
+    else if (lastGap > cRunGap)
+        band = std::min(std::max(band, 1) + 1, 3);
+
     const auto sinceLast = aNow - state.At;
     const auto delta = aPosition - state.Target;
 
@@ -174,19 +228,62 @@ static void SteerPuppet(NetworkWorldSystem* apSystem, const Red::Handle<Red::Ent
     state.Target = aPosition;
     state.Band = band;
 
-    // The script answers with where the body was BEFORE acting, and W = 1 when it snapped instead
-    // of steering (W = -1: no puppet to steer).
-    const bool allowSnap = aNow - state.LastSnapAt >= cSnapInterval;
+    // Far for long enough, or very far at once - and never more than one snap per 2s.
+    if (lastGap > cFarGap)
+    {
+        if (state.FarSince == Clock::time_point{})
+            state.FarSince = aNow;
+    }
+    else
+    {
+        state.FarSince = {};
+    }
+
+    const bool snapDue = state.HasBody && aNow - state.LastSnapAt >= cSnapInterval &&
+                         (lastGap > cHugeGap || (state.FarSince != Clock::time_point{} && aNow - state.FarSince >= cFarFor));
+
+    // Progress: has the gap shrunk by 0.5m in the last 1.5s? If not, while it is more than 2m, the
+    // path is not working - go straight.
+    if (!state.HasBody || lastGap < state.ProgressGap - cProgressStep || lastGap <= cRunGap - 0.5f)
+    {
+        state.ProgressGap = lastGap;
+        state.ProgressAt = aNow;
+    }
+    const bool stuck = state.HasBody && lastGap > 2.f && aNow - state.ProgressAt >= cStuckFor;
+
+    int32_t mode = 0;
+    if (snapDue)
+        mode = 2;
+    else if (!state.HasBody || lastGap < cDirectGap || stuck)
+        mode = 1;
+
+    if (mode == 1 && stuck)
+        ++state.Unsticks;
+
+    // Aim ahead of a moving target along its horizontal velocity. A snap lands on the truth.
+    glm::vec3 target = aPosition;
+    if (mode != 2 && aSpeed >= 0.3f)
+    {
+        glm::vec3 lead = state.Velocity * cLeadSeconds;
+        lead.z = 0.f;
+        const float length = glm::length(lead);
+        if (length > cMaxLead)
+            lead *= cMaxLead / length;
+        target += lead;
+    }
+
+    // The script answers with where the body was BEFORE acting (W = -1: no puppet to steer).
     Red::Vector4 body{0.f, 0.f, 0.f, -1.f};
     Red::CallVirtual(apSystem, "MpSteerPuppet", body, aEntity,
-                     Red::Vector4{aPosition.x, aPosition.y, aPosition.z, 0.f}, aYaw, band, allowSnap);
+                     Red::Vector4{target.x, target.y, target.z, 0.f}, aYaw, band, mode);
 
     if (body.W < 0.f)
         return;
 
     state.Body = {body.X, body.Y, body.Z};
+    state.HasBody = true;
     const float gap = glm::distance(state.Body, aPosition);
-    const bool snapped = body.W > 0.5f;
+    const bool snapped = mode == 2;
 
     // Did the previous snap land? Measured here, on the first look at the body after it.
     if (state.SnapPending)
@@ -232,15 +329,16 @@ static void SteerPuppet(NetworkWorldSystem* apSystem, const Red::Handle<Red::Ent
     const auto window = aNow - state.WindowStart;
     if (window >= cSummaryWindow)
     {
-        spdlog::info("[Driver] puppet {:x} steering: {} command(s), {} snap(s) ({} landed) in {}s - body ({:.1f}, {:.1f}, {:.1f}) "
+        spdlog::info("[Driver] puppet {:x} steering: {} command(s), {} snap(s) ({} landed), {} unstick(s) in {}s - body ({:.1f}, {:.1f}, {:.1f}) "
                      "is {:.1f}m from target ({:.1f}, {:.1f}, {:.1f}), worst {:.1f}m - {}",
-                     aIdHash, state.Commands, state.Snaps, state.SnapsLanded,
+                     aIdHash, state.Commands, state.Snaps, state.SnapsLanded, state.Unsticks,
                      std::chrono::duration_cast<std::chrono::seconds>(window).count(), state.Body.x, state.Body.y,
                      state.Body.z, gap, aPosition.x, aPosition.y, aPosition.z, state.WorstGap, describe());
         state.WindowStart = aNow;
         state.Commands = 0;
         state.Snaps = 0;
         state.SnapsLanded = 0;
+        state.Unsticks = 0;
         state.WorstGap = 0.f;
     }
 }
