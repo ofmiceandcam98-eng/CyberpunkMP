@@ -1735,13 +1735,29 @@ void NetworkWorldSystem::SaveCharacterAppearance(bool aAutomatic)
     Red::Handle<Red::game::ui::CharacterCustomizationState> liveState;
     Red::Handle<Red::game::ui::CharacterCustomizationState>* stateHandle = nullptr;
     const char* source = "+0x78";
-    const bool creating = m_newCharacterPending;
+
+    // A new character is captured only once it is IN THE WORLD - the spawn's own saves run
+    // in Restoring/Live. Before that the player is still in the game's creator and the state
+    // is unfinished: test.91, hezbollahcartel's 90-second autosave fired mid-creator, read a
+    // 23-byte unpopulated state and sent it (the server's size floor refused it). A later
+    // tick could have stored a half-designed face as a throwaway character.
+    const bool creating = m_newCharacterPending && (m_characterState == CharacterState::Restoring ||
+                                                    m_characterState == CharacterState::Live);
+
+    // A RESTORED character's look is not re-captured on 2.5: its possessions are saved and the
+    // server keeps the stored look (an existing character saved with no ccstate). The restore
+    // writes the stored look INTO a state that still holds the template's body, so re-saving
+    // that state stored Pajeet merged with the default woman's leftover options (female_base,
+    // breast, genitals - 6283 -> 6571 bytes, 2026-11-03). A clean 2.5 conversion of a stored
+    // look needs the state emptied first; until then the look the server holds is the good copy.
+    const bool possessionsOnly = !IsGame231Layout() && !creating && m_liveStateIsCharacter &&
+                                 m_appearanceRestore == AppearanceRestore::Applied;
 
     if (IsGame231Layout())
     {
         stateHandle = GetCustomizationState(ccSystem);
     }
-    else if (m_liveStateIsCharacter || creating)
+    else if (!possessionsOnly && (m_liveStateIsCharacter || creating))
     {
         liveState = GetLiveCustomizationState(ccSystem);
         stateHandle = &liveState;
@@ -1762,7 +1778,7 @@ void NetworkWorldSystem::SaveCharacterAppearance(bool aAutomatic)
     // GetCustomizationState() returns a pointer that can never be null; the instance
     // behind it can be, and is during ordinary gameplay. Serialising a null instance
     // crashes the game, so the instance is what gets checked.
-    if (!stateHandle || !stateHandle->instance)
+    if (!possessionsOnly && (!stateHandle || !stateHandle->instance))
     {
         // AN AUTOMATIC SAVE FINDING NO STATE IS THE NORMAL CASE, NOT A FAILURE.
         //
@@ -1787,9 +1803,11 @@ void NetworkWorldSystem::SaveCharacterAppearance(bool aAutomatic)
     }
 
     auto writer = CMPWriter();
-    CharacterCustomizationState_Serialize(stateHandle->instance, &writer);
 
-    if (writer.bytes.empty())
+    if (!possessionsOnly)
+        CharacterCustomizationState_Serialize(stateHandle->instance, &writer);
+
+    if (!possessionsOnly && writer.bytes.empty())
     {
         spdlog::error("[Character] the customization state serialised to nothing - not saving");
         return;
@@ -1799,7 +1817,7 @@ void NetworkWorldSystem::SaveCharacterAppearance(bool aAutomatic)
     // here for the first time on this game version; if one ever turns out to be the template's,
     // this line - size, body type, hash - is what proves it, and comparing hashes across
     // sessions shows whether a re-save changed anything.
-    if (!IsGame231Layout())
+    if (!possessionsOnly && !IsGame231Layout())
     {
         uint64_t fnv = 0xcbf29ce484222325ull;
         for (const auto byte : writer.bytes)
@@ -1813,8 +1831,18 @@ void NetworkWorldSystem::SaveCharacterAppearance(bool aAutomatic)
     }
 
     client::SaveCharacterRequest request;
-    request.set_ccstate(writer.bytes);
-    request.set_is_male(stateHandle->instance->isBodyGenderMale);
+
+    if (possessionsOnly)
+    {
+        // No ccstate means "keep the stored look". The body type still goes, so the server's
+        // body-flip guard checks this save exactly like any other.
+        request.set_is_male(m_liveStateIsMale);
+    }
+    else
+    {
+        request.set_ccstate(writer.bytes);
+        request.set_is_male(stateHandle->instance->isBodyGenderMale);
+    }
 
     // Ask the script side to read the inventory first.
     //
@@ -1874,7 +1902,10 @@ void NetworkWorldSystem::SaveCharacterAppearance(bool aAutomatic)
         m_liveStateIsMale = stateHandle->instance->isBodyGenderMale;
     }
 
-    spdlog::info("[Character] sent {} bytes of appearance to the server", writer.bytes.size());
+    if (possessionsOnly)
+        spdlog::info("[Character] sent possessions to the server - the stored look is kept");
+    else
+        spdlog::info("[Character] sent {} bytes of appearance to the server", writer.bytes.size());
 }
 
 bool NetworkWorldSystem::IsConnected() const
