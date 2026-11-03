@@ -50,6 +50,7 @@ public native class NetworkWorldSystem extends IGameSystem {
     // "redscript will work it out". Without this line the call fails with
     // UNRESOLVED_METHOD and takes every other script in the mod down with it.
     public native func MarkNewCharacter() -> Void;
+    public native func ClearNewCharacter() -> Void;
 
     // Handing the player's possessions to the server. Declared on both sides, like every
     // native here - a missing declaration fails with UNRESOLVED_METHOD and takes every

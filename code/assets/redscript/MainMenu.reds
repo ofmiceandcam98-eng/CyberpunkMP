@@ -227,6 +227,12 @@ public func MpEnterWithCharacter() -> Void {
     if network.HasCharacter() {
         MpCsLog(s"playing as '\(network.GetCharacterName())' (level \(network.GetCharacterLevel()))");
 
+        // An existing character is NOT a new one, whatever was clicked before. A click on a
+        // slot that only looked empty (the roster had not arrived yet) arms NEW CHARACTER, and
+        // left armed it retired the character at spawn and saved the body into an empty slot -
+        // the loop that moved zeldfep off Pajeet every session.
+        network.ClearNewCharacter();
+
         // Arm the in-world half. The world still has to be loaded to have somewhere to
         // stand; what changed is that the server already knows who is arriving.
         network.RequestJoin();

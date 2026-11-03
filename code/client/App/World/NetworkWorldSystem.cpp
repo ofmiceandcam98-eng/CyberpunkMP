@@ -714,6 +714,21 @@ void NetworkWorldSystem::MarkNewCharacter()
     m_newCharacterPending = true;
 }
 
+void NetworkWorldSystem::ClearNewCharacter()
+{
+    // The disarm MarkNewCharacter never had. Entering with an EXISTING character must not
+    // carry "new character" over from an earlier click: test.86, the login roster carried only
+    // the (empty) active slot, the selector drew every slot empty, zeldfep clicked Pajeet's
+    // slot - which read as "create here" and armed this - then picked Pajeet once the real
+    // roster arrived. The spawn still sent '/character new confirm' and tried to save the body
+    // as a NEW character, repointing the account at an empty slot every session (Atlas
+    // pajeet-vanishes-from-the-connect-selector-after-multiplayer).
+    if (m_newCharacterPending)
+        spdlog::info("[Character] entering with an existing character - NEW CHARACTER disarmed");
+
+    m_newCharacterPending = false;
+}
+
 uint32_t NetworkWorldSystem::GetRestoreCount() const
 {
     return static_cast<uint32_t>(m_restoreInventory.size());
@@ -1523,6 +1538,7 @@ void NetworkWorldSystem::ApplyStoredAppearance()
     const auto bytes = m_restoreAppearance;
 
     m_appearanceRestore = AppearanceRestore::Applying;
+    m_liveStateIsCharacter = false;
 
     // Stage by stage, deliberately verbose.
     //
@@ -1669,6 +1685,11 @@ void NetworkWorldSystem::ApplyStoredAppearance()
 
     m_appearanceRestore = AppearanceRestore::Applied;
 
+    // The live state now holds this character's stored look - which is what lets a 2.5 save
+    // read it back (and is how a 2.31-era look is re-saved in the 2.5 format).
+    m_liveStateIsCharacter = true;
+    m_liveStateIsMale = stateHandle->instance->isBodyGenderMale;
+
     // Deliberately NOT phrased as "the character now looks right".
     //
     // Every call above returning true proves the engine accepted the instructions, not that
@@ -1695,7 +1716,48 @@ void NetworkWorldSystem::SaveCharacterAppearance(bool aAutomatic)
     }
 
     auto ccSystem = Red::GetGameSystem<Red::game::ui::CharacterCustomizationSystem>();
-    auto stateHandle = GetCustomizationState(ccSystem);
+
+    // WHICH state to read, and whether it may be read at all.
+    //
+    // 2.31: the creator's state at +0x78, empty outside the creator - unchanged.
+    //
+    // Anything else (2.5): +0x78 stays off - it is never empty in play and holds the template's
+    // default body, which once overwrote Pajeet (GetCustomizationState answers "none" there).
+    // The LIVE state comes from the engine's own accessor instead - the GetState the restore
+    // already writes through - and only while it provably IS this character:
+    //   - a stored look was restored this session, or a new character's creator body was
+    //     captured (m_liveStateIsCharacter), and the body type has not changed since; or
+    //   - a NEW character is being made (MarkNewCharacter; ClearNewCharacter disarms it when an
+    //     existing character is entered), so the body is the one just built in the creator.
+    // Anything else - a template body, a failed restore, a reload - is refused, as before. This
+    // is what had stopped EVERY 2.5 save, possessions included, since the port (Atlas
+    // on-2-5-no-inventory-money-perks-or-attributes-are-ever-saved).
+    Red::Handle<Red::game::ui::CharacterCustomizationState> liveState;
+    Red::Handle<Red::game::ui::CharacterCustomizationState>* stateHandle = nullptr;
+    const char* source = "+0x78";
+    const bool creating = m_newCharacterPending;
+
+    if (IsGame231Layout())
+    {
+        stateHandle = GetCustomizationState(ccSystem);
+    }
+    else if (m_liveStateIsCharacter || creating)
+    {
+        liveState = GetLiveCustomizationState(ccSystem);
+        stateHandle = &liveState;
+        source = creating ? "the live state, new character" : "the live state, this character";
+
+        // Body type is fixed at creation, so a change means the state now holds somebody else.
+        if (m_liveStateIsCharacter && liveState && liveState.instance &&
+            liveState.instance->isBodyGenderMale != m_liveStateIsMale)
+        {
+            spdlog::error("[Character] NOT saving - the live state's body is {} but this character's is {}, so it "
+                          "is not this character any more",
+                          liveState.instance->isBodyGenderMale ? "male" : "female",
+                          m_liveStateIsMale ? "male" : "female");
+            return;
+        }
+    }
 
     // GetCustomizationState() returns a pointer that can never be null; the instance
     // behind it can be, and is during ordinary gameplay. Serialising a null instance
@@ -1731,6 +1793,23 @@ void NetworkWorldSystem::SaveCharacterAppearance(bool aAutomatic)
     {
         spdlog::error("[Character] the customization state serialised to nothing - not saving");
         return;
+    }
+
+    // A fingerprint of every 2.5 capture. A new character's body is read from the live state
+    // here for the first time on this game version; if one ever turns out to be the template's,
+    // this line - size, body type, hash - is what proves it, and comparing hashes across
+    // sessions shows whether a re-save changed anything.
+    if (!IsGame231Layout())
+    {
+        uint64_t fnv = 0xcbf29ce484222325ull;
+        for (const auto byte : writer.bytes)
+        {
+            fnv ^= static_cast<uint8_t>(byte);
+            fnv *= 0x100000001b3ull;
+        }
+
+        spdlog::info("[Character] capture from {}: {} bytes, {} body, fnv {:016x}", source, writer.bytes.size(),
+                     stateHandle->instance->isBodyGenderMale ? "male" : "female", fnv);
     }
 
     client::SaveCharacterRequest request;
@@ -1785,6 +1864,15 @@ void NetworkWorldSystem::SaveCharacterAppearance(bool aAutomatic)
     // and leaves NameChosen false, which is exactly what triggers the name prompt.
 
     service->Send(request);
+
+    // From here the live state IS this new character, so later saves in this session (the
+    // 90-second autosave, the disconnect save) may read it too - without this a new 2.5
+    // character's first session would store its look once and none of its possessions after.
+    if (creating)
+    {
+        m_liveStateIsCharacter = true;
+        m_liveStateIsMale = stateHandle->instance->isBodyGenderMale;
+    }
 
     spdlog::info("[Character] sent {} bytes of appearance to the server", writer.bytes.size());
 }
@@ -2253,6 +2341,7 @@ void NetworkWorldSystem::OnBeforeWorldDetach(RED4ext::world::RuntimeScene* aScen
     m_appearanceRestore = AppearanceRestore::NotStarted;
     m_appearanceRestoreFor = 0;
     m_restoreAppearance.clear();
+    m_liveStateIsCharacter = false;
 
     spdlog::info("[Detach] stand-down: silencing the animation hook");
     App::PuppetRegistry::Clear();
@@ -3120,8 +3209,6 @@ void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::
     // join would overwrite their character with whatever save happened to load.
     if (m_newCharacterPending)
     {
-        m_newCharacterPending = false;
-
         // Retire the stored character FIRST, through the same command a player could
         // type. The save below reuses SaveCharacterRequest, and the server builds a save
         // by COPYING the stored record - so without the retire, the old character's name
@@ -3150,6 +3237,11 @@ void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::
 
         spdlog::info("[Character] new character - sending this appearance to replace the stored one");
         SaveCharacterAppearance();
+
+        // Cleared AFTER the save, not before it: on 2.5 the save reads the live state only
+        // while a new character is being made, so clearing first refused this very capture.
+        // Still cleared whatever the save did - see above.
+        m_newCharacterPending = false;
     }
 }
 

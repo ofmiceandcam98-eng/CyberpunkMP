@@ -120,6 +120,48 @@ ChatSystem::ChatSystem(gsl::not_null<World*> apWorld)
             });
 }
 
+Vector<server::CharacterSummary> ChatSystem::RosterOf(const PlayerRecord& acRecord)
+{
+    Vector<server::CharacterSummary> characters;
+
+    for (const auto& character : acRecord.Characters)
+    {
+        server::CharacterSummary summary;
+        summary.set_id(character.CharacterId.c_str());
+        summary.set_name(character.Name.c_str());
+        summary.set_level(character.Level);
+        summary.set_spawned_before(character.SpawnedBefore);
+        summary.set_lifepath(character.Lifepath.c_str());
+
+        // The five attributes, sent as stored. See server.proto - this is the flag day
+        // that lets the selector show who somebody is rather than only what they are
+        // called.
+        Vector<server::Attribute> attributes;
+
+        for (const auto& attribute : character.Attributes)
+        {
+            server::Attribute wire;
+            wire.set_type(attribute.Type);
+            wire.set_value(attribute.Value);
+            attributes.push_back(wire);
+        }
+
+        summary.set_attributes(attributes);
+
+
+        // The slot is for DRAWING, never for identity. Slots are not contiguous -
+        // retiring the character in slot 1 of three leaves 0 and 2 occupied - so the
+        // client draws holes where the gaps are rather than renumbering. Anything
+        // keyed on a slot number that moves is a bug waiting for a deletion.
+        summary.set_slot(character.Slot);
+        summary.set_is_active(character.Slot == acRecord.ActiveSlot);
+
+        characters.push_back(summary);
+    }
+
+    return characters;
+}
+
 void ChatSystem::SendCharacterList(const PlayerComponent& acPlayer, const std::string& acError)
 {
     server::NotifyCharacterList message;
@@ -136,46 +178,7 @@ void ChatSystem::SendCharacterList(const PlayerComponent& acPlayer, const std::s
         const auto* pRecord = store.Find(acPlayer.DiscordId);
 
         if (pRecord && !pRecord->Characters.empty())
-        {
-            Vector<server::CharacterSummary> characters;
-
-            for (const auto& character : pRecord->Characters)
-            {
-                server::CharacterSummary summary;
-                summary.set_id(character.CharacterId.c_str());
-                summary.set_name(character.Name.c_str());
-                summary.set_level(character.Level);
-                summary.set_spawned_before(character.SpawnedBefore);
-                summary.set_lifepath(character.Lifepath.c_str());
-
-                // The five attributes, sent as stored. See server.proto - this is the flag day
-                // that lets the selector show who somebody is rather than only what they are
-                // called.
-                Vector<server::Attribute> attributes;
-
-                for (const auto& attribute : character.Attributes)
-                {
-                    server::Attribute wire;
-                    wire.set_type(attribute.Type);
-                    wire.set_value(attribute.Value);
-                    attributes.push_back(wire);
-                }
-
-                summary.set_attributes(attributes);
-
-
-                // The slot is for DRAWING, never for identity. Slots are not contiguous -
-                // retiring the character in slot 1 of three leaves 0 and 2 occupied - so the
-                // client draws holes where the gaps are rather than renumbering. Anything
-                // keyed on a slot number that moves is a bug waiting for a deletion.
-                summary.set_slot(character.Slot);
-                summary.set_is_active(character.Slot == pRecord->ActiveSlot);
-
-                characters.push_back(summary);
-            }
-
-            message.set_characters(characters);
-        }
+            message.set_characters(RosterOf(*pRecord));
     }
 
     if (!acError.empty())

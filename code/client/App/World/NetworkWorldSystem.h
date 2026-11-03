@@ -78,6 +78,7 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // and a player who just rebuilt themselves look identical. Only the client knows which
     // menu entry was pressed, so the client is what says so.
     void MarkNewCharacter();
+    void ClearNewCharacter();
 
     // Capturing what the player is carrying, so the SERVER owns it rather than their save.
     //
@@ -634,6 +635,14 @@ protected:
 
     AppearanceRestore m_appearanceRestore{AppearanceRestore::NotStarted};
 
+    // Off 2.31 only: whether the LIVE customization state (GetState) is provably this
+    // character's body, and which body type that is. Set when a stored look is restored
+    // (Applied) or a new character's creator body is captured; cleared wherever the restore
+    // starts over. SaveCharacterAppearance reads the live state only while this holds - the
+    // same state holds the template's default body otherwise (see GetCustomizationState).
+    bool m_liveStateIsCharacter{false};
+    bool m_liveStateIsMale{false};
+
     // So "waiting for a world" is said once instead of every tick. ApplyStoredAppearance is
     // called from the settle loop, and the wait is the normal case for the first second or
     // two of every connect.
@@ -917,6 +926,7 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(Disconnect);
     RTTI_METHOD(RequestJoin);
     RTTI_METHOD(MarkNewCharacter);
+    RTTI_METHOD(ClearNewCharacter);
     RTTI_METHOD(BeginInventoryCapture);
     RTTI_METHOD(AddInventoryItem);
     RTTI_METHOD(EndInventoryCapture);
