@@ -6,12 +6,11 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
-## What changed — v0.3.126
+## What changed — v0.3.127
 
 **Night City Online runs on Cyberpunk 2.5.** This is the first release built for the new
-patch: connect, pick your character, spawn, keep your inventory, money, attributes and
-perks, drive. It does NOT run on 2.31 any more - the launcher will tell you if your game
-is on the wrong version.
+patch: connect, pick your character, spawn, drive. It does NOT run on 2.31 any more - the
+launcher will tell you if your game is on the wrong version.
 
 - **CONNECT works again on 2.5.** On the 2.5 main menu the game now has a world loaded
   behind it, which made the mod think you were already in the city: it spawned you, then
@@ -24,11 +23,11 @@ is on the wrong version.
   older code since September, so recent launcher builds could not talk to it. It now runs
   the same code as this release.
 - **Trading: the eddies offer moves by 1 per press** instead of 500.
-- **"Install everything" works on a fresh install again.** Since v0.3.101 it stopped with
-  "manifest is not defined" right after copying the files, before recording the install.
 
 **Still broken on 2.5 - known, and being worked on:**
 
+- **Inventory, money, attributes and perks are not saved on 2.5 yet.** Nothing you pick up,
+  earn, spend or level on 2.5 is kept between sessions. This is the next fix in line.
 - **You look like the default character to yourself.** Your saved look is applied but does
   not show on your own body yet. Your look is SAFE on the server - an early 2.5 test build
   was saving the default body over characters, and this release is built so that cannot
