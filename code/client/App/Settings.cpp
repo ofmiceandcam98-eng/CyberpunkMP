@@ -182,42 +182,53 @@ void Settings::Load()
     if (launchParameters.Get("-puppet-driver-all"))
         settings.puppetDriverAll = true;
 
-    // The original 2.31 movement controller, opt-in by marker file - same reasoning and same
-    // search places as the local-puppet experiment below. Every interface it touches was
-    // measured identical on 2.5 (vtable, AttachController, AnimationDriver, AnimationData), but
-    // the test.74 crash that retired it is unexplained, so it goes onto one machine at a time.
+    // The original 2.31 movement controller is the default (see Settings.h). AI-move-command
+    // steering is the per-machine FALLBACK, by marker file - same reasoning and same search
+    // places as the local-puppet experiment below: if remote players crash or freeze one
+    // machine, that machine drops a file and is back on steering without a new build.
+    //
+    // mod-original-movement.on, the test.85/86 opt-in, is now simply the default; a leftover
+    // copy changes nothing and is only mentioned so nobody wonders whether it still matters.
     {
         const auto profile = std::getenv("USERPROFILE");
         std::vector<std::filesystem::path> places{
-            std::filesystem::current_path() / "mod-original-movement.on",
-            std::filesystem::current_path().parent_path().parent_path() / "mod-original-movement.on",
+            std::filesystem::current_path() / "mod-steered-movement.on",
+            std::filesystem::current_path().parent_path().parent_path() / "mod-steered-movement.on",
         };
         if (profile)
-            places.push_back(std::filesystem::path(profile) / "mod-original-movement.on");
+            places.push_back(std::filesystem::path(profile) / "mod-steered-movement.on");
 
-        std::filesystem::path marker;
-        for (const auto& place : places)
+        const auto firstExisting = [](const std::vector<std::filesystem::path>& aPlaces)
         {
-            std::error_code ec;
-            if (std::filesystem::exists(place, ec))
+            for (const auto& place : aPlaces)
             {
-                marker = place;
-                break;
+                std::error_code ec;
+                if (std::filesystem::exists(place, ec))
+                    return place;
             }
-        }
+            return std::filesystem::path{};
+        };
 
-        if (!marker.empty() || launchParameters.Get("-original-movement"))
+        const auto marker = firstExisting(places);
+        if (!marker.empty() || launchParameters.Get("-steered-movement"))
         {
-            settings.originalMovement = true;
-            spdlog::warn("[Movement] ORIGINAL 2.31 controller ON for remote players (via {}) - delete the file to go back "
-                         "to steering", marker.empty() ? std::string("launch argument") : marker.string());
+            settings.originalMovement = false;
+            spdlog::warn("[Movement] remote players are STEERED (AI move commands, the fallback) via {} - delete it to go "
+                         "back to the original 2.31 controller",
+                         marker.empty() ? std::string("launch argument") : marker.string());
         }
         else
         {
-            spdlog::info("[Movement] remote players are steered (AI move commands). To try the original controller, "
-                         "create an empty file at any of:");
+            spdlog::info("[Movement] ORIGINAL 2.31 controller for remote players (the default). If remote players crash "
+                         "or freeze this game, fall back to steering with an empty file at any of:");
             for (const auto& place : places)
                 spdlog::info("[Movement]   {}", place.string());
+
+            std::vector<std::filesystem::path> oldOptIn;
+            for (const auto& place : places)
+                oldOptIn.push_back(place.parent_path() / "mod-original-movement.on");
+            if (const auto old = firstExisting(oldOptIn); !old.empty())
+                spdlog::info("[Movement] {} is no longer needed - the original controller is the default now", old.string());
         }
     }
 

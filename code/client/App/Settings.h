@@ -138,10 +138,12 @@ struct Settings
     bool puppetDriverAll = false;
 
     // Off 2.31, use the ORIGINAL engine-attached MultiMovementController for remote players
-    // instead of AI-move-command steering. Opt-in per machine (mod-original-movement.on) while
-    // it is proven: every interface it touches was measured identical on 2.5 (2026-11-03), but
-    // the test.74 observer crash that retired it was never explained.
-    bool originalMovement = false;
+    // instead of AI-move-command steering. The DEFAULT since test.87: every interface it touches
+    // was measured identical on 2.5 (2026-11-03), it ran crash-free on test.85 and test.86, and
+    // steering measured 3-10m behind the real position with 2-38 unsticks per 10s (test.86,
+    // hezbollahcartel's log). Steering stays as a per-machine fallback (mod-steered-movement.on)
+    // because the test.74 observer crash that once retired this controller was never explained.
+    bool originalMovement = true;
 
     /**
      * PHASE 1 EXPERIMENT - make the LOCAL player a mod-spawned puppet.
