@@ -63,6 +63,16 @@ struct InterpolationComponent
     float ArrivalJitter{0.f};
     bool HasTransit{false};
 
+    // Per-remote buffer SIZE, beyond jitter. The next sample is usable only once it has
+    // arrived, so the buffer must cover this remote's transit plus one arrival gap. Transit here
+    // is ABSOLUTE - clock offset included, deliberately: render time is compared against sample
+    // ticks on exactly these clocks, so the offset is part of how late a sample really is. The
+    // gap is local arrival-to-arrival time; pauses (menus, standing still) are left out so they
+    // cannot inflate it. Both smoothed like ArrivalJitter. See InterpolateEntity.
+    float AvgTransit{0.f};
+    float AvgInterval{0.f};
+    int64_t LastArrivalTick{0};
+
     // How far behind real time this remote is drawn, and how often its buffer ran dry while
     // it was moving - logged every 10s per remote, because "there is still lag" (test.85, with
     // the original controller drawing exactly the buffered position) has to become a number

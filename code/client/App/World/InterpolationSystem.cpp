@@ -639,22 +639,38 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
     // still there"); the 10s stats below say whether 100 starves anybody.
     constexpr float cMaxJitterMargin = 100.f; // never add more than this many ms of delay
     const float jitterExtra = std::clamp(cJitterMargin * aInterpolation.ArrivalJitter, 0.f, cMaxJitterMargin);
+
+    // The buffer must also cover THIS remote's transit plus one arrival gap, or the next sample
+    // is still in flight when render time reaches it (InterpolationComponent::AvgTransit). The
+    // session base stays the floor, so two players close together on a good link are drawn
+    // exactly as before (test.91: transit 20-30 + gap 33 + margin < 65 + margin). A distant
+    // player - the server thins updates to 7.5/s past 200m - or a slow link gets the room it
+    // needs instead of extrapolating: test.91 measured 236 dry frames in 10s at 8/s, and after
+    // test.86 cut the base to 65 a ~100ms link would starve on every frame (Atlas
+    // high-ping-vs-interpolation-budget). Smoothed inputs move this gradually, and it is capped.
+    constexpr float cMaxDelay = 400.f;
+    const float floorDelay = aSimulationDelay + jitterExtra;
+    const float neededDelay = aInterpolation.AvgTransit + aInterpolation.AvgInterval + jitterExtra;
+    const float delay = std::min(std::max(floorDelay, neededDelay), std::max(cMaxDelay, floorDelay));
+
     const int64_t now = static_cast<int64_t>(NetworkWorldSystem::GetTick());
-    const int64_t renderTick = now - static_cast<int64_t>(aSimulationDelay + jitterExtra);
+    const int64_t renderTick = now - static_cast<int64_t>(delay);
 
     // The 10s delay/starvation line - see InterpolationComponent::StatsStartTick.
     if (aInterpolation.StatsStartTick == 0)
         aInterpolation.StatsStartTick = now;
     ++aInterpolation.StatsFrames;
-    aInterpolation.StatsDelaySum += aSimulationDelay + jitterExtra;
+    aInterpolation.StatsDelaySum += delay;
     if (now - aInterpolation.StatsStartTick >= 10000 && aInterpolation.StatsFrames > 0)
     {
-        spdlog::info("[Interpolation] {} {:x}: drawn {:.0f}ms behind on average (base {:.0f} + jitter margin, jitter now {:.1f}ms) "
-                     "- buffer ran dry on {} of {} frames while moving, {} past the guess window; {} sample(s) buffered",
+        spdlog::info("[Interpolation] {} {:x}: drawn {:.0f}ms behind on average (base {:.0f} + jitter margin, jitter now {:.1f}ms; "
+                     "transit {:.0f}ms, arrival gap {:.0f}ms) - buffer ran dry on {} of {} frames while moving, {} past the "
+                     "guess window; {} sample(s) buffered",
                      aEntityComponent.IsVehicle ? "vehicle" : "puppet", aEntityComponent.Id.hash,
                      aInterpolation.StatsDelaySum / static_cast<float>(aInterpolation.StatsFrames), aSimulationDelay,
-                     aInterpolation.ArrivalJitter, aInterpolation.StatsExtrapolated, aInterpolation.StatsFrames,
-                     aInterpolation.StatsStarved, aInterpolation.TimePoints.size());
+                     aInterpolation.ArrivalJitter, aInterpolation.AvgTransit, aInterpolation.AvgInterval,
+                     aInterpolation.StatsExtrapolated, aInterpolation.StatsFrames, aInterpolation.StatsStarved,
+                     aInterpolation.TimePoints.size());
         aInterpolation.StatsStartTick = now;
         aInterpolation.StatsFrames = 0;
         aInterpolation.StatsExtrapolated = 0;
@@ -1239,6 +1255,32 @@ void InterpolationSystem::HandleNotifyEntityMove(const PacketEvent<server::Notif
     }
     pInterpolation->LastTransit = transit;
     pInterpolation->HasTransit = true;
+
+    // Absolute transit and the arrival gap, smoothed - the two sizes the buffer has to cover
+    // (InterpolationComponent::AvgTransit). A negative transit is clock disagreement, never a
+    // sample from the future, so it counts as zero. Gaps of 500ms or more are pauses, not a rate.
+    {
+        const float transitMs = static_cast<float>(std::max<int64_t>(transit, 0));
+        pInterpolation->AvgTransit = pInterpolation->AvgTransit == 0.f
+                                         ? transitMs
+                                         : pInterpolation->AvgTransit + (transitMs - pInterpolation->AvgTransit) / 16.f;
+
+        const auto arrived = static_cast<int64_t>(NetworkWorldSystem::GetTick());
+        if (pInterpolation->LastArrivalTick != 0)
+        {
+            const int64_t gap = arrived - pInterpolation->LastArrivalTick;
+            // Zero is real - two packets handled in one frame - and leaving it out would bias the
+            // mean gap, and so the buffer, upward.
+            if (gap >= 0 && gap < 500)
+            {
+                const float gapMs = static_cast<float>(gap);
+                pInterpolation->AvgInterval = pInterpolation->AvgInterval == 0.f
+                                                  ? gapMs
+                                                  : pInterpolation->AvgInterval + (gapMs - pInterpolation->AvgInterval) / 16.f;
+            }
+        }
+        pInterpolation->LastArrivalTick = arrived;
+    }
 
     if (Settings::Get().syncTrace)
     {
