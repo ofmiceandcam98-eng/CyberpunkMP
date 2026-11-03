@@ -56,9 +56,19 @@ constexpr float kReturnBackoff = 3.f;
 constexpr float kJailRadius = 12.f;
 
 struct World;
+struct PlayerRecord;
 struct ChatSystem
 {
     ChatSystem(gsl::not_null<World*> apWorld);
+
+    // Every character on an account as the selector's roster, slot and is_active included.
+    //
+    // The ONE builder for it: the authentication reply had its own loop that sent only the
+    // active slot's character, so an account pointed at an empty slot was told at login that it
+    // had no characters at all, the selector drew every slot empty, and clicking Pajeet's slot
+    // read as "create here" - the slot loop (test.86). Public and static because GameServer's
+    // authentication reply uses it too.
+    static Vector<server::CharacterSummary> RosterOf(const PlayerRecord& acRecord);
 
     // Everyone on the server, wherever they are. For SERVER notices and /advert.
     void Broadcast(String acUsername, String acMessage, uint32_t aChannel = ChatChannel::kServer);
