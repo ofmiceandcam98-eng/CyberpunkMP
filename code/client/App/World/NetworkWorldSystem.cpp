@@ -134,9 +134,13 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
     // and on 2.5 the engine called into it and crashed the observing client 2.2s after the attach
     // (0xC0000005 writing into Cyberpunk2077.exe's image, 2026-11-01 23:39). Driver puppets are
     // never handed to the engine's controller pipeline; the idle hook skips them.
+    //
+    // Unless this machine opted back into the original controller (mod-original-movement.on):
+    // every interface it touches was measured identical on 2.5 on 2026-11-03, so the crash above
+    // is being re-tested one machine at a time rather than assumed.
     const bool usesDriver = Settings::Get().puppetDriverAll ||
                             record.rfind("Character.Player_Puppet", 0) == 0 ||
-                            !IsGame231Layout();
+                            (!IsGame231Layout() && !Settings::Get().originalMovement);
 
     // Register BEFORE the entity finishes assembling. The animation-thread hook
     // identifies our puppets through this registry instead of reading the entity's

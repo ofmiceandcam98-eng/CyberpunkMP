@@ -182,6 +182,45 @@ void Settings::Load()
     if (launchParameters.Get("-puppet-driver-all"))
         settings.puppetDriverAll = true;
 
+    // The original 2.31 movement controller, opt-in by marker file - same reasoning and same
+    // search places as the local-puppet experiment below. Every interface it touches was
+    // measured identical on 2.5 (vtable, AttachController, AnimationDriver, AnimationData), but
+    // the test.74 crash that retired it is unexplained, so it goes onto one machine at a time.
+    {
+        const auto profile = std::getenv("USERPROFILE");
+        std::vector<std::filesystem::path> places{
+            std::filesystem::current_path() / "mod-original-movement.on",
+            std::filesystem::current_path().parent_path().parent_path() / "mod-original-movement.on",
+        };
+        if (profile)
+            places.push_back(std::filesystem::path(profile) / "mod-original-movement.on");
+
+        std::filesystem::path marker;
+        for (const auto& place : places)
+        {
+            std::error_code ec;
+            if (std::filesystem::exists(place, ec))
+            {
+                marker = place;
+                break;
+            }
+        }
+
+        if (!marker.empty() || launchParameters.Get("-original-movement"))
+        {
+            settings.originalMovement = true;
+            spdlog::warn("[Movement] ORIGINAL 2.31 controller ON for remote players (via {}) - delete the file to go back "
+                         "to steering", marker.empty() ? std::string("launch argument") : marker.string());
+        }
+        else
+        {
+            spdlog::info("[Movement] remote players are steered (AI move commands). To try the original controller, "
+                         "create an empty file at any of:");
+            for (const auto& place : places)
+                spdlog::info("[Movement]   {}", place.string());
+        }
+    }
+
     // A FILE, not only a launch argument.
     //
     // The launcher owns the command line - it passes the Discord token, the server address

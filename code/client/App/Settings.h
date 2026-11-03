@@ -137,6 +137,12 @@ struct Settings
     // The A/B lever for retiring the legacy idle-controller hijack.
     bool puppetDriverAll = false;
 
+    // Off 2.31, use the ORIGINAL engine-attached MultiMovementController for remote players
+    // instead of AI-move-command steering. Opt-in per machine (mod-original-movement.on) while
+    // it is proven: every interface it touches was measured identical on 2.5 (2026-11-03), but
+    // the test.74 observer crash that retired it was never explained.
+    bool originalMovement = false;
+
     /**
      * PHASE 1 EXPERIMENT - make the LOCAL player a mod-spawned puppet.
      *
