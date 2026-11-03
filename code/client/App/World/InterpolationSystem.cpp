@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <deque>
 #include <fstream>
 #include <atomic>
 #include <unordered_map>
@@ -138,6 +139,13 @@ static Core::RawFunc<1828854026UL, void (*)(Red::IPlacedComponent*, const Red::W
 // Snaps go through the AI's own AITeleportCommand (TeleportationFacility moved nothing on 2.5,
 // test.80) and get 0.5s to land before the next move; every move cancels a teleport still
 // pending, because a dead one sat in the queue and froze the body at a constant 12-15m (test.82).
+//
+// test.83 (both players): running reads right, but a jump made the other body FLOAT - it was
+// being walked, and sometimes snapped, to a point in mid-air, and an AI walk cannot jump. So the
+// body steers to GROUND level: the lowest height the player has been at in the last 0.8s, which
+// sits still through a jump and follows stairs and ramps. Gaps are measured horizontally, with
+// height only counting past 2.5m (a different floor), so a jump is never "falling behind". The
+// lead grew to 0.6s and the catch-up gaits start sooner, for the lag that was left.
 static void SteerPuppet(NetworkWorldSystem* apSystem, const Red::Handle<Red::Entity>& aEntity,
                         uint64_t aIdHash, const glm::vec3& aPosition, float aYaw, float aSpeed,
                         std::chrono::steady_clock::time_point aNow)
@@ -156,6 +164,7 @@ static void SteerPuppet(NetworkWorldSystem* apSystem, const Red::Handle<Red::Ent
         glm::vec3 Body{};
         glm::vec3 SamplePosition{};
         glm::vec3 Velocity{};
+        std::deque<std::pair<Clock::time_point, float>> Heights;
         float ProgressGap{0.f};
         int32_t Band{-1};
         uint32_t Commands{0};
@@ -179,42 +188,64 @@ static void SteerPuppet(NetworkWorldSystem* apSystem, const Red::Handle<Red::Ent
     constexpr auto cSummaryWindow = std::chrono::seconds(10);
     constexpr float cRetargetSq = 0.75f * 0.75f;
     constexpr float cLandedGap = 3.f;
-    constexpr float cLeadSeconds = 0.4f;
-    constexpr float cMaxLead = 3.f;
+    constexpr float cLeadSeconds = 0.6f;
+    constexpr float cMaxLead = 4.f;
     constexpr float cDirectGap = 3.f;
-    constexpr float cRunGap = 2.5f;
-    constexpr float cSprintGap = 5.f;
+    constexpr float cRunGap = 1.5f;
+    constexpr float cSprintGap = 3.5f;
     constexpr float cFarGap = 8.f;
     constexpr float cHugeGap = 20.f;
     constexpr float cProgressStep = 0.5f;
+    constexpr float cVerticalSlack = 2.5f;
+    constexpr auto cGroundWindow = std::chrono::milliseconds(800);
 
     auto& state = s_steer[aIdHash];
 
     // Velocity from the interpolated positions, every frame and smoothed - the lead needs it even
     // on frames that send nothing. A respawn or snap makes a huge one-frame jump; the lead is
-    // capped, so that costs at most a moment of aiming 3m off.
+    // capped, so that costs at most a moment of aiming off. Heights ride the same cadence.
     if (!state.HasSample)
     {
         state.HasSample = true;
         state.SamplePosition = aPosition;
         state.SampleAt = aNow;
+        state.Heights.emplace_back(aNow, aPosition.z);
     }
     else if (const float dt = std::chrono::duration<float>(aNow - state.SampleAt).count(); dt >= 0.05f)
     {
         state.Velocity = glm::mix(state.Velocity, (aPosition - state.SamplePosition) / dt, 0.4f);
         state.SamplePosition = aPosition;
         state.SampleAt = aNow;
+        state.Heights.emplace_back(aNow, aPosition.z);
     }
 
-    // Distance from the last measured body to the TRUE position (never the lead).
-    const float lastGap = state.HasBody ? glm::distance(state.Body, aPosition) : 0.f;
+    while (state.Heights.size() > 1 && aNow - state.Heights.front().first > cGroundWindow)
+        state.Heights.pop_front();
+
+    // Ground under the player: their lowest height in the window - still through a jump, and
+    // following a stair or a ramp within a fraction of a second.
+    float groundZ = aPosition.z;
+    for (const auto& [at, z] : state.Heights)
+        groundZ = std::min(groundZ, z);
+    const glm::vec3 truth{aPosition.x, aPosition.y, groundZ};
+
+    // How far behind, as the steering sees it: horizontal, plus height only past a floor's worth.
+    const auto behind = [](const glm::vec3& aFrom, const glm::vec3& aTo)
+    {
+        const float horizontal = glm::length(glm::vec2{aTo.x - aFrom.x, aTo.y - aFrom.y});
+        return horizontal + std::max(0.f, std::abs(aTo.z - aFrom.z) - cVerticalSlack);
+    };
+
+    // From the last measured body to the ground truth (never the lead).
+    const float lastGap = state.HasBody ? behind(state.Body, truth) : 0.f;
 
     // Gait from the mover's real speed in m/s - stand, walk, run, sprint - raised when behind.
+    // A standing target is walked up to, never run at.
     int32_t band = aSpeed < 0.3f ? 0 : aSpeed < 2.5f ? 1 : aSpeed < 5.5f ? 2 : 3;
     if (lastGap > cSprintGap)
         band = 3;
-    else if (lastGap > cRunGap)
-        band = std::min(std::max(band, 1) + 1, 3);
+    else if (lastGap > cRunGap && band > 0)
+        band = std::min(band + 1, 3);
 
     const auto sinceLast = aNow - state.At;
     const auto delta = aPosition - state.Target;
@@ -260,8 +291,9 @@ static void SteerPuppet(NetworkWorldSystem* apSystem, const Red::Handle<Red::Ent
     if (mode == 1 && stuck)
         ++state.Unsticks;
 
-    // Aim ahead of a moving target along its horizontal velocity. A snap lands on the truth.
-    glm::vec3 target = aPosition;
+    // Aim ahead of a moving target along its horizontal velocity. A snap lands on the truth -
+    // on the ground, never in the air.
+    glm::vec3 target = truth;
     if (mode != 2 && aSpeed >= 0.3f)
     {
         glm::vec3 lead = state.Velocity * cLeadSeconds;
@@ -282,7 +314,7 @@ static void SteerPuppet(NetworkWorldSystem* apSystem, const Red::Handle<Red::Ent
 
     state.Body = {body.X, body.Y, body.Z};
     state.HasBody = true;
-    const float gap = glm::distance(state.Body, aPosition);
+    const float gap = behind(state.Body, truth);
     const bool snapped = mode == 2;
 
     // Did the previous snap land? Measured here, on the first look at the body after it.
