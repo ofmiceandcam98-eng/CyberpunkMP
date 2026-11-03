@@ -6,6 +6,22 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.126
+
+A launcher-only release. **No gameplay change** — the mod and the server are untouched,
+and the mod still targets game patch 2.31. The Cyberpunk 2.5 release comes next; it is in
+testing now.
+
+- **"Install everything" finishes on a fresh install again.** Since v0.3.101 a first-time
+  install copied every file and then stopped with *FAILED - manifest is not defined*,
+  before it recorded or checked the install - so a mostly-working install looked broken.
+  It now runs to the end.
+- **Testers: the Update button follows test builds.** On a test build it used to point at
+  the public release, which cannot join the test server - so it lit up but could only
+  refuse, and it never said when a newer test build was out. It now appears only when a
+  newer test build exists, names it, and installs it in one click. If you are not on a
+  test build, nothing changes for you.
+
 ## What changed — v0.3.125
 
 A launcher-reliability release for the Cyberpunk 2.5 transition. **No gameplay change** —
