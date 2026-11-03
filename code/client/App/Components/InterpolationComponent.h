@@ -63,6 +63,17 @@ struct InterpolationComponent
     float ArrivalJitter{0.f};
     bool HasTransit{false};
 
+    // How far behind real time this remote is drawn, and how often its buffer ran dry while
+    // it was moving - logged every 10s per remote, because "there is still lag" (test.85, with
+    // the original controller drawing exactly the buffered position) has to become a number
+    // before the buffer can be tuned. Counted only while the remote moves: a player standing
+    // still sends nothing new, and an empty buffer then is correct, not a stall.
+    int64_t StatsStartTick{0};
+    uint32_t StatsFrames{0};
+    uint32_t StatsExtrapolated{0};
+    uint32_t StatsStarved{0};
+    float StatsDelaySum{0.f};
+
     // Recovery state for player dead reckoning. A late authoritative sample should
     // correct the guess over a short window instead of lurching to the wire position.
     glm::vec3 LastRenderedPosition{};

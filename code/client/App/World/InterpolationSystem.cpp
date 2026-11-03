@@ -634,11 +634,33 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
     // delay away. Client-only; addresses jitter-driven starvation - a steady high-latency
     // link with near-zero jitter would still need server-sent ping (the flag-day option).
     constexpr float cJitterMargin = 2.f;      // cover ~2x the smoothed jitter
-    constexpr float cMaxJitterMargin = 200.f; // never add more than this many ms of delay
+    // Was 200. With the original controller back on 2.5 the body sits exactly on the buffered
+    // position, so every millisecond here is visible lag (test.85: "smoother, but the lag is
+    // still there"); the 10s stats below say whether 100 starves anybody.
+    constexpr float cMaxJitterMargin = 100.f; // never add more than this many ms of delay
     const float jitterExtra = std::clamp(cJitterMargin * aInterpolation.ArrivalJitter, 0.f, cMaxJitterMargin);
-    const int64_t renderTick =
-        static_cast<int64_t>(NetworkWorldSystem::GetTick()) -
-        static_cast<int64_t>(aSimulationDelay + jitterExtra);
+    const int64_t now = static_cast<int64_t>(NetworkWorldSystem::GetTick());
+    const int64_t renderTick = now - static_cast<int64_t>(aSimulationDelay + jitterExtra);
+
+    // The 10s delay/starvation line - see InterpolationComponent::StatsStartTick.
+    if (aInterpolation.StatsStartTick == 0)
+        aInterpolation.StatsStartTick = now;
+    ++aInterpolation.StatsFrames;
+    aInterpolation.StatsDelaySum += aSimulationDelay + jitterExtra;
+    if (now - aInterpolation.StatsStartTick >= 10000 && aInterpolation.StatsFrames > 0)
+    {
+        spdlog::info("[Interpolation] {} {:x}: drawn {:.0f}ms behind on average (base {:.0f} + jitter margin, jitter now {:.1f}ms) "
+                     "- buffer ran dry on {} of {} frames while moving, {} past the guess window; {} sample(s) buffered",
+                     aEntityComponent.IsVehicle ? "vehicle" : "puppet", aEntityComponent.Id.hash,
+                     aInterpolation.StatsDelaySum / static_cast<float>(aInterpolation.StatsFrames), aSimulationDelay,
+                     aInterpolation.ArrivalJitter, aInterpolation.StatsExtrapolated, aInterpolation.StatsFrames,
+                     aInterpolation.StatsStarved, aInterpolation.TimePoints.size());
+        aInterpolation.StatsStartTick = now;
+        aInterpolation.StatsFrames = 0;
+        aInterpolation.StatsExtrapolated = 0;
+        aInterpolation.StatsStarved = 0;
+        aInterpolation.StatsDelaySum = 0.f;
+    }
 
     TraceDriverless(aEntity, aEntityComponent, aInterpolation, renderTick, "enter");
 
@@ -724,6 +746,14 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
 
         // A difference, so float is safe here - this is milliseconds, not epoch time.
         const float ahead = static_cast<float>(renderTick - static_cast<int64_t>(first.Tick));
+
+        if (first.Velocity > 0.3f)
+        {
+            ++aInterpolation.StatsExtrapolated;
+            if (ahead > maxExtrapolationMs)
+                ++aInterpolation.StatsStarved;
+        }
+
         if (ahead <= 0.f || ahead > maxExtrapolationMs)
         {
             TraceDriverless(aEntity, aEntityComponent, aInterpolation, renderTick,
@@ -986,7 +1016,15 @@ void InterpolationSystem::OnConnected()
 {
     const auto pNetworkService = Core::Container::Get<NetworkService>();
 
-    const float cSimulationDelay = 50.f + (1500.f / pNetworkService->GetServerSettings().get_update_rate());
+    // How far behind real time remote players are drawn: one and a half send intervals, so the
+    // next sample is normally already here, plus 15ms of slack - 65ms at the 30/s the servers
+    // run. It was 50 + 1.5 intervals = 100ms, and with the original controller drawing exactly
+    // this position that whole buffer reads as lag (test.85). Per-remote jitter still widens it
+    // (InterpolateEntity), and the 10s [Interpolation] line says if 65 starves anyone.
+    const auto updateRate = std::max(1u, pNetworkService->GetServerSettings().get_update_rate());
+    const float cSimulationDelay = 15.f + 1.5f * (1000.f / static_cast<float>(updateRate));
+    spdlog::info("[InterpolationSystem] drawing remote players {:.0f}ms behind at {}/s (plus up to 100ms per-remote jitter margin)",
+                 cSimulationDelay, updateRate);
 
     const auto pSystem = Red::GetGameSystem<NetworkWorldSystem>();
     const auto pMoveSystem = Red::GetGameSystem<RED4ext::vehicle::IMoveSystem>();
