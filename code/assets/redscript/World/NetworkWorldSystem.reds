@@ -707,26 +707,48 @@ public native class NetworkWorldSystem extends IGameSystem {
      * never finishes on arrival, so one is always active and the body holds its spot instead of
      * the brain filling the gap.
      *
-     * band: 0 stand, 1 walk, 2 run, 3 sprint. Returns how far the body was from the target,
-     * negated when it was too far behind to walk and was snapped there instead.
+     * band: 0 stand, 1 walk, 2 run, 3 sprint. allowSnap: the native side permits one snap per 2s.
+     * Returns where the body was BEFORE acting, with W = 1 when it was snapped instead of steered
+     * and W = -1 when there was no puppet.
      */
-    public func MpSteerPuppet(entity: ref<Entity>, position: Vector4, yaw: Float, band: Int32) -> Float {
+    public func MpSteerPuppet(entity: ref<Entity>, position: Vector4, yaw: Float, band: Int32, allowSnap: Bool) -> Vector4 {
+        let result: Vector4;
+        result.W = -1.0;
+
         let puppet = entity as ScriptedPuppet;
         if !IsDefined(puppet) {
-            return 0.0;
+            return result;
         }
 
-        let gap = Vector4.Distance(puppet.GetWorldPosition(), position);
+        let bodyPosition = puppet.GetWorldPosition();
+        result.X = bodyPosition.X;
+        result.Y = bodyPosition.Y;
+        result.Z = bodyPosition.Z;
+        result.W = 0.0;
+
+        let gap = Vector4.Distance(bodyPosition, position);
         let ai = puppet.GetAIControllerComponent();
 
-        // Too far behind to walk back - a spawn, a respawn, a path it could not take. Snap it,
-        // and the next call steers from there.
-        if gap > 6.0 || !IsDefined(ai) {
-            if IsDefined(ai) {
-                ai.CancelOrInterruptCommand(n"AIMoveToCommand", true, true);
-            }
+        if !IsDefined(ai) {
             this.MpTeleportPuppet(entity, position, yaw);
-            return -gap;
+            result.W = 1.0;
+            return result;
+        }
+
+        // Too far behind to walk back - a spawn, a respawn, a path it could not take. Snap it
+        // through the AI's OWN teleport, which the behaviour tree carries out instead of resisting:
+        // test.80 snapped through TeleportationFacility and not one of hundreds moved the body.
+        // Between snaps it falls through to the move below and sprints after the target, so a snap
+        // that fails still recovers.
+        if gap > 6.0 && allowSnap {
+            ai.CancelOrInterruptCommand(n"AIMoveToCommand", true, true);
+            let teleport = new AITeleportCommand();
+            teleport.position = position;
+            teleport.rotation = yaw * 57.2957795;
+            teleport.doNavTest = false;
+            ai.SendCommand(teleport);
+            result.W = 1.0;
+            return result;
         }
 
         let targetPosition: WorldPosition;
@@ -738,13 +760,16 @@ public native class NetworkWorldSystem extends IGameSystem {
         command.movementTarget = target;
         command.desiredDistanceFromTarget = 0.25;
         command.finishWhenDestinationReached = false;
-        command.ignoreNavigation = true;
+        // Straight at the target only when it is right there. Further off, the navmesh walks it
+        // round walls and down stairs - a straight line is how a body that fell behind in test.80
+        // could walk itself into geometry or off a ledge and never come back.
+        command.ignoreNavigation = gap < 2.0;
         command.ignoreInCombat = false;
         command.removeAfterCombat = false;
         command.useStart = false;
         command.useStop = band == 0;
 
-        if band >= 3 {
+        if band >= 3 || gap > 6.0 {
             command.movementType = moveMovementType.Sprint;
         } else {
             if band == 2 {
@@ -773,7 +798,7 @@ public native class NetworkWorldSystem extends IGameSystem {
         // Replace, never stack.
         ai.CancelOrInterruptCommand(n"AIMoveToCommand", true, true);
         ai.SendCommand(command);
-        return gap;
+        return result;
     }
 
     public func DoTeleport(position: Vector4, yaw: Float) -> Void {
