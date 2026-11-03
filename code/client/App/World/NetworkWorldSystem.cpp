@@ -157,7 +157,12 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
 
     auto spawned = make_alive(aServerId);
 
-    spawned.emplace<SpawningComponent>(id, nullptr, usesDriver);
+    // All four fields, in order. SpawningComponent is {Id, Controller, AuthorityEpoch, UsesDriver},
+    // and this call used to pass three - so usesDriver landed in AuthorityEpoch and UsesDriver
+    // stayed false for every puppet ever spawned. That is the real reason test.78/79 logged
+    // "promoted - driver no" for a driver puppet; 162aca8c's archetype-move theory was a misread,
+    // and only FindDriver's registry fallback kept the driver path running at all.
+    spawned.emplace<SpawningComponent>(id, nullptr, 0u, usesDriver);
 
     // Give the puppet somewhere to put movement immediately.
     //

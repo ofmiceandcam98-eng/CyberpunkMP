@@ -101,41 +101,99 @@ inline void SetSimpleMovement(Red::vehicle::IMoveSystem* apMoveSystem, const Red
 static Core::RawFunc<1828854026UL, void (*)(Red::IPlacedComponent*, const Red::WorldTransform&)>
     PlacedComponent_SetTransform;
 
-// Moves a remote puppet through the game's TeleportationFacility - the transform-only (off
-// 2.31) half of DriveEntity.
+// Steers a remote puppet with the game's own AI move commands - the transform-only (off 2.31)
+// half of DriveEntity.
 //
-// A placed-transform write does not visibly move an NPC-record puppet on 2.5 - its own
-// movement component puts the position back - and the teleport goes through that component.
-// Teleport is not a per-frame call, so: at most 10 a second per puppet, and only once it has
-// moved 2cm. Needs only the entity, so it also runs for a puppet with no placedComponent.
-static void TeleportPuppet(NetworkWorldSystem* apSystem, const Red::Handle<Red::Entity>& aEntity,
-                           uint64_t aIdHash, const glm::vec3& aPosition, float aYaw,
-                           std::chrono::steady_clock::time_point aNow)
+// Every remote body is a Character.Panam-based NPC carrying her whole combat brain, and on 2.5
+// nothing of ours outranked it. The 2.31 controller swap that used to is what crashed the
+// observer (74de8dfd); a placed-transform write is put back by the body's own movement
+// component; and a teleport ten times a second did not visibly move it either (test.79). Worse,
+// --hackable-puppets makes the body hostile to the local player, so once they fight anything the
+// brain joins in and walks the body wherever IT likes - a different way on each client
+// (2026-11-03, after a police fight, exactly as on 2026-11-01).
+//
+// An active AIMoveToCommand is what the behaviour tree yields movement to - in combat too, while
+// ignoreInCombat is false (tweakAIConditionChecks.script:3417) - and OPEN//77 measured on 2.5
+// that re-issued move commands override the tree's own movement. It also walks the body with
+// the engine's locomotion, so this is the first 2.5 path with a walk cycle at all.
+//
+// Re-issued at most 4 a second: when the target has moved 0.75m, when the gait band changes,
+// and at least once a second regardless, so a command is never missing long enough for the
+// brain to take over. The script side snaps a body that is more than 6m behind.
+static void SteerPuppet(NetworkWorldSystem* apSystem, const Red::Handle<Red::Entity>& aEntity,
+                        uint64_t aIdHash, const glm::vec3& aPosition, float aYaw, float aSpeed,
+                        std::chrono::steady_clock::time_point aNow)
 {
-    struct LastTeleport
+    struct SteerState
     {
         std::chrono::steady_clock::time_point At{};
-        glm::vec3 Position{};
+        std::chrono::steady_clock::time_point WindowStart{};
+        glm::vec3 Target{};
+        int32_t Band{-1};
+        uint32_t Commands{0};
+        uint32_t Snaps{0};
+        float WorstGap{0.f};
+        bool Logged{false};
     };
-    static std::unordered_map<uint64_t, LastTeleport> s_lastTeleport;
+    static std::unordered_map<uint64_t, SteerState> s_steer;
 
-    constexpr auto cTeleportInterval = std::chrono::milliseconds(100);
-    constexpr float cMinMoveSq = 0.02f * 0.02f;
+    constexpr auto cMinInterval = std::chrono::milliseconds(250);
+    constexpr auto cMaxInterval = std::chrono::milliseconds(1000);
+    constexpr auto cSummaryWindow = std::chrono::seconds(10);
+    constexpr float cRetargetSq = 0.75f * 0.75f;
 
-    auto& last = s_lastTeleport[aIdHash];
-    const auto delta = aPosition - last.Position;
-    if (aNow - last.At < cTeleportInterval || glm::dot(delta, delta) < cMinMoveSq)
+    // Gait from the mover's real speed in m/s: stand, walk, run, sprint. Standing is its own band
+    // so the body stops and turns to face their way instead of walking on the spot.
+    const int32_t band = aSpeed < 0.3f ? 0 : aSpeed < 2.5f ? 1 : aSpeed < 5.5f ? 2 : 3;
+
+    auto& state = s_steer[aIdHash];
+    const auto sinceLast = aNow - state.At;
+    const auto delta = aPosition - state.Target;
+
+    if (sinceLast < cMinInterval)
+        return;
+    if (band == state.Band && glm::dot(delta, delta) < cRetargetSq && sinceLast < cMaxInterval)
         return;
 
-    const bool first = last.At == std::chrono::steady_clock::time_point{};
-    last.At = aNow;
-    last.Position = aPosition;
+    state.At = aNow;
+    state.Target = aPosition;
+    state.Band = band;
 
-    Red::CallVirtual(apSystem, "MpTeleportPuppet", aEntity,
-                     Red::Vector4{aPosition.x, aPosition.y, aPosition.z, 0.f}, aYaw);
+    // Distance from body to target before acting; negative when it was snapped instead.
+    float gap = 0.f;
+    Red::CallVirtual(apSystem, "MpSteerPuppet", gap, aEntity,
+                     Red::Vector4{aPosition.x, aPosition.y, aPosition.z, 0.f}, aYaw, band);
 
-    if (first)
-        spdlog::info("[Driver] puppet {:x} first teleport (TeleportationFacility, off 2.31)", aIdHash);
+    const bool snapped = gap < 0.f;
+    gap = std::abs(gap);
+
+    if (!state.Logged)
+    {
+        state.Logged = true;
+        state.WindowStart = aNow;
+        spdlog::info("[Driver] puppet {:x} first steer (AI move command, off 2.31) - body {:.1f}m from target{}",
+                     aIdHash, gap, snapped ? ", snapped" : "");
+        return;
+    }
+
+    ++state.Commands;
+    if (snapped)
+        ++state.Snaps;
+    state.WorstGap = std::max(state.WorstGap, gap);
+
+    // How well it follows, every 10s per puppet: a body that keeps snapping, or whose gap grows,
+    // is losing to something - and this is the line that says so.
+    const auto window = aNow - state.WindowStart;
+    if (window >= cSummaryWindow)
+    {
+        spdlog::info("[Driver] puppet {:x} steering: {} command(s), {} snap(s) in {}s - body {:.1f}m from target, worst {:.1f}m",
+                     aIdHash, state.Commands, state.Snaps,
+                     std::chrono::duration_cast<std::chrono::seconds>(window).count(), gap, state.WorstGap);
+        state.WindowStart = aNow;
+        state.Commands = 0;
+        state.Snaps = 0;
+        state.WorstGap = 0.f;
+    }
 }
 
 // The puppet's DriverComponent - or, for a puppet the registry says is a driver but which has
@@ -213,11 +271,19 @@ static void DriveEntity(const DriverComponent& aDriver, const EntityComponent& a
     {
         if (gateOnce())
             spdlog::warn("[Driver] puppet {:x} has no placedComponent - transform writes have nowhere to go{}",
-                         aEntityComponent.Id.hash, aDriver.Driver ? "" : " (teleporting it instead)");
+                         aEntityComponent.Id.hash, aDriver.Driver ? "" : " (steering it instead)");
 
-        // Transform-only mode still has the teleport, which needs only the entity.
+        // Transform-only mode steers, which needs only the entity.
         if (!aDriver.Driver)
-            TeleportPuppet(pSystem, entityHandle, aEntityComponent.Id.hash, aPosition, aYaw, now);
+            SteerPuppet(pSystem, entityHandle, aEntityComponent.Id.hash, aPosition, aYaw, aSpeed, now);
+        return;
+    }
+
+    // Off 2.31 (no PuppetDriver) the body is steered, never placed - see SteerPuppet. A
+    // per-frame transform write here would only fight the move command it is walking under.
+    if (!aDriver.Driver)
+    {
+        SteerPuppet(pSystem, entityHandle, aEntityComponent.Id.hash, aPosition, aYaw, aSpeed, now);
         return;
     }
 
@@ -277,17 +343,6 @@ static void DriveEntity(const DriverComponent& aDriver, const EntityComponent& a
         // of dying the way the engine-attached controller did.
         aDriver.Driver->EnsureAttached(entityHandle.GetPtr(), aEntityComponent.Id.hash);
         aDriver.Driver->Tick(aFrameDeltaMs * 0.001f, aSpeed, aLocomotion);
-    }
-    else
-    {
-        // Transform-only mode (off 2.31 - see the DriverComponent set in NetworkWorldSystem).
-        // Once per puppet, so a 2.5 log says whether the writes are happening at all.
-        static std::unordered_set<uint64_t> reported;
-        if (reported.insert(aEntityComponent.Id.hash).second)
-            spdlog::info("[Driver] puppet {:x} first transform write (transform only, no animation) -> ({:.1f}, {:.1f}, {:.1f})",
-                         aEntityComponent.Id.hash, aPosition.x, aPosition.y, aPosition.z);
-
-        TeleportPuppet(pSystem, entityHandle, aEntityComponent.Id.hash, writePos, aYaw, now);
     }
 }
 

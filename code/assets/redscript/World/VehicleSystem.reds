@@ -82,6 +82,15 @@ public native class VehicleSystem extends IScriptable {
 
         // let entity_system = GameInstance.GetDynamicEntitySystem();
         let character = entity_system.GetEntity(character_id) as GameObject;
+
+        // Release the steering first. Off 2.31 a remote body walks under a move command that
+        // never finishes (NetworkWorldSystem.MpSteerPuppet), and the mount is an AI event - the
+        // command must not still be holding the body in place when the AI comes to seat it.
+        let puppet = character as ScriptedPuppet;
+        if IsDefined(puppet) && IsDefined(puppet.GetAIControllerComponent()) {
+            puppet.GetAIControllerComponent().CancelOrInterruptCommand(n"AIMoveToCommand", true, true);
+        }
+
         character.QueueEvent(evt);
 
 

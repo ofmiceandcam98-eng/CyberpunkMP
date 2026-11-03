@@ -697,6 +697,85 @@ public native class NetworkWorldSystem extends IGameSystem {
         GameInstance.GetTeleportationFacility(GetGameInstance()).Teleport(puppet, position, angles);
     }
 
+    /**
+     * Steers a REMOTE player's puppet toward where they really are, called from native off 2.31
+     * (InterpolationSystem's SteerPuppet, which decides when and how often).
+     *
+     * The body is a Panam-based NPC and on 2.5 her behaviour tree owns its movement: teleports
+     * lost to it, and in a fight it walked the body wherever it liked. An active move command is
+     * what the tree yields movement to - in combat too, while ignoreInCombat is false. The command
+     * never finishes on arrival, so one is always active and the body holds its spot instead of
+     * the brain filling the gap.
+     *
+     * band: 0 stand, 1 walk, 2 run, 3 sprint. Returns how far the body was from the target,
+     * negated when it was too far behind to walk and was snapped there instead.
+     */
+    public func MpSteerPuppet(entity: ref<Entity>, position: Vector4, yaw: Float, band: Int32) -> Float {
+        let puppet = entity as ScriptedPuppet;
+        if !IsDefined(puppet) {
+            return 0.0;
+        }
+
+        let gap = Vector4.Distance(puppet.GetWorldPosition(), position);
+        let ai = puppet.GetAIControllerComponent();
+
+        // Too far behind to walk back - a spawn, a respawn, a path it could not take. Snap it,
+        // and the next call steers from there.
+        if gap > 6.0 || !IsDefined(ai) {
+            if IsDefined(ai) {
+                ai.CancelOrInterruptCommand(n"AIMoveToCommand", true, true);
+            }
+            this.MpTeleportPuppet(entity, position, yaw);
+            return -gap;
+        }
+
+        let targetPosition: WorldPosition;
+        WorldPosition.SetVector4(targetPosition, position);
+        let target: AIPositionSpec;
+        AIPositionSpec.SetWorldPosition(target, targetPosition);
+
+        let command = new AIMoveToCommand();
+        command.movementTarget = target;
+        command.desiredDistanceFromTarget = 0.25;
+        command.finishWhenDestinationReached = false;
+        command.ignoreNavigation = true;
+        command.ignoreInCombat = false;
+        command.removeAfterCombat = false;
+        command.useStart = false;
+        command.useStop = band == 0;
+
+        if band >= 3 {
+            command.movementType = moveMovementType.Sprint;
+        } else {
+            if band == 2 {
+                command.movementType = moveMovementType.Run;
+            } else {
+                command.movementType = moveMovementType.Walk;
+            }
+        }
+
+        // Standing: turn to face the way they face. Moving: the body faces where it walks, as a
+        // player's does. Same heading convention as the native side: (-sin, cos) of the yaw.
+        if band == 0 {
+            let ahead: Vector4;
+            ahead.X = position.X - SinF(yaw) * 2.0;
+            ahead.Y = position.Y + CosF(yaw) * 2.0;
+            ahead.Z = position.Z;
+            ahead.W = 0.0;
+            let facingPosition: WorldPosition;
+            WorldPosition.SetVector4(facingPosition, ahead);
+            let facing: AIPositionSpec;
+            AIPositionSpec.SetWorldPosition(facing, facingPosition);
+            command.facingTarget = facing;
+            command.rotateEntityTowardsFacingTarget = true;
+        }
+
+        // Replace, never stack.
+        ai.CancelOrInterruptCommand(n"AIMoveToCommand", true, true);
+        ai.SendCommand(command);
+        return gap;
+    }
+
     public func DoTeleport(position: Vector4, yaw: Float) -> Void {
         let player = GetPlayer(GetGameInstance());
         if !IsDefined(player) {
