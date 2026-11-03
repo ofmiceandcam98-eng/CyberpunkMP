@@ -1736,13 +1736,18 @@ void NetworkWorldSystem::SaveCharacterAppearance(bool aAutomatic)
     Red::Handle<Red::game::ui::CharacterCustomizationState>* stateHandle = nullptr;
     const char* source = "+0x78";
 
-    // A new character is captured only once it is IN THE WORLD - the spawn's own saves run
-    // in Restoring/Live. Before that the player is still in the game's creator and the state
-    // is unfinished: test.91, hezbollahcartel's 90-second autosave fired mid-creator, read a
-    // 23-byte unpopulated state and sent it (the server's size floor refused it). A later
-    // tick could have stored a half-designed face as a throwaway character.
-    const bool creating = m_newCharacterPending && (m_characterState == CharacterState::Restoring ||
-                                                    m_characterState == CharacterState::Live);
+    // A NEW character's look exists in the live state at exactly one moment on 2.5: as the New
+    // Game world (the one the creator built the body in) is torn down. Measured on test.91,
+    // hezbollahcartel's log:
+    //   - mid-creator, the 90-second autosave read a 23-byte unpopulated state (refused by the
+    //     server's size floor) - too EARLY;
+    //   - the pre-teardown save read his creator look (10263 bytes, female, fnv 074ece6197c293a3)
+    //     and that is the save that created Pelayo - the RIGHT moment;
+    //   - once the multiplayer world loads, the live state is the template's body until a restore
+    //     writes a stored look into it (Pajeet's re-save carried the template woman's leftovers) -
+    //     too LATE. test.92 allowed only this one and so blocked the moment that works.
+    // So off 2.31 a new character is captured by the pre-detach save and nothing else.
+    const bool creating = m_newCharacterPending && m_savingBeforeDetach;
 
     // A RESTORED character's look is not re-captured on 2.5: its possessions are saved and the
     // server keeps the stored look (an existing character saved with no ccstate). The restore
@@ -2357,7 +2362,12 @@ void NetworkWorldSystem::OnBeforeWorldDetach(RED4ext::world::RuntimeScene* aScen
         if (service && service->IsConnected() && !m_restorePending && MaySaveCharacter())
         {
             spdlog::info("[Inventory] saving before the world is torn down");
+
+            // Marks the one moment a NEW character's creator look can be read on 2.5 - see
+            // SaveCharacterAppearance.
+            m_savingBeforeDetach = true;
             SaveCharacterAppearance(true);
+            m_savingBeforeDetach = false;
         }
     }
 

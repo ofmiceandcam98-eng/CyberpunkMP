@@ -643,6 +643,10 @@ protected:
     bool m_liveStateIsCharacter{false};
     bool m_liveStateIsMale{false};
 
+    // True only for the save OnBeforeWorldDetach runs - on 2.5 the one moment a new character's
+    // creator look is in the live state (the New Game world, before the multiplayer world loads).
+    bool m_savingBeforeDetach{false};
+
     // So "waiting for a world" is said once instead of every tick. ApplyStoredAppearance is
     // called from the settle loop, and the wait is the normal case for the first second or
     // two of every connect.
