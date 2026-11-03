@@ -3241,14 +3241,31 @@ void NetworkWorldSystem::UpdatePlayerLocation() const
 
     auto puppet = Red::Cast<Red::game::Puppet>(player);
 
-    if (auto vehicle_id = GetVehicleSystem()->GetVehicleGameId())
+    // Resolved BEFORE choosing a stream, so a vehicle that cannot be found falls back to the
+    // on-foot stream below instead of sending nothing. This used to `return`, and a wrong or
+    // stale vehicle id silenced the player completely: "vehicle" 1 - the player's own entity,
+    // from a body pickup that VehicleSystem.reds reported as a car entry - froze
+    // hezbollahcartel on zeldfep's screen for as long as he held it (test.86: his send rate
+    // fell to 12-17/s, 349 "Couldn't find vehicle: 1" lines, zeldfep's buffer ran dry).
+    // Red::Cast returns a reference into its argument, so the entity handle is a local.
+    Red::Handle<Red::vehicle::BaseObject> vehicle;
+    if (const auto vehicleId = GetVehicleSystem()->GetVehicleGameId())
     {
-        auto vehicle = Red::Cast<Red::vehicle::BaseObject>(GetEntity(*vehicle_id));
+        const auto vehicleEntity = GetEntity(*vehicleId);
+        vehicle = Red::Cast<Red::vehicle::BaseObject>(vehicleEntity);
         if (!vehicle)
         {
-            spdlog::info("Couldn't find vehicle: {}", (*vehicle_id).hash);
-            return;
+            // Once per id, not once per tick: the old line printed 30 times a second.
+            static uint64_t s_reportedMissing = 0;
+            if (std::exchange(s_reportedMissing, vehicleId->hash) != vehicleId->hash)
+                spdlog::warn("[Movement] VehicleSystem says we are in vehicle {:x}, but no such vehicle is in the "
+                             "world - streaming the on-foot position instead",
+                             vehicleId->hash);
         }
+    }
+
+    if (vehicle)
+    {
         if (auto remote_id = GetVehicleSystem()->GetVehicleRemoteId(); remote_id != std::nullopt)
         {
             auto transform = Red::WorldTransform();
