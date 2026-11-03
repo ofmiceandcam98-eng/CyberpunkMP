@@ -20,8 +20,8 @@
     only shows builds that have one.
 
     Usage:
-        .\tools\ShipTestBuild.ps1 -Name "character selector"
-        .\tools\ShipTestBuild.ps1 -Name "character selector" -WhatIf
+        .\tools\ShipTestBuild.ps1 -Name "character selector" -Checked some-atlas-branch-id,another-id
+        .\tools\ShipTestBuild.ps1 -Name "character selector" -Checked "none: selector, connect menu" -WhatIf
 #>
 
 [CmdletBinding()]
@@ -32,6 +32,13 @@ param(
     # tell them apart; there is a warning below that catches that shape now.
     [Parameter(Mandatory = $true)]
     [string]$Name,
+
+    # "Have we fixed this?" - the Atlas branches read before building this, whatever their
+    # status, or "none: <symptoms searched>" when a full search found nothing. Mandatory so
+    # the check cannot be skipped by forgetting it (zeldfep, 2026-11-03). It proves the search
+    # was declared, not that it was done well.
+    [Parameter(Mandatory = $true)]
+    [string[]]$Checked,
 
     # Override the tag. Defaults to <current version>-worldstate-test.<next number>.
     [string]$Tag,
@@ -62,6 +69,31 @@ function Warn($m) { Write-Host "  !!  $m" -ForegroundColor Yellow }
 function Die($m)  { Write-Host "`nSTOPPED: $m" -ForegroundColor Red; exit 1 }
 
 Set-Location $Repo
+
+# ---------------------------------------------------------------------------
+# "Have we fixed this?" - before the tag, so a refusal burns no build number
+# ---------------------------------------------------------------------------
+
+$checkedIsNone = $Checked.Count -eq 1 -and $Checked[0] -match '^none:\s*\S'
+if (-not $checkedIsNone) {
+    # The address is not in this public repo: $AtlasUrl in tools\ship.local.ps1, or NCO_ATLAS_URL.
+    $atlas = if ($env:NCO_ATLAS_URL) { $env:NCO_ATLAS_URL } else { $AtlasUrl }
+    if (-not $atlas) {
+        Warn "no Atlas address, so -Checked ids are NOT verified. Set `$AtlasUrl in tools\ship.local.ps1 or NCO_ATLAS_URL."
+    } else {
+        foreach ($id in $Checked) {
+            try {
+                Invoke-RestMethod -TimeoutSec 15 "$atlas/v1/branches/$([uri]::EscapeDataString($id))" | Out-Null
+            } catch {
+                $status = $_.Exception.Response.StatusCode.value__
+                if ($status -eq 404) {
+                    Die "-Checked names '$id', which is not an Atlas branch. Search /v1/branches with NO status filter and pass real ids, or -Checked 'none: <symptoms searched>'."
+                }
+                Warn "could not verify '$id' at $atlas ($($_.Exception.Message)) - the Atlas may be down, so shipping anyway."
+            }
+        }
+    }
+}
 
 # ---------------------------------------------------------------------------
 # Tag
@@ -376,6 +408,7 @@ $Name
 Install swaps in this build's mod payload (DLL, redscript and Rpc together) and keeps
 the shipped one. Restore puts the current release back.
 
+have-we-fixed-this checked: $($Checked -join ', ')
 shipped-by: $stream
 "@
 

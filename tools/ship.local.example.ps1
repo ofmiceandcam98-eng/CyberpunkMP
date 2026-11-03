@@ -60,3 +60,6 @@
 
 # $ServerUser = "your-server-account"
 # $ServerHost = "your-server-address"
+
+# Atlas address, so ShipTestBuild -Checked can verify branch ids. Unset = a warning, ids unverified.
+# $AtlasUrl = 'http://<atlas-host>:11782'
