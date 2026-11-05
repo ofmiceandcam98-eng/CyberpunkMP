@@ -13,6 +13,7 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs'
+import path from 'node:path'
 import vm from 'node:vm'
 
 const text = (relative) => readFileSync(new URL(relative, import.meta.url), 'utf8').split('\r\n').join('\n')
@@ -343,6 +344,118 @@ check('a first render, signed out, leaves the invite hidden and the Tools row ho
   })(), [false, true])
 check('a member already on the network is not offered it',
   inviteShown(rendered(MEMBER, { serverState: { online: true, players: 1 } })), false)
+
+// --- mod list ----------------------------------------------------------------------------------
+
+const mainSource = text('./main.js')
+
+// The real mods:list handler out of main.js, so what the panel is handed below is what the main
+// process really answers, not what a test assumes it might.
+function modsListHandler ({ published, installed = {}, nexusKey = 'a-key' }) {
+  const start = mainSource.indexOf("ipcMain.handle('mods:list', async () => {")
+  if (start < 0) throw new Error('main.js has no mods:list handler - update this selftest')
+  const end = mainSource.indexOf('\n})\n', start)
+  let handler = null
+  const deps = {
+    ipcMain: { handle: (_name, fn) => { handler = fn } },
+    path,
+    existsSync: () => true,
+    findGameDir: () => 'game',
+    fetchModList: async () => published,
+    sortByDependencies: (mods) => mods,
+    refreshUserLevel: async () => 'player',
+    LEVELS: { player: 0, moderator: 1, admin: 2, owner: 3 },
+    isAdmin: () => false,
+    loadInstalledMods: () => installed,
+    describeInstalledMod: (mod, records) => ({ state: records[String(mod.nexusModId)] ? 'installed' : 'missing' }),
+    fetchModInfo: async () => null,
+    recordPaths: (record) => record.files || [],
+    pulledMods: new Map(),
+    describeUpdate: async () => null,
+    loadNexusKey: () => nexusKey
+  }
+  // eslint-disable-next-line no-new-func
+  new Function(...Object.keys(deps), `'use strict'\n${mainSource.slice(start, end + 3)}`)(...Object.values(deps))
+  return handler
+}
+
+const OWN_MOD = { 555: { name: 'My Own Mod', version: '1.0', files: ['archive/pc/mod/own.archive'] } }
+const LISTED = { nexusModId: 111, name: 'Listed Mod' }
+
+const emptyList = await modsListHandler({ published: [], installed: OWN_MOD })()
+check('main process: an empty published list with a player\'s own install beside it is a real answer',
+  [emptyList.ok, emptyList.mods, emptyList.personal.map((m) => m.name)], [true, [], ['My Own Mod']])
+
+const devOnlyList = await modsListHandler({ published: [{ ...LISTED, devOnly: true }], installed: OWN_MOD })()
+check('main process: so is a list of only dev mods, read by a player',
+  [devOnlyList.mods, devOnlyList.personal.map((m) => m.name)], [[], ['My Own Mod']])
+
+const signedOutOfNexus = await modsListHandler({ published: [LISTED], installed: OWN_MOD, nexusKey: null })()
+check('main process: being signed out of Nexus is NOT a way there - it does not empty the list',
+  [signedOutOfNexus.signedIn, signedOutOfNexus.mods.map((m) => m.name)], [false, ['Listed Mod']])
+
+const bothLists = await modsListHandler({ published: [LISTED], installed: OWN_MOD })()
+const nothing = await modsListHandler({ published: [] })()
+
+function modPanel (answer) {
+  const deleted = []
+  const panel = page({
+    functions: ['renderMods', 'renderPersonalMods', 'makeUpdateButton', 'refreshMods'],
+    state: { modState: [], personalState: [], modsSignedIn: null },
+    globals: () => ({
+      setStatus: () => {},
+      window: {
+        launcher: {
+          listMods: async () => answer,
+          deleteMod: async (id) => {
+            deleted.push(id)
+            return { ok: true }
+          }
+        }
+      }
+    })
+  })
+  return { ...panel, deleted, rows: () => panel.$('modList').children }
+}
+
+const YOUR_MODS = '/// YOUR MODS — not on the server’s list ///'
+const NO_LIST_HINT = 'The server has no recommended mods yet. When it adds some, they appear here.'
+const ownRow = 'My Own Mod✓ INSTALLED🗑'
+
+{
+  const panel = modPanel(emptyList)
+  await panel.refreshMods()
+  check('an empty recommended list does not hide the player\'s own mods',
+    panel.rows().map((r) => r.textContent), [YOUR_MODS, ownRow])
+  check('and the hint still says why the list is empty',
+    [panel.$('modHint').textContent, panel.$('modCount').textContent], [NO_LIST_HINT, ''])
+
+  const remove = panel.rows()[1]?.children.find((c) => c.title === 'Remove this mod')
+  await remove?.listeners.click()
+  check('and the mod can be removed from there', panel.deleted, ['555'])
+}
+
+{
+  const panel = modPanel(devOnlyList)
+  await panel.refreshMods()
+  check('a list of only dev mods does not hide them either',
+    panel.rows().map((r) => r.textContent), [YOUR_MODS, ownRow])
+}
+
+{
+  const panel = modPanel(bothLists)
+  await panel.refreshMods()
+  check('with both lists, the recommended ones still come first',
+    panel.rows().map((r) => r.textContent), ['Listed ModRECOMMENDEDInstall', YOUR_MODS, ownRow])
+  check('and the count still counts the recommended ones',
+    panel.$('modCount').textContent, '1 mods · 0 installed')
+}
+
+{
+  const panel = modPanel(nothing)
+  await panel.refreshMods()
+  check('nothing listed and nothing installed draws nothing', [panel.rows(), panel.$('modHint').textContent], [[], NO_LIST_HINT])
+}
 
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exitCode = failed === 0 ? 0 : 1

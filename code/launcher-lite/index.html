@@ -4047,6 +4047,10 @@
       hint.textContent = modsSignedIn === false
         ? 'Sign in to Nexus in Settings to see the mod list.'
         : 'The server has no recommended mods yet. When it adds some, they appear here.'
+
+      // An empty recommended list says nothing about what the player installed themselves.
+      // The main process still reports those, and this panel is where they get removed.
+      renderPersonalMods(list)
       return
     }
 
@@ -4139,10 +4143,14 @@
       list.appendChild(row)
     }
 
-    // The player's own installs - anything added by link, number, or a Nexus "Mod
-    // Manager Download" click that was never on the server's list. Same records, same
-    // verify/repair/removal; this section is what makes the launcher a mod manager
-    // rather than a checklist, so nobody needs a second one.
+    renderPersonalMods(list)
+  }
+
+  // The player's own installs - anything added by link, number, or a Nexus "Mod
+  // Manager Download" click that was never on the server's list. Same records, same
+  // verify/repair/removal; this section is what makes the launcher a mod manager
+  // rather than a checklist, so nobody needs a second one.
+  function renderPersonalMods (list) {
     if (personalState.length > 0) {
       const head = document.createElement('div')
       head.className = 'modqueue-head'
