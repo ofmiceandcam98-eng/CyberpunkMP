@@ -25,6 +25,10 @@ import CyberpunkMP.World.*
  * separate because the game models it as an item and a balance is not a stack - counting
  * it as one is how somebody duplicates eddies.
  */
+// Lives on the body on purpose: a new world means a new body, which is what resets it.
+@addField(PlayerPuppet)
+public let m_mpMoneyRestored: Bool;
+
 public class MpInventory {
 
   /**
@@ -408,6 +412,7 @@ public class MpInventory {
     // end would report that correct case as a failure, and a summary that cries wolf is one
     // nobody reads - which is how the blind spot this fixes lasted three days.
     let expectedMoney = stored;
+    let puppet = player as PlayerPuppet;
 
     if owed > 0 {
       transaction.GiveItem(player, MarketSystem.Money(), owed);
@@ -439,6 +444,15 @@ public class MpInventory {
         if firstSpawn {
           transaction.RemoveItem(player, MarketSystem.Money(), -owed);
           network.ScriptLog(s"[MONEY] 4 restore: first spawn, stripped \(-owed) template eddies");
+        } else if !puppet.m_mpMoneyRestored {
+          // The first restore on this body. Everyone spawns into the shared world template, so
+          // what a brand-new body holds came from the world under it. Nothing can have been
+          // earned yet. Keeping it as "earnings" handed returning players the template's 121994
+          // on every session, and the next capture would have reported it as theirs (test.69).
+          // A reconnect inside the same world keeps the same body, so real earnings still land
+          // in the branch below.
+          transaction.RemoveItem(player, MarketSystem.Money(), -owed);
+          network.ScriptLog(s"[MONEY] 4 restore: first restore on this body, stripped \(-owed) eddies that came with the world");
         } else {
           // Kept on purpose, so the balance that SHOULD be there afterwards is the one the
           // player already had, not the server's older figure.
@@ -447,6 +461,9 @@ public class MpInventory {
         }
       }
     }
+
+    // Set after the money is settled, so only a restore that reached this point counts.
+    puppet.m_mpMoneyRestored = true;
 
     // Take back what the server does NOT say you own.
     //
