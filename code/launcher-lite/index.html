@@ -1919,7 +1919,9 @@
     } else if (!updateState.installed) {
       blockers.push('The mod is not installed — open Settings and press Install')
     } else if (!(updateState.upToDate || updateState.offline)) {
-      blockers.push('Your mod is out of date — press Update')
+      blockers.push(updateState.payloadCurrent
+        ? 'The frameworks the mod runs on need updating — press Update'
+        : 'Your mod is out of date — press Update')
     }
 
     if (!serverState) {
@@ -2301,10 +2303,13 @@
       }
     } else {
       dot.className = 'dot'
-      text.textContent = 'Mod update required' + (updateState.version ? ' - ' + updateState.version : '')
+      text.textContent = (updateState.payloadCurrent ? 'Framework update required' : 'Mod update required') +
+        (updateState.version ? ' - ' + updateState.version : '')
       updateBtn.style.display = 'inline-block'
       updateBtn.disabled = false
-      updateBtn.title = ''
+      updateBtn.title = updateState.payloadCurrent
+        ? 'Brings ' + (updateState.prerequisitesStale || []).join(', ') + ' to the versions this release uses'
+        : ''
     }
   }
 

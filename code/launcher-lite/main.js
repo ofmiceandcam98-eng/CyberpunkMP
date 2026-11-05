@@ -1671,9 +1671,20 @@ async function checkForUpdates () {
   //
   // On a test build the mod is CURRENT. The tag rides along so the UI can name the build
   // instead of implying a stale one; Update and Restore both still clear it.
+  //
+  // The frameworks count too, because the mod crashes on an old one just as surely. That makes
+  // Update the one button that fixes it: a player whose mod is current but whose RED4ext is not
+  // would otherwise see "up to date" over a game that will not start. A test build stays
+  // current here, since a test build leaves the frameworks alone; the Checkup row says so.
+  await refreshManifestState().catch(() => null)
+  const payloadCurrent = localStamp === remoteStamp
+  const prerequisitesStale = stalePrerequisites(findGameDir()).map((c) => c.name)
+
   return {
     installed: true,
-    upToDate: testBuildTag ? true : localStamp === remoteStamp,
+    upToDate: testBuildTag ? true : payloadCurrent && prerequisitesStale.length === 0,
+    payloadCurrent,
+    prerequisitesStale,
     testBuildTag,
     version: release.tag_name,
     published: release.published_at,
@@ -1706,6 +1717,19 @@ function missingPrerequisites (aGameDir) {
     ['Input Loader', path.join(aGameDir, 'red4ext', 'plugins', 'input_loader', 'input_loader.dll')]
   ]
   return prerequisites.filter(([, file]) => !existsSync(file)).map(([name]) => name)
+}
+
+// The pinned frameworks this install has not been proven to carry. Existing is not enough: an
+// old RED4ext exists, and crashes a newer game before the mod ever loads. Reads no network and
+// hashes nothing, so it is safe on every update check; bringPrerequisitesToPin does the proving.
+function stalePrerequisites (aGameDir) {
+  return ManifestKit.findStalePrerequisites(usableManifest(), loadSettings().bundledArchives,
+    aGameDir ? missingPrerequisites(aGameDir) : [])
+}
+
+// The name a framework's files are recorded under: its zip, without the version.
+function bundledOwnerKey (aArchiveName) {
+  return aArchiveName.replace(/-[\d.]+\.zip$/i, '').replace(/\.zip$/i, '')
 }
 
 async function verifyInstall () {
@@ -1800,7 +1824,9 @@ async function verifyInstall () {
   const outOfDate = update.installed && !update.upToDate && !update.offline
 
   if (outOfDate) {
-    problems.push(`A newer build is available (${update.version})`)
+    problems.push(update.payloadCurrent
+      ? `These frameworks are not confirmed at this release's versions: ${update.prerequisitesStale.join(', ')}. Press Update.`
+      : `A newer build is available (${update.version})`)
   }
 
   return {
@@ -1814,6 +1840,129 @@ async function verifyInstall () {
     testBuildTag: update.testBuildTag || null,
     problems
   }
+}
+
+// /releases/latest/download/ is a permanent URL that always resolves to the newest
+// release's asset of that name.
+//
+// This previously interpolated RELEASE_TAG - a constant that was DELETED when the
+// update check moved to /releases/latest. Referencing it threw a ReferenceError before
+// a single byte was fetched, so first-time install was broken outright for anyone on
+// 0.1.4 or later. Nothing pointed at it because the launcher's own update path had
+// stopped using tags, and nobody had done a fresh install since.
+async function downloadFullInstallPackage () {
+  const url = `https://github.com/${GITHUB_REPO}/releases/latest/download/FullInstall.zip`
+  const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 180000 })
+  const buffer = Buffer.from(response.data)
+
+  if (buffer.length < 1024 * 1024) {
+    throw new Error(`That download looks wrong (${buffer.length} bytes) - nothing was changed.`)
+  }
+
+  return new AdmZip(buffer)
+}
+
+/**
+ * Bring the frameworks up to what the signed manifest pins, as part of a normal Update.
+ *
+ * Update used to refresh the mod and nothing else, so a release that needed a newer RED4ext
+ * could not deliver it: only Remove mod plus Install everything could. Proven on zeldfep's box
+ * 2026-11-01, where the mod was current and RED4ext 1.29.1 plus ArchiveXL 1.26.0 crashed a 2.5
+ * game before the DLL loaded - and every existing player would have hit the same thing the day
+ * the 2.5 port shipped. atlas:launcher-update-path-never-upgrades-prerequisite-versions-pl.
+ *
+ * Runs BEFORE the payload, and checks every zip before a byte lands, so a bad download leaves a
+ * working install alone. Test builds never get here: applyUpdate refuses them first.
+ */
+async function bringPrerequisitesToPin (aGameDir, onProgress = () => {}) {
+  await refreshManifestState().catch(() => null)
+  let stale = stalePrerequisites(aGameDir)
+  if (stale.length === 0) return []
+
+  launcherLog(`[prereq] not confirmed at their pins: ${stale.map((c) => `${c.name} ${c.version}`).join(', ')}`)
+  onProgress('Checking the frameworks the mod runs on...')
+
+  const pkg = await downloadFullInstallPackage()
+  const zips = new Map()
+  for (const entry of pkg.getEntries()) {
+    const name = entry.entryName.replace(/\\/g, '/')
+    if (!entry.isDirectory && name.startsWith('prerequisites/')) zips.set(path.basename(name).toLowerCase(), entry)
+  }
+
+  const approve = () => {
+    const approved = new Map()
+    for (const component of stale) {
+      const entry = zips.get(component.archive.name.toLowerCase())
+      if (!entry) return { problem: `the release package has no ${component.archive.name}` }
+      const data = entry.getData()
+      const got = ManifestKit.sha256Hex(data)
+      if (got !== component.archive.sha256) {
+        return { problem: `${component.archive.name} is ${got.slice(0, 12)} but the manifest approved ${component.archive.sha256.slice(0, 12)}` }
+      }
+      approved.set(component.id, data)
+    }
+    return { approved }
+  }
+
+  // The same defect 456679a fixed for the payload: the manifest is memoized, so a package
+  // republished inside MANIFEST_TTL_MS can disagree with a stale memo while being perfectly
+  // good. A disagreement buys one forced re-fetch; only a FRESH manifest may fail the update.
+  let result = approve()
+  if (result.problem) {
+    launcherLog(`[prereq] ${result.problem} - re-fetching the manifest before refusing`)
+    await refreshManifestState(true).catch(() => null)
+    stale = stalePrerequisites(aGameDir)
+    result = approve()
+  }
+  if (result.problem) {
+    launcherLog(`[prereq] update refused: ${result.problem}`)
+    throw new Error(`The frameworks could not be updated: ${result.problem}. Nothing was changed. ` +
+                    'Try again in a minute, and report it if it repeats.')
+  }
+
+  const updated = []
+  for (const component of stale) {
+    const label = `${component.name} ${component.version}`
+    onProgress(`Checking ${label}...`)
+
+    const key = bundledOwnerKey(component.archive.name)
+    const settings = loadSettings()
+    const owned = settings.bundledFiles || {}
+    const others = Object.entries(owned).filter(([k]) => k !== key).flatMap(([, files]) => files)
+
+    let applied
+    try {
+      applied = ManifestKit.applyBundledZip(aGameDir, new AdmZip(result.approved.get(component.id)), owned[key], others)
+    } catch (err) {
+      launcherLog(`[prereq] ${label} extract FAILED into ${aGameDir} - ${err.message}`)
+      throw new Error(`${label} could not be written into the game folder (${err.message}). ` +
+                      'Close whatever is holding those files, such as an antivirus scan or an Explorer window, and press Update again.')
+    }
+
+    if (!applied.ok) {
+      launcherLog(`[prereq] ${label} did not land: ${applied.unwritten.slice(0, 8).join(', ')}`)
+      throw new Error(`${label} did not land: ${applied.unwritten.length} file(s) still differ ` +
+                      `(first: ${applied.unwritten[0]}). Check the game folder is writable and that no anti-virus removed them, then press Update again.`)
+    }
+
+    if (applied.retired.removed.length > 0) {
+      launcherLog(`[prereq] ${label} removed ${applied.retired.removed.length} file(s) the new version no longer ships: ${applied.retired.removed.slice(0, 8).join(', ')}`)
+    }
+    if (applied.retired.failed.length > 0) {
+      launcherLog(`[prereq] ${label} could not remove: ${applied.retired.failed.slice(0, 8).join(', ')}`)
+    }
+
+    // Recorded per framework, only after the disk proved it, so a failure part way through
+    // keeps what landed and the next Update picks up exactly what did not.
+    saveSettings({
+      bundledFiles: { ...owned, [key]: applied.files },
+      bundledArchives: { ...(settings.bundledArchives || {}), [component.id]: component.archive.sha256 }
+    })
+    launcherLog(`[prereq] ${label} ${applied.changed ? 'updated' : 'already at its pin - nothing written'}`)
+    if (applied.changed) updated.push(label)
+  }
+
+  return updated
 }
 
 /**
@@ -1854,23 +2003,7 @@ async function installEverything (onProgress = () => {}) {
 
   onProgress('Downloading...')
 
-  // /releases/latest/download/ is a permanent URL that always resolves to the newest
-  // release's asset of that name.
-  //
-  // This previously interpolated RELEASE_TAG - a constant that was DELETED when the
-  // update check moved to /releases/latest. Referencing it threw a ReferenceError before
-  // a single byte was fetched, so first-time install was broken outright for anyone on
-  // 0.1.4 or later. Nothing pointed at it because the launcher's own update path had
-  // stopped using tags, and nobody had done a fresh install since.
-  const url = `https://github.com/${GITHUB_REPO}/releases/latest/download/FullInstall.zip`
-  const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 180000 })
-  const buffer = Buffer.from(response.data)
-
-  if (buffer.length < 1024 * 1024) {
-    throw new Error(`That download looks wrong (${buffer.length} bytes) - nothing was changed.`)
-  }
-
-  const pkg = new AdmZip(buffer)
+  const pkg = await downloadFullInstallPackage()
 
   // Zip entry paths use whatever separator the tool that made them wrote.
   //
@@ -1898,6 +2031,7 @@ async function installEverything (onProgress = () => {}) {
 
   const installed = []
   const bundledOwnership = {}
+  const provenArchives = {}
 
   // The signed manifest, when one exists, knows the sha256 of every prerequisite zip -
   // so each is verified against the manifest BEFORE its bytes touch the game folder.
@@ -1950,13 +2084,16 @@ async function installEverything (onProgress = () => {}) {
     // ArchiveXL (Nexus 4198, fingerprinted live 2026-08-23) extract straight over the
     // pinned framework, and would have let its uninstall DELETE the framework. These
     // are file lists only, held in settings, never offered in any mods UI.
-    bundledOwnership[name.replace(/-[\d.]+\.zip$/i, '').replace(/\.zip$/i, '')] =
+    bundledOwnership[bundledOwnerKey(name)] =
       inner.getEntries().filter((e) => !e.isDirectory).map((e) => e.entryName.replace(/\\/g, '/'))
+
+    // Proven against the manifest above, so a fresh install is not asked to prove it again.
+    if (expected) provenArchives[expected.id] = got
 
     installed.push(name.replace(/\.zip$/, ''))
   }
 
-  saveSettings({ bundledFiles: bundledOwnership })
+  saveSettings({ bundledFiles: bundledOwnership, bundledArchives: provenArchives })
 
   // --- the mod ------------------------------------------------------------
   onProgress('Installing the multiplayer mod...')
@@ -2255,7 +2392,7 @@ function isProcessRunning (imageName) {
 // fs/path (no Electron), so they sit beside the other pure helpers, and
 // manifest.selftest.mjs exercises them. Call them via ManifestKit.
 
-async function applyUpdate () {
+async function applyUpdate (onProgress = () => {}) {
   const modDir = findModDir()
   if (!modDir) throw new Error('The mod is not installed - install it once first.')
 
@@ -2282,6 +2419,10 @@ async function applyUpdate () {
   if (await isGameRunning()) {
     throw new Error('Close Cyberpunk 2077 first - the game is holding the mod files open.')
   }
+
+  // First, so a framework that cannot be brought up to date stops here with the mod untouched.
+  const gameDir = findGameDir()
+  if (gameDir) await bringPrerequisitesToPin(gameDir, onProgress)
 
   // Reuse the check we already did rather than asking GitHub again. Two calls per
   // click doubled the chance of hitting the unauthenticated rate limit, and a failed
@@ -5779,7 +5920,10 @@ ipcMain.handle('launcher:reset', async () => {
 
 ipcMain.handle('update:apply', async () => {
   try {
-    const result = await applyUpdate()
+    const result = await applyUpdate((step) => {
+      launcherLog(`update: ${step}`)
+      if (mainWindow) mainWindow.webContents.send('install-progress', step)
+    })
     lastUpdateCheck = await checkForUpdates()
     return { ok: true, ...result }
   } catch (err) {
@@ -5860,8 +6004,18 @@ ipcMain.handle('system:checkup', async () => {
     row('Game folder writable', writable, writable ? 'installs can land' : 'run the launcher as administrator')
 
     const missing = missingPrerequisites(gameDir)
-    row('Frameworks', missing.length === 0,
-      missing.length === 0 ? 'all six present' : `missing: ${missing.join(', ')} - use Install everything`)
+    if (missing.length > 0) {
+      row('Frameworks', false, `missing: ${missing.join(', ')} - use Install everything`)
+    } else {
+      const stale = stalePrerequisites(gameDir).map((c) => c.name)
+      row('Frameworks', stale.length === 0 ? true : 'warn',
+        stale.length === 0
+          ? 'all six present'
+          : `${stale.join(', ')} not confirmed at the versions this release pins - ` +
+            (loadSettings().testBuildTag
+              ? 'a test build leaves these alone; Tools > Test builds > Restore, then Update'
+              : 'press Update'))
+    }
   }
 
   const modDir = findModDir()

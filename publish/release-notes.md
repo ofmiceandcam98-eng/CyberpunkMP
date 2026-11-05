@@ -23,6 +23,11 @@ launcher will tell you if your game is on the wrong version.
   older code since September, so recent launcher builds could not talk to it. It now runs
   the same code as this release.
 - **Trading: the eddies offer moves by 1 per press** instead of 500.
+- **Update now brings the frameworks with it.** RED4ext and the other five frameworks the
+  mod runs on used to change only with a full Install everything, so an old copy could
+  survive every Update and crash the game before the mod loaded. Update now checks them
+  against this release and replaces any that differ. If yours already match, it leaves
+  them alone.
 
 **Still broken on 2.5 - known, and being worked on:**
 
