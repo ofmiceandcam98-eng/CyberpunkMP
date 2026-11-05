@@ -1565,6 +1565,12 @@ fixes — money is not server-authoritative today. See `docs/PHASE5-STAGE6B-MONE
   one (9141 bytes, female) and is re-uploaded on every autosave and every disconnect (`sent
   9141 bytes of appearance to the server`), so the bad record keeps refreshing itself. The
   commit is inert — why nobody is visibly Veronica: `ReFinalizeState`/`FinalizeState` are
+  **CORRECTED 2026-11-05: those calls were never refused - they never ran.** `CallCustomizationFunction` (NetworkWorldSystem.cpp) passes no out-slot, and the SDK's
+  `ExecuteFunction` returns false WITHOUT calling any function that has a return type when
+  the out-slot is null (`Scripting/Utils-inl.hpp`). ReFinalizeState, FinalizeState and
+  InitializeState return Bool, so none ran; InitializeOptionsFromFinalizedState is void, so it
+  "worked". Do not fix the helper alone: the mirror calls InitOpts BEFORE ReFinalize, and
+  ReFinalize needs state the InitOpts call sets. atlas:on-2-5-a-player-sees-themself-as-the-template-body-while-eve
   refused in gameplay, `InitializeOptionsFromFinalizedState` is accepted and does not rebuild
   the body — the restore "succeeds", changes nothing, and still gates saving
   (`MaySaveCharacter` refuses on a FAILED restore). Cam, from the field: "im not the character
