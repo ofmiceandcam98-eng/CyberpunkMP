@@ -405,8 +405,16 @@
     justify-content: flex-start;
     gap: .85rem;
     text-align: center;
-    overflow: hidden;
+    /* An admin's Server panel doesn't fit the real 1164x761 window, and the admin login row sits
+       at the bottom of it, so hiding the overflow made that row unreachable. The wheel crosses
+       it, with no visible bar. Nobody else's column is tall enough to scroll. */
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-width: none;
   }
+  /* A flex column shrinks its children before it scrolls, which would only move the overflow
+     inside the cards. */
+  .col-right > * { flex-shrink: 0; }
 
   h1 { font-size: var(--fs-head); margin: 0; font-weight: 600; }
   p.lede { color: var(--ink-dim); margin: 0; max-width: 30rem; line-height: 1.45; font-size: var(--fs-body); }
