@@ -184,7 +184,7 @@ void GameServer::Kill()
 
 void GameServer::Run()
 {
-    while (m_run && IsListening())
+    while (m_run && !s_stopRequested && IsListening())
         Update();
 }
 

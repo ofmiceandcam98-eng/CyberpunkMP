@@ -21,6 +21,11 @@ void ServerAPI::Run()
     s_server->Run();
 }
 
+void ServerAPI::RequestStop()
+{
+    GameServer::RequestStop();
+}
+
 void ServerAPI::Exit()
 {
     s_server = nullptr;

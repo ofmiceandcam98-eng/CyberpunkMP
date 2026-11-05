@@ -12,6 +12,7 @@
 #include "Systems/WorldFacts.h"
 #include "Systems/VehicleStore.h"
 #include "Game/World.h"
+#include <atomic>
 #include <utility>
 
 template <typename T>
@@ -53,6 +54,9 @@ struct GameServer final : Server
     ~GameServer() override;
 
     void Kill();
+    // Asks the tick loop to end, from any thread. Static so a late signal cannot reach a
+    // server that is already being destroyed.
+    static void RequestStop() noexcept { s_stopRequested = true; }
     void Run();
 
     template <NetworkMessage T>
@@ -281,6 +285,7 @@ private:
     UniquePtr<World> m_pWorld;
     TaskQueue m_tasks;
     bool m_run = true;
+    inline static std::atomic_bool s_stopRequested{false};
     std::chrono::steady_clock::time_point m_lastUpdate;
     std::chrono::steady_clock::time_point m_lastConnectionReport;
     std::chrono::steady_clock::time_point m_lastReverify;
