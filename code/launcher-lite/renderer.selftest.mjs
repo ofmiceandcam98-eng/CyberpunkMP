@@ -92,7 +92,7 @@ function fakeDocument () {
     createElement: (tag) => new Element(tag),
     getElementById: (id) => {
       if (elements.has(id)) return elements.get(id)
-      const tag = new RegExp(`<[a-z]+\\b[^>]*\\bid="${id}"[^>]*>`).exec(html)
+      const tag = new RegExp(`<[a-z][a-z0-9]*\\b[^>]*\\bid="${id}"[^>]*>`).exec(html)
       if (!tag) throw new Error(`index.html has no element #${id}`)
       const element = new Element(tag[0].slice(1, tag[0].search(/\s/)), id)
       if (/\bstyle="[^"]*display:\s*none/.test(tag[0])) element.style.display = 'none'
@@ -262,6 +262,62 @@ if (!existsSync(NOTES_FILE)) {
   check('real notes: the check above is not vacuous - the file does wrap its lines',
     wrappedLines.length > 0, true)
 }
+
+// --- JACK IN reason and the network invite -----------------------------------------------------
+
+const MEMBER = { handle: 'v', username: 'v', playerId: 1, avatarUrl: 'x', isMember: true, isAdmin: false }
+const STRANGER = { ...MEMBER, isMember: false }
+const ADMIN = { ...MEMBER, isAdmin: true }
+
+const INVITE_BUTTON = "Join the server's network"
+
+// The real render and renderTailnetInvite together, on a machine that is on Tailscale and cannot
+// reach the server: the state where the invite is the answer.
+function launcher (over = {}) {
+  return page({
+    functions: ['render', 'renderTailnetInvite'],
+    state: {
+      signedInUser: null,
+      gameState: { launching: false, running: false },
+      updateState: { installed: true, upToDate: true },
+      serverState: { online: false },
+      tailscaleState: { installed: true, connected: true, ip: '100.64.0.1' },
+      ...over
+    },
+    globals: (document) => ({
+      playBtn: document.getElementById('play'),
+      loginBtn: document.getElementById('login'),
+      refreshNexus: () => {},
+      showAdminPanel: () => {}
+    })
+  })
+}
+
+const inviteShown = (l) => l.$('joinTailnet').style.display !== 'none'
+const reason = (l) => l.$('playReason').textContent
+
+function rendered (user, over) {
+  const l = launcher(over)
+  l.render(user)
+  return l
+}
+
+check('the reason quotes the label the invite button really has',
+  html.includes(`id="joinTailnet" style="display:none">${INVITE_BUTTON}</button>`), true)
+
+for (const [who, user] of [['signed out', null], ['not a member', STRANGER], ['member', MEMBER], ['admin', ADMIN]]) {
+  const l = rendered(user)
+  check(`${who}: the reason only names the invite button when it is on screen`,
+    !reason(l).includes(INVITE_BUTTON) || inviteShown(l), true)
+}
+
+const NETWORK_OPENS = "The server's network opens to you once you have joined the Discord"
+check('not a member: told what comes first',
+  reason(rendered(STRANGER)), `Join the Night City Online Discord — press the button above  ·  ${NETWORK_OPENS}`)
+check('signed out: told what comes first',
+  reason(rendered(null)), `Sign in with Discord  ·  ${NETWORK_OPENS}`)
+check('member: still sent to the button, which is there',
+  [reason(rendered(MEMBER)).includes(INVITE_BUTTON), inviteShown(rendered(MEMBER))], [true, true])
 
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exitCode = failed === 0 ? 0 : 1

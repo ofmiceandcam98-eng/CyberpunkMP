@@ -1942,7 +1942,13 @@
       } else if (tailscaleState && !tailscaleState.connected) {
         blockers.push('Tailscale is installed but not signed in — open it from the system tray')
       } else if (tailscaleState && tailscaleState.connected) {
-        blockers.push("You are not on the server's network yet — press “Join the server's network” above and accept the invite")
+        // The button this names is only ever shown to a verified member (renderTailnetInvite),
+        // and the main process refuses the invite to anyone else. Someone signed out or not in
+        // the Discord yet is told what comes first, not sent looking for a control that is not
+        // on their screen.
+        blockers.push(verified
+          ? "You are not on the server's network yet — press “Join the server's network” above and accept the invite"
+          : "The server's network opens to you once you have joined the Discord")
       } else {
         blockers.push('Cannot reach the server — press Verify files for a step-by-step check')
       }
