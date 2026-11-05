@@ -651,6 +651,8 @@ public native class NetworkWorldSystem extends IGameSystem {
             let request = new UnmountingRequest();
             request.lowLevelMountingInfo = info;
             request.mountData = new MountEventData();
+            // They are about to be somewhere else, so there is nothing to animate.
+            request.mountData.isInstant = true;
 
             GameInstance.GetMountingFacility(GetGameInstance()).Unmount(request);
 
@@ -665,7 +667,42 @@ public native class NetworkWorldSystem extends IGameSystem {
             delayed.system = this;
             delayed.position = position;
             delayed.yaw = yaw;
+            delayed.attemptsLeft = 4;
             GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(delayed, 0.5, false);
+            return;
+        }
+
+        this.DoTeleport(position, yaw);
+    }
+
+    /**
+     * The seat has had time to empty. Usually it has, and this just moves them.
+     *
+     * A player downed in a car can stay seated through all of the above: on test.86 the
+     * respawn moved hezbollahcartel on the server while the game kept him in a burning car,
+     * and neither /tp nor a reconnect could free him, only a game restart. The seat is a
+     * workspot, and the workspot system is what the game's own exit ends up calling
+     * (vehicleTransition.script, ExitWorkspot), so that is the last resort. It only runs on
+     * someone the polite route has already failed, and the attempts run out so that a seat
+     * which will not let go still ends in the teleport rather than a player left waiting.
+     */
+    public func FinishMountedTeleport(position: Vector4, yaw: Float, attemptsLeft: Int32) -> Void {
+        let game = GetGameInstance();
+        let player = GetPlayer(game);
+
+        if IsDefined(player) && attemptsLeft > 0 && VehicleComponent.IsMountedToVehicle(game, player) {
+            let vehicle: wref<VehicleObject>;
+            if VehicleComponent.GetVehicle(game, player, vehicle) {
+                FTLogWarning(s"[NetworkWorldSystem] still seated after the unmount - forcing the workspot out, \(attemptsLeft) attempt(s) left");
+                GameInstance.GetWorkspotSystem(game).UnmountFromVehicle(vehicle, player, true);
+            }
+
+            let again = new MpDelayedTeleportCallback();
+            again.system = this;
+            again.position = position;
+            again.yaw = yaw;
+            again.attemptsLeft = attemptsLeft - 1;
+            GameInstance.GetDelaySystem(game).DelayCallback(again, 0.5, false);
             return;
         }
 
@@ -1020,10 +1057,11 @@ public class MpDelayedTeleportCallback extends DelayCallback {
     public let system: wref<NetworkWorldSystem>;
     public let position: Vector4;
     public let yaw: Float;
+    public let attemptsLeft: Int32;
 
     public func Call() -> Void {
         if IsDefined(this.system) {
-            this.system.DoTeleport(this.position, this.yaw);
+            this.system.FinishMountedTeleport(this.position, this.yaw, this.attemptsLeft);
         }
     }
 }
