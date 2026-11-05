@@ -319,5 +319,30 @@ check('signed out: told what comes first',
 check('member: still sent to the button, which is there',
   [reason(rendered(MEMBER)).includes(INVITE_BUTTON), inviteShown(rendered(MEMBER))], [true, true])
 
+// Every way out of an account (Log out, Sign out and reset, a refused login) lands on render(null).
+{
+  const l = launcher()
+  const toolRow = () => [l.$('openTailscaleInvite').disabled, l.$('openTailscaleInvite').textContent]
+
+  l.render(MEMBER)
+  check('a member who cannot reach the server is offered the invite',
+    [inviteShown(l), toolRow()], [true, [false, 'Open invite']])
+
+  l.render(null)
+  check('logging out takes the invite off the screen', inviteShown(l), false)
+  check('and the Tools row stops offering it', toolRow(), [true, 'Members only'])
+
+  l.render(MEMBER)
+  check('signing back in offers it again', [inviteShown(l), toolRow()], [true, [false, 'Open invite']])
+}
+
+check('a first render, signed out, leaves the invite hidden and the Tools row honest',
+  (() => {
+    const l = rendered(null)
+    return [inviteShown(l), l.$('openTailscaleInvite').disabled]
+  })(), [false, true])
+check('a member already on the network is not offered it',
+  inviteShown(rendered(MEMBER, { serverState: { online: true, players: 1 } })), false)
+
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exitCode = failed === 0 ? 0 : 1

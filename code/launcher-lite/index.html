@@ -1967,6 +1967,11 @@
 
     showAdminPanel(signedIn && user.isAdmin)
 
+    // Above the signed-out return, not after it. A verified member who logs out while the
+    // server is unreachable kept the members-only invite on screen otherwise, and the main
+    // process refuses it, so the press could only fail.
+    renderTailnetInvite()
+
     if (!signedIn) {
       $('gateText').textContent = 'Not verified'
       $('heading').textContent = 'Sign in to play'
@@ -1996,8 +2001,6 @@
         'Your Discord account is verified, but you are not in Night City Online. ' +
         'Join, then sign in again.'
     }
-
-    renderTailnetInvite()
   }
 
   // If the preload failed to load, window.launcher does not exist and every button
