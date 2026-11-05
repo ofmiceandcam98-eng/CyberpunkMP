@@ -102,7 +102,9 @@ inline bool IsGame231Layout()
 // ripperdoc saves stop, which is recoverable; overwriting somebody's face is not.
 inline Handle<game::ui::CharacterCustomizationState> * GetCustomizationState(game::ui::CharacterCustomizationSystem * self)
 {
-    constexpr uint32_t kDecodedLayoutSize = 0x388;
+    // static: the lambda below has no captures, and passing this to spdlog binds a reference to
+    // it, which needs an object it can reach. The CI compiler refuses a plain local (C3493).
+    static constexpr uint32_t kDecodedLayoutSize = 0x388;
 
     static Handle<game::ui::CharacterCustomizationState> s_none;
     static const bool s_layoutKnown = []

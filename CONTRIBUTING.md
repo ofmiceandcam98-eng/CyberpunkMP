@@ -1,7 +1,7 @@
 # Working on Night City Online
 
 This is a fork of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) carrying the
-changes needed to run on **Cyberpunk 2077 patch 2.31**. Upstream targets 2.2 and will not
+changes needed to run on **Cyberpunk 2077 patch 2.5**. Upstream targets 2.2 and will not
 start on current game versions.
 
 Read this before building. The toolchain has version pins that are load-bearing, and a
