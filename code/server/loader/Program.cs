@@ -18,6 +18,14 @@ internal class Program
         CyberpunkMp.ServerAPI.SetPlayerLeftCallback(leaveCallback);
     }
 
+    // A stop signal only asks the tick loop to end. Main then falls through to Exit on its own
+    // thread, so the final save runs with nothing else touching the stores.
+    private static void StopRequested(PosixSignalContext context)
+    {
+        context.Cancel = true;
+        CyberpunkMp.ServerAPI.RequestStop();
+    }
+
     private static void Main(string[] args)
     {
         // An admin stopped this server. Idle in stopped mode - status plus an
@@ -29,6 +37,13 @@ internal class Program
             Server.Loader.Systems.Lifecycle.RunStoppedMode();
             return;
         }
+
+        // docker stop sends SIGTERM. Left alone, the runtime answers it by exiting on its own
+        // thread: that ran ServerAPI::Exit and destroyed GameServer while this thread was still
+        // ticking inside it, so the final save raced live play and every stop ended in
+        // free(): invalid pointer. atlas:both-game-servers-abort-with-free-invalid-pointer-on-every-s
+        using var sigterm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, StopRequested);
+        using var sigint = PosixSignalRegistration.Create(PosixSignal.SIGINT, StopRequested);
 
         try
         {
