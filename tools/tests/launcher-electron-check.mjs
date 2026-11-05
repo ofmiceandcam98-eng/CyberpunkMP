@@ -111,7 +111,20 @@ async function run () {
     if (exceptionDetails) throw new Error(`page threw on: ${expression.slice(0, 80)}`)
     return result.value
   }
-  const centre = (id) => read(`(() => { const r = document.getElementById('${id}').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 } })()`)
+  // The launcher's startup checks finish at their own pace and change how many lines the status
+  // takes, which moves the buttons. Aiming before that settles misses, so wait for two matching reads.
+  const centre = async (id) => {
+    const measure = () => read(`(() => { const r = document.getElementById('${id}').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 } })()`)
+    let last = await measure()
+    for (let tries = 0; tries < 20; tries++) {
+      await sleep(400)
+      const now = await measure()
+      if (now.x === last.x && now.y === last.y) return now
+      last = now
+    }
+    return last
+  }
+  const under = (at, id) => read(`(() => { const u = document.elementFromPoint(${at.x}, ${at.y}); return 'pointer at ' + ${Math.round(at.x)} + ',' + ${Math.round(at.y)} + ' is over ' + (u ? (u.id || u.className || u.tagName) : 'nothing') + ', window ' + innerWidth + 'x' + innerHeight + ', ${id} hover=' + document.getElementById('${id}').matches(':hover') })()`)
   const mouse = (type, at, extra = {}) => send('Input.dispatchMouseEvent', { type, x: at.x, y: at.y, ...extra })
   const shot = async (name) => {
     if (!outDir) return
@@ -123,7 +136,18 @@ async function run () {
   await send('Runtime.enable')
   await send('Log.enable')
   await send('Page.enable')
-  await sleep(4000)
+
+  // The startup checks change the layout when they land: a finished update check can put an Update
+  // button beside Verify, right under where the pointer was aimed. Touch nothing until they're done.
+  for (let tries = 0; tries < 60; tries++) {
+    const checking = await read(`(() => {
+      const text = ['srvText', 'updateText', 'tsText'].map((id) => document.getElementById(id)?.textContent || 'Checking')
+      return text.some((t) => t.includes('Checking'))
+    })()`).catch(() => true)
+    if (!checking) break
+    await sleep(500)
+  }
+  await sleep(500)
 
   const facts = await read(`(async () => {
     await document.fonts.ready
@@ -152,14 +176,25 @@ async function run () {
   check(facts.doneBackground === 'rgb(255, 42, 50)', "the settings modal's Done button kept its red", 'the .play rules were removed')
   await shot('electron-rest')
 
+  // A real pointer sends a stream of moves. Chromium can drop a single synthetic one before the
+  // window is active, which looks exactly like a hover rule that doesn't work.
+  // The window is on a real desktop, so the real cursor can win too. What's being judged is whether
+  // the rule applies WHILE hovered, so keep moving until Chromium says it is hovered.
   const verify = await centre('verify')
-  await mouse('mouseMoved', verify)
+  for (let tries = 0; tries < 8; tries++) {
+    for (const step of [40, 20, 10, 0]) {
+      await mouse('mouseMoved', { x: verify.x - step, y: verify.y })
+      await sleep(60)
+    }
+    if (await read(`document.getElementById('verify').matches(':hover')`)) break
+    await sleep(250)
+  }
   await sleep(600)
   const hover = await read(`(() => {
     const b = document.getElementById('verify')
     return { dots: [...b.querySelectorAll('.pips i')].map((i) => getComputedStyle(i).opacity), plate: getComputedStyle(b.querySelector('.face')).transform, base: getComputedStyle(b.querySelector('.back')).transform }
   })()`)
-  check(hover.dots.every((d) => d === '1'), 'hover fills the load bar', 'the hover rule did not apply in Electron')
+  check(hover.dots.every((d) => d === '1'), 'hover fills the load bar', `the hover rule did not apply in Electron; ${await under(verify, 'verify')}`)
   if (facts.reduced) {
     check(hover.plate === 'none', 'with animations off, hover does not move the plate', 'the reduced-motion rules did not apply')
   } else {
@@ -171,7 +206,7 @@ async function run () {
   await mouse('mousePressed', verify, { button: 'left', buttons: 1, clickCount: 1 })
   await sleep(200)
   const pressed = await read(`getComputedStyle(document.querySelector('#verify .face')).transform`)
-  if (!facts.reduced) check(pressed.includes('-3, 3'), 'pressing drops the plate into its base', 'the :active rule did not apply')
+  if (!facts.reduced) check(pressed.includes('-3, 3'), 'pressing drops the plate into its base', `the :active rule did not apply, plate reads ${pressed}; ${await under(verify, 'verify')}`)
   const away = { x: 8, y: 8 }
   await mouse('mouseMoved', away, { button: 'left', buttons: 1 })
   await mouse('mouseReleased', away, { button: 'left', buttons: 0, clickCount: 1 })
