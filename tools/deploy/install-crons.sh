@@ -14,9 +14,9 @@
 #   /bin/bash tools/deploy/install-crons.sh            # install what is missing
 #   /bin/bash tools/deploy/install-crons.sh --dry-run  # say what it would do, touch nothing
 #
-# Idempotent: re-running never duplicates a line. Presence is decided by the SCRIPT PATH,
-# not the exact schedule, so a schedule you hand-tuned in the crontab is left ALONE rather
-# than reset to the default here - change one deliberately, and remove the old line by hand.
+# Idempotent: re-running never duplicates a line. Presence is decided by the JOB, not the
+# exact schedule, so a schedule you hand-tuned in the crontab is left ALONE rather than
+# reset to the default here - change one deliberately, and remove the old line by hand.
 #
 # Keep this list and docs/MIGRATION.md in step; both name the same four jobs.
 set -u
@@ -36,6 +36,19 @@ CRONS=(
   "0 4 * * * /bin/bash $REPO_DIR/tools/deploy/backup-gamedata.sh"
 )
 
+# The snapshot, twice over. A test server's saves are worth keeping too, when one sits beside
+# this deploy; a box that only runs one server gets just the one. And cron never runs a job it
+# missed: a box that was down at 04:00 on Nov 4 and 5 2026 silently took no snapshot at all, so
+# every boot takes one. The 180s lets the mounts and the containers settle first.
+BACKUP="/bin/bash $REPO_DIR/tools/deploy/backup-gamedata.sh"
+TEST_ENV="NCO_GAMEDATA_SRC=$REPO_DIR-authority/config NCO_BACKUP_DIR=/mnt/vol/backups/gamedata-authority"
+if [ -d "$REPO_DIR-authority/config" ]; then
+  CRONS+=("0 4 * * * $TEST_ENV $BACKUP")
+  CRONS+=("@reboot sleep 180; $BACKUP; $TEST_ENV $BACKUP")
+else
+  CRONS+=("@reboot sleep 180; $BACKUP")
+fi
+
 DRY=0
 [ "${1:-}" = "--dry-run" ] && DRY=1
 
@@ -47,9 +60,16 @@ added=0
 present=0
 
 for line in "${CRONS[@]}"; do
-    # Match on the .sh path only, so a present-but-rescheduled line counts as present.
-    script=$(printf '%s' "$line" | grep -oE '/[^ ]+/tools/deploy/[a-z-]+\.sh')
-    if printf '%s\n' "$current" | grep -Fq "$script"; then
+    # Match on the job only, so a present-but-rescheduled line counts as present. The three
+    # backup lines share one script, so a bare path match would read all three as present
+    # the moment any one of them exists.
+    script=$(printf '%s' "$line" | grep -oE '/[^ ]+/tools/deploy/[a-z-]+\.sh' | head -n 1)
+    case "$line" in
+        @reboot*)           printf '%s\n' "$current" | grep -q '^@reboot.*/tools/deploy/backup-gamedata\.sh' ;;
+        *NCO_BACKUP_DIR=*)  printf '%s\n' "$current" | grep -v '^@reboot' | grep -Fq "$TEST_ENV" ;;
+        *)                  printf '%s\n' "$current" | grep -v '^@reboot' | grep -v 'NCO_BACKUP_DIR=' | grep -Fq "$script" ;;
+    esac
+    if [ $? -eq 0 ]; then
         present=$((present + 1))
         echo "  present: ${script##*/}"
     else

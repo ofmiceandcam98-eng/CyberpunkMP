@@ -69,7 +69,8 @@ two of the four jobs). One command installs all of them, idempotently:
 /bin/bash <live deploy>/tools/deploy/install-crons.sh --dry-run  # show, touch nothing
 ```
 It carries the four NCO jobs — `update-server` (*/10), `update-wolvenkit` (hourly),
-`watch-events` (*/5), `backup-gamedata` (04:00) — pointed at wherever the checkout is, and
+`watch-events` (*/5), `backup-gamedata` (04:00 and at every boot, for a test server's saves
+too when a `<live deploy>-authority` sits beside it) — pointed at wherever the checkout is, and
 re-running never duplicates a line. All are invoked via `/bin/bash`, because TrueNAS mounts
 `/home` noexec, where direct execution fails silently with exit 126. To confirm on a running
 box: `crontab -l | grep tools/deploy`.
