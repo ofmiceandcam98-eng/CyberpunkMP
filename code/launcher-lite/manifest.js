@@ -776,6 +776,24 @@ export function dllLoadWarning ({ isSymlink, linkTarget } = {}) {
     'while the launcher reports success. Remove the dev link (or restore the shipped DLL) before launching.'
 }
 
+/**
+ * The test build a dev on `installedTag` should be offered by the main Update button, or null.
+ *
+ * On a test build, Update means "the newest test build" - never the release, which cannot
+ * handshake the test server (applyUpdate refuses that outright). Newest is by publish time,
+ * not by list order or tag text: GitHub's list order is not a contract, and tags are
+ * free-form. Only builds install can actually use count. Null when the dev is already on the
+ * newest, or nothing installable is published - and then the button stays hidden, because a
+ * lit Update that can only print a refusal is the bug this exists to fix.
+ */
+export function newerTestBuild (prereleases, installedTag) {
+  const newest = (prereleases || [])
+    .filter((r) => r && r.installable && r.tag && r.publishedAt)
+    .sort((a, b) => String(b.publishedAt).localeCompare(String(a.publishedAt)))[0]
+  if (!newest || newest.tag === installedTag) return null
+  return newest.tag
+}
+
 // The top-level folders the game and its mod loaders actually read. A real mod archive's
 // paths begin with one of these; a wrapper folder an author left in (ModName/archive/pc/
 // mod/...) does not - which is how such an archive installs a silent no-op.

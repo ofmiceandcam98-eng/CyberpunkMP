@@ -1810,6 +1810,8 @@ async function verifyInstall () {
     redscriptCount,
     outOfDate,
     version: update.version,
+    // Carried so Verify does not rewrite the mod row as "up to date - <release>" on a test build.
+    testBuildTag: update.testBuildTag || null,
     problems
   }
 }
@@ -2005,6 +2007,10 @@ async function installEverything (onProgress = () => {}) {
   // with the right names exist. Only when the manifest describes THIS release; a cached
   // older manifest must not fail a newer install it knows nothing about.
   const info = await checkForUpdates()
+  // Bound here, not assumed from an outer scope: this function never had a `manifest`, so
+  // the check below threw "manifest is not defined" on EVERY fresh install from v0.3.101
+  // to v0.3.125 - after the files landed, before the install was recorded or verified.
+  const manifest = usableManifest()
   if (manifest && manifest.release === info.version && manifest.client?.payload?.files?.length) {
     onProgress('Verifying against the manifest...')
     const bad = manifest.client.payload.files.filter((f) => {
@@ -6252,6 +6258,10 @@ ipcMain.handle('prerelease:list', async () => {
         active: r.tag_name === activeTag
       }))
 
+    // What the main Update button offers while a test build is installed. Computed before
+    // the retired row below joins the list - that row is the installed build, not a target.
+    const newer = activeTag ? ManifestKit.newerTestBuild(prereleases, activeTag) : null
+
     // A test build can be retired from GitHub while still INSTALLED on this machine -
     // superseded builds get deleted so there is only ever one to pick. Without this
     // row, the installed build simply vanished from the list, taking its Uninstall
@@ -6267,7 +6277,7 @@ ipcMain.handle('prerelease:list', async () => {
       })
     }
 
-    return { ok: true, prereleases, activeTag }
+    return { ok: true, prereleases, activeTag, newer }
   } catch (err) {
     return { ok: false, error: err.message }
   }
