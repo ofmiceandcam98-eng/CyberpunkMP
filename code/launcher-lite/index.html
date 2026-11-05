@@ -1727,6 +1727,10 @@
   // until there is something true to say.
   let manifestSummary = ''
 
+  // The newest published test build, while a DIFFERENT test build is installed - what the
+  // main Update button installs on a test build (see renderUpdateState). Null otherwise.
+  let newerTestBuild = null
+
   // Set from the main process as the launcher updates itself, not from any check we
   // run here - the updater owns that state and reports on it.
   let launcherUpdate = null
@@ -2272,13 +2276,22 @@
       // against - the number the server checks at the door.
       // A test build is CURRENT, but it is not the release - say which, or this row
       // claims the player is on v0.3.120 while they are running something else entirely.
-      // Update stays visible here on purpose: on a test build it is the way BACK to the
-      // release, not a nag, and hiding it would strand somebody on a broken test build.
+      //
+      // On a test build, Update means the NEWER TEST BUILD and shows only when one exists.
+      // It used to stay visible as "the way back to the release" (2026-09-09); the next day
+      // applyUpdate learned to REFUSE on a test build, because that way back was silently
+      // bouncing devs off the build that matches the test server - and this side never
+      // heard. So every test build wore a big orange Update that could only print a refusal
+      // (zeldfep, 2026-11-02, on test.78 with test.79 out: "whats up with this update
+      // button"). The deliberate way back is Tools > Test builds > Restore, which says so.
       if (updateState.testBuildTag) {
+        const short = (tag) => String(tag).replace(/^.*-(test\.\d+)$/, '$1')
         text.textContent = 'Test build - ' + updateState.testBuildTag +
+          (newerTestBuild ? ' · ' + short(newerTestBuild) + ' available' : '') +
           (manifestSummary ? ' · ' + manifestSummary : '')
-        updateBtn.style.display = 'inline-block'
+        updateBtn.style.display = newerTestBuild ? 'inline-block' : 'none'
         updateBtn.disabled = false
+        updateBtn.title = newerTestBuild ? 'Installs test build ' + newerTestBuild + ' - not the public release' : ''
       } else {
         text.textContent = 'Mod up to date' + (updateState.version ? ' - ' + updateState.version : '') +
           (manifestSummary ? ' · ' + manifestSummary : '')
@@ -2291,6 +2304,7 @@
       text.textContent = 'Mod update required' + (updateState.version ? ' - ' + updateState.version : '')
       updateBtn.style.display = 'inline-block'
       updateBtn.disabled = false
+      updateBtn.title = ''
     }
   }
 
@@ -2487,6 +2501,16 @@
     const result = await window.launcher.checkUpdate()
     updateState = result.ok ? result : null
 
+    // Only on a test build, so player launchers make no extra GitHub call. prereleaseList is
+    // dev-gated in main; a refusal or an outage just leaves the button hidden.
+    newerTestBuild = null
+    if (updateState?.testBuildTag) {
+      try {
+        const pre = await window.launcher.prereleaseList()
+        if (pre.ok) newerTestBuild = pre.newer || null
+      } catch { /* hidden button, no harm */ }
+    }
+
     // The manifest state rides the same refresh. 'invalid' is the one state that must
     // interrupt: a manifest that FAILS signature verification is tampering evidence,
     // not an outage, and quietly carrying on is exactly what the signature exists to
@@ -2563,6 +2587,7 @@
         installed: true,
         upToDate: !result.outOfDate,
         version: result.version,
+        testBuildTag: result.testBuildTag,
         notes: updateState?.notes,
         downloadUrl: updateState?.downloadUrl
       }
@@ -4417,6 +4442,26 @@
 
   $('update').addEventListener('click', async () => {
     $('update').disabled = true
+
+    // On a test build the button only shows when a newer one exists, and installs THAT -
+    // the same path and the same loud DevInstall-symlink warning as Tools > Test builds.
+    if (updateState?.testBuildTag && newerTestBuild) {
+      setStatus('Downloading ' + newerTestBuild + '...')
+      const installed = await window.launcher.prereleaseInstall(newerTestBuild)
+      if (!installed.ok) {
+        setStatus(installed.error, 'error')
+        $('update').disabled = false
+        return
+      }
+      if (installed.warning) {
+        setStatus('Test build ' + installed.tag + ' installed, but it will NOT load: ' + installed.warning, 'error')
+      } else {
+        setStatus('Updated to test build ' + installed.tag, 'ok')
+      }
+      await checkUpdates()
+      return
+    }
+
     setStatus('Downloading update...')
 
     const result = await window.launcher.applyUpdate()
