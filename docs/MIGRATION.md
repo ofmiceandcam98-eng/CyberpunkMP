@@ -154,9 +154,9 @@ the only manual steps are the ones above, because they are the ones git must not
 
 ---
 
-## 5. THE 2026-09-06 CUTOVER — live checklist
+## 5. THE 2026-09-06 CUTOVER — finished, kept as the record
 
-Tick as you go. Anything unticked is not done, however sure anyone feels.
+Closed out 2026-11-05: every line below is done. What outlived the cutover is tracked on the Atlas.
 **Old box:** TrueNAS, deployments stopped. **New box:** `officialcutstudios01`, Ubuntu 26.04.
 
 ### Hardware and OS
@@ -182,11 +182,11 @@ Tick as you go. Anything unticked is not done, however sure anyone feels.
 - [x] Fresh `TS_AUTHKEY` minted (`k4DKQhY33d11CNTRL`, expires 2026-12-05, reusable + preauthorised), written to both `.env`, mode 600, backups kept
 - [x] Docs repointed `/mnt/vol/NASa` -> `/mnt/vol/projects` (`99d1551`)
 
-### Bring-up — IN PROGRESS
+### Bring-up
 - [x] Live: `docker compose up -d --build` completes (full native compile, 10-15 min)
 - [x] Live: status endpoint answers `State: running` via the sidecar netns
 - [x] Live: **new tailnet address recorded** (replaces `<old-live-server>`)
-- [ ] Live: a returning character logs `has character '<name>' (played)`, NOT `never spawned`
+- [x] Live: a returning character logs `has character '<name>' (played)`, NOT `never spawned` Proven 2026-09-06.
 - [x] coord-api container up; `GET /health` answers; posting works again
 - [x] Test: built and started with `-p nco-authority`
 - [x] Test: **new tailnet address recorded** (replaces `<old-test-server>`)
@@ -195,8 +195,8 @@ Tick as you go. Anything unticked is not done, however sure anyone feels.
 ### Player-facing — do LAST, only after the above is green
 - [x] `publish/server.json`: `host` + `coordHost` -> new address. **MUST be committed on `main`** - the publish workflow triggers on push to `main` only, and `workflow_dispatch` also checks out `main`. An edit on `feat/world-state` reaches nobody.
 - [x] Confirm the release asset actually updated (`releases/latest/download/server.json`)
-- [ ] **Invite distributed via Discord, NOT via `server.json`** - see the decision below
-- [ ] Players told to relaunch
+- [x] **Invite distributed via Discord, NOT via `server.json`** - see the decision below Reversed the next day: a multi-use device share is published in `server.json`, accepted as a closed-alpha risk.
+- [x] Players told to relaunch They reach the new box by relaunching, because `server.json` is fetched at runtime.
 
 ### Decisions taken during this cutover, recorded so they are not re-litigated
 - **`tailscaleInvite` comes OUT of `server.json`.** That file is fetched from
@@ -213,9 +213,9 @@ Tick as you go. Anything unticked is not done, however sure anyone feels.
   nothing on Ubuntu. Cheap to change: the cron takes the deployment dir as an argument and
   compose paths are relative, so only documentation referenced it.
 
-### After the cutover — still open
-- [ ] Launcher `index.html` dev panel hardcodes the OLD test-server address. **Needs a ship** - `server.json` is fetched at runtime, `index.html` is baked into the launcher.
-- [ ] Sanitise internal addresses out of the public repo (18 tracked files; `publish/ASSISTANT_UPDATES.md` + `assistant-updates.json` are the ones that actually ship). Full copy to live off-git on the server. **Migration retires the old addresses anyway** - no history rewrite, force-push is forbidden.
-- [ ] `CLAUDE-HANDOFF.md` §2 claims `<a-desktop>` "is dead". It was **seen on the tailnet 2026-09-06**. Correct it.
-- [ ] Old NAS deployments: decide archive vs delete. Do not delete until the new box has served a real session.
-- [ ] `rmdir /mnt/vol/NASa` on the new box once confirmed empty.
+### After the cutover
+- [x] Launcher `index.html` dev panel hardcodes the OLD test-server address. **Needs a ship** - `server.json` is fetched at runtime, `index.html` is baked into the launcher. Fixed and shipped in v0.3.115.
+- [x] Sanitise internal addresses out of the public repo (18 tracked files; `publish/ASSISTANT_UPDATES.md` + `assistant-updates.json` are the ones that actually ship). Full copy to live off-git on the server. **Migration retires the old addresses anyway** - no history rewrite, force-push is forbidden. Done in 4d56afd, and the feed's published slice now redacts them.
+- [x] `CLAUDE-HANDOFF.md` §2 claims `<a-desktop>` "is dead". It was **seen on the tailnet 2026-09-06**. Correct it. Corrected.
+- [x] Old NAS deployments: decide archive vs delete. Do not delete until the new box has served a real session. Archived, checksum-verified, then deleted.
+- [x] `rmdir /mnt/vol/NASa` on the new box once confirmed empty. Left in place: it is empty and harmless.

@@ -51,6 +51,10 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
     here and in CLAUDE.md as well as posted - the feed scrolls, and the other stream reads
     law from the rulebook.
 
+- **Auditing the Atlas includes the internal docs** (zeldfep, 2026-11-05): *"lets make sure these
+  .md are getting audited when auditing atlas"*. Every audit also walks the docs on the server,
+  following the ledger at `/mnt/vol/projects/_internal-docs/DOC-AUDIT.md`. Anything still open and
+  unbranched gets a branch; each doc is marked live, stale or history.
 - **This repo is the open multiplayer service; operator tooling is maintained separately**
   (zeldfep, 2026-09-11). Scope boundary for what belongs in this repository:
   - **The multiplayer service and portability → here.** The client, server, protocol and
@@ -2089,7 +2093,11 @@ scripts will take effect"*, naming exactly those twelve files.
   the ship works around for `distrib` but NOT for the game directory. Mirrored by hand.
   **Two places rot; the ship only guards one.**
 
-- **TEST SERVER IS ARMED (2026-09-07) AND THE TWO DIGEST IMPLEMENTATIONS AGREE.** First time
+- **CORRECTED 2026-11-05: NEITHER SERVER IS ARMED.** Test was disarmed again the same day
+  (`config/server-manifest.json.disarmed-2026-09-07`), and both servers answer
+  `ManifestVersion: ""`. State: atlas:neither-server-has-the-install-check-on. What follows is the
+  record of 2026-09-07.
+- **TEST SERVER WAS ARMED (2026-09-07) AND THE TWO DIGEST IMPLEMENTATIONS AGREED.** First time
   that has ever been true.
   - `/mnt/vol/projects/CyberpunkMP-authority/config/server-manifest.json`, manifest
     `2026.09.07.03` off v0.3.117 (re-armed after the duplicate-script fix regenerated it). **Live is deliberately
