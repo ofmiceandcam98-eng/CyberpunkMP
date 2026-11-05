@@ -2387,36 +2387,90 @@
 
     let list = null
 
-    for (const rawLine of markdown.split(/\r?\n/)) {
-      const line = rawLine.trim()
-
-      // Skip the markdown table rows and images the release body uses for layout.
-      if (!line || line.startsWith('|') || line.startsWith('<')) continue
-
-      if (line.startsWith('#')) {
+    for (const block of parseNotes(markdown)) {
+      if (block.kind === 'heading') {
         list = null
         const h = document.createElement('h4')
-        h.textContent = line.replace(/^#+\s*/, '')
+        h.textContent = block.text
         body.appendChild(h)
         continue
       }
 
-      if (line.startsWith('- ') || line.startsWith('* ')) {
+      if (block.kind === 'item') {
         if (!list) {
           list = document.createElement('ul')
           body.appendChild(list)
         }
         const li = document.createElement('li')
-        li.textContent = stripMarkdown(line.slice(2))
+        li.textContent = stripMarkdown(block.text)
         list.appendChild(li)
         continue
       }
 
       list = null
       const p = document.createElement('p')
-      p.textContent = stripMarkdown(line)
+      p.textContent = stripMarkdown(block.text)
       body.appendChild(p)
     }
+  }
+
+  // Turns the release body into whole blocks, before any element exists.
+  //
+  // The notes are hard-wrapped at about 90 columns, so one source line is not one thought: a
+  // paragraph arrives as three or four lines, and a list item as its first line plus indented
+  // continuations. Treating each line as a block broke paragraphs into fragments and dropped
+  // the end of every list item out of its list. This folds them back together first, which
+  // also lets bold or a link that crosses a line break lose its markers in stripMarkdown.
+  //
+  // A line continues whatever block is open, and only a blank line, a heading, a new list item
+  // or a layout row closes one. That is the rule markdown itself uses, so the notes read here
+  // the way they read on the GitHub release. Numbered steps and quotes are written one per
+  // line, so each starts its own block, and a code fence keeps its lines apart.
+  function parseNotes (markdown) {
+    const blocks = []
+    let open = null
+    let inFence = false
+
+    for (const rawLine of markdown.split(/\r?\n/)) {
+      const line = rawLine.trim()
+
+      // Skip the markdown table rows and images the release body uses for layout.
+      if (!line || line.startsWith('|') || line.startsWith('<')) {
+        open = null
+        continue
+      }
+
+      if (line.startsWith('#')) {
+        open = null
+        blocks.push({ kind: 'heading', text: line.replace(/^#+\s*/, '') })
+        continue
+      }
+
+      if (line.startsWith('- ') || line.startsWith('* ')) {
+        open = { kind: 'item', text: line.slice(2) }
+        blocks.push(open)
+        continue
+      }
+
+      const isFence = line.startsWith('```')
+      if (isFence) inFence = !inFence
+
+      if (isFence || inFence) {
+        open = null
+        blocks.push({ kind: 'paragraph', text: line })
+        continue
+      }
+
+      if (open && !/^(\d+[.)]\s|>)/.test(line)) {
+        open.text += ' ' + line
+        continue
+      }
+
+      open = { kind: 'paragraph', text: line }
+      blocks.push(open)
+    }
+
+    return blocks
   }
 
   // Strips the emphasis markers so notes read as prose rather than raw markdown.

@@ -530,7 +530,8 @@ if ($Launcher) {
     # so they only meant something when somebody remembered. prereq.selftest.mjs lifts real
     # functions out of main.js, which is the one thing here that catches an undeclared
     # identifier before a player presses the button: that is how installFull broke, twice.
-    foreach ($test in @("manifest.selftest.mjs", "prereq.selftest.mjs")) {
+    # renderer.selftest.mjs does the same for index.html's inline script, which nothing else reads.
+    foreach ($test in @("manifest.selftest.mjs", "prereq.selftest.mjs", "renderer.selftest.mjs")) {
         $testOutput = node $test 2>&1
         if ($LASTEXITCODE -ne 0) {
             Pop-Location
