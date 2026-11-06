@@ -847,7 +847,12 @@ struct PlayerStore
 
         auto* pRecord = FindMutable(acDiscordId);
         if (!pRecord)
-            return "no_account";
+        {
+            // An account with no record is already on slot 0 (see ActiveSlotFor), so asking for
+            // it is a success with nothing to write. Refusing it told every brand-new player
+            // their new character could not be started, while it started anyway.
+            return aSlot == 0 ? std::string{} : std::string{"no_account"};
+        }
 
         if (pRecord->ActiveSlot != aSlot)
         {
