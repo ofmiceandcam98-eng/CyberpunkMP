@@ -117,24 +117,61 @@ cooled() { # $1 container, $2 class, $3 window-seconds -> 0 if still cooling
 # the post carries class + count, and the docker-logs pull command in the body is
 # how a human gets the detail, on the host, off the record.
 
+# Every log line newer than a timestamp, surviving a damaged log.
+#
+# An unclean death of the box leaves a run of NUL bytes in the container's json log, and docker's
+# forward reader stops there with exit 0: `docker logs --since` returned nothing on both game
+# servers from Nov 3 to Nov 5 2026, so this watcher reported a quiet server while seeing nothing.
+# `--tail N` reads backwards only while N fits after the damage. Ask for more and it restarts from
+# the top of the file and stops at the damage again, returning FEWER lines, all of them old. So
+# this creeps up from a small read and keeps the last one that grew. On a healthy log the first
+# read is usually enough, because 8 lines already reach back past the last tick.
+read_window() { # $1 container, $2 since (UTC ISO) -> stdout: lines newer than that, no timestamps
+    local c="$1" since="${2:0:19}" n=8 lines kept=0 oldest try best
+    try=$(mktemp); best=$(mktemp)
+    while [ "$n" -le 256000 ]; do
+        # stderr stays OUT of the scanned text: docker's own errors are not server events.
+        if ! docker logs --timestamps --tail "$n" "$c" > "$try" 2>/dev/null; then
+            rm -f "$try" "$best"; return 1
+        fi
+        lines=$(wc -l < "$try")
+        [ "$lines" -lt "$kept" ] && break   # it fell back to the top of the file: the damage
+        cp "$try" "$best"; kept=$lines
+        [ "$lines" -lt "$n" ] && break      # that is the whole log
+        oldest=$(head -n 1 "$best" | cut -c1-19)
+        [[ "$oldest" < "$since" ]] && break # reached back past the window
+        n=$((n * 2))
+    done
+    # Only a line docker stamped starts a decision: one log entry can span lines.
+    awk -v s="$since" '/^20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]T/ { keep = (substr($0, 1, 19) >= s); sub(/^[^ ]+ /, "") } keep { print }' "$best"
+    rm -f "$try" "$best"
+}
+
 for c in $CONTAINERS; do
     docker inspect "$c" >/dev/null 2>&1 || continue
 
     since_file="$STATE_DIR/since-$c"
-    since=$(cat "$since_file" 2>/dev/null || echo "10m")
+    since=$(cat "$since_file" 2>/dev/null || date -u -d '10 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
     now_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
     logfile=$(mktemp)
-    # stderr stays OUT of the scanned text (docker's own errors are not server events),
-    # and pipefail makes the guard see a failed read - the window must not advance past
-    # logs that were never scanned, or a crash during a container restart is skipped
-    # forever. A failed read keeps $since; the next tick retries the same window.
-    if ! docker logs --since "$since" "$c" 2>/dev/null | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g; s/\x1b[=><]//g' > "$logfile"; then
+    # pipefail makes the guard see a failed read - the window must not advance past logs that
+    # were never scanned, or a crash during a container restart is skipped forever. A failed
+    # read keeps $since; the next tick retries the same window.
+    if ! read_window "$c" "$since" | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g; s/\x1b[=><]//g' > "$logfile"; then
         rm -f "$logfile"; continue
     fi
     echo "$now_iso" > "$since_file"   # advance only after a successful read
 
-    if [ ! -s "$logfile" ]; then rm -f "$logfile"; continue; fi
+    if [ ! -s "$logfile" ]; then
+        # A quiet window is normal. A quiet window that spans a restart is not: the server prints
+        # its startup lines every time, so reading none means this watcher cannot see the log.
+        started=$(docker inspect -f '{{.State.StartedAt}}' "$c" 2>/dev/null)
+        if [[ "${started:0:19}" > "${since:0:19}" ]] && ! cooled "$c" "blind" "$COOLDOWN_S"; then
+            post_feed "server events: $c" "The event watcher read NOTHING from $c across a restart at $started, so it cannot see this log and a quiet feed means nothing right now. Check on the host: docker logs --tail 20 $c, and the dockerd journal for 'Error decoding log file'."
+        fi
+        rm -f "$logfile"; continue
+    fi
 
     findings=""
 
