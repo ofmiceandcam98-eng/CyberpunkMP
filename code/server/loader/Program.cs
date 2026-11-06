@@ -20,8 +20,12 @@ internal class Program
 
     // A stop signal only asks the tick loop to end. Main then falls through to Exit on its own
     // thread, so the final save runs with nothing else touching the stores.
+    //
+    // The [shutdown] lines here and in the native Exit/~GameServer trace each stage of a stop,
+    // so the abort that ends every one can be placed. Console.Error flushes on every write.
     private static void StopRequested(PosixSignalContext context)
     {
+        Console.Error.WriteLine($"[shutdown] {context.Signal} received - asking the tick loop to end");
         context.Cancel = true;
         CyberpunkMp.ServerAPI.RequestStop();
     }
@@ -52,6 +56,8 @@ internal class Program
                 SetupCallbacks();
 
                 CyberpunkMp.ServerAPI.Run();
+
+                Console.Error.WriteLine("[shutdown] tick loop ended");
             }
         }
         catch (Exception e)
@@ -61,6 +67,8 @@ internal class Program
         finally
         {
             CyberpunkMp.ServerAPI.Exit();
+
+            Console.Error.WriteLine("[shutdown] Main returning to the runtime");
         }
     }
 }
