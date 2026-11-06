@@ -465,6 +465,11 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // whoever is in your Cyberpunk save.
     void ApplyStoredAppearance();
 
+    // EXPERIMENT, admin overlay only: dresses the LOCAL player's body from the stored look the
+    // way remote players are dressed, without touching the live state or any save. See the
+    // definition. aReplaceTemplateKeys also hands the changer the template's keys to take off.
+    void DressLocalBodyFromStoredLook(bool aReplaceTemplateKeys);
+
     // Watches for the player finishing a mirror or creator session, and saves it for them.
     void PollAppearanceChanges();
 
@@ -615,6 +620,13 @@ protected:
     bool m_callIncoming{false};
 
     Vector<uint8_t> m_restoreAppearance;
+
+    // Kept for DressLocalBodyFromStoredLook once ApplyStoredAppearance has spent the buffer
+    // above: the stored look as the server sent it, and the live state as it was just before
+    // the restore wrote into it - the template body that is still the one on screen. Set only
+    // off 2.31, cleared wherever the restore starts over.
+    Vector<uint8_t> m_restoredLook;
+    Vector<uint8_t> m_templateLook;
 
     // How far the local appearance restore has got, so it happens exactly once.
     //

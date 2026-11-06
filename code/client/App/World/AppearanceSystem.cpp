@@ -531,29 +531,7 @@ bool AppearanceSystem::ApplyAppearance(Red::Handle<Red::game::Object> object)
         spdlog::info("Scheduling change");
 
         Red::DynArray<Red::world::EntityAppearanceChangeParameter::Key> keys;
-        stateHandle.instance->GetHeadCustomization("TPP", true, keys);
-        stateHandle.instance->GetHeadCustomization("face", true, keys);
-        stateHandle.instance->GetHeadCustomization("hairs", true, keys);
-        if (stateHandle.instance->isBodyGenderMale) 
-        {
-            stateHandle.instance->GetHeadCustomization("beards", true, keys);
-        }
-
-        // does all of them
-        // stateHandle.instance->GetHeadCustomization("character_customization", true, keys);
-
-        stateHandle.instance->GetBodyCustomization("TPP_Body", true, keys);
-        // make genitals appear as well
-        // stateHandle.instance->GetBodyCustomization("character_creation", true, keys);
-        // pops through clothes lol
-        // stateHandle.instance->GetBodyCustomization("genitals", true, keys);
-        stateHandle.instance->GetBodyCustomization("breast", true, keys);
-        stateHandle.instance->GetBodyCustomization("lifted_feet", true, keys);
-        stateHandle.instance->GetBodyCustomization("flat_feet", true, keys);
-
-        // stateHandle.instance->GetArmsCustomization("character_customization", true, keys);
-        stateHandle.instance->GetArmsCustomization("holstered_default", true, keys);
-        stateHandle.instance->GetArmsCustomization("nails", true, keys);
+        CollectCustomizationKeys(stateHandle.instance, keys);
 
         // How many appearance keys the remote player's state actually produced.
         //

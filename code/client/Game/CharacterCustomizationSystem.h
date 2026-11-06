@@ -69,6 +69,40 @@ constexpr auto ScheduleSynchronizedAppearanceChanges = Core::RawFunc<386815609UL
         uint32_t //io::EAsyncPriority
     )>();
 
+// The appearance keys a customization state resolves to, as one list for the changer above.
+//
+// The group set the remote dressing path has used since 2.31, and the set that dresses remote
+// players correctly on 2.5. Shared with the local-body experiment
+// (NetworkWorldSystem::DressLocalBodyFromStoredLook) so the two cannot drift apart: whatever
+// dresses somebody else properly is exactly what the experiment tries on yourself.
+inline void CollectCustomizationKeys(game::ui::CharacterCustomizationState* apState,
+                                     DynArray<world::EntityAppearanceChangeParameter::Key>& aKeys)
+{
+    apState->GetHeadCustomization("TPP", true, aKeys);
+    apState->GetHeadCustomization("face", true, aKeys);
+    apState->GetHeadCustomization("hairs", true, aKeys);
+    if (apState->isBodyGenderMale)
+    {
+        apState->GetHeadCustomization("beards", true, aKeys);
+    }
+
+    // does all of them
+    // apState->GetHeadCustomization("character_customization", true, aKeys);
+
+    apState->GetBodyCustomization("TPP_Body", true, aKeys);
+    // make genitals appear as well
+    // apState->GetBodyCustomization("character_creation", true, aKeys);
+    // pops through clothes lol
+    // apState->GetBodyCustomization("genitals", true, aKeys);
+    apState->GetBodyCustomization("breast", true, aKeys);
+    apState->GetBodyCustomization("lifted_feet", true, aKeys);
+    apState->GetBodyCustomization("flat_feet", true, aKeys);
+
+    // apState->GetArmsCustomization("character_customization", true, aKeys);
+    apState->GetArmsCustomization("holstered_default", true, aKeys);
+    apState->GetArmsCustomization("nails", true, aKeys);
+}
+
 // CharacterCustomizationSystem
 // THandle<game::ui::CharacterCustomizationState> unk78
 

@@ -9,11 +9,12 @@ import CyberpunkMP.World.*
  * and the vanilla V path is untouched either way: the shipping player system must never be
  * the thing under test.
  *
- * WHY. Every attempt to change the local player's body in-world failed. InitializeState,
- * ReFinalizeState and FinalizeState are all refused during gameplay;
- * InitializeOptionsFromFinalizedState is accepted and does not rebuild the body - proved
- * by applying a female appearance and watching Cam stay male. The appearance lives in the
- * save and cannot be overwritten on a live V.
+ * WHY. Every attempt to change the local player's body in-world failed.
+ * InitializeOptionsFromFinalizedState runs and does not rebuild the body - proved by applying
+ * a female appearance and watching Cam stay male. CORRECTED 2026-11-05: InitializeState,
+ * ReFinalizeState and FinalizeState were never refused, they never ran - they return Bool and
+ * the native caller passed no out-value, which the SDK skips. So "cannot be overwritten on a
+ * live V" is unproven; NetworkWorldSystem::DressLocalBodyFromStoredLook is the next attempt.
  *
  * Remote players never had this problem, because the gendered record is chosen BEFORE the
  * puppet exists. This asks whether the local player can be built the same way, using

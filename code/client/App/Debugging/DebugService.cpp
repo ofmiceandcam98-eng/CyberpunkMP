@@ -65,6 +65,21 @@ namespace App
                     SendChatCommand("/dummy");
                 }
 
+                // On 2.5 you see yourself as the template body. These dress your own body from
+                // your stored look the way other players are dressed; nothing is saved. Try
+                // "new keys only" first - see NetworkWorldSystem::DressLocalBodyFromStoredLook.
+                ImGui::Separator();
+
+                if (ImGui::Button("Dress my body: new keys only"))
+                {
+                    DressLocalBody(false);
+                }
+
+                if (ImGui::Button("Dress my body: replace template keys"))
+                {
+                    DressLocalBody(true);
+                }
+
                 ImGui::EndMenu();
             }
 
@@ -155,5 +170,18 @@ namespace App
 
         spdlog::info("[Debug] sending chat command '{}'", apCommand);
         chat->Send(Red::CString(apCommand));
+    }
+
+    void DebugService::DressLocalBody(bool aReplaceTemplateKeys)
+    {
+        const auto world = Red::GetGameSystem<NetworkWorldSystem>();
+        if (!world)
+        {
+            spdlog::error("[Debug] NetworkWorldSystem is not available");
+            return;
+        }
+
+        spdlog::info("[Debug] dress my body pressed ({})", aReplaceTemplateKeys ? "replace template keys" : "new keys only");
+        world->DressLocalBodyFromStoredLook(aReplaceTemplateKeys);
     }
 }

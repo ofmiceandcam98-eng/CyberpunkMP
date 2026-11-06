@@ -1491,6 +1491,8 @@ void NetworkWorldSystem::ApplyStoredAppearance()
         spdlog::warn("[Character] discarding a stored appearance for id {} - we are now playing {}",
                      m_appearanceRestoreFor, *m_remotePlayerId);
         m_restoreAppearance.clear();
+        m_restoredLook.clear();
+        m_templateLook.clear();
         m_appearanceRestoreFor = 0;
         return;
     }
@@ -1626,6 +1628,14 @@ void NetworkWorldSystem::ApplyStoredAppearance()
         return;
     }
 
+    // Off 2.31 the write below does not change the body on screen, so the template the snapshot
+    // just read is still what the player sees. DressLocalBodyFromStoredLook needs both halves.
+    if (!IsGame231Layout())
+    {
+        m_restoredLook = bytes;
+        m_templateLook = snapshot.bytes;
+    }
+
     spdlog::info("[Character] Deserialize ccstate BEGIN");
 
     auto reader = CMPReader(bytes);
@@ -1635,16 +1645,21 @@ void NetworkWorldSystem::ApplyStoredAppearance()
                  stateHandle->instance->isBodyGenderMale ? "male" : "female");
 
     // Rebuild the body from what was just read in.
-    // Commit. Three candidates, because the engine refuses ReFinalizeState during gameplay
-    // and the RTTI dump lists siblings that have never been tried:
+    // Commit. Three candidates:
     //
     //   ReFinalizeState                    - what the body-morph menu calls
     //   FinalizeState                      - what the creator's summary menu calls
     //   InitializeOptionsFromFinalizedState
     //
-    // Whichever one the engine accepts is the one that rebuilds the body. Trying them in
-    // order costs nothing on the failing path, and each is logged so the next run says which
-    // was accepted rather than leaving it to be inferred.
+    // CORRECTED 2026-11-05: the first two were never refused by the engine - they never RAN.
+    // Both return Bool, CallCustomizationFunction passes no out-value, and the SDK's
+    // ExecuteFunction returns false without calling a function that has a return type and
+    // nowhere to put it (RED4ext.SDK Scripting/Utils-inl.hpp). So every run "accepts"
+    // InitializeOptionsFromFinalizedState, the void one, which updates the data and does not
+    // rebuild the body. Do NOT simply pass an out-value: the mirror calls InitOpts BEFORE
+    // ReFinalize (BodyMorphMenu.script), and ReFinalize on its own may blank the state. Atlas
+    // on-2-5-a-player-sees-themself-as-the-template-body-while-eve has both routes;
+    // DressLocalBodyFromStoredLook is the first.
     spdlog::info("[Character] commit BEGIN - trying ReFinalizeState, FinalizeState, "
                  "InitializeOptionsFromFinalizedState");
 
@@ -1658,7 +1673,7 @@ void NetworkWorldSystem::ApplyStoredAppearance()
             break;
         }
 
-        spdlog::info("[Character] commit: {} refused", candidate);
+        spdlog::info("[Character] commit: {} not run (returns Bool, called with no out-value)", candidate);
     }
 
     if (!committed)
@@ -1698,6 +1713,142 @@ void NetworkWorldSystem::ApplyStoredAppearance()
     spdlog::info("[Character] Local appearance restore COMPLETE - {} bytes applied ({}). This is "
                  "technical success only; the body on screen still has to be looked at.",
                  bytes.size(), stateHandle->instance->isBodyGenderMale ? "male" : "female");
+}
+
+/**
+ * EXPERIMENT - put the stored look on your OWN body the way everybody else's is put on theirs.
+ *
+ * On 2.5 each player sees the others as their real characters and themselves as the template
+ * body. The remote path works because it never touches a live state: it reads the stored look
+ * into a FRESH state, asks that state for its appearance keys, and hands them to the engine's
+ * appearance changer for the puppet. This does the same for the local player. The live state
+ * is left exactly as ApplyStoredAppearance left it, so the 90-second save stays
+ * possessions-only and the look the server holds cannot be written over from here.
+ *
+ * Two variants, because nobody knows yet what the changer does with the keys it is told to
+ * take off. Remote puppets pass none and come out right, so "new keys only" is the proven
+ * shape. If that leaves the template's parts showing through, "replace" also passes the
+ * template's keys, read from the snapshot ApplyStoredAppearance took before it wrote anything.
+ *
+ * Reached only from the admin overlay (DebugService), one press at a time, so nobody gets it
+ * by accident and a bad result costs one session. INFERRED odds: about 70% for a female
+ * character; about 35% for a male one such as Pajeet, whose keys go onto the single female
+ * template rig. What to look for, in the log and on screen, is on the Atlas branch
+ * on-2-5-a-player-sees-themself-as-the-template-body-while-eve.
+ */
+void NetworkWorldSystem::DressLocalBodyFromStoredLook(bool aReplaceTemplateKeys)
+{
+    const char* mode = aReplaceTemplateKeys ? "replacing the template's keys" : "new keys only";
+    spdlog::info("[Character] local dressing BEGIN ({})", mode);
+
+    if (IsGame231Layout())
+    {
+        spdlog::info("[Character] local dressing: nothing to test on 2.31, where the restore rebuilds the body itself");
+        return;
+    }
+
+    if (m_appearanceRestore != AppearanceRestore::Applied || m_restoredLook.empty() || m_templateLook.empty())
+    {
+        spdlog::warn("[Character] local dressing: no stored look was restored this session (stored {} bytes, "
+                     "template {} bytes) - enter the city as a saved character first",
+                     m_restoredLook.size(), m_templateLook.size());
+        return;
+    }
+
+    const auto system = Red::GetGameSystem<Game::PlayerSystem>();
+    Red::Handle<Red::GameObject> player;
+
+    if (system)
+        system->GetLocalPlayerControlledGameObject(player);
+
+    if (!player)
+    {
+        spdlog::warn("[Character] local dressing: no local player to dress");
+        return;
+    }
+
+    // The same read the remote path makes, including its refusal of a blob that does not
+    // consume to the byte: garbage keys reaching the changer is a crash, not a wrong face.
+    const auto load = [](const Vector<uint8_t>& aBytes, const char* acpWhat)
+    {
+        Red::Handle<Red::game::ui::CharacterCustomizationState> state;
+        CreateHandle_CharacterCustomizationState(&state);
+
+        if (!state.instance)
+        {
+            spdlog::error("[Character] local dressing: could not create a state for the {}", acpWhat);
+            return Red::Handle<Red::game::ui::CharacterCustomizationState>{};
+        }
+
+        auto reader = CMPReader(aBytes);
+        CharacterCustomizationState_Serialize(state.instance, &reader);
+
+        if (!reader.IsOK() || reader.GetOffset() != aBytes.size())
+        {
+            spdlog::error("[Character] local dressing: the {} did not read cleanly (consumed {}/{} bytes, ok={})",
+                          acpWhat, reader.GetOffset(), aBytes.size(), reader.IsOK());
+            return Red::Handle<Red::game::ui::CharacterCustomizationState>{};
+        }
+
+        return state;
+    };
+
+    auto stored = load(m_restoredLook, "stored look");
+    if (!stored)
+        return;
+
+    Red::Handle<Red::game::ui::CharacterCustomizationState> previous;
+    if (aReplaceTemplateKeys)
+    {
+        previous = load(m_templateLook, "template snapshot");
+        if (!previous)
+            return;
+    }
+
+    // Heap-held and captured by the completion below, for the reason the remote path gives:
+    // the changer may read the spans after this function has returned.
+    using Key = Red::world::EntityAppearanceChangeParameter::Key;
+    auto newKeys = std::make_shared<Red::DynArray<Key>>();
+    auto oldKeys = std::make_shared<Red::DynArray<Key>>();
+
+    CollectCustomizationKeys(stored.instance, *newKeys);
+    if (previous)
+        CollectCustomizationKeys(previous.instance, *oldKeys);
+
+    spdlog::info("[Character] local keys old {} new {} - stored body {}, template body {}",
+                 oldKeys->Size(), newKeys->Size(), stored.instance->isBodyGenderMale ? "male" : "female",
+                 previous ? (previous.instance->isBodyGenderMale ? "male" : "female") : "not read");
+
+    // Zero keys means the state resolved none of its options, and an empty change would leave
+    // the template exactly where it is while looking like it ran.
+    if (newKeys->Size() == 0)
+    {
+        spdlog::warn("[Character] local dressing: the stored look produced no keys - nothing scheduled");
+        return;
+    }
+
+    auto changer = Red::GetRuntimeSystem<Red::world::RuntimeSystemEntityAppearanceChanger>();
+    if (!changer)
+    {
+        spdlog::error("[Character] local dressing: no appearance changer");
+        return;
+    }
+
+    Red::WeakHandle<Red::game::Object> weakHandle = player;
+    Span<Key> old_keys = {.start = nullptr, .end = nullptr};
+    if (oldKeys->Size() > 0)
+        old_keys = {.start = oldKeys->Data(), .end = &oldKeys->Data()[oldKeys->Size()]};
+    Span<Key> new_keys = {.start = newKeys->Data(), .end = &newKeys->Data()[newKeys->Size()]};
+
+    const std::function<void(void)> callback = [stored, previous, newKeys, oldKeys, player](void)
+    {
+        spdlog::info("[Character] local dressing COMPLETE - the engine finished the change. This is technical "
+                     "success only: look at the body in third person.");
+    };
+
+    ScheduleSynchronizedAppearanceChanges(changer, weakHandle, &old_keys, &new_keys, callback, 0);
+
+    spdlog::info("[Character] local dressing scheduled ({}). Nothing was saved and the stored look is untouched.", mode);
 }
 
 /**
@@ -2382,6 +2533,8 @@ void NetworkWorldSystem::OnBeforeWorldDetach(RED4ext::world::RuntimeScene* aScen
     m_appearanceRestore = AppearanceRestore::NotStarted;
     m_appearanceRestoreFor = 0;
     m_restoreAppearance.clear();
+    m_restoredLook.clear();
+    m_templateLook.clear();
     m_liveStateIsCharacter = false;
 
     spdlog::info("[Detach] stand-down: silencing the animation hook");

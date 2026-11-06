@@ -1564,19 +1564,20 @@ fixes — money is not server-authoritative today. See `docs/PHASE5-STAGE6B-MONE
   the stored blob over the character the player just made. The stored blob IS the contaminated
   one (9141 bytes, female) and is re-uploaded on every autosave and every disconnect (`sent
   9141 bytes of appearance to the server`), so the bad record keeps refreshing itself. The
-  commit is inert — why nobody is visibly Veronica: `ReFinalizeState`/`FinalizeState` are
-  **CORRECTED 2026-11-05: those calls were never refused - they never ran.** `CallCustomizationFunction` (NetworkWorldSystem.cpp) passes no out-slot, and the SDK's
-  `ExecuteFunction` returns false WITHOUT calling any function that has a return type when
-  the out-slot is null (`Scripting/Utils-inl.hpp`). ReFinalizeState, FinalizeState and
-  InitializeState return Bool, so none ran; InitializeOptionsFromFinalizedState is void, so it
+  commit is inert — why nobody is visibly Veronica: `InitializeOptionsFromFinalizedState` runs
+  and does not rebuild the body, so the restore "succeeds", changes nothing, and still gates
+  saving (`MaySaveCharacter` refuses on a FAILED restore). Cam, from the field: "im not the
+  character i just made, im some man but not my male character."
+- **The creator commit calls were never refused - they never ran (CORRECTED 2026-11-05).**
+  `CallCustomizationFunction` (NetworkWorldSystem.cpp) passes no out-slot, and the SDK's
+  `ExecuteFunction` returns false WITHOUT calling a function that has a return type when the
+  out-slot is null (`Scripting/Utils-inl.hpp`). `InitializeState`, `ReFinalizeState` and
+  `FinalizeState` return Bool, so none ran; `InitializeOptionsFromFinalizedState` is void, so it
   "worked". Do not fix the helper alone: the mirror calls InitOpts BEFORE ReFinalize, and
-  ReFinalize needs state the InitOpts call sets. atlas:on-2-5-a-player-sees-themself-as-the-template-body-while-eve
-  refused in gameplay, `InitializeOptionsFromFinalizedState` is accepted and does not rebuild
-  the body — the restore "succeeds", changes nothing, and still gates saving
-  (`MaySaveCharacter` refuses on a FAILED restore). Cam, from the field: "im not the character
-  i just made, im some man but not my male character." Do NOT re-attempt the creator-only
-  commit functions (`InitializeState`/`ReFinalizeState`/`FinalizeState`) — all three are
-  measured and refused.
+  ReFinalize alone may blank the state. Route A is in the admin overlay (Test > "Dress my
+  body", `DressLocalBodyFromStoredLook`): stored look into a FRESH state, keys via
+  `CollectCustomizationKeys` (shared with the remote path), scheduled on the local player.
+  Touches no live state and no save. atlas:on-2-5-a-player-sees-themself-as-the-template-body-while-eve
 
 ### Manifest system: built, waiting on two keys and one deploy
 - **Cam's signing key: MINTED 2026-08-30 (`node tools/manifest/keygen.cjs`), deliberately
