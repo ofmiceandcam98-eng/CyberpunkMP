@@ -26,6 +26,9 @@ void MultiMovementController::Tick(float delta)
     if (!m_pState)
         return;
 
+    if (!std::exchange(m_tickLogged, true))
+        spdlog::info("[MultiMovement] first Tick for puppet {:x} (delta {:.4f})", m_ownerHash, delta);
+
     States::Base::Update update;
     update.Delta = delta;
     update.Speed = States::Base::BandSpeed(m_speed, m_locomotion);
@@ -59,6 +62,10 @@ void MultiMovementController::GetDeltaTransform(Red::Vector4& positionDelta, Red
     const auto& rawRotation = m_pComponent->owner->placedComponent->localTransform.Orientation;
     const glm::vec3 pos = Game::ToGlm(rawPosition);
     const auto rot = Game::ToGlm(rawRotation);
+
+    if (!std::exchange(m_deltaLogged, true))
+        spdlog::info("[MultiMovement] first GetDeltaTransform for puppet {:x}: body ({:.1f}, {:.1f}, {:.1f}) -> target ({:.1f}, {:.1f}, {:.1f})",
+                     m_ownerHash, pos.x, pos.y, pos.z, m_position.X, m_position.Y, m_position.Z);
 
     auto angles = eulerAngles(rot);
     angles.z = m_angle - angles.z;
@@ -107,7 +114,14 @@ void MultiMovementController::SendAnimationParameters(float delta, Red::Vector4&
 
     GetAnimationParameters(data);
 
+    if (!m_sendLogged)
+        spdlog::info("[MultiMovement] first SendAnimationParameters for puppet {:x}: style {} action {} speed {:.2f} - calling the engine",
+                     m_ownerHash, static_cast<int32_t>(data.style), static_cast<int32_t>(data.action), data.speed);
+
     m_animationDriver.SendParameters(data);
+
+    if (!std::exchange(m_sendLogged, true))
+        spdlog::info("[MultiMovement] first SendAnimationParameters for puppet {:x} returned", m_ownerHash);
 }
 
 void MultiMovementController::sub_48(RED4ext::Vector4& somePosition1, RED4ext::Quaternion& someRotation1, RED4ext::Vector4& somePosition2, RED4ext::Quaternion& someRotation2)
@@ -154,6 +168,7 @@ void MultiMovementController::Attach(Red::move::Component& movable)
     }
 
     m_pComponent = &movable;
+    m_ownerHash = movable.owner->id.hash;
 
     const auto& pos = movable.owner->placedComponent->localTransform.Position;
     const auto& rot = movable.owner->placedComponent->localTransform.Orientation;
@@ -161,10 +176,12 @@ void MultiMovementController::Attach(Red::move::Component& movable)
     const auto quat = Game::ToGlm(rot);
     SetTransform(Red::Vector4{pos.x, pos.y, pos.z, 0.f}, eulerAngles(quat).z, 0.f);
 
+    spdlog::info("[MultiMovement] Attach for puppet {:x} - binding the engine AnimationDriver", m_ownerHash);
     m_animationDriver.Attach(movable.owner);
 
     m_pState = MakeUnique<States::Spawning>(m_host);
     m_pState->Enter();
+    spdlog::info("[MultiMovement] Attach for puppet {:x} done - state machine running", m_ownerHash);
 }
 
 void MultiMovementController::Detach(Red::move::Component& movable)

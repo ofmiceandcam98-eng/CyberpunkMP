@@ -11,6 +11,9 @@
 #include "AppearanceSystem.h"
 #include "App/Voice/VoiceAudioManager.h"
 #include "App/Voice/VoiceClient.h"
+
+// Vectored crash handler + terminate/abort hooks. Idempotent; see the definition.
+void InstallCrashReporter();
 #include "ChatSystem.h"
 #include "InterpolationSystem.h"
 #include "VehicleSystem.h"
@@ -45,6 +48,10 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     void OnInitialize(const RED4ext::JobHandle& aJob) override;
 
     void Connect();
+    // The main menu's CONNECT and PLAY: never spawns on authentication, because on 2.5 a
+    // player object exists behind the menu and the in-world test cannot tell the difference.
+    void ConnectFromMenu();
+    void ConnectAs(bool aFromMenu);
     void Disconnect();
     void OnConnected();
     void OnDisconnected(Client::EDisconnectReason);
@@ -71,6 +78,7 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // and a player who just rebuilt themselves look identical. Only the client knows which
     // menu entry was pressed, so the client is what says so.
     void MarkNewCharacter();
+    void ClearNewCharacter();
 
     // Capturing what the player is carrying, so the SERVER owns it rather than their save.
     //
@@ -457,6 +465,11 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // whoever is in your Cyberpunk save.
     void ApplyStoredAppearance();
 
+    // EXPERIMENT, admin overlay only: dresses the LOCAL player's body from the stored look the
+    // way remote players are dressed, without touching the live state or any save. See the
+    // definition. aReplaceTemplateKeys also hands the changer the template's keys to take off.
+    void DressLocalBodyFromStoredLook(bool aReplaceTemplateKeys);
+
     // Watches for the player finishing a mirror or creator session, and saves it for them.
     void PollAppearanceChanges();
 
@@ -608,6 +621,13 @@ protected:
 
     Vector<uint8_t> m_restoreAppearance;
 
+    // Kept for DressLocalBodyFromStoredLook once ApplyStoredAppearance has spent the buffer
+    // above: the stored look as the server sent it, and the live state as it was just before
+    // the restore wrote into it - the template body that is still the one on screen. Set only
+    // off 2.31, cleared wherever the restore starts over.
+    Vector<uint8_t> m_restoredLook;
+    Vector<uint8_t> m_templateLook;
+
     // How far the local appearance restore has got, so it happens exactly once.
     //
     // InitializeState and ReFinalizeState rebuild the LIVE player's body. Running them a
@@ -626,6 +646,18 @@ protected:
     };
 
     AppearanceRestore m_appearanceRestore{AppearanceRestore::NotStarted};
+
+    // Off 2.31 only: whether the LIVE customization state (GetState) is provably this
+    // character's body, and which body type that is. Set when a stored look is restored
+    // (Applied) or a new character's creator body is captured; cleared wherever the restore
+    // starts over. SaveCharacterAppearance reads the live state only while this holds - the
+    // same state holds the template's default body otherwise (see GetCustomizationState).
+    bool m_liveStateIsCharacter{false};
+    bool m_liveStateIsMale{false};
+
+    // True only for the save OnBeforeWorldDetach runs - on 2.5 the one moment a new character's
+    // creator look is in the live state (the New Game world, before the multiplayer world loads).
+    bool m_savingBeforeDetach{false};
 
     // So "waiting for a world" is said once instead of every tick. ApplyStoredAppearance is
     // called from the settle loop, and the wait is the normal case for the first second or
@@ -906,9 +938,11 @@ private:
 RTTI_DEFINE_CLASS(NetworkWorldSystem, { 
     RTTI_ALIAS("CyberpunkMP.World.NetworkWorldSystem");
     RTTI_METHOD(Connect);
+    RTTI_METHOD(ConnectFromMenu);
     RTTI_METHOD(Disconnect);
     RTTI_METHOD(RequestJoin);
     RTTI_METHOD(MarkNewCharacter);
+    RTTI_METHOD(ClearNewCharacter);
     RTTI_METHOD(BeginInventoryCapture);
     RTTI_METHOD(AddInventoryItem);
     RTTI_METHOD(EndInventoryCapture);

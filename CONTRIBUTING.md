@@ -1,7 +1,7 @@
 # Working on Night City Online
 
 This is a fork of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) carrying the
-changes needed to run on **Cyberpunk 2077 patch 2.31**. Upstream targets 2.2 and will not
+changes needed to run on **Cyberpunk 2077 patch 2.5**. Upstream targets 2.2 and will not
 start on current game versions.
 
 Read this before building. The toolchain has version pins that are load-bearing, and a
@@ -44,6 +44,7 @@ the unpinned dependencies resolve to versions that no longer work.
 | **Windows SDK 10.0.22621.0** | 10.0.26100.0 breaks the build. Installing a second SDK requires clearing **both** `xmake global --clean` and the local `.xmake/` and `build/` directories, or the two include paths collide with type-redefinition errors. |
 | **CppSharp 1.1.84.17100 on net9.0** | For `SdkGenerator` only. The pinned 1.1.5.3168 bundles a Clang too old for MSVC 14.44's STL. The SDK and plugins stay on net8.0. |
 | **pnpm 9** | pnpm 10+ blocks package build scripts by default, which breaks esbuild. |
+| **RED4ext.SDK, vendored in-tree** | Not a submodule: `vendor/RED4ext.SDK` is upstream WopsS `5246e659` (patch 2.5) with the original CyberpunkMP team's hand-decoded engine structs merged in, carried to 2.5 offsets. Upstream alone lacks those decodes, and the old fork lacks 2.5. `vendor/RED4ext.SDK/NCO-PROVENANCE.md` records the bases, the merged commits and every local patch - start the next game patch's port there. |
 
 Build with **`-j 4` or lower**. Higher parallelism has exhausted memory and produced
 `C3859: Failed to create virtual memory for PCH`.

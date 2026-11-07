@@ -36,7 +36,15 @@ happened here twice, and both cleanups cost an evening.
 | `--ok` | `#3ddc64` | it worked |
 | `--bad` | `#f0a05a` | it did not |
 | `--update` | `#c2621b` | an update is waiting |
-| `--steel` | `#2b303a` | inert chrome — verify button, scrollbar thumb |
+| `--update-2` | `#6b3410` | the Update plate's base — a shade of `--update`, never a new hue |
+| `--update-tread` | `#9a4a14` | the second band of the Update plate's working stripe |
+| `--steel` | `#2b303a` | inert chrome — secondary plates, scrollbar thumb |
+| `--accent-2` | `#7c1015` | the accent ramp: the red fade on the motifs and the progress bar |
+| `--accent-3` | `#5a0c11` | deeper in the ramp — a secondary plate's base, trailing plates and hairlines |
+| `--accent-4` | `#26060a` | where the ramp ends, just above the ground |
+| `--plate-dead` | `#2a0d11` | a kit button that cannot be pressed yet |
+| `--tread-2` | `#b81f26` | the second band of the working stripe |
+| `--glitch` | `#3ce8ef` | **the click glitch and nothing else.** The one hue outside this palette |
 
 **The hazard rule, and it is the subtle one.** Yellow means *warning* everywhere in this app —
 the waiting queue row, the `/// WARNING ///` prefix, the busy spinner. It ALSO carries the
@@ -108,12 +116,56 @@ this when something needs to read as a HUD element rather than a web control.
 | Pattern | Where | Says |
 |---|---|---|
 | `120deg`, fine, 2px/6px | `.play::before` | this is the primary control |
-| `-45deg`, 14px, animated | `.play.busy` | working, do not press again |
+| `-45deg`, 14px, animated | a working `.hud` button | working, do not press again |
 | `45deg`, 3px/7px, hazard | rail caps | end of travel |
 | `45deg`, 5px/10px, hazard | rail active plate | you are here |
 
 **Marks:** `❮❮` (`\276E\276E`) trails an action. `///` prefixes a warning
 (`/// WARNING ///`). `›` leads a list item.
+
+---
+
+## Buttons
+
+zeldfep, 2026-11-05, choosing from a live test page: *"I like A, C and D all at once"*. The main
+actions and the mods panel use one kit, in `THE BUTTON KIT` in `code/launcher-lite/index.html`:
+one button with separate moments, so its effects never compete.
+
+| Moment | The plate (`.hud.plate`) | The wired plate (`.hud.wired`) |
+|---|---|---|
+| Rest | solid plate on an offset base, a raised tab with four square dots | the same tab, fed by a ring node and a trace |
+| Hover or Tab | lifts off its base; the dots fill one at a time | a signal runs down the trace; the dots fill |
+| Press | drops into the base | pushes onto the trace |
+| Click | the text tears and a scan line drops, once | the same, except on the small Install size |
+| Working | the dots chase; the `-45deg` stripe runs on JACK IN | the dots chase |
+
+- **The little load bar is the hover cue.** The four dots say "this is live" on hover and on
+  keyboard Tab. **The glitch belongs on the click**, because hover would replay it constantly.
+- **The glitch never delays what the click does.** It plays over the click and the action starts at once.
+- **A working button keeps its lit plate.** Dark means it can't be pressed yet. Busy is not that.
+- **Don't show progress you can't measure, or a result you don't have.** "Files OK" only appears after
+  the check passed, and a check with no known length chases its dots instead of filling a bar.
+- **Every clip-path sits on an inner layer, never on the button**, or the keyboard focus ring is clipped
+  away with it. Plain `button.action` buttons still have that problem.
+- **Write the label with `setHudButton`.** `textContent` wipes out the layers inside the button with no
+  error. `tools/tests/launcher_buttons_test.mjs` checks for this.
+- **With animations turned off, nothing travels or tears.** Colour and the load bar still answer.
+
+**Update stands in your path** (zeldfep, 2026-11-07, picking option 2 of the Update test page).
+It is the plate in `--update` orange with `#140406` text; white on that orange is 4.15:1 and fails.
+
+- **When an update blocks JACK IN, Update sits above it**, with a wire down into JACK IN's raised
+  tab. Hover or Tab sends a signal down the wire and JACK IN's dots stir.
+- **Each real step is printed on the wire** as the main process reports it, as a `--fs-micro` mono
+  readout. A refusal is said there too, because the status line is far below the button.
+- **Done, it turns steel with a green "Updated", then lifts away**, and JACK IN comes alive when the
+  next check confirms the files. Green on the orange would be 2.3:1.
+- **A newer test build blocks nothing**, so the same button sits in the row beside Verify as a steel
+  plate with orange dots. `placeUpdate` is the only thing that shows, hides or moves it.
+
+`.play` is still in use: the settings modal's Done button is an `.action.play`.
+
+See any state of the real page in a browser with `node tools/tests/launcher-stage.mjs`.
 
 ---
 

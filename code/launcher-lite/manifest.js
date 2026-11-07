@@ -752,6 +752,105 @@ export function extractPayloadClean (aModDir, aZip) {
 }
 
 /**
+ * Which frameworks does the signed manifest pin that this install has not been proven to carry?
+ *
+ * Asking whether the file EXISTS is what let this go wrong: RED4ext 1.29.1 passed every check on
+ * zeldfep's box (2026-11-01) while crashing a 2.5 game before the mod ever loaded, because Update
+ * only ever replaced the mod. aProven is the launcher's own record, component id -> the archive
+ * sha256 it last proved on disk, so a release that bumps a pin makes that framework stale by
+ * itself and no version has to be read out of a DLL. No record reads as stale, not as fine: an
+ * install from before this existed is exactly the one that may be carrying an old framework, and
+ * the check that follows costs one download and touches nothing that already matches. No manifest
+ * means nothing to compare against, so nothing is stale - the same answer migration always gets.
+ */
+export function findStalePrerequisites (aManifest, aProven, aMissingNames = []) {
+  return (aManifest?.components || [])
+    .filter((c) => c.class === 'bundled' && c.archive?.name && c.archive?.sha256)
+    .filter((c) => aProven?.[c.id] !== c.archive.sha256 || aMissingNames.includes(c.name))
+}
+
+/**
+ * Are the bytes on disk the bytes this framework's zip carries? Compared by hash rather than by
+ * name or size, because a one-version bump of a DLL keeps both. aZip is anything whose
+ * getEntries() yield entries with getData().
+ */
+export function auditBundledFiles (aGameDir, aZip) {
+  const missing = []
+  const different = []
+  for (const entry of aZip.getEntries()) {
+    if (entry.isDirectory) continue
+    const rel = entry.entryName.split('\\').join('/')
+    const full = path.join(aGameDir, rel.split('/').join(path.sep))
+    if (!existsSync(full)) {
+      missing.push(rel)
+      continue
+    }
+    try {
+      if (hashFileSha256(full) !== sha256Hex(entry.getData())) different.push(rel)
+    } catch {
+      different.push(rel)
+    }
+  }
+  return { missing, different }
+}
+
+/**
+ * Delete what an older version of a framework placed and the new one no longer ships. A script
+ * left behind is not inert: two definitions of one class make redscript refuse the whole
+ * compile. Only ever walks the launcher's own record of what it installed, never a directory,
+ * because those folders also hold what players and other mods put there. Case-insensitive,
+ * since this is NTFS: a version that renames Foo.dll to foo.dll must not lose the file it just
+ * wrote. aKeep is every path still owned, by this framework's new version and by the others.
+ */
+export function removeRetiredFiles (aGameDir, aOldFiles, aKeep) {
+  const keep = new Set((aKeep || []).map((p) => String(p).split('\\').join('/').toLowerCase()))
+  const root = path.resolve(aGameDir)
+  const removed = []
+  const failed = []
+  for (const rel of aOldFiles || []) {
+    const clean = String(rel).split('\\').join('/')
+    if (keep.has(clean.toLowerCase())) continue
+    const full = path.resolve(root, clean.split('/').join(path.sep))
+    // The record lives in a settings file, so it does not get to name a path outside the game.
+    if (!full.startsWith(root + path.sep)) {
+      failed.push(`${clean} (outside the game folder)`)
+      continue
+    }
+    try {
+      if (!existsSync(full)) continue
+      rmSync(full, { force: true, maxRetries: 3, retryDelay: 120 })
+      removed.push(clean)
+    } catch (err) {
+      failed.push(`${clean} (${err.code || err.message})`)
+    }
+  }
+  return { removed, failed }
+}
+
+/**
+ * Bring one framework to the version in aZip, and prove it. Nothing is written when the disk
+ * already matches, so a framework that was fine all along keeps its files and their timestamps.
+ * Returns ok:false with the paths that did not land; a failed extract throws, as adm-zip does.
+ */
+export function applyBundledZip (aGameDir, aZip, aOldFiles = [], aOtherFiles = []) {
+  const files = aZip.getEntries()
+    .filter((e) => !e.isDirectory)
+    .map((e) => e.entryName.split('\\').join('/'))
+
+  const before = auditBundledFiles(aGameDir, aZip)
+  const changed = before.missing.length > 0 || before.different.length > 0
+
+  if (changed) {
+    aZip.extractAllTo(aGameDir, true)
+    const after = auditBundledFiles(aGameDir, aZip)
+    const unwritten = [...after.missing, ...after.different]
+    if (unwritten.length > 0) return { ok: false, changed, files, unwritten }
+  }
+
+  return { ok: true, changed, files, retired: removeRetiredFiles(aGameDir, aOldFiles, [...files, ...aOtherFiles]) }
+}
+
+/**
  * Will the installed CyberpunkMP.dll actually LOAD, or has a DevInstall symlink parked it?
  *
  * installdll.lua (the dev build step) replaces the DLL with a symbolic link into the build

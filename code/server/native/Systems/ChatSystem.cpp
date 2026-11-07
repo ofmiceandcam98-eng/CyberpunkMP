@@ -120,6 +120,48 @@ ChatSystem::ChatSystem(gsl::not_null<World*> apWorld)
             });
 }
 
+Vector<server::CharacterSummary> ChatSystem::RosterOf(const PlayerRecord& acRecord)
+{
+    Vector<server::CharacterSummary> characters;
+
+    for (const auto& character : acRecord.Characters)
+    {
+        server::CharacterSummary summary;
+        summary.set_id(character.CharacterId.c_str());
+        summary.set_name(character.Name.c_str());
+        summary.set_level(character.Level);
+        summary.set_spawned_before(character.SpawnedBefore);
+        summary.set_lifepath(character.Lifepath.c_str());
+
+        // The five attributes, sent as stored. See server.proto - this is the flag day
+        // that lets the selector show who somebody is rather than only what they are
+        // called.
+        Vector<server::Attribute> attributes;
+
+        for (const auto& attribute : character.Attributes)
+        {
+            server::Attribute wire;
+            wire.set_type(attribute.Type);
+            wire.set_value(attribute.Value);
+            attributes.push_back(wire);
+        }
+
+        summary.set_attributes(attributes);
+
+
+        // The slot is for DRAWING, never for identity. Slots are not contiguous -
+        // retiring the character in slot 1 of three leaves 0 and 2 occupied - so the
+        // client draws holes where the gaps are rather than renumbering. Anything
+        // keyed on a slot number that moves is a bug waiting for a deletion.
+        summary.set_slot(character.Slot);
+        summary.set_is_active(character.Slot == acRecord.ActiveSlot);
+
+        characters.push_back(summary);
+    }
+
+    return characters;
+}
+
 void ChatSystem::SendCharacterList(const PlayerComponent& acPlayer, const std::string& acError)
 {
     server::NotifyCharacterList message;
@@ -136,46 +178,7 @@ void ChatSystem::SendCharacterList(const PlayerComponent& acPlayer, const std::s
         const auto* pRecord = store.Find(acPlayer.DiscordId);
 
         if (pRecord && !pRecord->Characters.empty())
-        {
-            Vector<server::CharacterSummary> characters;
-
-            for (const auto& character : pRecord->Characters)
-            {
-                server::CharacterSummary summary;
-                summary.set_id(character.CharacterId.c_str());
-                summary.set_name(character.Name.c_str());
-                summary.set_level(character.Level);
-                summary.set_spawned_before(character.SpawnedBefore);
-                summary.set_lifepath(character.Lifepath.c_str());
-
-                // The five attributes, sent as stored. See server.proto - this is the flag day
-                // that lets the selector show who somebody is rather than only what they are
-                // called.
-                Vector<server::Attribute> attributes;
-
-                for (const auto& attribute : character.Attributes)
-                {
-                    server::Attribute wire;
-                    wire.set_type(attribute.Type);
-                    wire.set_value(attribute.Value);
-                    attributes.push_back(wire);
-                }
-
-                summary.set_attributes(attributes);
-
-
-                // The slot is for DRAWING, never for identity. Slots are not contiguous -
-                // retiring the character in slot 1 of three leaves 0 and 2 occupied - so the
-                // client draws holes where the gaps are rather than renumbering. Anything
-                // keyed on a slot number that moves is a bug waiting for a deletion.
-                summary.set_slot(character.Slot);
-                summary.set_is_active(character.Slot == pRecord->ActiveSlot);
-
-                characters.push_back(summary);
-            }
-
-            message.set_characters(characters);
-        }
+            message.set_characters(RosterOf(*pRecord));
     }
 
     if (!acError.empty())
@@ -433,6 +436,18 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
 
     const auto& blob = aMessage.get_ccstate();
 
+    auto& store = GServer->GetPlayerStore();
+    const auto* pExisting = store.FindCharacter(pPlayer->DiscordId);
+
+    // NO appearance at all = "keep the stored look, update the rest" - for an EXISTING
+    // character only. A 2.5 client sends this for a character whose stored look it restored:
+    // re-capturing the live state there saved Pajeet merged with the default woman's leftover
+    // options (female_base, breast, genitals - 2026-11-03, 6283 -> 6571 bytes), because the
+    // restore writes the look INTO a state that still holds the template's body. Possessions
+    // must not wait on a clean look capture (Atlas on-2-5-no-inventory-money-perks-or-...).
+    // A new character still needs a real appearance - an empty one is refused below.
+    const bool keepStoredLook = blob.empty() && pExisting != nullptr && !pExisting->Appearance.empty();
+
     // Same bound as the spawn path. This is stored and then relayed to every other client,
     // so an unbounded blob is a way to make one save allocate arbitrary memory everywhere.
     constexpr size_t kMaxCcstate = 256 * 1024;
@@ -444,16 +459,13 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
     // catch it before it becomes somebody's stored character.
     constexpr size_t kMinCcstate = 1024;
 
-    if (blob.size() < kMinCcstate || blob.size() > kMaxCcstate)
+    if (!keepStoredLook && (blob.size() < kMinCcstate || blob.size() > kMaxCcstate))
     {
         spdlog::warn("Refused a character save from {} - {} bytes of appearance is not plausible",
                      pPlayer->Username, blob.size());
         Tell(*pPlayer, "That character could not be saved - the appearance data was not usable.");
         return;
     }
-
-    auto& store = GServer->GetPlayerStore();
-    const auto* pExisting = store.FindCharacter(pPlayer->DiscordId);
 
     // BODY TYPE IS CHOSEN ONCE AND CANNOT CHANGE.
     //
@@ -525,8 +537,13 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
      * pointed at an empty slot writes a new character there rather than over anybody.
      */
     character.Slot = store.ActiveSlotFor(pPlayer->DiscordId);
-    character.IsMale = aMessage.get_is_male();
-    character.Appearance = Base64::Encode(std::vector<uint8_t>(blob.begin(), blob.end()));
+
+    // The look and the body type travel together, and a keep-the-look save changes neither.
+    if (!keepStoredLook)
+    {
+        character.IsMale = aMessage.get_is_male();
+        character.Appearance = Base64::Encode(std::vector<uint8_t>(blob.begin(), blob.end()));
+    }
 
     // Read BEFORE it is consumed. The old code cleared this field and then tested it, so
     // "did they deliberately choose a name" could never come back true from here.
@@ -1002,8 +1019,12 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
         }
     }
 
-    spdlog::info("{} saved character '{}' from the creator ({} bytes)", pPlayer->Username,
-                 character.Name, blob.size());
+    if (keepStoredLook)
+        spdlog::info("{} saved character '{}' - possessions only, stored look kept", pPlayer->Username,
+                     character.Name);
+    else
+        spdlog::info("{} saved character '{}' from the creator ({} bytes)", pPlayer->Username,
+                     character.Name, blob.size());
 
     // Confirmed only when they asked. An automatic save is not news.
     if (!aMessage.get_automatic())

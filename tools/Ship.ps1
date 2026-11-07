@@ -526,6 +526,21 @@ if ($Launcher) {
 
     Ok "every declared dependency is installed"
 
+    # The launcher's own tests. manifest.selftest.mjs held 113 checks and no gate ever ran it,
+    # so they only meant something when somebody remembered. prereq.selftest.mjs lifts real
+    # functions out of main.js, which is the one thing here that catches an undeclared
+    # identifier before a player presses the button: that is how installFull broke, twice.
+    # renderer.selftest.mjs does the same for index.html's inline script, which nothing else reads.
+    foreach ($test in @("manifest.selftest.mjs", "prereq.selftest.mjs", "renderer.selftest.mjs")) {
+        $testOutput = node $test 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Pop-Location
+            $testOutput | Select-Object -Last 20 | ForEach-Object { Write-Host $_ }
+            Die "$test failed - nothing was packaged. The failures are printed above; reproduce with: node $test (in $LauncherDir)"
+        }
+    }
+    Ok "launcher selftests pass"
+
     # The same failure as the check above, one layer over: a file the launcher imports that
     # is not IN the package.
     #

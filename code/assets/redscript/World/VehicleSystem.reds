@@ -82,6 +82,15 @@ public native class VehicleSystem extends IScriptable {
 
         // let entity_system = GameInstance.GetDynamicEntitySystem();
         let character = entity_system.GetEntity(character_id) as GameObject;
+
+        // Release the steering first. Off 2.31 a remote body walks under a move command that
+        // never finishes (NetworkWorldSystem.MpSteerPuppet), and the mount is an AI event - the
+        // command must not still be holding the body in place when the AI comes to seat it.
+        let puppet = character as ScriptedPuppet;
+        if IsDefined(puppet) && IsDefined(puppet.GetAIControllerComponent()) {
+            puppet.GetAIControllerComponent().CancelOrInterruptCommand(n"AIMoveToCommand", true, true);
+        }
+
         character.QueueEvent(evt);
 
 
@@ -157,14 +166,29 @@ public native class VehicleSystem extends IScriptable {
     // }
 }
 
+// Only a mount where THIS player sits IN a vehicle is a vehicle entry.
+//
+// The engine sends MountingEvent for every mount this puppet takes part in, including the
+// ones where the player is the PARENT: picking up a body or grabbing an enemy mounts the NPC
+// onto the player (vanilla carriedObject.script reads the NPC from childId). Reporting those
+// as entries handed the server "vehicle" parentId = the player's own entity id, 1 - after
+// which UpdatePlayerLocation took the vehicle branch, could not find vehicle 1 (237 and 349
+// "Couldn't find vehicle: 1" lines in two test.85/86 logs) and sent NO position until the
+// next unmount: the remote player froze on everyone's screen, then snapped. Vanilla's own
+// handler decides the same way - a vehicle only if parentId resolves to a VehicleObject.
 @wrapMethod(PlayerPuppet)
 protected cb func OnMountingEvent(evt: ref<MountingEvent>) -> Bool {
     let result: Bool = wrappedMethod(evt);
 
-    let entity_system = GameInstance.GetDynamicEntitySystem();
-
     let mounting_info = evt.request.lowLevelMountingInfo;
-    let vehicle = entity_system.GetEntity(mounting_info.parentId) as VehicleObject;
+    if NotEquals(mounting_info.childId, this.GetEntityID()) {
+        return result;
+    }
+
+    let vehicle = GameInstance.FindEntityByID(this.GetGame(), mounting_info.parentId) as VehicleObject;
+    if !IsDefined(vehicle) {
+        return result;
+    }
 
     let type = vehicle.GetRecordID();
     let sit_position = mounting_info.slotId.id;
@@ -176,10 +200,16 @@ protected cb func OnMountingEvent(evt: ref<MountingEvent>) -> Bool {
     return result;
 }
 
+// The mirror of the entry guard: dropping a body or releasing a grabbed enemy unmounts the
+// NPC (the child), not the player - vanilla's handler checks childId is the player too.
 @wrapMethod(PlayerPuppet)
 protected cb func OnUnmountingEvent(evt: ref<UnmountingEvent>) -> Bool {
     let result: Bool = wrappedMethod(evt);
-    
+
+    if NotEquals(evt.request.lowLevelMountingInfo.childId, this.GetEntityID()) {
+        return result;
+    }
+
     GameInstance.GetNetworkWorldSystem().GetVehicleSystem().OnVehicleExit();
 
     return result;

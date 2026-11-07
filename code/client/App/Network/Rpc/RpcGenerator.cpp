@@ -209,7 +209,7 @@ void RpcGenerator::GenerateHandlers()
             if (type->GetType() == Red::ERTTIType::Class)
             {
                 const auto* pClass = static_cast<Red::CClass*>(type);
-                if (pClass->IsA(pParent) && pClass->funcs.size > 0)
+                if (pClass->IsA(pParent) && pClass->funcs.Size() > 0)
                 {
                     clientLibrary[pClass] = {};
 

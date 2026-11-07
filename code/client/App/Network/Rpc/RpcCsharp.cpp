@@ -376,7 +376,7 @@ void RpcGenerator::DumpCsharp()
             if (type->GetType() == Red::ERTTIType::Class)
             {
                 const auto* pClass = static_cast<Red::CClass*>(type);
-                if (pClass->IsA(pParent) && pClass->funcs.size > 0)
+                if (pClass->IsA(pParent) && pClass->funcs.Size() > 0)
                 {
                     clientLibrary[pClass] = {};
 
@@ -431,7 +431,7 @@ void RpcGenerator::DumpCsharp()
             o << "public enum " << name;
             o << "\n";
             o << "{\n";
-            for (uint32_t i = 0; i < klass->hashList.size; ++i)
+            for (uint32_t i = 0; i < klass->hashList.Size(); ++i)
             {
                 auto hash = klass->hashList[i];
                 auto val = klass->valueList[i];

@@ -159,21 +159,79 @@ else {
 }
 
 # ---------------------------------------------------------------------------
-Head "redscript natives vs C++ RTTI"
-$reds = "code\assets\redscript\World\NetworkWorldSystem.reds"
-$hdr  = "code\client\App\World\NetworkWorldSystem.h"
-$declared = (Select-String -Path $reds -Pattern 'public native func (\w+)' -AllMatches).Matches | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
-$exposed  = (Select-String -Path $hdr  -Pattern 'RTTI_METHOD\((\w+)\)'     -AllMatches).Matches | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
+Head "the game patch, everywhere a player reads it"
+# The manifest drives the launcher's version gate. These are the files that say the same thing in
+# words, and they drifted: the first 2.5 release was about to tell players to install on 2.31.
+$sourceManifest = Get-Content "publish\manifest-source.json" -Raw | ConvertFrom-Json
+$gamePatch = [string]$sourceManifest.game.supportedVersion
+$patchOk = $true
+foreach ($doc in @("publish\INSTALL.txt", "README.md", "CONTRIBUTING.md")) {
+    foreach ($hit in (Select-String -Path $doc -Pattern '(?i)patch\s+(\d+\.\d+)|Cyberpunk%202077-(\d+\.\d+)-')) {
+        if ($hit.Line -match '(?i)upstream') { continue }
+        $found = if ($hit.Matches[0].Groups[1].Success) { $hit.Matches[0].Groups[1].Value } else { $hit.Matches[0].Groups[2].Value }
+        if ($found -ne $gamePatch) {
+            $patchOk = $false
+            Fail -Summary "$doc says patch $found, the manifest says $gamePatch" `
+                 -What "players read this and install on the wrong patch, or are told the mod does not fit their game." `
+                 -Where "$doc`:$($hit.LineNumber)" `
+                 -Fix "change it to $gamePatch, or correct game.supportedVersion in publish\manifest-source.json"
+        }
+    }
+}
+foreach ($component in ($sourceManifest.components | Where-Object { $_.class -eq 'bundled' })) {
+    if (-not (Select-String -Path "publish\INSTALL.txt" -SimpleMatch $component.archive.name -Quiet)) {
+        $patchOk = $false
+        Fail -Summary "publish\INSTALL.txt does not name $($component.archive.name)" `
+             -What "someone installing by hand is told to use a different version of $($component.name) than this release pins." `
+             -Where "section 1 of publish\INSTALL.txt" `
+             -Fix "list $($component.archive.name) there, matching publish\manifest-source.json"
+    }
+}
+if ($patchOk) { Pass "patch $gamePatch and the pinned frameworks agree in INSTALL.txt, README and CONTRIBUTING" }
 
-foreach ($n in ($declared | Where-Object { $exposed -notcontains $_ })) {
-    $line = (Select-String -Path $reds -Pattern "native func $n\b" | Select-Object -First 1).LineNumber
-    Fail -Summary "native '$n' has no C++ behind it" `
-         -What "this fails when the mod LOADS, not when it compiles - and it takes EVERY script in the mod down with it. The game starts with no menu entry, no chat and no HUD, looking exactly like the mod did nothing" `
-         -Where "declared at $reds`:$line, missing from $hdr" `
-         -Fix "either add RTTI_METHOD($n) to the RTTI block in $hdr and implement it, or delete the declaration in the .reds if it was speculative"
+# ---------------------------------------------------------------------------
+Head "redscript natives vs C++ RTTI"
+# Every script that declares a native class, beside the C++ that has to expose it. This used to
+# check NetworkWorldSystem alone while its pass line read as if it covered the whole mod.
+$nativePairs = @(
+    @{ Reds = "code\assets\redscript\World\NetworkWorldSystem.reds"; Cpp = @("code\client\App\World\NetworkWorldSystem.h") }
+    @{ Reds = "code\assets\redscript\World\ChatSystem.reds";         Cpp = @("code\client\App\World\ChatSystem.h") }
+    @{ Reds = "code\assets\redscript\World\AppearanceSystem.reds";   Cpp = @("code\client\App\World\AppearanceSystem.h") }
+    @{ Reds = "code\assets\redscript\World\VehicleSystem.reds";      Cpp = @("code\client\App\World\VehicleSystem.h", "code\client\App\World\VehicleSystem.cpp") }
+)
+$nativeCount = 0
+$nativesOk = $true
+foreach ($pair in $nativePairs) {
+    $reds = $pair.Reds
+    # Anchored: a commented-out declaration is not a native.
+    $declared = (Select-String -Path $reds -Pattern '^\s*public native func (\w+)' -AllMatches).Matches | ForEach-Object { $_.Groups[1].Value }
+    $exposed  = (Select-String -Path $pair.Cpp -Pattern 'RTTI_METHOD\((\w+)\)' -AllMatches).Matches | ForEach-Object { $_.Groups[1].Value }
+    $nativeCount += @($declared).Count
+
+    foreach ($n in ($declared | Where-Object { $exposed -notcontains $_ })) {
+        $nativesOk = $false
+        $line = (Select-String -Path $reds -Pattern "native func $n\b" | Select-Object -First 1).LineNumber
+        Fail -Summary "native '$n' has no C++ behind it" `
+             -What "this fails when the mod LOADS, not when it compiles - and it takes EVERY script in the mod down with it." `
+             -Where "declared at $reds`:$line, missing from $($pair.Cpp -join ', ')" `
+             -Fix "either add RTTI_METHOD($n) to the RTTI block and implement it, or delete the declaration in the .reds"
+    }
+}
+# A new native class has to join the list above, or the pass line starts lying again.
+$listed = $nativePairs | ForEach-Object { $_.Reds }
+foreach ($file in (Get-ChildItem "code\assets\redscript" -Recurse -Filter *.reds)) {
+    $rel = (Resolve-Path -Relative $file.FullName) -replace '^\.\\', ''
+    if ($listed -contains $rel) { continue }
+    if ((Select-String -Path $file.FullName -Pattern '^\s*(public\s+)?native class ' -Quiet) -and (Select-String -Path $file.FullName -Pattern '^\s*public native func ' -Quiet)) {
+        $nativesOk = $false
+        Fail -Summary "$rel declares a native class this check does not cover" `
+             -What "its natives are never compared with the C++, so a missing one only shows up when the mod fails to load." `
+             -Where "`$nativePairs in tools\Verify.ps1" `
+             -Fix "add the script and its C++ files to `$nativePairs"
+    }
 }
 # The reverse is not an error - C++ may expose more than script uses - so it is not checked.
-if (-not ($declared | Where-Object { $exposed -notcontains $_ })) { Pass "$($declared.Count) natives all resolve" }
+if ($nativesOk) { Pass "$nativeCount natives across $($nativePairs.Count) classes all resolve" }
 
 # ---------------------------------------------------------------------------
 Head "chat command dispatch"

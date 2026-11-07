@@ -493,6 +493,12 @@ public:
         return Undelivered(acCharacterId).size();
     }
 
+    // Whether a change is waiting for Flush - for the shutdown trace in ~GameServer.
+    bool IsDirty() const
+    {
+        return m_dirty;
+    }
+
     /**
      * Write if enough time has passed. Called from the server tick.
      *

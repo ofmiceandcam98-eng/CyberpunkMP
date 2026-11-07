@@ -71,6 +71,13 @@ auto-load — read it deliberately. Cam's stream: it auto-loads; keep it current
 
 ## The decrees (full text in the map's Standing Decrees — do not paraphrase from memory)
 
+- **"Have we fixed this?" is the number 1 question, every build** (zeldfep, 2026-11-03: *"it
+  should be the first thing we check every build"*). Before designing a fix or shipping a
+  build, search the WHOLE Atlas by symptom: `/v1/branches` with NO status filter, so landed,
+  parked, dropped and active all count, not just open. Read the matches in full, check
+  `docs/MAP.md`, and say what you found before proposing a change. A `status=open` search
+  once hid the active and archived movement history and reported nothing on the board.
+
 - **The launcher is the one-click solution** (zeldfep, 2026-09-07): *"I should not have to
   run things on my end unless we're fixing some issue, the whole point of the launcher is
   one click solution."* Getting a build is Play. Handing a human a command is acceptable
@@ -88,6 +95,14 @@ auto-load — read it deliberately. Cam's stream: it auto-loads; keep it current
   moment you notice it - one POST, with what/why/next written for somebody who was not here.
   A session remembers what it is working on and forgets everything it found; the Atlas is
   where the second kind lives.
+
+- **Auditing the Atlas includes the internal docs** (zeldfep, 2026-11-05: *"lets make sure these
+  .md are getting audited when auditing atlas if theres something on those that needs to be added
+  to the branches lets do that"*). A working doc outlives the session that wrote it, and what it
+  leaves open is invisible to the board: the 2026-09-06 cutover runbook held one unticked line for
+  two months under a branch marked landed. Every Atlas audit also walks the docs on the server,
+  following the ledger at `/mnt/vol/projects/_internal-docs/DOC-AUDIT.md`: anything still open and
+  unbranched gets a branch, and each doc is marked live, stale or history.
 
 - **Boot policy**: straight to menu, both halves stay.
 - **The footprint rule**: uninstall leaves NOTHING; every write location in the footprint,

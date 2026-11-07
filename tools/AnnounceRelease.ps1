@@ -159,7 +159,26 @@ $body += "If you crash, grab the log from ``red4ext\plugins\zzzCyberpunkMP\logs\
 
 $message = $body -join "`n"
 
-$fields = "Version=$($release.tag_name);Download=$sizeMb MB;Game patch=2.31"
+# The patch comes from the manifest this release carries, the same field the launcher's game
+# version gate reads, so the post cannot disagree with it. It used to be a hardcoded 2.31, which
+# would have announced the first 2.5 release as a 2.31 build.
+$gamePatch = $null
+$manifestAsset = $release.assets | Where-Object { $_.name -eq 'server-manifest.json' } | Select-Object -First 1
+if ($manifestAsset) {
+    try {
+        $gamePatch = (Invoke-RestMethod -Uri $manifestAsset.browser_download_url -TimeoutSec 20).game.supportedVersion
+    } catch {
+        Write-Host "Could not read $($manifestAsset.name) from the release: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+}
+
+$fields = "Version=$($release.tag_name);Download=$sizeMb MB"
+if ($gamePatch) {
+    $fields += ";Game patch=$gamePatch"
+} else {
+    # Say nothing rather than guess: a wrong patch in the announcement is worse than none.
+    Write-Host "No game patch found in the release's manifest - the post leaves that field out. Check $($release.html_url)" -ForegroundColor Yellow
+}
 
 # Not $args - that is an automatic variable holding this script's own unbound arguments,
 # and assigning to it corrupts the call.

@@ -331,19 +331,28 @@ void NetworkService::HandleAuthentication(const PacketEvent<server::Authenticati
  *
  * So the answer is taken once, at the press, and kept. A menu connect stays a menu connect
  * however fast the machine is.
+ *
+ * AND THE MENU SAYS SO RATHER THAN BEING INFERRED. "Is there a player object" stopped meaning
+ * "is this the world" on game 2.5: its main menu stands on a live world with a player in it,
+ * so a CONNECT pressed on the menu read as in-world, spawned at once, and the selector that
+ * opened next released the body again - zeldfep on an empty map with nothing to click
+ * (test.68/69). The player lookup is only the answer for connects that do not say where
+ * they came from - the in-world HUD and the debug overlay, where it is still right.
  */
-void NetworkService::CaptureSpawnIntent()
+void NetworkService::CaptureSpawnIntent(const bool aFromMenu)
 {
-    const auto system = Red::GetGameSystem<Game::PlayerSystem>();
     Red::Handle<Red::GameObject> player;
 
-    if (system)
-        system->GetLocalPlayerControlledGameObject(player);
+    if (!aFromMenu)
+    {
+        if (const auto system = Red::GetGameSystem<Game::PlayerSystem>())
+            system->GetLocalPlayerControlledGameObject(player);
+    }
 
     m_spawnAuthorized = static_cast<bool>(player);
 
     spdlog::info("[Spawn] connect asked for from {} - the spawn {}",
-                 m_spawnAuthorized ? "inside the world" : "the main menu",
+                 aFromMenu ? "the main menu (the menu said so)" : m_spawnAuthorized ? "inside the world" : "the main menu",
                  m_spawnAuthorized ? "goes out with authentication"
                                    : "is held until the player enters the world");
 }

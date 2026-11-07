@@ -36,7 +36,25 @@
        ends up with three ambers and nobody able to say which one is correct. Same values
        as before - this changes nothing on screen, it just gives them one home. */
     --update:  #c2621b;
+    /* Shades OF --update for the Update plate's base and its working stripe - the same rule as
+       the accent ramp below: never new hues. */
+    --update-2: #6b3410;
+    --update-tread: #9a4a14;
     --steel:   #2b303a;
+    /* THE ACCENT RAMP - the red fade on the Play button, the rail and the progress bar. It
+       was pasted as hex into ten gradients (#7c1015 x4, #5a0c11 x5, #26060a x8), and the
+       progress bar read an --accent-2 nobody had declared, falling back to a fourth red,
+       #7a1016, one step off #7c1015. Same values, one home: shades OF the accent, never new
+       hues - a new shade goes here or does not exist. */
+    --accent-2: #7c1015;
+    --accent-3: #5a0c11;
+    --accent-4: #26060a;
+    /* What the button kit needs and nothing else has. --glitch is the one hue outside this
+       palette, and only the click glitch may use it. */
+    --glitch: #3ce8ef;
+    --plate-dead: #2a0d11;
+    --tread-2: #b81f26;
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
     /* ONE corner radius. This file had 2, 3, 4, 6 and 8px in it, none of them chosen -
        and the modal, the panels and the notes card are all square already, so square is
        what the kit actually is. Avatars stay round; they are pictures of people. */
@@ -96,8 +114,8 @@
   header::before {
     content: ""; position: absolute; top: 0; left: 0; right: 0; height: 10px;
     background:
-      linear-gradient(120deg, var(--accent) 0, #7c1015 55%, #26060a calc(100% - 7px), transparent calc(100% - 7px)) left 0 top 0 / 320px 100% no-repeat,
-      linear-gradient(120deg, transparent 5px, #5a0c11 5px, #26060a calc(100% - 5px), transparent calc(100% - 5px)) left 334px top 0 / 26px 100% no-repeat;
+      linear-gradient(120deg, var(--accent) 0, var(--accent-2) 55%, var(--accent-4) calc(100% - 7px), transparent calc(100% - 7px)) left 0 top 0 / 320px 100% no-repeat,
+      linear-gradient(120deg, transparent 5px, var(--accent-3) 5px, var(--accent-4) calc(100% - 5px), transparent calc(100% - 5px)) left 334px top 0 / 26px 100% no-repeat;
     filter: drop-shadow(0 0 6px rgba(255, 42, 50, .4));
     pointer-events: none;
   }
@@ -106,7 +124,7 @@
      bend, and terminates on a square node pad pointing into the page. */
   header::after {
     content: ""; position: absolute; bottom: -8px; right: 0; width: 46%; height: 16px;
-    background: linear-gradient(270deg, var(--accent) 0, #7c1015 45%, #26060a 100%);
+    background: linear-gradient(270deg, var(--accent) 0, var(--accent-2) 45%, var(--accent-4) 100%);
     clip-path: polygon(
       100% 2px, 80px 2px, 72px 10px, 12px 10px, 12px 2px, 0 2px,
       0 14px, 12px 14px, 76px 14px, 84px 6px, 100% 6px);
@@ -288,7 +306,7 @@
   }
   .qbar > div {
     height: 100%;
-    background: linear-gradient(90deg, var(--accent), var(--accent-2, #7a1016));
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
     transition: width .3s ease;
   }
   /* No length from Nexus, or extraction - progress is real but unmeasurable, and a bar
@@ -306,9 +324,10 @@
     display: flex;
     align-items: center;
     gap: .5rem;
-    padding: .45rem .55rem;
-    background: rgba(255,255,255,.02);
-    border: 1px solid rgba(255,255,255,.06);
+    min-height: 38px;
+    padding: .375rem .5rem;
+    background: color-mix(in srgb, var(--ink) 2%, transparent);
+    border: 1px solid var(--line);
     border-radius: var(--radius);
   }
 
@@ -324,15 +343,40 @@
   }
 
   .mod-badge {
+    flex: none;
+    font-family: var(--mono);
     font-size: var(--fs-micro);
-    letter-spacing: .04em;
-    padding: .12rem .4rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    padding: .14rem .4rem;
     border-radius: var(--radius);
     white-space: nowrap;
   }
-  .mod-badge.ok      { background: rgba(70,200,120,.15); color: #6fdca0; }
-  .mod-badge.missing { background: rgba(255,255,255,.06); color: var(--ink-dim); }
-  .mod-badge.bad     { background: rgba(255,90,90,.15);  color: #ff8f8f; }
+  .mod-badge.ok      { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+  .mod-badge.missing { color: var(--ink-dim); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+  .mod-badge.bad     { color: var(--bad); background: color-mix(in srgb, var(--bad) 14%, transparent); }
+
+  /* Remove is a drawn bin: the emoji was a grey smudge at this size. */
+  .bin {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    background: var(--steel);
+    color: var(--ink-dim);
+    cursor: pointer;
+    clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px);
+    transition: color 120ms ease, background-color 120ms ease, transform 110ms var(--ease-out);
+  }
+  .bin svg { width: 12px; height: 12px; }
+  @media (hover: hover) and (pointer: fine) {
+    .bin:hover { color: var(--ink); background: var(--accent-3); }
+  }
+  .bin:active { transform: scale(.94); }
+  .bin:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
 
   .mod-btn {
     font-size: var(--fs-micro);
@@ -346,7 +390,6 @@
     white-space: nowrap;
   }
   .mod-btn:hover { background: rgba(255,255,255,.08); }
-  .mod-btn.danger:hover { background: rgba(255,90,90,.15); color: #ff8f8f; }
 
   .col-left {
     min-height: 0;
@@ -366,8 +409,16 @@
     justify-content: flex-start;
     gap: .85rem;
     text-align: center;
-    overflow: hidden;
+    /* An admin's Server panel doesn't fit the real 1164x761 window, and the admin login row sits
+       at the bottom of it, so hiding the overflow made that row unreachable. The wheel crosses
+       it, with no visible bar. Nobody else's column is tall enough to scroll. */
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-width: none;
   }
+  /* A flex column shrinks its children before it scrolls, which would only move the overflow
+     inside the cards. */
+  .col-right > * { flex-shrink: 0; }
 
   h1 { font-size: var(--fs-head); margin: 0; font-weight: 600; }
   p.lede { color: var(--ink-dim); margin: 0; max-width: 30rem; line-height: 1.45; font-size: var(--fs-body); }
@@ -408,8 +459,6 @@
 
   .discord { background: #5865f2; color: #fff; }
   .join { background: #5865f2; color: #fff; }
-  .update { background: var(--update); color: #fff; }
-  .verify { background: var(--steel); color: var(--ink); }
 
   /* Destructive and secondary actions, kept small and away from the main flow. */
   .footlinks {
@@ -444,22 +493,9 @@
     font-family: var(--mono); font-size: .72em; letter-spacing: .08em; color: #140406;
     opacity: .8; pointer-events: none;
   }
-  .play.busy::before, .play.busy::after { display: none; }
-
-  /* Disabled has to LOOK disabled, not just be disabled - otherwise people
-     click it repeatedly and assume the app is broken. */
-  .play.busy, .play.busy:disabled {
-    color: #140406;
-    background: repeating-linear-gradient(-45deg, var(--accent) 0 14px, #8d1218 14px 28px);
-    background-size: 200% 100%;
-    animation: tread 1.1s linear infinite;
-    border-color: var(--accent);
-  }
-  @keyframes tread { to { background-position: -40px 0; } }
 
   @media (prefers-reduced-motion: reduce) {
     .dot.busy:not(.on) { animation: none; }
-    .play.busy, .play.busy:disabled { animation: none; }
     .modal, .modal-backdrop { animation: none; }
     .rail-num, .section-rail button.rail-step,
     .section-rail::before, .section-rail::after { transition: none; }
@@ -471,6 +507,224 @@
     cursor: not-allowed;
     border-color: var(--line);
   }
+
+  /* --- THE BUTTON KIT ---
+     zeldfep, 2026-11-05, choosing from a live test page: "I like A, C and D all at once".
+     One button with three moments, so they never compete: the plate lifts and presses in,
+     the little load bar fills on hover or Tab, and the glitch fires once on click. Keeping
+     the glitch off hover is deliberate - it would replay every time the pointer crossed.
+
+     Every clip-path sits on an inner layer, never on the button. A clip-path clips the
+     element's own outline too, which is why a button.action shows no keyboard focus ring.
+     The label is an inner span as well, so write it with setHudButton: textContent on one
+     of these buttons wipes out every layer inside it. */
+  .hud {
+    position: relative;
+    display: block;
+    flex: none;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    cursor: pointer;
+    font-family: var(--mono);
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  .hud:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }
+  .hud:disabled { cursor: not-allowed; }
+  .hud[data-state="busy"], .hud[data-state="checking"] { cursor: progress; }
+  .hud .face { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; }
+  .hud .label { position: relative; z-index: 2; white-space: nowrap; }
+  .hud[data-state="ok"] .label { color: var(--ok); }
+
+  .hud-stack { display: flex; flex-direction: column; gap: 1rem; width: 100%; }
+  #playReason:empty { display: none; }
+  .hud-row { align-items: flex-end; }
+  .hud-row > .hud { flex: 1 1 0; width: auto; min-width: 0; }
+
+  .hud-play { height: 60px; font-family: 'NCO Display', var(--mono); font-size: var(--fs-lead); letter-spacing: .16em; --lug: 8px; --pip: 4px; }
+  .hud-wide { font-size: var(--fs-body); letter-spacing: .07em; --lug: 6px; --pip: 3px; }
+  .plate.hud-wide { height: 44px; }
+  .wired.hud-wide { height: 38px; }
+  .hud-add { width: 122px; height: 36px; font-size: var(--fs-body); letter-spacing: .07em; --lug: 5px; --pip: 3px; }
+  .hud-mini { width: 74px; height: 24px; margin-left: -.5rem; font-size: var(--fs-micro); letter-spacing: .08em; --lug: 4px; --pip: 2px; }
+  .hud-add:focus-visible, .hud-mini:focus-visible { outline-offset: 2px; }
+
+  /* The little load bar: four square dots in the raised tab. It says "this is live" on
+     hover or Tab, and chases while the button is working. */
+  .hud .pips { position: absolute; z-index: 3; top: calc((var(--lug) - var(--pip)) / 2); left: calc(56% + var(--lug) + 4px); display: flex; gap: var(--pip); }
+  .hud .pips i { --i: 0; width: var(--pip); height: var(--pip); background: currentColor; opacity: .3; transition: opacity 120ms ease; }
+  .hud .pips i:nth-child(2) { --i: 1; }
+  .hud .pips i:nth-child(3) { --i: 2; }
+  .hud .pips i:nth-child(4) { --i: 3; }
+  .hud:focus-visible .pips i { opacity: 1; transition-delay: calc(var(--i) * 50ms); }
+  @media (hover: hover) and (pointer: fine) {
+    .hud:hover:not(:disabled) .pips i { opacity: 1; transition-delay: calc(var(--i) * 50ms); }
+  }
+  .hud:active:not(:disabled) .pips i { opacity: 1; transition-delay: 0ms; }
+  .hud[data-state="busy"] .pips i, .hud[data-state="checking"] .pips i { animation: pip-chase 800ms linear infinite; animation-delay: calc(var(--i) * 120ms); }
+  .hud.armed .pips i { animation: pip-arm 240ms var(--ease-out) backwards; animation-delay: calc(var(--i) * 50ms + 120ms); }
+  @keyframes pip-chase { 0%, 100% { opacity: .25; } 35% { opacity: 1; } }
+  @keyframes pip-arm { from { opacity: 1; transform: scale(1.8); } to { opacity: .3; transform: none; } }
+
+  /* Working: the -45deg stripe, moved with transform so it stays smooth while the launcher
+     is busy. The label sits on a solid plate, because near-black on the dark stripe is hard
+     to read. */
+  .hud .tread { display: none; position: absolute; inset: 0 -56px; background: repeating-linear-gradient(-45deg, var(--accent) 0 14px, var(--tread-2) 14px 28px); animation: tread 1.1s linear infinite; }
+  @keyframes tread { to { transform: translateX(39.6px); } }
+  .hud[data-state="busy"] .tread { display: block; }
+  /* The hatch and chevrons say "press this", and neither of these can be pressed. Clearing them
+     also keeps "Game running" from running into them in the launcher's narrowest window. */
+  .hud[data-state="busy"] .hatch, .hud[data-state="busy"] .chev,
+  .hud[data-state="running"] .hatch, .hud[data-state="running"] .chev { display: none; }
+  .hud[data-state="busy"] .label { background: var(--accent); color: #140406; padding: .12em .6em; }
+
+  /* THE PLATE, for the main actions: a solid plate on an offset base, with the tab on top. */
+  .plate { --notch: polygon(9px var(--lug), 56% var(--lug), calc(56% + var(--lug)) 0, calc(88% - var(--lug)) 0, 88% var(--lug), 100% var(--lug), 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%, 0 calc(var(--lug) + 9px)); }
+  .plate.hud-play { --plate-fill: var(--accent); --plate-base: var(--accent-2); --plate-text: #140406; }
+  .plate.hud-wide { --plate-fill: var(--steel); --plate-base: var(--accent-3); --plate-text: var(--ink); }
+  .plate .back { position: absolute; inset: 0; transform: translate(-4px, 4px); transition: transform 160ms var(--ease-out); }
+  .plate .back::before { content: ""; position: absolute; inset: 0; clip-path: var(--notch); background: var(--plate-base); }
+  .plate .back::after { content: ""; position: absolute; left: 26%; bottom: -6px; width: 52px; height: 3px; background: repeating-linear-gradient(120deg, var(--plate-base) 0 18px, transparent 18px 24px); }
+  .plate .face { padding-top: var(--lug); clip-path: var(--notch); background: var(--plate-fill); color: var(--plate-text); transition: transform 160ms var(--ease-out), background-color 160ms ease; }
+  .plate .hatch { position: absolute; left: 14px; top: calc(var(--lug) + 12px); bottom: 12px; width: 22px; background: repeating-linear-gradient(120deg, currentColor 0 2px, transparent 2px 6px); opacity: .75; transition: transform 160ms var(--ease-out); }
+  .plate .chev { position: absolute; right: 16px; top: calc(50% + var(--lug) / 2); font-family: var(--mono); font-size: .72em; letter-spacing: .08em; opacity: .8; transform: translateY(-52%); transition: transform 160ms var(--ease-out); }
+  .plate .chev::before { content: "\276E\276E"; }
+  @media (hover: hover) and (pointer: fine) {
+    .plate:hover:not(:disabled) .back { transform: translate(-6px, 6px); }
+    .plate:hover:not(:disabled) .face { transform: translate(1px, -1px); }
+    .plate:hover:not(:disabled) .hatch { transform: translateX(3px); }
+    .plate:hover:not(:disabled) .chev { transform: translate(-3px, -52%); }
+  }
+  .plate:active:not(:disabled) .face { transform: translate(-3px, 3px); transition-duration: 70ms; }
+  .plate:active:not(:disabled) .back { transform: translate(-4px, 4px); transition-duration: 70ms; }
+  .plate:disabled .face { background: var(--plate-dead); color: var(--ink-dim); }
+  .plate:disabled .back::before { background: var(--accent-4); }
+  .plate:disabled .back::after { opacity: .5; }
+  /* Working is not unavailable: a busy button keeps its lit plate. */
+  .plate[data-state="busy"] .face { background: var(--accent); color: #140406; }
+  .plate[data-state="checking"] .face, .plate[data-state="ok"] .face { background: var(--plate-fill); color: var(--plate-text); }
+  .plate[data-state="busy"] .back::before, .plate[data-state="checking"] .back::before, .plate[data-state="ok"] .back::before { background: var(--plate-base); }
+  .plate.armed .face { animation: plate-arm 260ms var(--ease-out); }
+  @keyframes plate-arm { from { transform: translate(-4px, 4px); filter: brightness(1.7); } to { transform: none; filter: none; } }
+
+  /* THE WIRED PLATE, for the mods panel: a ring node and a trace feed the plate, so a badge
+     or a text box visibly leads to the button that acts on it. */
+  .wired { --wire-w: 32px; --cham: 10px; }
+  .wired.hud-wide { --wire-path: path('M8.5 29H14L24 20H32'); }
+  .wired.hud-add { --wire-w: 22px; --cham: 8px; --wire-path: path('M5.5 22H9L16 14H22'); }
+  .wired.hud-mini { --wire-w: 14px; --cham: 5px; --wire-path: path('M0 15H5L9 11H14'); }
+  .wired .wire { position: absolute; left: 0; top: 0; width: var(--wire-w); height: 100%; overflow: visible; fill: none; stroke: var(--ink-dim); stroke-width: 1; }
+  .wired .pulse { position: absolute; left: 0; top: 0; width: 5px; height: 5px; background: var(--ink); opacity: 0; offset-path: var(--wire-path); offset-rotate: 0deg; offset-distance: 0%; }
+  .wired.hud-mini .pulse { width: 3px; height: 3px; }
+  .wired .face { left: var(--wire-w); padding-top: var(--lug); background: var(--steel); color: var(--ink); transition: transform 140ms var(--ease-out);
+                 clip-path: polygon(var(--cham) var(--lug), 56% var(--lug), calc(56% + var(--lug)) 0, calc(88% - var(--lug)) 0, 88% var(--lug), 100% var(--lug), 100% calc(100% - var(--cham)), calc(100% - var(--cham)) 100%, 0 100%, 0 calc(var(--lug) + var(--cham))); }
+  @media (hover: hover) and (pointer: fine) {
+    .wired:hover:not(:disabled) .pulse { opacity: 1; offset-distance: 100%; transition: offset-distance 200ms var(--ease-out); }
+  }
+  .wired:active:not(:disabled) .face { transform: translateX(-3px); transition-duration: 70ms; }
+  .wired:disabled .face { background: var(--plate-dead); color: var(--ink-dim); }
+  .wired:disabled .wire { stroke: var(--steel); }
+  .wired[data-state="checking"] .face, .wired[data-state="ok"] .face { background: var(--steel); color: var(--ink); }
+  .wired[data-state="checking"] .wire, .wired[data-state="ok"] .wire { stroke: var(--ink-dim); }
+
+  /* THE UPDATE PLATE: the plate in update orange. zeldfep, 2026-11-07, picking option 2 of the
+     Update test page, "In your path". When an update blocks JACK IN, Update sits ABOVE it with a
+     wire down into JACK IN's raised tab, each real step is printed on the wire, and once it is
+     done it lifts away and JACK IN comes alive. A newer test build blocks nothing, so the same
+     button sits in the row beside Verify as a steel plate with orange dots: the colour says
+     "update", the plate says "when you like". Near-black on --update is 4.82:1; the white the
+     old button carried was 4.15:1. */
+  .plate.hud-update { height: 44px; font-size: var(--fs-body); letter-spacing: .07em; --lug: 6px; --pip: 3px;
+                      --plate-fill: var(--update); --plate-base: var(--update-2); --plate-text: #140406; --glitch-2: var(--ink); --glitch-h: 44px; }
+  .plate.hud-update.optional { --plate-fill: var(--steel); --plate-base: var(--accent-3); --plate-text: var(--ink); --glitch-2: var(--accent); }
+  .hud-update.optional .pips i { background: var(--update); }
+  .hud-update .tread { background: repeating-linear-gradient(-45deg, var(--update) 0 14px, var(--update-tread) 14px 28px); }
+  .plate.hud-update[data-state="busy"] .face, .hud-update[data-state="busy"] .label { background: var(--update); color: #140406; }
+  .plate.hud-update[data-state="busy"] .back::before { background: var(--update-2); }
+  /* Done reads as the orange going away: green on orange is 2.3:1, green on steel is 7.3:1. */
+  .plate.hud-update[data-state="ok"] { --plate-fill: var(--steel); --plate-base: var(--accent-3); }
+  .hud-update.arrive { animation: drop-in 260ms var(--ease-out); }
+  .hud-update.leaving, .update-wire.leaving { opacity: 0; transform: translateY(-6px); transition: opacity 180ms ease, transform 180ms var(--ease-out); }
+  @keyframes drop-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+
+  /* The wire lands on JACK IN's raised tab (56%-88% of its width), so it reads as plugged in. */
+  .update-wire { position: relative; height: 22px; margin: -.5rem 0 -.6rem; }
+  .update-wire svg { position: absolute; left: calc(70% - 40px); top: 0; width: 60px; height: 22px; overflow: visible; fill: none; stroke: var(--update); stroke-width: 1.5; }
+  .update-wire circle { fill: var(--update); }
+  .update-wire .pulse { position: absolute; left: calc(70% - 40px); top: 0; width: 5px; height: 5px; background: var(--ink); opacity: 0;
+                        offset-path: path('M30 0V6L40 14V19'); offset-rotate: 0deg; offset-distance: 0%; }
+  .update-wire.arrive path { stroke-dasharray: 30; animation: draw 260ms var(--ease-out) 120ms backwards; }
+  @keyframes draw { from { stroke-dashoffset: 30; } to { stroke-dashoffset: 0; } }
+  /* The step the update is on, printed on the wire: a tiny mono readout, so --fs-micro. */
+  .update-readout { margin-top: -.55rem; font: var(--fs-micro) var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--update); text-align: right; padding-right: calc(30% + 8px); }
+  .update-readout:empty { display: none; }
+  .update-readout.error { color: var(--accent); font-weight: 700; }
+  /* Hover or Tab: a signal runs down the wire and JACK IN's dots stir. */
+  .hud-update.in-path:focus-visible + .update-wire .pulse { opacity: 1; offset-distance: 100%; transition: offset-distance 220ms var(--ease-out); }
+  .hud-stack:has(> .hud-update.in-path:focus-visible) .hud-play .pips i { opacity: .8; transition-delay: calc(var(--i) * 50ms + 160ms); }
+  @media (hover: hover) and (pointer: fine) {
+    .hud-update.in-path:hover:not(:disabled) + .update-wire .pulse { opacity: 1; offset-distance: 100%; transition: offset-distance 220ms var(--ease-out); }
+    .hud-stack:has(> .hud-update.in-path:hover:not(:disabled)) .hud-play .pips i { opacity: .8; transition-delay: calc(var(--i) * 50ms + 160ms); }
+  }
+
+  /* THE CLICK GLITCH: the text tears into slices and a scan line drops, once. It plays over
+     the click and never delays what the click does. */
+  .glitches { --glitch-2: var(--accent); --glitch-h: 38px; }
+  .plate.hud-play.glitches { --glitch-2: var(--ink); --glitch-h: 60px; }
+  .plate.hud-wide.glitches { --glitch-h: 44px; }
+  .hud-add.glitches { --glitch-h: 36px; }
+  .glitches .label::before, .glitches .label::after { content: attr(data-text); position: absolute; left: 0; top: 0; opacity: 0; pointer-events: none; }
+  .glitches .label::before { color: var(--glitch); }
+  .glitches .label::after { color: var(--glitch-2); }
+  .glitches .scan { position: absolute; z-index: 1; left: 0; right: 0; top: 0; height: 2px; background: var(--glitch-2); opacity: 0; }
+  .glitches.hit .label::before { animation: glitch-a 220ms steps(1) 1; }
+  .glitches.hit .label::after { animation: glitch-b 220ms steps(1) 1; }
+  .glitches.hit .scan { animation: glitch-scan 180ms linear 1; }
+  @keyframes glitch-a {
+    0% { opacity: 1; transform: translate(-3px, 0); clip-path: inset(0 0 55% 0); }
+    25% { opacity: 1; transform: translate(3px, -1px); clip-path: inset(60% 0 0 0); }
+    50% { opacity: 1; transform: translate(-2px, 1px); clip-path: inset(20% 0 40% 0); }
+    75% { opacity: 1; transform: translate(2px, 0); clip-path: inset(45% 0 10% 0); }
+    100% { opacity: 0; }
+  }
+  @keyframes glitch-b {
+    0% { opacity: 1; transform: translate(3px, 1px); clip-path: inset(50% 0 5% 0); }
+    25% { opacity: 1; transform: translate(-3px, 0); clip-path: inset(5% 0 60% 0); }
+    50% { opacity: 1; transform: translate(2px, -1px); clip-path: inset(55% 0 15% 0); }
+    75% { opacity: 1; transform: translate(-2px, 1px); clip-path: inset(10% 0 55% 0); }
+    100% { opacity: 0; }
+  }
+  @keyframes glitch-scan { from { opacity: .7; transform: translateY(0); } to { opacity: .7; transform: translateY(var(--glitch-h)); } }
+
+  /* Animations turned off: colour and the load bar still answer, nothing travels or tears. */
+  @media (prefers-reduced-motion: reduce) {
+    .hud *, .hud *::before, .hud *::after { animation: none !important; transition-property: opacity, color, background-color !important; }
+    .hud .face, .plate .hatch, .bin { transform: none !important; }
+    .plate .back { transform: translate(-4px, 4px) !important; }
+    .plate .chev { transform: translateY(-52%) !important; }
+    .wired .pulse, .update-wire .pulse { display: none; }
+    .hud-update.arrive, .update-wire.arrive path { animation: none !important; }
+    .hud-update.leaving, .update-wire.leaving { transform: none !important; }
+  }
+
+  .add-row { display: flex; align-items: stretch; }
+  /* Its own class. .field is declared twice in this file, as a settings form wrapper and as
+     a text input, so a .field input inherits the page's 16px - the largest text on screen. */
+  .input {
+    flex: 1;
+    min-width: 0;
+    padding: 0 .6rem;
+    background: var(--ground);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: var(--fs-small);
+  }
+  .input::placeholder { color: var(--ink-dim); }
+  .input:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 
   /* --- admin server panel --- */
   .admin { width: 100%; max-width: 26rem; gap: .7rem; }
@@ -611,9 +865,9 @@
   .modal-head::after {
     content: ""; position: absolute; left: 0; right: 0; bottom: -8px; height: 8px;
     background:
-      linear-gradient(120deg, var(--accent) 0, #7c1015 55%, #26060a calc(100% - 6px), transparent calc(100% - 6px)) left 0 top 0 / 150px 100% no-repeat,
-      linear-gradient(120deg, transparent 4px, #5a0c11 4px, #26060a calc(100% - 4px), transparent calc(100% - 4px)) left 162px top 0 / 16px 100% no-repeat,
-      linear-gradient(270deg, #5a0c11, transparent) right 0 center / calc(100% - 196px) 2px no-repeat;
+      linear-gradient(120deg, var(--accent) 0, var(--accent-2) 55%, var(--accent-4) calc(100% - 6px), transparent calc(100% - 6px)) left 0 top 0 / 150px 100% no-repeat,
+      linear-gradient(120deg, transparent 4px, var(--accent-3) 4px, var(--accent-4) calc(100% - 4px), transparent calc(100% - 4px)) left 162px top 0 / 16px 100% no-repeat,
+      linear-gradient(270deg, var(--accent-3), transparent) right 0 center / calc(100% - 196px) 2px no-repeat;
     opacity: .92; pointer-events: none;
   }
   .modal-head h2 {
@@ -675,7 +929,7 @@
 
   /* The section rail. The scrollbar is gone, so this is both how the modal says where you
      are and how you travel, and it is built from marks the kit already owns: the clipped
-     corner, the caution striping off .play.busy, mono readouts.
+     corner, the caution striping off a working JACK IN, mono readouts.
 
      HAZARD YELLOW CARRIES THIS CONTROL - zeldfep's call, 2026-09-07, picking option B off
      the two mockups. Yellow is still the launcher's warning colour everywhere else (the
@@ -768,7 +1022,7 @@
     padding-bottom: .5rem;
     /* The motif, minimized: a slant-cut block accent over a hairline rule. */
     background:
-      linear-gradient(120deg, var(--accent) 0, #26060a calc(100% - 5px), transparent calc(100% - 5px)) left 0 bottom 0 / 34px 3px no-repeat,
+      linear-gradient(120deg, var(--accent) 0, var(--accent-4) calc(100% - 5px), transparent calc(100% - 5px)) left 0 bottom 0 / 34px 3px no-repeat,
       linear-gradient(var(--line), var(--line)) left 0 bottom 1px / 100% 1px no-repeat;
   }
   .panel h3::before { content: "/// "; color: var(--accent); }
@@ -853,9 +1107,9 @@
   footer::before {
     content: ""; position: absolute; left: 0; right: 0; top: -8px; height: 8px;
     background:
-      linear-gradient(60deg, transparent 6px, #26060a 6px, #7c1015 45%, var(--accent) 100%) right 0 top 0 / 220px 100% no-repeat,
-      linear-gradient(60deg, transparent 4px, #26060a 4px, #5a0c11 calc(100% - 4px), transparent calc(100% - 4px)) right 232px top 0 / 16px 100% no-repeat,
-      linear-gradient(90deg, transparent, #5a0c11) left 0 center / calc(100% - 270px) 2px no-repeat;
+      linear-gradient(60deg, transparent 6px, var(--accent-4) 6px, var(--accent-2) 45%, var(--accent) 100%) right 0 top 0 / 220px 100% no-repeat,
+      linear-gradient(60deg, transparent 4px, var(--accent-4) 4px, var(--accent-3) calc(100% - 4px), transparent calc(100% - 4px)) right 232px top 0 / 16px 100% no-repeat,
+      linear-gradient(90deg, transparent, var(--accent-3)) left 0 center / calc(100% - 270px) 2px no-repeat;
     opacity: .8; pointer-events: none;
   }
   footer {
@@ -1549,17 +1803,36 @@
            and people were only ever told about the first. -->
       <button class="action join" id="joinTailnet" style="display:none">Join the server's network</button>
 
-      <div class="btn-row">
-        <button class="action verify" id="verify">Verify files</button>
-        <button class="action update" id="update" style="display:none">Update</button>
+      <!-- The button kit: see THE BUTTON KIT in the styles. The text is in .label, so write it
+           with setHudButton - textContent on one of these wipes out the layers inside it. -->
+      <div class="hud-stack">
+        <!-- Update, when it blocks JACK IN: above it, wired into its tab, with the step it is on
+             printed on the wire (THE UPDATE PLATE). A newer test build blocks nothing, so
+             placeUpdate moves this same button down into the row beside Verify. -->
+        <button class="hud plate hud-update glitches in-path" id="update" aria-label="Update" style="display:none">
+          <span class="back"></span>
+          <span class="face"><span class="tread"></span><span class="scan"></span><span class="pips"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Update">Update</span></span>
+        </button>
+        <div class="update-wire" id="updateWire" aria-hidden="true" style="display:none"><svg viewBox="0 0 60 22"><path d="M30 0V6L40 14V19"></path><circle cx="40" cy="19.5" r="2.5"></circle></svg><span class="pulse"></span></div>
+        <div class="update-readout" id="updateReadout" aria-live="polite"></div>
+
+        <button class="hud plate hud-play glitches" id="play" aria-label="JACK IN" disabled>
+          <span class="back"></span>
+          <span class="face"><span class="tread"></span><span class="scan"></span><span class="pips"><i></i><i></i><i></i><i></i></span><span class="hatch"></span><span class="label" data-text="JACK IN">JACK IN</span><span class="chev" aria-hidden="true"></span></span>
+        </button>
+
+        <!-- Why the button is dead. A greyed-out Launch with no explanation is the most
+             frustrating thing a launcher can do - people conclude it is broken and leave,
+             when the answer is usually one sentence. -->
+        <div class="field-hint" id="playReason" style="text-align:center"></div>
+
+        <div class="btn-row hud-row">
+          <button class="hud plate hud-wide glitches" id="verify" aria-label="Verify files">
+            <span class="back"></span>
+            <span class="face"><span class="scan"></span><span class="pips"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Verify files">Verify files</span></span>
+          </button>
+        </div>
       </div>
-
-      <button class="action play" id="play" disabled>JACK IN</button>
-
-      <!-- Why the button is dead. A greyed-out Launch with no explanation is the most
-           frustrating thing a launcher can do - people conclude it is broken and leave,
-           when the answer is usually one sentence. -->
-      <div class="field-hint" id="playReason" style="text-align:center;margin-top:.35rem"></div>
 
       <div class="footlinks">
         <button class="linkbtn" id="pickGameDir">Game not found? Locate it</button>
@@ -1634,9 +1907,11 @@
           <span class="serverstate" id="modCount"></span>
         </div>
 
-        <div class="btn-row" style="margin:.5rem 0">
-          <button class="action verify" id="verifyAllMods">Verify all</button>
-        </div>
+        <button class="hud wired hud-wide glitches" id="verifyAllMods" aria-label="Verify all">
+          <svg class="wire" viewBox="0 0 32 38" aria-hidden="true"><circle cx="5" cy="29" r="3.5"></circle><path d="M8.5 29H14L24 20H32"></path></svg>
+          <span class="pulse"></span>
+          <span class="face"><span class="scan"></span><span class="pips"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Verify all">Verify all</span></span>
+        </button>
 
         <div class="modlist" id="modList"></div>
 
@@ -1665,11 +1940,15 @@
         <!-- Install anything from Nexus without a second mod manager: paste the mod's
              page link (or just its number) and it lands here, recorded file by file
              like everything else, listed under YOUR MODS above. -->
-        <div class="btn-row" style="margin-top:.5rem">
-          <input type="text" id="addModInput" placeholder="Nexus mod link or number..."
-                 class="field"
+        <div class="add-row">
+          <input type="text" id="addModInput" placeholder="Nexus mod link or number"
+                 class="input" aria-label="Nexus mod link or number"
                  spellcheck="false">
-          <button class="action ghost" id="addModBtn" style="flex:0 0 auto">Add mod</button>
+          <button class="hud wired hud-add glitches" id="addModBtn" aria-label="Add mod">
+            <svg class="wire" viewBox="0 0 22 36" aria-hidden="true"><circle cx="3" cy="22" r="2.5"></circle><path d="M5.5 22H9L16 14H22"></path></svg>
+            <span class="pulse"></span>
+            <span class="face"><span class="scan"></span><span class="pips"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Add mod">Add mod</span></span>
+          </button>
         </div>
 
         <div class="field-hint" id="modHint" style="margin-top:.5rem"></div>
@@ -1699,6 +1978,51 @@
 
 <script>
   const $ = (id) => document.getElementById(id)
+
+  // The button kit keeps its text on an inner span, and the glitch reads its own copy from
+  // data-text. Going through here keeps the two, and the accessible name, in step.
+  function setHudButton (btn, text, state) {
+    const label = btn.querySelector('.label')
+    label.textContent = text
+    label.dataset.text = text
+    btn.setAttribute('aria-label', text)
+    if (state) btn.dataset.state = state
+    else delete btn.dataset.state
+  }
+
+  // A one-shot animation class: removed and re-added so it replays, then cleared.
+  function playOnce (el, cls, ms) {
+    el.classList.remove(cls)
+    void el.offsetWidth
+    el.classList.add(cls)
+    setTimeout(() => el.classList.remove(cls), ms)
+  }
+
+  // Once, when the button comes alive. Not on every re-render.
+  function armHudButton (btn) {
+    playOnce(btn, 'armed', 700)
+  }
+
+  // A result worth a moment on the button itself, only ever after the check really passed.
+  function flashHudButton (btn, text, restingText) {
+    btn.disabled = true
+    setHudButton(btn, text, 'ok')
+    setTimeout(() => {
+      setHudButton(btn, restingText)
+      btn.disabled = false
+    }, 1100)
+  }
+
+  // The click glitch. Capture phase, so it starts before the button's own handler disables
+  // it, and it never holds up what the click does.
+  document.addEventListener('click', (event) => {
+    const btn = event.target.closest('.glitches')
+    if (!btn) return
+    btn.classList.remove('hit')
+    void btn.offsetWidth
+    btn.classList.add('hit')
+    setTimeout(() => btn.classList.remove('hit'), 340)
+  }, true)
 
   const loginBtn = $('login')
   const playBtn = $('play')
@@ -1730,6 +2054,10 @@
   // The newest published test build, while a DIFFERENT test build is installed - what the
   // main Update button installs on a test build (see renderUpdateState). Null otherwise.
   let newerTestBuild = null
+
+  // True while the main Update button's applyUpdate runs, so its steps go on the wire. Settings'
+  // own installs report through the same channel and stay in Settings.
+  let updateRunning = false
 
   // Set from the main process as the launcher updates itself, not from any check we
   // run here - the updater owns that state and reports on it.
@@ -1888,20 +2216,19 @@
     // one player teleporting between two places. So the button locks and SAYS what it is
     // waiting for, because a dead button with no explanation reads as the launcher having
     // broken during the least reassuring possible moment.
+    const wasLocked = playBtn.disabled
     playBtn.disabled = !verified || !filesReady || !serverReady ||
                        gameState.launching || gameState.running
 
     if (gameState.launching) {
-      playBtn.textContent = 'JACKING IN...'
-    playBtn.classList.add('busy')
-      playBtn.classList.add('busy')
+      setHudButton(playBtn, 'JACKING IN...', 'busy')
     } else if (gameState.running) {
-      playBtn.classList.remove('busy')
-      playBtn.textContent = 'Game running'
+      setHudButton(playBtn, 'Game running', 'running')
     } else {
-      playBtn.classList.remove('busy')
-      playBtn.textContent = 'JACK IN'
+      setHudButton(playBtn, 'JACK IN')
     }
+
+    if (wasLocked && !playBtn.disabled) armHudButton(playBtn)
 
     // Say WHY, in the order someone has to fix them. Signing in first, then files, then
     // the server - listing a server outage to someone who has not signed in yet sends
@@ -1919,7 +2246,9 @@
     } else if (!updateState.installed) {
       blockers.push('The mod is not installed — open Settings and press Install')
     } else if (!(updateState.upToDate || updateState.offline)) {
-      blockers.push('Your mod is out of date — press Update')
+      blockers.push(updateState.payloadCurrent
+        ? 'The frameworks the mod runs on need updating — press Update'
+        : 'Your mod is out of date — press Update')
     }
 
     if (!serverState) {
@@ -1940,7 +2269,13 @@
       } else if (tailscaleState && !tailscaleState.connected) {
         blockers.push('Tailscale is installed but not signed in — open it from the system tray')
       } else if (tailscaleState && tailscaleState.connected) {
-        blockers.push("You are not on the server's network yet — press “Join the server's network” above and accept the invite")
+        // The button this names is only ever shown to a verified member (renderTailnetInvite),
+        // and the main process refuses the invite to anyone else. Someone signed out or not in
+        // the Discord yet is told what comes first, not sent looking for a control that is not
+        // on their screen.
+        blockers.push(verified
+          ? "You are not on the server's network yet — press “Join the server's network” above and accept the invite"
+          : "The server's network opens to you once you have joined the Discord")
       } else {
         blockers.push('Cannot reach the server — press Verify files for a step-by-step check')
       }
@@ -1958,6 +2293,11 @@
     refreshNexus()
 
     showAdminPanel(signedIn && user.isAdmin)
+
+    // Above the signed-out return, not after it. A verified member who logs out while the
+    // server is unreachable kept the members-only invite on screen otherwise, and the main
+    // process refuses it, so the press could only fail.
+    renderTailnetInvite()
 
     if (!signedIn) {
       $('gateText').textContent = 'Not verified'
@@ -1988,8 +2328,6 @@
         'Your Discord account is verified, but you are not in Night City Online. ' +
         'Join, then sign in again.'
     }
-
-    renderTailnetInvite()
   }
 
   // If the preload failed to load, window.launcher does not exist and every button
@@ -2197,11 +2535,13 @@
     // inside that gap - which is precisely the double launch this exists to prevent.
     if (playBtn.disabled) return
     playBtn.disabled = true
-    playBtn.textContent = 'JACKING IN...'
+    setHudButton(playBtn, 'JACKING IN...', 'busy')
 
     setStatus('Starting game...')
     const result = await window.launcher.launchGame()
     setStatus(result.ok ? 'Game started.' : result.error, result.ok ? 'ok' : 'error')
+    // A refused launch must not leave the working stripes running until the next poll.
+    if (!result.ok) render(signedInUser)
   })
 
   // Launching / running / closed, pushed from the main process.
@@ -2240,22 +2580,53 @@
 
   // --- updates ---------------------------------------------------------------
 
+  // Update has two homes (THE UPDATE PLATE). 'path': above JACK IN and wired into it, because the
+  // update is what stands between the player and the game. 'row': beside Verify, for a newer test
+  // build, which blocks nothing. null: hidden. It only moves when its home changes, so a re-render
+  // never replays the arrival or drops keyboard focus.
+  function placeUpdate (where, title) {
+    const btn = $('update')
+    const wire = $('updateWire')
+    const was = btn.style.display === 'none' ? null : (btn.classList.contains('in-path') ? 'path' : 'row')
+    btn.title = title || ''
+    // A re-render while it is working (Verify reports the version too) must not re-arm it.
+    if (where && btn.dataset.state !== 'busy') btn.disabled = false
+    if (where === was) return
+
+    if (where === 'path') wire.before(btn)
+    else if (where === 'row') $('verify').after(btn)
+    btn.classList.toggle('in-path', where === 'path')
+    btn.classList.toggle('optional', where === 'row')
+    btn.style.display = where ? '' : 'none'
+    wire.style.display = where === 'path' ? '' : 'none'
+
+    if (where) {
+      playOnce(btn, 'arrive', 500)
+      if (where === 'path') playOnce(wire, 'arrive', 500)
+    } else {
+      // Hidden mid-exit after an update landed, so it comes back clean next time.
+      btn.classList.remove('leaving')
+      wire.classList.remove('leaving')
+      setHudButton(btn, 'Update')
+      $('updateReadout').textContent = ''
+    }
+  }
+
   function renderUpdateState () {
     const dot = $('updateDot')
     const text = $('updateText')
-    const updateBtn = $('update')
 
     if (!updateState) {
       dot.className = 'dot'
       text.textContent = 'Checking for updates...'
-      updateBtn.style.display = 'none'
+      placeUpdate(null)
       return
     }
 
     if (!updateState.installed) {
       dot.className = 'dot'
       text.textContent = 'Mod not installed'
-      updateBtn.style.display = 'none'
+      placeUpdate(null)
       return
     }
 
@@ -2264,7 +2635,7 @@
       // has the files - an outage should not stop a game that would work fine.
       dot.className = 'dot on'
       text.textContent = 'Update check unavailable - playing offline'
-      updateBtn.style.display = 'none'
+      placeUpdate(null)
       return
     }
 
@@ -2289,22 +2660,22 @@
         text.textContent = 'Test build - ' + updateState.testBuildTag +
           (newerTestBuild ? ' · ' + short(newerTestBuild) + ' available' : '') +
           (manifestSummary ? ' · ' + manifestSummary : '')
-        updateBtn.style.display = newerTestBuild ? 'inline-block' : 'none'
-        updateBtn.disabled = false
-        updateBtn.title = newerTestBuild ? 'Installs test build ' + newerTestBuild + ' - not the public release' : ''
+        placeUpdate(newerTestBuild ? 'row' : null,
+          newerTestBuild ? 'Installs test build ' + newerTestBuild + ' - not the public release' : '')
       } else {
         text.textContent = 'Mod up to date' + (updateState.version ? ' - ' + updateState.version : '') +
           (manifestSummary ? ' · ' + manifestSummary : '')
         // Nothing to do, so the button is not shown at all. A permanently disabled
         // "Update" button invites people to keep pressing it wondering what is broken.
-        updateBtn.style.display = 'none'
+        placeUpdate(null)
       }
     } else {
       dot.className = 'dot'
-      text.textContent = 'Mod update required' + (updateState.version ? ' - ' + updateState.version : '')
-      updateBtn.style.display = 'inline-block'
-      updateBtn.disabled = false
-      updateBtn.title = ''
+      text.textContent = (updateState.payloadCurrent ? 'Framework update required' : 'Mod update required') +
+        (updateState.version ? ' - ' + updateState.version : '')
+      placeUpdate('path', updateState.payloadCurrent
+        ? 'Brings ' + (updateState.prerequisitesStale || []).join(', ') + ' to the versions this release uses'
+        : '')
     }
   }
 
@@ -2382,36 +2753,90 @@
 
     let list = null
 
-    for (const rawLine of markdown.split(/\r?\n/)) {
-      const line = rawLine.trim()
-
-      // Skip the markdown table rows and images the release body uses for layout.
-      if (!line || line.startsWith('|') || line.startsWith('<')) continue
-
-      if (line.startsWith('#')) {
+    for (const block of parseNotes(markdown)) {
+      if (block.kind === 'heading') {
         list = null
         const h = document.createElement('h4')
-        h.textContent = line.replace(/^#+\s*/, '')
+        h.textContent = block.text
         body.appendChild(h)
         continue
       }
 
-      if (line.startsWith('- ') || line.startsWith('* ')) {
+      if (block.kind === 'item') {
         if (!list) {
           list = document.createElement('ul')
           body.appendChild(list)
         }
         const li = document.createElement('li')
-        li.textContent = stripMarkdown(line.slice(2))
+        li.textContent = stripMarkdown(block.text)
         list.appendChild(li)
         continue
       }
 
       list = null
       const p = document.createElement('p')
-      p.textContent = stripMarkdown(line)
+      p.textContent = stripMarkdown(block.text)
       body.appendChild(p)
     }
+  }
+
+  // Turns the release body into whole blocks, before any element exists.
+  //
+  // The notes are hard-wrapped at about 90 columns, so one source line is not one thought: a
+  // paragraph arrives as three or four lines, and a list item as its first line plus indented
+  // continuations. Treating each line as a block broke paragraphs into fragments and dropped
+  // the end of every list item out of its list. This folds them back together first, which
+  // also lets bold or a link that crosses a line break lose its markers in stripMarkdown.
+  //
+  // A line continues whatever block is open, and only a blank line, a heading, a new list item
+  // or a layout row closes one. That is the rule markdown itself uses, so the notes read here
+  // the way they read on the GitHub release. Numbered steps and quotes are written one per
+  // line, so each starts its own block, and a code fence keeps its lines apart.
+  function parseNotes (markdown) {
+    const blocks = []
+    let open = null
+    let inFence = false
+
+    for (const rawLine of markdown.split(/\r?\n/)) {
+      const line = rawLine.trim()
+
+      // Skip the markdown table rows and images the release body uses for layout.
+      if (!line || line.startsWith('|') || line.startsWith('<')) {
+        open = null
+        continue
+      }
+
+      if (line.startsWith('#')) {
+        open = null
+        blocks.push({ kind: 'heading', text: line.replace(/^#+\s*/, '') })
+        continue
+      }
+
+      if (line.startsWith('- ') || line.startsWith('* ')) {
+        open = { kind: 'item', text: line.slice(2) }
+        blocks.push(open)
+        continue
+      }
+
+      const isFence = line.startsWith('```')
+      if (isFence) inFence = !inFence
+
+      if (isFence || inFence) {
+        open = null
+        blocks.push({ kind: 'paragraph', text: line })
+        continue
+      }
+
+      if (open && !/^(\d+[.)]\s|>)/.test(line)) {
+        open.text += ' ' + line
+        continue
+      }
+
+      open = { kind: 'paragraph', text: line }
+      blocks.push(open)
+    }
+
+    return blocks
   }
 
   // Strips the emphasis markers so notes read as prose rather than raw markdown.
@@ -2568,13 +2993,13 @@
   $('verify').addEventListener('click', async () => {
     const btn = $('verify')
     btn.disabled = true
-    btn.textContent = 'Checking...'
+    setHudButton(btn, 'Checking...', 'checking')
     setStatus('Checking your files...')
 
     const result = await window.launcher.verifyInstall()
 
     btn.disabled = false
-    btn.textContent = 'Verify files'
+    setHudButton(btn, 'Verify files')
 
     if (!result.ok && result.error) {
       setStatus(result.error, 'error')
@@ -2597,6 +3022,7 @@
 
     if (result.ok) {
       setStatus(`Everything checks out - ${result.redscriptCount} script files, ${result.version || 'current'}`, 'ok')
+      flashHudButton(btn, 'Files OK', 'Verify files')
       return
     }
 
@@ -3967,6 +4393,42 @@
   let personalState = []
   let modsSignedIn = null
 
+  // The mods panel's small wired button. The text and the mod's name go through
+  // textContent and setAttribute, never into this markup: mod names come off the network.
+  const WIRED_MINI = '<svg class="wire" viewBox="0 0 14 24" aria-hidden="true"><path d="M0 15H5L9 11H14"></path></svg>' +
+    '<span class="pulse"></span>' +
+    '<span class="face"><span class="pips"><i></i><i></i><i></i><i></i></span><span class="label"></span></span>'
+
+  function makeWiredMini (text, accessibleName) {
+    const btn = document.createElement('button')
+    btn.className = 'hud wired hud-mini'
+    btn.innerHTML = WIRED_MINI
+    setHudButton(btn, text)
+    btn.setAttribute('aria-label', accessibleName)
+    return btn
+  }
+
+  const BIN_ICON = '<svg viewBox="0 0 12 12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="square">' +
+    '<path d="M1.5 3h9M4.5 3V1.5h3V3M2.75 3l.6 7.5h5.3l.6-7.5M5 5v3.5M7 5v3.5"></path></svg>'
+
+  function makeRemoveButton (mod) {
+    const remove = document.createElement('button')
+    remove.className = 'bin'
+    remove.innerHTML = BIN_ICON
+    remove.title = 'Remove this mod'
+    remove.setAttribute('aria-label', 'Remove ' + mod.name)
+    remove.addEventListener('click', async () => {
+      const result = await window.launcher.deleteMod(mod.id)
+      if (result.ok) {
+        setStatus('Removed ' + mod.name + '.', 'ok')
+        await refreshMods()
+      } else if (result.error) {
+        setStatus(result.error, 'error')
+      }
+    })
+    return remove
+  }
+
   function renderMods () {
     const list = $('modList')
     const count = $('modCount')
@@ -3979,6 +4441,10 @@
       hint.textContent = modsSignedIn === false
         ? 'Sign in to Nexus in Settings to see the mod list.'
         : 'The server has no recommended mods yet. When it adds some, they appear here.'
+
+      // An empty recommended list says nothing about what the player installed themselves.
+      // The main process still reports those, and this panel is where they get removed.
+      renderPersonalMods(list)
       return
     }
 
@@ -4003,9 +4469,9 @@
       const badge = document.createElement('span')
       if (mod.state === 'installed') {
         badge.className = 'mod-badge ok'
-        badge.textContent = '✓ INSTALLED'
+        badge.textContent = 'INSTALLED'
       } else if (mod.state === 'downloading') {
-        badge.className = 'mod-badge'
+        badge.className = 'mod-badge missing'
         badge.textContent = 'DOWNLOADING'
       } else if (mod.state === 'failed') {
         badge.className = 'mod-badge bad'
@@ -4030,10 +4496,15 @@
 
       // The install button is REMOVED once installed rather than disabled. A greyed
       // button still reads as something you are supposed to press.
+      if (mod.state === 'downloading') {
+        const working = makeWiredMini('Working', mod.name + ' is downloading')
+        working.disabled = true
+        working.dataset.state = 'checking'
+        row.appendChild(working)
+      }
+
       if (!blocked && mod.state !== 'installed' && mod.state !== 'downloading') {
-        const install = document.createElement('button')
-        install.className = 'mod-btn'
-        install.textContent = 'Install'
+        const install = makeWiredMini('Install', 'Install ' + mod.name)
         install.addEventListener('click', async () => {
           const result = await window.launcher.openMod(mod.id)
           if (!result.ok) setStatus(result.error, 'error')
@@ -4052,29 +4523,20 @@
           row.appendChild(makeUpdateButton(mod))
         }
 
-        const remove = document.createElement('button')
-        remove.className = 'mod-btn danger'
-        remove.textContent = '🗑'
-        remove.title = 'Remove this mod'
-        remove.addEventListener('click', async () => {
-          const result = await window.launcher.deleteMod(mod.id)
-          if (result.ok) {
-            setStatus('Removed ' + mod.name + '.', 'ok')
-            await refreshMods()
-          } else if (result.error) {
-            setStatus(result.error, 'error')
-          }
-        })
-        row.appendChild(remove)
+        row.appendChild(makeRemoveButton(mod))
       }
 
       list.appendChild(row)
     }
 
-    // The player's own installs - anything added by link, number, or a Nexus "Mod
-    // Manager Download" click that was never on the server's list. Same records, same
-    // verify/repair/removal; this section is what makes the launcher a mod manager
-    // rather than a checklist, so nobody needs a second one.
+    renderPersonalMods(list)
+  }
+
+  // The player's own installs - anything added by link, number, or a Nexus "Mod
+  // Manager Download" click that was never on the server's list. Same records, same
+  // verify/repair/removal; this section is what makes the launcher a mod manager
+  // rather than a checklist, so nobody needs a second one.
+  function renderPersonalMods (list) {
     if (personalState.length > 0) {
       const head = document.createElement('div')
       head.className = 'modqueue-head'
@@ -4095,7 +4557,7 @@
         const badge = document.createElement('span')
         if (mod.pulled) {
           // The server pulled this id from its list; the record only sits in this
-          // bucket because the pull delisted it. Say so - "✓ INSTALLED" here is how
+          // bucket because the pull delisted it. Say so - "INSTALLED" here is how
           // a pull stays invisible to the one player it affects.
           badge.className = 'mod-badge bad'
           badge.textContent = 'PULLED FROM SERVER LIST'
@@ -4109,22 +4571,13 @@
           badge.title = mod.reason || ''
         } else {
           badge.className = 'mod-badge ok'
-          badge.textContent = '✓ INSTALLED'
+          badge.textContent = 'INSTALLED'
         }
         row.appendChild(badge)
 
         if (mod.updateAvailable && mod.state === 'installed') row.appendChild(makeUpdateButton(mod))
 
-        const remove = document.createElement('button')
-        remove.className = 'mod-btn danger'
-        remove.textContent = '🗑'
-        remove.title = 'Remove this mod'
-        remove.addEventListener('click', async () => {
-          const result = await window.launcher.deleteMod(mod.id)
-          if (result.ok) { setStatus('Removed ' + mod.name + '.', 'ok'); await refreshMods() }
-          else if (result.error) setStatus(result.error, 'error')
-        })
-        row.appendChild(remove)
+        row.appendChild(makeRemoveButton(mod))
 
         list.appendChild(row)
       }
@@ -4132,9 +4585,7 @@
   }
 
   function makeUpdateButton (mod) {
-    const update = document.createElement('button')
-    update.className = 'mod-btn'
-    update.textContent = 'Update'
+    const update = makeWiredMini('Update', 'Update ' + mod.name)
     update.title = mod.reason || 'Install the expected version'
     update.addEventListener('click', async () => {
       update.disabled = true
@@ -4163,10 +4614,12 @@
   $('verifyAllMods').addEventListener('click', async () => {
     const btn = $('verifyAllMods')
     btn.disabled = true
+    setHudButton(btn, 'Checking...', 'checking')
     $('modHint').textContent = 'Checking every file...'
 
     const result = await window.launcher.verifyMods()
     btn.disabled = false
+    setHudButton(btn, 'Verify all')
 
     if (!result.ok) {
       $('modHint').textContent = result.error
@@ -4184,6 +4637,7 @@
       $('modHint').textContent = 'Nothing installed through the launcher yet.' + manifestNote
     } else if (result.problems.length === 0 && (result.retired || []).length === 0) {
       $('modHint').textContent = '✓ All ' + result.intact + ' installed mod(s) verified.' + manifestNote
+      flashHudButton(btn, 'All verified', 'Verify all')
     } else {
       // Names the broken ones. "3 problems found" leaves someone to work out which.
       const parts = []
@@ -4341,12 +4795,18 @@
     if (!input.value.trim()) { setStatus('Paste a Nexus mod link or its number first.', 'error'); return }
 
     btn.disabled = true
+    setHudButton(btn, 'Adding...', 'checking')
     const result = await window.launcher.addModFromNexus(input.value)
     btn.disabled = false
+    setHudButton(btn, 'Add mod')
 
     if (result.ok) {
       setStatus(result.message, result.needsWebsite ? 'error' : 'ok')
-      if (!result.needsWebsite) { input.value = ''; await refreshMods() }
+      if (!result.needsWebsite) {
+        input.value = ''
+        flashHudButton(btn, 'Added', 'Add mod')
+        await refreshMods()
+      }
     } else {
       setStatus(result.error, 'error')
     }
@@ -4408,7 +4868,10 @@
     await checkUpdates()
   })
 
-  window.launcher.onInstallProgress((step) => setSettingsStatus(step))
+  window.launcher.onInstallProgress((step) => {
+    setSettingsStatus(step)
+    if (updateRunning && $('update').classList.contains('in-path')) $('updateReadout').textContent = step
+  })
 
   $('verifyFiles').addEventListener('click', () => $('verify').click())
   $('reinstallMod').addEventListener('click', () => $('installAll').click())
@@ -4441,7 +4904,12 @@
   })
 
   $('update').addEventListener('click', async () => {
-    $('update').disabled = true
+    const btn = $('update')
+    const readout = $('updateReadout')
+    btn.disabled = true
+    setHudButton(btn, 'Updating...', 'busy')
+    readout.textContent = ''
+    readout.classList.remove('error')
 
     // On a test build the button only shows when a newer one exists, and installs THAT -
     // the same path and the same loud DevInstall-symlink warning as Tools > Test builds.
@@ -4450,7 +4918,8 @@
       const installed = await window.launcher.prereleaseInstall(newerTestBuild)
       if (!installed.ok) {
         setStatus(installed.error, 'error')
-        $('update').disabled = false
+        setHudButton(btn, 'Update')
+        btn.disabled = false
         return
       }
       if (installed.warning) {
@@ -4458,21 +4927,37 @@
       } else {
         setStatus('Updated to test build ' + installed.tag, 'ok')
       }
+      setHudButton(btn, 'Update')
       await checkUpdates()
       return
     }
 
-    setStatus('Downloading update...')
-
+    // The steps arrive from main as they happen and go on the wire (onInstallProgress).
+    setStatus('')
+    updateRunning = true
     const result = await window.launcher.applyUpdate()
+    updateRunning = false
 
-    if (result.ok) {
-      setStatus('Updated to ' + result.version, 'ok')
-      await checkUpdates()
-    } else {
+    if (!result.ok) {
       setStatus(result.error, 'error')
-      $('update').disabled = false
+      // The plate sits well above the status line, so the failure is said where the click was too.
+      readout.textContent = 'Stopped - the reason is below'
+      readout.classList.add('error')
+      setHudButton(btn, 'Update')
+      btn.disabled = false
+      return
     }
+
+    setStatus('Updated to ' + result.version, 'ok')
+    readout.textContent = ''
+    setHudButton(btn, 'Updated', 'ok')
+    // A beat to read it, then it lifts away. checkUpdates hides it (placeUpdate tidies it up for
+    // next time), and render() wakes JACK IN once the check says the files are current.
+    await new Promise((resolve) => setTimeout(resolve, 700))
+    btn.classList.add('leaving')
+    $('updateWire').classList.add('leaving')
+    await new Promise((resolve) => setTimeout(resolve, 180))
+    await checkUpdates()
   })
 
   // --- startup ---------------------------------------------------------------

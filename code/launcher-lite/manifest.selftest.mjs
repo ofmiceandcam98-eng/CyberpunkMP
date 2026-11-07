@@ -36,6 +36,10 @@ import {
   normalizeOwnedPath,
   auditPayloadInstall,
   extractPayloadClean,
+  findStalePrerequisites,
+  auditBundledFiles,
+  removeRetiredFiles,
+  applyBundledZip,
   dllLoadWarning,
   newerTestBuild,
   resolveArchiveStrip
@@ -724,6 +728,134 @@ check('dllLoadWarning: no facts is fine (null)', dllLoadWarning(), null)
   // A wrapper whose stripped paths STILL do not reach a surface is refused (only one strip).
   const r = resolveArchiveStrip(['Outer/Inner/archive/pc/mod/x.archive'])
   check('resolveArchiveStrip: does not strip more than one level', r.ok, false)
+}
+
+// A stand-in for the framework zips: entries carry real bytes, because these helpers compare by hash.
+function bytesZip (files) {
+  const list = Object.entries(files)
+  return {
+    getEntries: () => list.map(([p, content]) => ({
+      entryName: p,
+      isDirectory: p.endsWith('/'),
+      getData: () => Buffer.from(content)
+    })),
+    extractAllTo: (dir) => {
+      for (const [p, content] of list) {
+        if (p.endsWith('/')) continue
+        const full = path.join(dir, p.split('\\').join('/').split('/').join(path.sep))
+        mkdirSync(path.dirname(full), { recursive: true })
+        writeFileSync(full, content)
+      }
+    }
+  }
+}
+
+function placeFile (dir, rel, content) {
+  const full = path.join(dir, rel.split('/').join(path.sep))
+  mkdirSync(path.dirname(full), { recursive: true })
+  writeFileSync(full, content)
+  return full
+}
+
+{
+  const pinned = {
+    components: [
+      { id: 'cyberpunk_multiplayer', name: 'CyberpunkMP', class: 'payload' },
+      { id: 'red4ext', name: 'RED4ext', class: 'bundled', archive: { name: 'RED4ext-1.31.0.zip', sha256: 'new' } },
+      { id: 'codeware', name: 'Codeware', class: 'bundled', archive: { name: 'Codeware-1.21.2.zip', sha256: 'cw' } },
+      { id: 'some_mod', name: 'Some Mod', class: 'nexus', archive: { name: 'some.zip', sha256: 'x' } }
+    ]
+  }
+  const ids = (list) => list.map((c) => c.id)
+
+  check('findStalePrerequisites: no manifest means nothing to compare, so nothing is stale',
+    findStalePrerequisites(null, {}), [])
+  check('findStalePrerequisites: an install with no record is stale, not assumed fine',
+    ids(findStalePrerequisites(pinned, undefined)), ['red4ext', 'codeware'])
+  check('findStalePrerequisites: everything proven at its pin is current',
+    findStalePrerequisites(pinned, { red4ext: 'new', codeware: 'cw' }), [])
+  check('findStalePrerequisites: a release that bumps a pin makes only that framework stale',
+    ids(findStalePrerequisites(pinned, { red4ext: 'old', codeware: 'cw' })), ['red4ext'])
+  check('findStalePrerequisites: proven but gone from disk is stale',
+    ids(findStalePrerequisites(pinned, { red4ext: 'new', codeware: 'cw' }, ['Codeware'])), ['codeware'])
+}
+
+{
+  const d = mkdtempSync(path.join(os.tmpdir(), 'nco-prereq-audit-'))
+  try {
+    placeFile(d, 'bin/x64/winmm.dll', 'same')
+    placeFile(d, 'red4ext/plugins/ArchiveXL/ArchiveXL.dll', 'old version')
+    const audit = auditBundledFiles(d, bytesZip({
+      'bin\\x64\\winmm.dll': 'same',
+      'red4ext/plugins/ArchiveXL/': '',
+      'red4ext/plugins/ArchiveXL/ArchiveXL.dll': 'new version',
+      'red4ext/plugins/ArchiveXL/Bundle/extra.xl': 'new file'
+    }))
+    check('auditBundledFiles: same name and path with different bytes is caught',
+      audit.different, ['red4ext/plugins/ArchiveXL/ArchiveXL.dll'])
+    check('auditBundledFiles: an absent file is missing, a directory entry is not, backslashes are read',
+      audit.missing, ['red4ext/plugins/ArchiveXL/Bundle/extra.xl'])
+  } finally {
+    rmSync(d, { recursive: true, force: true })
+  }
+}
+
+{
+  const d = mkdtempSync(path.join(os.tmpdir(), 'nco-prereq-retire-'))
+  const outside = placeFile(os.tmpdir(), `nco-prereq-outside-${process.pid}.txt`, 'not ours')
+  try {
+    const gone = placeFile(d, 'red4ext/plugins/Codeware/Scripts/Old.reds', 'retired')
+    const kept = placeFile(d, 'red4ext/plugins/Codeware/Codeware.dll', 'kept')
+    const renamed = placeFile(d, 'r6/scripts/foo.reds', 'renamed by case only')
+    const playerFile = placeFile(d, 'red4ext/plugins/Codeware/player-notes.txt', 'theirs')
+    const r = removeRetiredFiles(d, [
+      'red4ext/plugins/Codeware/Scripts/Old.reds',
+      'red4ext\\plugins\\Codeware\\Codeware.dll',
+      'r6/scripts/FOO.reds',
+      'red4ext/plugins/Codeware/already-gone.reds',
+      `../${path.basename(outside)}`
+    ], ['red4ext/plugins/Codeware/Codeware.dll', 'r6/scripts/foo.reds'])
+    check('removeRetiredFiles: deletes what the new version no longer ships', existsSync(gone), false)
+    check('removeRetiredFiles: reports only what it actually removed', r.removed, ['red4ext/plugins/Codeware/Scripts/Old.reds'])
+    check('removeRetiredFiles: keeps what is still owned, whichever slash the record used', existsSync(kept), true)
+    check('removeRetiredFiles: a rename by case does not delete the new file', existsSync(renamed), true)
+    check('removeRetiredFiles: never touches a file it has no record of', existsSync(playerFile), true)
+    check('removeRetiredFiles: a record pointing outside the game folder is refused', existsSync(outside), true)
+    check('removeRetiredFiles: and that refusal is reported', r.failed.length, 1)
+    check('removeRetiredFiles: no record removes nothing', removeRetiredFiles(d, undefined, []).removed, [])
+  } finally {
+    rmSync(d, { recursive: true, force: true })
+    rmSync(outside, { force: true })
+  }
+}
+
+{
+  const d = mkdtempSync(path.join(os.tmpdir(), 'nco-prereq-apply-'))
+  try {
+    placeFile(d, 'red4ext/plugins/TweakXL/TweakXL.dll', 'old')
+    placeFile(d, 'red4ext/plugins/TweakXL/Old.reds', 'retired')
+    placeFile(d, 'red4ext/plugins/Other/Other.dll', 'another framework')
+    const zip = bytesZip({ 'red4ext/plugins/TweakXL/TweakXL.dll': 'new' })
+    const r = applyBundledZip(d, zip,
+      ['red4ext/plugins/TweakXL/TweakXL.dll', 'red4ext/plugins/TweakXL/Old.reds', 'red4ext/plugins/Other/Other.dll'],
+      ['red4ext/plugins/Other/Other.dll'])
+    check('applyBundledZip: an old framework is replaced and proven', [r.ok, r.changed], [true, true])
+    check('applyBundledZip: the new bytes are on disk',
+      hashFileSha256(path.join(d, 'red4ext', 'plugins', 'TweakXL', 'TweakXL.dll')), sha256Hex(Buffer.from('new')))
+    check('applyBundledZip: the retired file is gone', r.retired.removed, ['red4ext/plugins/TweakXL/Old.reds'])
+    check('applyBundledZip: a file another framework owns survives', existsSync(path.join(d, 'red4ext', 'plugins', 'Other', 'Other.dll')), true)
+    check('applyBundledZip: returns the new file list for the record', r.files, ['red4ext/plugins/TweakXL/TweakXL.dll'])
+
+    let extracted = false
+    const again = applyBundledZip(d, { ...zip, extractAllTo: () => { extracted = true } })
+    check('applyBundledZip: a framework already at its pin is not rewritten', [again.ok, again.changed, extracted], [true, false, false])
+
+    const stuck = applyBundledZip(d, { ...bytesZip({ 'red4ext/plugins/TweakXL/TweakXL.dll': 'newer' }), extractAllTo: () => {} })
+    check('applyBundledZip: bytes that did not land are reported, not recorded',
+      [stuck.ok, stuck.unwritten], [false, ['red4ext/plugins/TweakXL/TweakXL.dll']])
+  } finally {
+    rmSync(d, { recursive: true, force: true })
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

@@ -109,7 +109,7 @@ void AppearanceSystem::AddEntity(const Red::EntityID entityID, const Red::DynArr
     // carrying is the first thing worth knowing when they look wrong, and it has earned
     // its place several times since.
     spdlog::info("[Appearance] entity {:x}: {} equipment item(s), {} bytes of ccstate",
-                 entityID.hash, items.size, ccstate.size());
+                 entityID.hash, items.Size(), ccstate.size());
 
     {
         std::lock_guard lock(m_mapLock);
@@ -121,7 +121,7 @@ void AppearanceSystem::AddEntity(const Red::EntityID entityID, const Red::DynArr
     // against the matching 'apply' line - see HashBytes above.
     spdlog::info("[Identity] add   entity {:x}: ccstate {} bytes hash={:016x}, equipment {} items hash={:016x}",
                  entityID.hash, ccstate.size(), HashBytes(ccstate.data(), ccstate.size()),
-                 items.size, HashEquipment(items));
+                 items.Size(), HashEquipment(items));
 
 }
 
@@ -147,6 +147,20 @@ std::string AppearanceSystem::GetEntityName(Red::EntityID entityID) const
     std::lock_guard lock(m_mapLock);
     const auto it = m_playerNames.find(entityID);
     return it == m_playerNames.end() ? std::string() : it->second;
+}
+
+// Whether the ITransactionSystem vtable slots AddItems calls through were decoded on THIS
+// game build - see IsGame231Layout. Anything other than 2.31 takes the script path; see the
+// call site in ApplyAppearance.
+static bool IsDecodedTransactionLayout()
+{
+    static const bool s_decoded = [] {
+        const bool decoded = IsGame231Layout();
+        if (!decoded)
+            spdlog::warn("[Appearance] not the 2.31 layout - remote players are dressed through the script "
+                         "TransactionSystem API, not the native vtable path");
+        return decoded; }();
+    return s_decoded;
 }
 
 void AddItems(Red::Handle<Red::game::Object> & object, Red::DynArray<Red::TweakDBID> const & items, game::ui::CharacterCustomizationState const * state)
@@ -305,7 +319,7 @@ bool AppearanceSystem::ApplyAppearance(Red::Handle<Red::game::Object> object)
     // downstream of us - in the engine's appearance changer. If they differ, it is ours.
     spdlog::info("[Identity] apply entity {:x}: ccstate {} bytes hash={:016x}, equipment {} items hash={:016x}, name '{}'",
                  object.instance->id.hash, bytes.size(), HashBytes(bytes.data(), bytes.size()),
-                 items.size, HashEquipment(items), name);
+                 items.Size(), HashEquipment(items), name);
 
     // The name on the puppet.
     //
@@ -377,7 +391,25 @@ bool AppearanceSystem::ApplyAppearance(Red::Handle<Red::game::Object> object)
     //     items.PushBack("Items.MuppetWaHead");
     // }
     // items.PushBack("Items.MuppetArms");
-    AddItems(object, items, stateHandle.instance);
+    //
+    // Native dressing only on the layout it was decoded on.
+    //
+    // AddItems reaches GiveItem and AddItemToSlot through hand-numbered ITransactionSystem
+    // vtable slots (0x250 and on) that were read off 2.31 and carried to 2.5 unverified. On
+    // 2.5 that call lands somewhere else: a new tester's game died every time, 16 seconds
+    // after joining, the instant it dressed the one other player in the world (0xC0000005
+    // reading 0xFFFFFFFF in Cyberpunk2077.exe right after the "[Appearance] holstered_default"
+    // line, 2026-11-01 23:05 and 23:08). Any client seeing anybody with a stored look crashed.
+    //
+    // The script version calls the same two operations through TransactionSystem's
+    // declared API, which the redscript compiler checks against the installed game - so it
+    // survives a patch that moves the vtable. It does not pass a garment appearance name,
+    // so a remote outfit can render with the item's default variant; a plain outfit is
+    // recoverable, a client that crashes on contact is not.
+    if (IsDecodedTransactionLayout())
+        AddItems(object, items, stateHandle.instance);
+    else
+        Red::CallVirtual(this, "AddItems", object);
 
     // spdlog::info("head groups read:");
     // for (auto &group : stateHandle.instance->unk70) 
@@ -499,29 +531,7 @@ bool AppearanceSystem::ApplyAppearance(Red::Handle<Red::game::Object> object)
         spdlog::info("Scheduling change");
 
         Red::DynArray<Red::world::EntityAppearanceChangeParameter::Key> keys;
-        stateHandle.instance->GetHeadCustomization("TPP", true, keys);
-        stateHandle.instance->GetHeadCustomization("face", true, keys);
-        stateHandle.instance->GetHeadCustomization("hairs", true, keys);
-        if (stateHandle.instance->isBodyGenderMale) 
-        {
-            stateHandle.instance->GetHeadCustomization("beards", true, keys);
-        }
-
-        // does all of them
-        // stateHandle.instance->GetHeadCustomization("character_customization", true, keys);
-
-        stateHandle.instance->GetBodyCustomization("TPP_Body", true, keys);
-        // make genitals appear as well
-        // stateHandle.instance->GetBodyCustomization("character_creation", true, keys);
-        // pops through clothes lol
-        // stateHandle.instance->GetBodyCustomization("genitals", true, keys);
-        stateHandle.instance->GetBodyCustomization("breast", true, keys);
-        stateHandle.instance->GetBodyCustomization("lifted_feet", true, keys);
-        stateHandle.instance->GetBodyCustomization("flat_feet", true, keys);
-
-        // stateHandle.instance->GetArmsCustomization("character_customization", true, keys);
-        stateHandle.instance->GetArmsCustomization("holstered_default", true, keys);
-        stateHandle.instance->GetArmsCustomization("nails", true, keys);
+        CollectCustomizationKeys(stateHandle.instance, keys);
 
         // How many appearance keys the remote player's state actually produced.
         //
@@ -542,7 +552,7 @@ bool AppearanceSystem::ApplyAppearance(Red::Handle<Red::game::Object> object)
         // Guessing between those two means editing native appearance code blind, and a
         // wrong guess here crashes the game on spawn rather than failing visibly.
         spdlog::info("[Appearance] remote state produced {} customization key(s), male={}",
-                     keys.size, stateHandle.instance->isBodyGenderMale);
+                     keys.Size(), stateHandle.instance->isBodyGenderMale);
 
         auto changer = Red::GetRuntimeSystem<Red::world::RuntimeSystemEntityAppearanceChanger>();
         Red::WeakHandle<Red::game::Object> weakHandle = object;
@@ -563,8 +573,8 @@ bool AppearanceSystem::ApplyAppearance(Red::Handle<Red::game::Object> object)
         // engine's read regardless of when that read happens.
         auto keysStorage = std::make_shared<Red::DynArray<Red::world::EntityAppearanceChangeParameter::Key>>(std::move(keys));
         Span<Red::world::EntityAppearanceChangeParameter::Key> new_keys = {
-            .start = keysStorage->entries,
-            .end = &keysStorage->entries[keysStorage->size]
+            .start = keysStorage->Data(),
+            .end = &keysStorage->Data()[keysStorage->Size()]
         };
         const std::function<void (void)> callback = [stateHandle = std::move(stateHandle), object = std::move(object), keysStorage](void)
         {

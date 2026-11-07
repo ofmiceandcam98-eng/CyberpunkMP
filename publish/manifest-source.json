@@ -34,7 +34,7 @@
 
   "game": {
     "id": "cyberpunk2077",
-    "supportedVersion": "2.31",
+    "supportedVersion": "2.5",
     "enforce": "warn"
   },
 
