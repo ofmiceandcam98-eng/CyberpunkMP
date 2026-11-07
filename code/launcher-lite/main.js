@@ -2433,6 +2433,9 @@ async function applyUpdate (onProgress = () => {}) {
     throw new Error('Could not reach GitHub to download the update. Check your connection and try again.')
   }
 
+  // Said out loud because the main screen prints each step on the Update button's wire: without
+  // these, a mod-only update showed nothing at all between the press and the result.
+  onProgress('Downloading the update...')
   const response = await axios.get(info.downloadUrl, { responseType: 'arraybuffer', timeout: 120000 })
   const buffer = Buffer.from(response.data)
 
@@ -2480,6 +2483,7 @@ async function applyUpdate (onProgress = () => {}) {
     launcherLog(`payload verified against manifest ${pin.manifest.manifestVersion} before install`)
   }
 
+  onProgress('Installing the update...')
   const zip = new AdmZip(buffer)
   const cleanFailures = ManifestKit.extractPayloadClean(modDir, zip)
   for (const failure of cleanFailures) {

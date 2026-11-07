@@ -22,7 +22,7 @@ function fail (what, where, fix) {
 }
 
 // Every hud button in the markup has the layers the kit expects.
-const HUD_BUTTONS = ['play', 'verify', 'verifyAllMods', 'addModBtn']
+const HUD_BUTTONS = ['play', 'verify', 'update', 'verifyAllMods', 'addModBtn']
 for (const id of HUD_BUTTONS) {
   const match = markup.match(new RegExp(`<button[^>]*id="${id}"[^>]*>([\\s\\S]*?)</button>`))
   if (!match) {
@@ -53,6 +53,14 @@ for (const [, id, body] of script.matchAll(/\$\('(\w+)'\)\.addEventListener\('cl
 // .play looks like JACK IN's old class, but the settings modal's Done button still depends on it.
 if (!/class="action play" id="closeSettingsDone"/.test(markup) || !/^\s*\.play \{/m.test(markup)) {
   fail("the settings modal's Done button lost its .play styling", 'the styles and #closeSettingsDone', 'keep the .play rules and class="action play" on Done')
+}
+
+// Update has two homes and placeUpdate moves it between them. Setting display on it anywhere else
+// shows it without its wire, or hides it and leaves the wire pointing at nothing.
+for (const line of script.split('\n')) {
+  if (/(\$\('update'\)|updateBtn)\.style\.display\s*=/.test(line)) {
+    fail('the Update button is shown or hidden directly', `the launcher script: ${line.trim().slice(0, 70)}`, "call placeUpdate('path' | 'row' | null) so its wire and readout follow it")
+  }
 }
 
 // Every clip-path in the kit stays off the button, or its focus ring disappears.

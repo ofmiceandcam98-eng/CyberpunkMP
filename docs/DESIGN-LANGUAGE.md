@@ -36,6 +36,8 @@ happened here twice, and both cleanups cost an evening.
 | `--ok` | `#3ddc64` | it worked |
 | `--bad` | `#f0a05a` | it did not |
 | `--update` | `#c2621b` | an update is waiting |
+| `--update-2` | `#6b3410` | the Update plate's base — a shade of `--update`, never a new hue |
+| `--update-tread` | `#9a4a14` | the second band of the Update plate's working stripe |
 | `--steel` | `#2b303a` | inert chrome — secondary plates, scrollbar thumb |
 | `--accent-2` | `#7c1015` | the accent ramp: the red fade on the motifs and the progress bar |
 | `--accent-3` | `#5a0c11` | deeper in the ramp — a secondary plate's base, trailing plates and hairlines |
@@ -148,6 +150,18 @@ one button with separate moments, so its effects never compete.
 - **Write the label with `setHudButton`.** `textContent` wipes out the layers inside the button with no
   error. `tools/tests/launcher_buttons_test.mjs` checks for this.
 - **With animations turned off, nothing travels or tears.** Colour and the load bar still answer.
+
+**Update stands in your path** (zeldfep, 2026-11-07, picking option 2 of the Update test page).
+It is the plate in `--update` orange with `#140406` text; white on that orange is 4.15:1 and fails.
+
+- **When an update blocks JACK IN, Update sits above it**, with a wire down into JACK IN's raised
+  tab. Hover or Tab sends a signal down the wire and JACK IN's dots stir.
+- **Each real step is printed on the wire** as the main process reports it, as a `--fs-micro` mono
+  readout. A refusal is said there too, because the status line is far below the button.
+- **Done, it turns steel with a green "Updated", then lifts away**, and JACK IN comes alive when the
+  next check confirms the files. Green on the orange would be 2.3:1.
+- **A newer test build blocks nothing**, so the same button sits in the row beside Verify as a steel
+  plate with orange dots. `placeUpdate` is the only thing that shows, hides or moves it.
 
 `.play` is still in use: the settings modal's Done button is an `.action.play`.
 

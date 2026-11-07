@@ -263,6 +263,11 @@ await withGame(async (game) => {
     at('isGameRunning') > -1 && at('isGameRunning') < at('bringPrerequisitesToPin'), true)
   check('applyUpdate: frameworks are settled before the payload is touched',
     at('bringPrerequisitesToPin') > -1 && at('bringPrerequisitesToPin') < at('extractPayloadClean'), true)
+  // The main screen prints these on the Update button's wire; without them a mod-only update is silent.
+  check('applyUpdate: the download says so before it starts',
+    at("onProgress('Downloading the update...')") > -1 && at("onProgress('Downloading the update...')") < at('axios.get'), true)
+  check('applyUpdate: the install says so before it starts',
+    at("onProgress('Installing the update...')") > -1 && at("onProgress('Installing the update...')") < at('extractPayloadClean'), true)
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

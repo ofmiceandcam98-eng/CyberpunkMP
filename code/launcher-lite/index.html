@@ -36,6 +36,10 @@
        ends up with three ambers and nobody able to say which one is correct. Same values
        as before - this changes nothing on screen, it just gives them one home. */
     --update:  #c2621b;
+    /* Shades OF --update for the Update plate's base and its working stripe - the same rule as
+       the accent ramp below: never new hues. */
+    --update-2: #6b3410;
+    --update-tread: #9a4a14;
     --steel:   #2b303a;
     /* THE ACCENT RAMP - the red fade on the Play button, the rail and the progress bar. It
        was pasted as hex into ten gradients (#7c1015 x4, #5a0c11 x5, #26060a x8), and the
@@ -455,7 +459,6 @@
 
   .discord { background: #5865f2; color: #fff; }
   .join { background: #5865f2; color: #fff; }
-  .update { background: var(--update); color: #fff; }
 
   /* Destructive and secondary actions, kept small and away from the main flow. */
   .footlinks {
@@ -627,6 +630,46 @@
   .wired[data-state="checking"] .face, .wired[data-state="ok"] .face { background: var(--steel); color: var(--ink); }
   .wired[data-state="checking"] .wire, .wired[data-state="ok"] .wire { stroke: var(--ink-dim); }
 
+  /* THE UPDATE PLATE: the plate in update orange. zeldfep, 2026-11-07, picking option 2 of the
+     Update test page, "In your path". When an update blocks JACK IN, Update sits ABOVE it with a
+     wire down into JACK IN's raised tab, each real step is printed on the wire, and once it is
+     done it lifts away and JACK IN comes alive. A newer test build blocks nothing, so the same
+     button sits in the row beside Verify as a steel plate with orange dots: the colour says
+     "update", the plate says "when you like". Near-black on --update is 4.82:1; the white the
+     old button carried was 4.15:1. */
+  .plate.hud-update { height: 44px; font-size: var(--fs-body); letter-spacing: .07em; --lug: 6px; --pip: 3px;
+                      --plate-fill: var(--update); --plate-base: var(--update-2); --plate-text: #140406; --glitch-2: var(--ink); --glitch-h: 44px; }
+  .plate.hud-update.optional { --plate-fill: var(--steel); --plate-base: var(--accent-3); --plate-text: var(--ink); --glitch-2: var(--accent); }
+  .hud-update.optional .pips i { background: var(--update); }
+  .hud-update .tread { background: repeating-linear-gradient(-45deg, var(--update) 0 14px, var(--update-tread) 14px 28px); }
+  .plate.hud-update[data-state="busy"] .face, .hud-update[data-state="busy"] .label { background: var(--update); color: #140406; }
+  .plate.hud-update[data-state="busy"] .back::before { background: var(--update-2); }
+  /* Done reads as the orange going away: green on orange is 2.3:1, green on steel is 7.3:1. */
+  .plate.hud-update[data-state="ok"] { --plate-fill: var(--steel); --plate-base: var(--accent-3); }
+  .hud-update.arrive { animation: drop-in 260ms var(--ease-out); }
+  .hud-update.leaving, .update-wire.leaving { opacity: 0; transform: translateY(-6px); transition: opacity 180ms ease, transform 180ms var(--ease-out); }
+  @keyframes drop-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+
+  /* The wire lands on JACK IN's raised tab (56%-88% of its width), so it reads as plugged in. */
+  .update-wire { position: relative; height: 22px; margin: -.5rem 0 -.6rem; }
+  .update-wire svg { position: absolute; left: calc(70% - 40px); top: 0; width: 60px; height: 22px; overflow: visible; fill: none; stroke: var(--update); stroke-width: 1.5; }
+  .update-wire circle { fill: var(--update); }
+  .update-wire .pulse { position: absolute; left: calc(70% - 40px); top: 0; width: 5px; height: 5px; background: var(--ink); opacity: 0;
+                        offset-path: path('M30 0V6L40 14V19'); offset-rotate: 0deg; offset-distance: 0%; }
+  .update-wire.arrive path { stroke-dasharray: 30; animation: draw 260ms var(--ease-out) 120ms backwards; }
+  @keyframes draw { from { stroke-dashoffset: 30; } to { stroke-dashoffset: 0; } }
+  /* The step the update is on, printed on the wire: a tiny mono readout, so --fs-micro. */
+  .update-readout { margin-top: -.55rem; font: var(--fs-micro) var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--update); text-align: right; padding-right: calc(30% + 8px); }
+  .update-readout:empty { display: none; }
+  .update-readout.error { color: var(--accent); font-weight: 700; }
+  /* Hover or Tab: a signal runs down the wire and JACK IN's dots stir. */
+  .hud-update.in-path:focus-visible + .update-wire .pulse { opacity: 1; offset-distance: 100%; transition: offset-distance 220ms var(--ease-out); }
+  .hud-stack:has(> .hud-update.in-path:focus-visible) .hud-play .pips i { opacity: .8; transition-delay: calc(var(--i) * 50ms + 160ms); }
+  @media (hover: hover) and (pointer: fine) {
+    .hud-update.in-path:hover:not(:disabled) + .update-wire .pulse { opacity: 1; offset-distance: 100%; transition: offset-distance 220ms var(--ease-out); }
+    .hud-stack:has(> .hud-update.in-path:hover:not(:disabled)) .hud-play .pips i { opacity: .8; transition-delay: calc(var(--i) * 50ms + 160ms); }
+  }
+
   /* THE CLICK GLITCH: the text tears into slices and a scan line drops, once. It plays over
      the click and never delays what the click does. */
   .glitches { --glitch-2: var(--accent); --glitch-h: 38px; }
@@ -662,7 +705,9 @@
     .hud .face, .plate .hatch, .bin { transform: none !important; }
     .plate .back { transform: translate(-4px, 4px) !important; }
     .plate .chev { transform: translateY(-52%) !important; }
-    .wired .pulse { display: none; }
+    .wired .pulse, .update-wire .pulse { display: none; }
+    .hud-update.arrive, .update-wire.arrive path { animation: none !important; }
+    .hud-update.leaving, .update-wire.leaving { transform: none !important; }
   }
 
   .add-row { display: flex; align-items: stretch; }
@@ -1761,6 +1806,16 @@
       <!-- The button kit: see THE BUTTON KIT in the styles. The text is in .label, so write it
            with setHudButton - textContent on one of these wipes out the layers inside it. -->
       <div class="hud-stack">
+        <!-- Update, when it blocks JACK IN: above it, wired into its tab, with the step it is on
+             printed on the wire (THE UPDATE PLATE). A newer test build blocks nothing, so
+             placeUpdate moves this same button down into the row beside Verify. -->
+        <button class="hud plate hud-update glitches in-path" id="update" aria-label="Update" style="display:none">
+          <span class="back"></span>
+          <span class="face"><span class="tread"></span><span class="scan"></span><span class="pips"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Update">Update</span></span>
+        </button>
+        <div class="update-wire" id="updateWire" aria-hidden="true" style="display:none"><svg viewBox="0 0 60 22"><path d="M30 0V6L40 14V19"></path><circle cx="40" cy="19.5" r="2.5"></circle></svg><span class="pulse"></span></div>
+        <div class="update-readout" id="updateReadout" aria-live="polite"></div>
+
         <button class="hud plate hud-play glitches" id="play" aria-label="JACK IN" disabled>
           <span class="back"></span>
           <span class="face"><span class="tread"></span><span class="scan"></span><span class="pips"><i></i><i></i><i></i><i></i></span><span class="hatch"></span><span class="label" data-text="JACK IN">JACK IN</span><span class="chev" aria-hidden="true"></span></span>
@@ -1776,7 +1831,6 @@
             <span class="back"></span>
             <span class="face"><span class="scan"></span><span class="pips"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Verify files">Verify files</span></span>
           </button>
-          <button class="action update" id="update" style="display:none">Update</button>
         </div>
       </div>
 
@@ -1936,12 +1990,17 @@
     else delete btn.dataset.state
   }
 
+  // A one-shot animation class: removed and re-added so it replays, then cleared.
+  function playOnce (el, cls, ms) {
+    el.classList.remove(cls)
+    void el.offsetWidth
+    el.classList.add(cls)
+    setTimeout(() => el.classList.remove(cls), ms)
+  }
+
   // Once, when the button comes alive. Not on every re-render.
   function armHudButton (btn) {
-    btn.classList.remove('armed')
-    void btn.offsetWidth
-    btn.classList.add('armed')
-    setTimeout(() => btn.classList.remove('armed'), 700)
+    playOnce(btn, 'armed', 700)
   }
 
   // A result worth a moment on the button itself, only ever after the check really passed.
@@ -1995,6 +2054,10 @@
   // The newest published test build, while a DIFFERENT test build is installed - what the
   // main Update button installs on a test build (see renderUpdateState). Null otherwise.
   let newerTestBuild = null
+
+  // True while the main Update button's applyUpdate runs, so its steps go on the wire. Settings'
+  // own installs report through the same channel and stay in Settings.
+  let updateRunning = false
 
   // Set from the main process as the launcher updates itself, not from any check we
   // run here - the updater owns that state and reports on it.
@@ -2517,22 +2580,53 @@
 
   // --- updates ---------------------------------------------------------------
 
+  // Update has two homes (THE UPDATE PLATE). 'path': above JACK IN and wired into it, because the
+  // update is what stands between the player and the game. 'row': beside Verify, for a newer test
+  // build, which blocks nothing. null: hidden. It only moves when its home changes, so a re-render
+  // never replays the arrival or drops keyboard focus.
+  function placeUpdate (where, title) {
+    const btn = $('update')
+    const wire = $('updateWire')
+    const was = btn.style.display === 'none' ? null : (btn.classList.contains('in-path') ? 'path' : 'row')
+    btn.title = title || ''
+    // A re-render while it is working (Verify reports the version too) must not re-arm it.
+    if (where && btn.dataset.state !== 'busy') btn.disabled = false
+    if (where === was) return
+
+    if (where === 'path') wire.before(btn)
+    else if (where === 'row') $('verify').after(btn)
+    btn.classList.toggle('in-path', where === 'path')
+    btn.classList.toggle('optional', where === 'row')
+    btn.style.display = where ? '' : 'none'
+    wire.style.display = where === 'path' ? '' : 'none'
+
+    if (where) {
+      playOnce(btn, 'arrive', 500)
+      if (where === 'path') playOnce(wire, 'arrive', 500)
+    } else {
+      // Hidden mid-exit after an update landed, so it comes back clean next time.
+      btn.classList.remove('leaving')
+      wire.classList.remove('leaving')
+      setHudButton(btn, 'Update')
+      $('updateReadout').textContent = ''
+    }
+  }
+
   function renderUpdateState () {
     const dot = $('updateDot')
     const text = $('updateText')
-    const updateBtn = $('update')
 
     if (!updateState) {
       dot.className = 'dot'
       text.textContent = 'Checking for updates...'
-      updateBtn.style.display = 'none'
+      placeUpdate(null)
       return
     }
 
     if (!updateState.installed) {
       dot.className = 'dot'
       text.textContent = 'Mod not installed'
-      updateBtn.style.display = 'none'
+      placeUpdate(null)
       return
     }
 
@@ -2541,7 +2635,7 @@
       // has the files - an outage should not stop a game that would work fine.
       dot.className = 'dot on'
       text.textContent = 'Update check unavailable - playing offline'
-      updateBtn.style.display = 'none'
+      placeUpdate(null)
       return
     }
 
@@ -2566,25 +2660,22 @@
         text.textContent = 'Test build - ' + updateState.testBuildTag +
           (newerTestBuild ? ' · ' + short(newerTestBuild) + ' available' : '') +
           (manifestSummary ? ' · ' + manifestSummary : '')
-        updateBtn.style.display = newerTestBuild ? 'inline-block' : 'none'
-        updateBtn.disabled = false
-        updateBtn.title = newerTestBuild ? 'Installs test build ' + newerTestBuild + ' - not the public release' : ''
+        placeUpdate(newerTestBuild ? 'row' : null,
+          newerTestBuild ? 'Installs test build ' + newerTestBuild + ' - not the public release' : '')
       } else {
         text.textContent = 'Mod up to date' + (updateState.version ? ' - ' + updateState.version : '') +
           (manifestSummary ? ' · ' + manifestSummary : '')
         // Nothing to do, so the button is not shown at all. A permanently disabled
         // "Update" button invites people to keep pressing it wondering what is broken.
-        updateBtn.style.display = 'none'
+        placeUpdate(null)
       }
     } else {
       dot.className = 'dot'
       text.textContent = (updateState.payloadCurrent ? 'Framework update required' : 'Mod update required') +
         (updateState.version ? ' - ' + updateState.version : '')
-      updateBtn.style.display = 'inline-block'
-      updateBtn.disabled = false
-      updateBtn.title = updateState.payloadCurrent
+      placeUpdate('path', updateState.payloadCurrent
         ? 'Brings ' + (updateState.prerequisitesStale || []).join(', ') + ' to the versions this release uses'
-        : ''
+        : '')
     }
   }
 
@@ -4777,7 +4868,10 @@
     await checkUpdates()
   })
 
-  window.launcher.onInstallProgress((step) => setSettingsStatus(step))
+  window.launcher.onInstallProgress((step) => {
+    setSettingsStatus(step)
+    if (updateRunning && $('update').classList.contains('in-path')) $('updateReadout').textContent = step
+  })
 
   $('verifyFiles').addEventListener('click', () => $('verify').click())
   $('reinstallMod').addEventListener('click', () => $('installAll').click())
@@ -4810,7 +4904,12 @@
   })
 
   $('update').addEventListener('click', async () => {
-    $('update').disabled = true
+    const btn = $('update')
+    const readout = $('updateReadout')
+    btn.disabled = true
+    setHudButton(btn, 'Updating...', 'busy')
+    readout.textContent = ''
+    readout.classList.remove('error')
 
     // On a test build the button only shows when a newer one exists, and installs THAT -
     // the same path and the same loud DevInstall-symlink warning as Tools > Test builds.
@@ -4819,7 +4918,8 @@
       const installed = await window.launcher.prereleaseInstall(newerTestBuild)
       if (!installed.ok) {
         setStatus(installed.error, 'error')
-        $('update').disabled = false
+        setHudButton(btn, 'Update')
+        btn.disabled = false
         return
       }
       if (installed.warning) {
@@ -4827,21 +4927,37 @@
       } else {
         setStatus('Updated to test build ' + installed.tag, 'ok')
       }
+      setHudButton(btn, 'Update')
       await checkUpdates()
       return
     }
 
-    setStatus('Downloading update...')
-
+    // The steps arrive from main as they happen and go on the wire (onInstallProgress).
+    setStatus('')
+    updateRunning = true
     const result = await window.launcher.applyUpdate()
+    updateRunning = false
 
-    if (result.ok) {
-      setStatus('Updated to ' + result.version, 'ok')
-      await checkUpdates()
-    } else {
+    if (!result.ok) {
       setStatus(result.error, 'error')
-      $('update').disabled = false
+      // The plate sits well above the status line, so the failure is said where the click was too.
+      readout.textContent = 'Stopped - the reason is below'
+      readout.classList.add('error')
+      setHudButton(btn, 'Update')
+      btn.disabled = false
+      return
     }
+
+    setStatus('Updated to ' + result.version, 'ok')
+    readout.textContent = ''
+    setHudButton(btn, 'Updated', 'ok')
+    // A beat to read it, then it lifts away. checkUpdates hides it (placeUpdate tidies it up for
+    // next time), and render() wakes JACK IN once the check says the files are current.
+    await new Promise((resolve) => setTimeout(resolve, 700))
+    btn.classList.add('leaving')
+    $('updateWire').classList.add('leaving')
+    await new Promise((resolve) => setTimeout(resolve, 180))
+    await checkUpdates()
   })
 
   // --- startup ---------------------------------------------------------------

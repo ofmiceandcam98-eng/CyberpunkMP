@@ -4,8 +4,9 @@
 //   node tools/tests/launcher-stage.mjs [port] [minutes]
 //   http://127.0.0.1:8772/?scene=ready
 //
-// Scenes: ready, admin, update, notready, signedout, worst. Add &motion=full or &motion=reduced to
-// force either set of motion rules, whatever this machine's animation setting is. Size the window
+// Scenes: ready, admin, update, frameworks, testbuild, notready, signedout, worst. Add &motion=full
+// or &motion=reduced to force either set of motion rules, whatever this machine's animation setting
+// is, and &result=fail to make Update refuse the way it does while the game is running. Size the window
 // to 1180x800 to match the launcher (its minimum is 1024x740). It binds to loopback only and exits
 // by itself after [minutes] (default 30), so it
 // can't be left running. Everything it reports is staged: nothing here touches a game, a server
@@ -22,7 +23,7 @@ const TYPES = { '.ttf': 'font/ttf', '.webp': 'image/webp', '.png': 'image/png', 
 
 // Runs in the page, before the launcher's own script. Passed through toString, so it can't close
 // over anything from this file.
-function stage (scene) {
+function stage (scene, result) {
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
   const listeners = {}
   const emit = (name, value) => (listeners[name] || []).forEach((callback) => callback(value))
@@ -58,12 +59,40 @@ function stage (scene) {
       ]
     : []
 
+  // Update scenes: the mod is behind, the frameworks are behind, or a newer test build is out. A
+  // successful Update brings it current, so the next check says so, like the real one.
+  let updated = false
+  const steps = scene === 'frameworks'
+    ? ['Checking the frameworks the mod runs on...', 'Checking RED4ext...', 'Installing RED4ext...', 'Checking ArchiveXL...', 'Installing ArchiveXL...', 'Downloading the update...', 'Installing the update...']
+    : ['Checking the frameworks the mod runs on...', 'Downloading the update...', 'Installing the update...']
+
   const fixed = {
     getPaths: { appVersion: '0.0.0-stage' },
     restore: scene === 'signedout' ? { ok: false } : { ok: true, user: scene === 'worst' ? { ...user, isMember: false, username: 'aleksandra.wisniewska.kowalczyk' } : user },
-    checkUpdate: scene === 'update'
-      ? { ok: true, installed: true, upToDate: false, version: 'v0.3.127', notes }
-      : { ok: true, installed: true, upToDate: true, version: 'v0.3.127', notes },
+    checkUpdate: () => {
+      const current = { ok: true, installed: true, upToDate: true, version: 'v0.3.127', notes }
+      if (updated) return scene === 'testbuild' ? { ...current, testBuildTag: 'v0.3.127-test.94' } : current
+      if (scene === 'update') return { ...current, upToDate: false }
+      if (scene === 'frameworks') return { ...current, upToDate: false, payloadCurrent: true, prerequisitesStale: ['RED4ext', 'ArchiveXL'] }
+      if (scene === 'testbuild') return { ...current, testBuildTag: 'v0.3.127-test.93' }
+      return current
+    },
+    prereleaseList: () => ({ ok: true, newer: updated ? null : 'v0.3.127-test.94' }),
+    applyUpdate: async () => {
+      if (result === 'fail') return { ok: false, error: 'Close Cyberpunk 2077 first - the game is holding the mod files open.' }
+      for (const step of steps) {
+        emit('onInstallProgress', step)
+        await wait(step.startsWith('Downloading') ? 1200 : 450)
+      }
+      updated = true
+      return { ok: true, version: 'v0.3.127' }
+    },
+    prereleaseInstall: async (tag) => {
+      if (result === 'fail') return { ok: false, error: 'Close Cyberpunk 2077 first - the game is holding the mod files open.' }
+      await wait(1600)
+      updated = true
+      return { ok: true, tag }
+    },
     manifestStatus: { ok: true, state: 'verified', version: '2026.11.01.01' },
     gameServerStatus: scene === 'notready' ? { ok: true, online: false } : { ok: true, online: true, players: 2 },
     tailscaleStatus: { ok: true, installed: true, connected: true, ip: '100.64.0.12' },
@@ -111,7 +140,7 @@ function stage (scene) {
   window.stage = { scene, emit }
 }
 
-async function launcherPage (scene, motion) {
+async function launcherPage (scene, motion, result) {
   let html = await readFile(join(LAUNCHER, 'index.html'), 'utf8')
   // A machine's animation setting decides which rules the launcher shows, so one machine could only
   // ever test one of them. &motion=full and &motion=reduced force each, here and nowhere else.
@@ -122,14 +151,14 @@ async function launcherPage (scene, motion) {
   if ((html.match(anchor) || []).length !== 1) {
     throw new Error('launcher-stage: expected exactly one inline <script> in code/launcher-lite/index.html - update launcherPage() to match')
   }
-  return html.replace(anchor, (found) => `\n<script>(${stage})(${JSON.stringify(scene)})</script>${found}`)
+  return html.replace(anchor, (found) => `\n<script>(${stage})(${JSON.stringify(scene)}, ${JSON.stringify(result)})</script>${found}`)
 }
 
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, 'http://127.0.0.1')
   try {
     if (url.pathname === '/') {
-      const page = await launcherPage(url.searchParams.get('scene') || 'ready', url.searchParams.get('motion'))
+      const page = await launcherPage(url.searchParams.get('scene') || 'ready', url.searchParams.get('motion'), url.searchParams.get('result'))
       response.writeHead(200, { 'Content-Type': TYPES['.html'] })
       response.end(page)
       return
