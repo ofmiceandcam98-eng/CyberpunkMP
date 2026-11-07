@@ -56,8 +56,37 @@ class Element {
     this.style = {}
     this.listeners = {}
     this.htmlWrites = []
+    this.dataset = {}
+    this.attributes = {}
+    this.found = new Map()
+    this.moves = []
     const classes = new Set()
-    this.classList = { add: (c) => classes.add(c), remove: (c) => classes.delete(c) }
+    this.classList = {
+      add: (c) => classes.add(c),
+      remove: (c) => classes.delete(c),
+      contains: (c) => classes.has(c),
+      toggle: (c, on) => ((on ?? !classes.has(c)) ? classes.add(c) : classes.delete(c), classes.has(c))
+    }
+  }
+
+  setAttribute (name, value) {
+    this.attributes[name] = String(value)
+  }
+
+  // The button kit keeps its text on an inner .label. A selector answers with the same child every
+  // time, so what setHudButton writes is in the button's textContent, as it is on the page.
+  querySelector (selector) {
+    if (!this.found.has(selector)) this.found.set(selector, this.appendChild(new Element('span')))
+    return this.found.get(selector)
+  }
+
+  // Moving an element is recorded on the element that moved: [where, next to which id].
+  before (element) {
+    element.moves.push(['before', this.id])
+  }
+
+  after (element) {
+    element.moves.push(['after', this.id])
   }
 
   get textContent () {
@@ -71,6 +100,7 @@ class Element {
 
   set innerHTML (value) {
     this.children = []
+    this.found.clear()
     this.ownText = ''
     if (value !== '') this.htmlWrites.push(value)
   }
@@ -276,7 +306,7 @@ const INVITE_BUTTON = "Join the server's network"
 // reach the server: the state where the invite is the answer.
 function launcher (over = {}) {
   return page({
-    functions: ['render', 'renderTailnetInvite'],
+    functions: ['render', 'renderTailnetInvite', 'setHudButton', 'armHudButton', 'playOnce'],
     state: {
       signedInUser: null,
       gameState: { launching: false, running: false },
@@ -400,9 +430,12 @@ const nothing = await modsListHandler({ published: [] })()
 function modPanel (answer) {
   const deleted = []
   const panel = page({
-    functions: ['renderMods', 'renderPersonalMods', 'makeUpdateButton', 'refreshMods'],
+    functions: ['renderMods', 'renderPersonalMods', 'makeUpdateButton', 'refreshMods', 'makeWiredMini', 'makeRemoveButton', 'setHudButton'],
     state: { modState: [], personalState: [], modsSignedIn: null },
     globals: () => ({
+      // The kit's markup templates. The stand-in records innerHTML rather than parsing it.
+      WIRED_MINI: '<wired mini>',
+      BIN_ICON: '<bin icon>',
       setStatus: () => {},
       window: {
         launcher: {
@@ -420,7 +453,9 @@ function modPanel (answer) {
 
 const YOUR_MODS = '/// YOUR MODS — not on the server’s list ///'
 const NO_LIST_HINT = 'The server has no recommended mods yet. When it adds some, they appear here.'
-const ownRow = 'My Own Mod✓ INSTALLED🗑'
+// The button kit's mods panel: the badge reads INSTALLED, and the remove button is a drawn bin with
+// no text of its own (the 🗑 emoji rendered as a 6px smudge). The tests below find it by its title.
+const ownRow = 'My Own ModINSTALLED'
 
 {
   const panel = modPanel(emptyList)
@@ -455,6 +490,57 @@ const ownRow = 'My Own Mod✓ INSTALLED🗑'
   const panel = modPanel(nothing)
   await panel.refreshMods()
   check('nothing listed and nothing installed draws nothing', [panel.rows(), panel.$('modHint').textContent], [[], NO_LIST_HINT])
+}
+
+// --- the Update button -------------------------------------------------------------------------
+
+// The real renderUpdateState and placeUpdate. Update has two homes: in the player's path, above
+// JACK IN with its wire, when an update blocks play; in the row beside Verify for a newer test build.
+function updateRow (updateState, newerTestBuild = null) {
+  return page({
+    functions: ['renderUpdateState', 'placeUpdate', 'playOnce', 'setHudButton'],
+    state: { updateState, newerTestBuild, manifestSummary: '' }
+  })
+}
+
+const placed = (l) => {
+  const btn = l.$('update')
+  return {
+    shown: btn.style.display !== 'none',
+    wire: l.$('updateWire').style.display !== 'none',
+    home: btn.classList.contains('in-path') ? 'path' : btn.classList.contains('optional') ? 'row' : null,
+    moves: btn.moves
+  }
+}
+
+const BEHIND = { installed: true, upToDate: false, version: 'v0.3.127' }
+
+{
+  const l = updateRow(BEHIND)
+  l.renderUpdateState()
+  check('an update that blocks JACK IN puts Update above it, wired in',
+    placed(l), { shown: true, wire: true, home: 'path', moves: [['before', 'updateWire']] })
+  l.renderUpdateState()
+  check('a second render does not move it again, so the arrival does not replay', l.$('update').moves.length, 1)
+
+  l.$('update').dataset.state = 'busy'
+  l.$('update').disabled = true
+  l.renderUpdateState()
+  check('a render while it is working does not re-arm it', l.$('update').disabled, true)
+}
+
+{
+  const l = updateRow({ installed: true, upToDate: true, version: 'v0.3.127', testBuildTag: 'v0.3.127-test.93' }, 'v0.3.127-test.94')
+  l.renderUpdateState()
+  check('a newer test build puts Update in the row beside Verify, with no wire',
+    placed(l), { shown: true, wire: false, home: 'row', moves: [['after', 'verify']] })
+}
+
+for (const [what, state] of [['up to date', { installed: true, upToDate: true, version: 'v0.3.127' }],
+  ['not installed', { installed: false }], ['offline', { installed: true, offline: true }], ['still checking', null]]) {
+  const l = updateRow(state)
+  l.renderUpdateState()
+  check(`${what}: no Update and no wire`, [placed(l).shown, placed(l).wire], [false, false])
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)
