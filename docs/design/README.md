@@ -9,8 +9,11 @@ They live on the server, not in this repository:
 /mnt/vol/projects/_internal-docs/
 ```
 
-Open them in a browser from there. They need no server of their own and load nothing but a
-webfont.
+That directory is the storage; the reading surface is the Atlas visualiser's **MOCKUPS**
+pane (internal, dev-role only), which serves every design doc posted to the share. Written
+working docs — runbooks, checklists, plans — show in its **LIBRARY** pane instead; a
+categories file on the share decides which pane a doc belongs to. Post a doc to the share
+and it is on the board; nothing needs re-indexing by hand.
 
 ## Why they are not in git
 

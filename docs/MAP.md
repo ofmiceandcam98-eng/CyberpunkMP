@@ -55,6 +55,12 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
   .md are getting audited when auditing atlas"*. Every audit also walks the docs on the server,
   following the ledger at `/mnt/vol/projects/_internal-docs/DOC-AUDIT.md`. Anything still open and
   unbranched gets a branch; each doc is marked live, stale or history.
+  - **The Atlas visualiser is where posted docs are READ**: its LIBRARY pane carries the
+    share's written working docs plus indexed entries (artifact links and stored copies),
+    its MOCKUPS pane carries the share's design docs. A categories file beside the docs on
+    the share decides the pane; a doc posted to the share appears with no further step. The
+    panes are the reading surface — the share directory stays the storage and the audit
+    ledger stays the audit's spine.
 - **This repo is the open multiplayer service; operator tooling is maintained separately**
   (zeldfep, 2026-09-11). Scope boundary for what belongs in this repository:
   - **The multiplayer service and portability → here.** The client, server, protocol and
@@ -69,8 +75,8 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
 - **Read the type doc BEFORE turning a mockup into code** (zeldfep, 2026-09-09): *"server
   side we have a font doc i need you review that when pushing things from mockups"*. The doc
   is `/mnt/vol/projects/_internal-docs/type-scale.html` - INTERNAL, on the server, per the
-  working-checklists decree - and it exists because the launcher had grown 24 distinct font
-  sizes in one window (.54, .55, .58, .6, .62 ... nine rules agreeing on .72 and fifteen
+  working-checklists decree, served in the Atlas visualiser's MOCKUPS pane - and it exists
+  because the launcher had grown 24 distinct font sizes in one window (.54, .55, .58, .6, .62 ... nine rules agreeing on .72 and fifteen
   sizes used once or twice each). It collapses them onto SEVEN steps: `--fs-micro .58`,
   `--fs-label .68`, `--fs-small .74`, `--fs-body .84`, `--fs-lead 1.02`, `--fs-head 1.15`,
   `--fs-icon 1.2`. Same typefaces, same weights, same colours - only sizes move.

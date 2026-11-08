@@ -248,6 +248,14 @@ A stream's memory directory is a CACHE of these. Carry it if convenient; never t
 as a source of truth, and correct it against the map when they disagree — the old
 machine's memory still contains a dead feed address, which is exactly the failure mode.
 
+**Added later (this brief predates the Atlas):** the **Atlas** (2026-09-09, dev-role only,
+on the tailnet — see `CLAUDE.md`) is the source of truth for STATE, and its visualiser is
+also where internal docs are read: working docs (runbooks, checklists, plans) in its
+**LIBRARY** pane, design mockups in its **MOCKUPS** pane. Their storage is
+`/mnt/vol/projects/_internal-docs/` on the server — post a doc there and it appears in the
+right pane; a categories file on the share decides which. Designs and working checklists
+never go in this public repository (`docs/design/README.md` is the redirect).
+
 ## 7. State as of this handoff (2026-09-04)
 
 - **Current release v0.3.114**, shipped with the first **signed** manifest. Test channel

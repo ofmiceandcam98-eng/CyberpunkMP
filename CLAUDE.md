@@ -114,8 +114,10 @@ auto-load — read it deliberately. Cam's stream: it auto-loads; keep it current
   shared with cam."* Cutover runbooks, incident plans, UI mockups — anything that is us
   working rather than us shipping — goes to `/mnt/vol/projects/_internal-docs/` on the
   server, mode 600, and NOT into this public repository. `docs/design/README.md` is a
-  redirect so nothing dangles. **Both streams read them there**, which is why the location
-  is written here rather than in one machine's memory. What stays public is what a
+  redirect so nothing dangles. **Both streams read them in the Atlas visualiser** — working
+  docs in its LIBRARY pane, design mockups in its MOCKUPS pane, split by a categories file
+  on the share; a doc posted to the share appears there with no further step — which is why
+  the location is written here rather than in one machine's memory. What stays public is what a
   contributor needs to build: the map, the handoff, `DESIGN-LANGUAGE.md`, CONTRIBUTING.
   A published artifact link is a convenience, never the record — viewers can be pinned to
   an older version, and sharing is per-page and easy to get wrong.

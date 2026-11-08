@@ -229,7 +229,9 @@ decisions were made in a minute from a page and would have been an argument with
 **The mockup is a decision aid, not a record.** zeldfep, 2026-09-07: *"its built in so I dont
 mind the mock ups being missing, we'll just build on what we have."* Once a decision ships, the
 code IS the record and this file is the rulebook for it — a page that disagrees with the
-launcher is stale, not a spec. Keep one in `docs/design/` while it is still useful and let it
-go when it is not.
+launcher is stale, not a spec. Post one to the internal-docs share while it is still useful —
+it shows in the Atlas visualiser's MOCKUPS pane, where both streams and whoever is deciding
+read it (`docs/design/README.md` has the where and why) — and let it go when it is not.
+`docs/design/` holds no designs; it is a redirect.
 
 **Never copy one into `distrib/`** — the ship carries that directory wholesale to every player.
