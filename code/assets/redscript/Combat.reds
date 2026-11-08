@@ -227,11 +227,26 @@ public func MpReportStatusEffect(target: ref<ScriptedPuppet>, evt: ref<ApplyStat
  * thread; the queue is native, and this is script visiting it.
  */
 public class MpStatusEffectPoll extends DelayCallback {
+    // The player this chain was started for. It ends with that player's world, and the next
+    // player to attach starts a new one, so there is exactly one chain per body.
+    public let owner: wref<PlayerPuppet>;
+
     public func Call() -> Void {
+        if !IsDefined(this.owner) {
+            return;
+        }
+
         let network = GameInstance.GetNetworkWorldSystem();
 
         if !IsDefined(network) {
             return;
+        }
+
+        // Once per body: the line that says this chain is alive. Its absence is what took a
+        // live session to notice.
+        if !this.owner.m_mpStatusPollTicked {
+            this.owner.m_mpStatusPollTicked = true;
+            network.ScriptLog("combat: the status poll is running in this world");
         }
 
         if network.IsConnected() {
@@ -257,8 +272,40 @@ public class MpStatusEffectPoll extends DelayCallback {
 
         // Rearmed unconditionally, including while disconnected - the poll has to survive a
         // reconnect, and a callback that stops on the first quiet tick never comes back.
-        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(new MpStatusEffectPoll(), 0.25, false);
+        let next = new MpStatusEffectPoll();
+        next.owner = this.owner;
+        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(next, 0.25, false);
     }
+}
+
+@addField(PlayerPuppet)
+public let m_mpStatusPollArmed: Bool;
+
+@addField(PlayerPuppet)
+public let m_mpStatusPollTicked: Bool;
+
+/**
+ * Starts the poll that applies what the server decided about us, once per body.
+ *
+ * It used to start only from NetworkWorldSystem.OnConnected, written when connecting happened
+ * inside the world. Connecting now usually happens at the main menu, before any player exists
+ * and before the world loads, and that chain never lived to see a body: on 2026-11-08 /kill
+ * reached the client as 'state 1' and 'state 2', and MpApplyDownedState never once ran. So
+ * the player's own attach arms it (Death.reds), and OnConnected covers connecting in the
+ * world, with a flag on the body so the two cannot start a second chain.
+ *
+ * Atlas: kill-on-a-seated-player-does-nothing-visible-the-server-blee.
+ */
+public func MpArmStatusPoll(player: ref<PlayerPuppet>) -> Void {
+    if !IsDefined(player) || player.m_mpStatusPollArmed {
+        return;
+    }
+
+    player.m_mpStatusPollArmed = true;
+
+    let poll = new MpStatusEffectPoll();
+    poll.owner = player;
+    GameInstance.GetDelaySystem(player.GetGame()).DelayCallback(poll, 0.25, false);
 }
 
 /**
@@ -449,11 +496,25 @@ public func MpApplyIncomingUploads(network: ref<NetworkWorldSystem>) -> Void {
  * Four times a second. Fast enough that a burst is reported as it happens, slow enough to
  * cost nothing.
  */
+@addField(PlayerPuppet)
+public let m_mpWeaponPollTicked: Bool;
+
+// STILL ARMED ONLY FROM OnConnected, ON PURPOSE. It very likely has the same problem the status
+// poll had, and reviving it before the reload refusal is fixed would make the server refuse
+// every shot after the first magazine (on-2-5-the-server-refuses-hezbollahcartel-s-weapon-
+// reloads-r). The line below measures whether it runs; fix that branch, then bind this the same
+// way.
 public class MpWeaponPoll extends DelayCallback {
     public func Call() -> Void {
         let network = GameInstance.GetNetworkWorldSystem();
 
         if IsDefined(network) && network.IsConnected() {
+            let polled = GetPlayer(GetGameInstance()) as PlayerPuppet;
+            if IsDefined(polled) && !polled.m_mpWeaponPollTicked {
+                polled.m_mpWeaponPollTicked = true;
+                network.ScriptLog("combat: the weapon poll is running in this world");
+            }
+
             MpPollWeapon(network);
         }
 
