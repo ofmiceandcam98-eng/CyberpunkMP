@@ -75,14 +75,18 @@ RED4EXT_C_EXPORT bool Main(RED4ext::v1::PluginHandle aHandle, RED4ext::v1::EMain
 
         Initialize();
 
+        // FIRST, before anything in the load can fault. From plugin load through script compile
+        // and the first frames, a crash used to leave nothing but "[Boot] logger up" - the 2.5
+        // first-light crashes all died in that window - and this used to be installed AFTER
+        // Bootstrap, so the window it was written for stayed open: the 2026-11-08 startup access
+        // violation died ~300 ms after that line with nothing recorded. Report-only, so it also
+        // runs on a session that turns out to be offline (Settings are not loaded yet to tell),
+        // and it needs nothing Bootstrap builds.
+        // Atlas: intermittent-startup-crash-cyberpunkmp-dll-access-violates-i.
+        InstallCrashReporter();
+
         App::GApplication = MakeUnique<App::Application>(aHandle, aSdk);
         App::GApplication->Bootstrap();
-
-        // Here, not only at game init: from plugin load through script compile and the first
-        // frames, a crash used to leave nothing but "[Boot] logger up" - the 2.5 first-light
-        // crashes all died in that window. Report-only, so it also runs on a session that
-        // turns out to be offline (Settings are not loaded yet to tell).
-        InstallCrashReporter();
 
         const auto scriptPath = GCyberpunkMpLocation / TP_REDSCRIPT_LOCATION;
 
