@@ -9,11 +9,9 @@ They live on the server, not in this repository:
 /mnt/vol/projects/_internal-docs/
 ```
 
-That directory is the storage; the reading surface is the Atlas visualiser's **MOCKUPS**
-pane (internal, dev-role only), which serves every design doc posted to the share. Written
-working docs — runbooks, checklists, plans — show in its **LIBRARY** pane instead; a
-categories file on the share decides which pane a doc belongs to. Post a doc to the share
-and it is on the board; nothing needs re-indexing by hand.
+Post a design there and it is readable in the Atlas visualiser's **MOCKUPS** pane
+(internal, dev-role only) with no further step. The full mechanics — the pane split, the
+categories file — live in one place: `docs/MAP.md`, the audit decree.
 
 ## Why they are not in git
 
