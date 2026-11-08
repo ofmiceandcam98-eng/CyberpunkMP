@@ -11,7 +11,8 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const FILE = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'code', 'launcher-lite', 'index.html')
-const html = readFileSync(FILE, 'utf8')
+// Line endings normalised: a Windows checkout has CRLF, and the --px-* check reads values up to ';\n'.
+const html = readFileSync(FILE, 'utf8').replace(/\r\n/g, '\n')
 const scriptAt = html.lastIndexOf('<script>')
 const markup = html.slice(0, scriptAt)
 const script = html.slice(scriptAt)
