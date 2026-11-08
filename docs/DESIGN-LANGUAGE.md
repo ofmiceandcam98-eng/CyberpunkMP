@@ -207,8 +207,14 @@ See any state of the real page in a browser with `node tools/tests/launcher-stag
   cap height so their middle is the tick, and the pointer is centred on that same line. The
   pointer interpolates between the numbers' own scroll points, so it is on a number exactly when
   you are at that section. A fixed pattern from the top, with numbers placed independently, is
-  how the first cut put 02 and 03 between rungs. Keep the rail off `transform`: half a pixel
-  smears every rung. `launcher_buttons_test.mjs` fails one.
+  how the first cut put 02 and 03 between rungs. **The arrow is also the handle** (*"make the rail
+  arrow on ladder scrollable"*): drag it and the pane scrolls with it, through the same sums run
+  backwards, so it stays under the cursor and dropping it on a number lands at that section; a
+  press on the bare ladder jumps it there; the wheel over the rail scrolls the pane. The numbers
+  and the step tabs stay, and they are the keyboard's way in. Keep the rail on whole pixels BY
+  LAYOUT (`railSnap` pins its top margin): the rungs are snapped before any transform is
+  applied, so a transform smears them, and an unsnapped rail leaves the arrow half a pixel off
+  its tick. `launcher_buttons_test.mjs` fails either.
 - **The gear is a hex bolt** (G1, the same pick): a hexagon plate, a red hairline over steel,
   holding a drawn cog on `--fs-icon`, with three ticks under it as its load bar. Hover or Tab
   lights the hairline, fills the ticks and turns the cog one tooth; a click drops the scan line.

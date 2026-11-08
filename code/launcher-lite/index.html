@@ -946,8 +946,10 @@
      apart BY FORM rather than by hue: warnings are flat hazard, and the rail's active
      marker is the only STRIPED hazard plate in the app. If you add a new warning state,
      keep it flat - striping now reads as "you are here", not "something is wrong". */
-  /* Centred by auto margins, not translateY(-50%): a transform can leave the rail on half a
-     pixel, and every rung on the ladder is a 1px line that then smears across two. */
+  /* Centred by auto margins, not translateY(-50%), which puts the rail on half a pixel whenever
+     its height is odd. Auto margins can too (an odd leftover), so railSnap pins the top margin
+     to land the track on a whole pixel - every rung is a 1px line and the arrow has to share a
+     pixel with its tick. A transform cannot do that job: see railSnap. */
   .section-rail {
     position: absolute; right: .35rem; top: 0; bottom: 0; height: fit-content; margin: auto 0;
     display: flex; flex-direction: column; align-items: center; gap: .4rem;
@@ -1011,13 +1013,27 @@
   .rail-num::before { content: ""; position: absolute; left: 9px; top: 6px; width: 11px; height: 1px; background: var(--ink); }
   .rail-num:hover, .rail-num.on { color: var(--ink); }
   .rail-num:focus-visible { outline: 1px solid var(--hazard); outline-offset: 1px; }
-  /* The ONE striped hazard plate on the rail - "you are here" (2026-09-07). Centred on the
-     middle of its tick's pixel: 9px tall, 4px above the line and 4px below it. */
+  /* The ONE striped hazard plate on the rail - "you are here" (2026-09-07) - and the rail's
+     handle: drag it and the pane scrolls with it (zeldfep, 2026-11-08: "can we make the rail
+     arrow on ladder scrollable? I love the arrow design"). The element is a 13x17 grab box so
+     it is easy to catch; the arrow is the same 9px triangle drawn inside it, centred on the
+     middle of its tick's pixel (4px above the line, 4px below). It hides from a screen reader:
+     the numbers and the step tabs already do everything it does, from the keyboard. */
   .rail-pointer {
-    position: absolute; left: 0; width: 9px; height: 9px; margin-top: -4px; pointer-events: none;
-    background: repeating-linear-gradient(45deg, var(--hazard) 0 3px, #d8ae0b 3px 6px);
-    clip-path: polygon(0 0, 100% 50%, 0 100%); transition: top 120ms var(--ease-out);
+    position: absolute; left: 0; width: 13px; height: 17px; margin-top: -8px;
+    cursor: grab; touch-action: none; transition: top 120ms var(--ease-out);
   }
+  .rail-pointer::before {
+    content: ""; position: absolute; left: 0; top: 4px; width: 9px; height: 9px;
+    background: repeating-linear-gradient(45deg, var(--hazard) 0 3px, #d8ae0b 3px 6px);
+    clip-path: polygon(0 0, 100% 50%, 0 100%); transition: filter 120ms ease;
+  }
+  /* Brighter, not bigger, under the cursor: moving it would take the tip off the spine. */
+  @media (hover: hover) and (pointer: fine) { .rail-pointer:hover::before { filter: brightness(1.2); } }
+  /* While dragging it follows the cursor with no lag, and the cursor holds while off the arrow. */
+  .rail-track.dragging, .rail-track.dragging .rail-pointer { cursor: grabbing; }
+  .rail-track.dragging .rail-pointer { transition: none; }
+  .rail-track.dragging .rail-pointer::before { filter: brightness(1.2); }
 
   /* Horizontal, tabular and zero-padded. The readout this replaced was set in
      writing-mode: vertical-rl, which turned a two-character number into something you
@@ -3916,6 +3932,43 @@
     return Math.round(y[i] + t * (y[i + 1] - y[i]))
   }
 
+  // Onto a whole device pixel, BY LAYOUT. Auto margins leave the rail on half a pixel whenever the
+  // leftover height is odd, and the modal can sit on a fraction too. The 1px rungs get snapped to
+  // pixels when painted, but the arrow is a clipped shape and does not: at 800x600 it sat half a
+  // pixel off its tick. A transform cannot fix it - the rungs are snapped BEFORE a transform is
+  // applied, so a 0.5px translate smeared every rung across two rows. So measure where the TRACK
+  // lands (the .4rem gaps above it are 6.4px, so it carries its own fraction) and pin the rail's
+  // top margin that fraction away. updateRail calls this when the rail's fit changes; the modal's
+  // entrance animation moves it, so the animation's end calls it too.
+  function railSnap () {
+    const rail = $('sectionRail')
+    const track = $('railTrack')
+    if (!rail || !track || rail.hidden) return
+    rail.style.marginTop = ''
+    const dpr = window.devicePixelRatio || 1
+    const frac = ((track.getBoundingClientRect().top * dpr) % 1 + 1) % 1
+    if (frac < 0.001 || frac > 0.999) return
+    const nudge = (frac < 0.5 ? -frac : 1 - frac) / dpr
+    const parent = rail.offsetParent
+    const from = parent ? parent.getBoundingClientRect().top + parent.clientTop : 0
+    rail.style.marginTop = (rail.getBoundingClientRect().top - from + nudge) + 'px'
+  }
+
+  // The same sums backwards, for dragging: a point on the ladder -> the scroll that puts the
+  // pointer there. So the arrow stays under the cursor, and dropping it on a number lands at that
+  // number's section exactly. The last number is the end of the scroll.
+  function railScrollFor (y, reach, ys, max) {
+    if (y <= ys[0]) return 0
+    if (y >= ys[ys.length - 1]) return max
+    for (let i = 0; i < ys.length - 1; i++) {
+      if (y <= ys[i + 1]) {
+        const span = ys[i + 1] - ys[i]
+        return reach[i] + (span > 0 ? (y - ys[i]) / span : 1) * (reach[i + 1] - reach[i])
+      }
+    }
+    return max
+  }
+
   function updateRail () {
     const body = document.querySelector('#settingsModal .modal-body')
     const rail = $('sectionRail')
@@ -3925,6 +3978,9 @@
     const overflows = body.scrollHeight > body.clientHeight + 8
     if (sections.length < 2 || !overflows) { rail.hidden = true; return }
     rail.hidden = false
+    const parent = rail.offsetParent
+    const fit = `${innerWidth}x${innerHeight}:${rail.offsetHeight}:${parent ? parent.clientHeight : 0}`
+    if (rail.dataset.fit !== fit) { rail.dataset.fit = fit; railSnap() }
 
     const current = railCurrent(body, sections)
 
@@ -3972,8 +4028,9 @@
       if (mark.dataset.index === undefined) continue
       mark.classList.toggle('on', Number(mark.dataset.index) === current)
     }
+    // While it is being dragged, the drag places the pointer - under the cursor, to the pixel.
     const pointer = track.querySelector('.rail-pointer')
-    if (pointer) pointer.style.top = railPointerY(body.scrollTop, ladder.reach, ladder.y) + 'px'
+    if (pointer && !track.classList.contains('dragging')) pointer.style.top = railPointerY(body.scrollTop, ladder.reach, ladder.y) + 'px'
 
     // Only rewrite the readout when it actually changed - it is otherwise a DOM write on
     // every scroll frame for text that did not move.
@@ -4017,6 +4074,68 @@
   document.querySelector('#settingsModal .modal-body').addEventListener('scroll', updateRail, { passive: true })
   // The ladder's positions come from the layout, so a resize that reflows the pane moves them.
   window.addEventListener('resize', updateRail)
+  // The modal slides in, so a rail measured while it moved is snapped to the wrong pixel.
+  document.querySelector('#settingsModal .modal').addEventListener('animationend', railSnap)
+
+  // Dragging the arrow scrolls the pane. Pressing the ladder anywhere that is not a number jumps
+  // the arrow there and carries on as a drag, like the track of a scrollbar. Grabbed on the arrow
+  // itself, it keeps where you caught it, so it does not jump to centre on the cursor. The pane
+  // moves instantly and the rail is redrawn by hand, not left to the scroll event, so the numbers
+  // light under the arrow as it passes them.
+  {
+    const track = $('railTrack')
+    let drag = null
+    const move = (e) => {
+      if (!drag || e.pointerId !== drag.id) return
+      const ys = drag.ladder.y
+      const y = Math.round(Math.max(ys[0], Math.min(ys[ys.length - 1], e.clientY - drag.top + drag.offset)))
+      drag.body.scrollTop = railScrollFor(y, drag.ladder.reach, ys, drag.max)
+      updateRail()
+      const pointer = track.querySelector('.rail-pointer')
+      if (pointer) pointer.style.top = y + 'px'
+    }
+    const end = (e) => {
+      if (!drag || e.pointerId !== drag.id) return
+      drag = null
+      track.classList.remove('dragging')
+      updateRail()
+    }
+    track.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return
+      const onArrow = e.target.closest('.rail-pointer')
+      if (!onArrow && e.target !== track) return // a number is a button of its own
+      const body = document.querySelector('#settingsModal .modal-body')
+      const { sections } = railSections()
+      if (!body || sections.length < 2) return
+      const ladder = railLadder(body, sections, track.clientHeight || 230)
+      const top = track.getBoundingClientRect().top
+      const at = onArrow ? parseFloat(onArrow.style.top) : NaN
+      drag = {
+        body, ladder, top, id: e.pointerId,
+        max: Math.max(0, body.scrollHeight - body.clientHeight),
+        // The arrow's middle is the middle of its tick's pixel, half a pixel below its top.
+        offset: Number.isFinite(at) ? at - (e.clientY - top) : -0.5
+      }
+      track.setPointerCapture(e.pointerId)
+      track.classList.add('dragging')
+      e.preventDefault()
+      move(e)
+    })
+    track.addEventListener('pointermove', move)
+    track.addEventListener('pointerup', end)
+    track.addEventListener('pointercancel', end)
+    track.addEventListener('lostpointercapture', end)
+  }
+
+  // The wheel over the rail scrolls the pane, as it would over a scrollbar. The rail sits outside
+  // the scrolling body, so without this the wheel did nothing there.
+  $('sectionRail').addEventListener('wheel', (e) => {
+    const body = document.querySelector('#settingsModal .modal-body')
+    if (!body) return
+    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? body.clientHeight : 1
+    body.scrollBy({ top: e.deltaY * unit, behavior: 'auto' })
+    e.preventDefault()
+  }, { passive: false })
   // Content inside the panes changes after async loads (the checkup, mod lists) - keep
   // the rail honest without wiring every producer: observe and debounce.
   {

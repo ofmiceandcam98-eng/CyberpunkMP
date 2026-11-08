@@ -360,6 +360,41 @@ async function run () {
     })()`)
     check(landed.lit === i && landed.off === 0, `a click on rail number ${String(i + 1).padStart(2, '0')} lands there, lit, with the pointer on its tick`, `${JSON.stringify(landed)}; ${await under(at, 'railTrack')}`)
   }
+
+  // The arrow is a handle (zeldfep, 2026-11-08: "make the rail arrow on ladder scrollable"): a real
+  // drag from 01 onto the last number's tick scrolls to the end with the arrow on that tick, and
+  // the wheel over the rail scrolls the pane, which it could not before.
+  if (rail.count) {
+    const handle = await read(`(() => {
+      const p = document.querySelector('#railTrack .rail-pointer').getBoundingClientRect()
+      const nums = document.querySelectorAll('#railTrack .rail-num')
+      return { x: p.left + 4, y: p.top + 8.5, toY: nums[nums.length - 1].getBoundingClientRect().top + 6.5 }
+    })()`)
+    await mouse('mouseMoved', handle)
+    await sleep(60)
+    await mouse('mousePressed', handle, { button: 'left', buttons: 1, clickCount: 1 })
+    for (let k = 1; k <= 8; k++) {
+      await mouse('mouseMoved', { x: handle.x, y: handle.y + (handle.toY - handle.y) * k / 8 }, { button: 'left', buttons: 1 })
+      await sleep(30)
+    }
+    await mouse('mouseReleased', { x: handle.x, y: handle.toY }, { button: 'left', buttons: 0, clickCount: 1 })
+    await sleep(300)
+    const state = `(() => {
+      const body = document.querySelector('#settingsModal .modal-body')
+      const nums = [...document.querySelectorAll('#railTrack .rail-num')]
+      const p = document.querySelector('#railTrack .rail-pointer').getBoundingClientRect()
+      const last = nums[nums.length - 1].getBoundingClientRect().top + 6.5
+      return { scroll: Math.round(body.scrollTop), max: body.scrollHeight - body.clientHeight, lit: nums.findIndex((n) => n.classList.contains('on')), off: +Math.abs(p.top + p.height / 2 - last).toFixed(3), dragging: document.getElementById('railTrack').classList.contains('dragging') }
+    })()`
+    const dragged = await read(state)
+    check(dragged.scroll === dragged.max && dragged.lit === rail.count - 1 && dragged.off === 0 && !dragged.dragging, 'dragging the arrow onto the last number scrolls to the end, with the arrow on its tick', `${JSON.stringify(dragged)}; ${await under(handle, 'railTrack')}`)
+
+    const over = await read(`(() => { const r = document.getElementById('railTrack').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 } })()`)
+    await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: over.x, y: over.y, deltaX: 0, deltaY: -240 })
+    await sleep(300)
+    const wheeled = await read(state)
+    check(wheeled.scroll === dragged.max - 240, 'the wheel over the rail scrolls the pane', `scrolled from ${dragged.max} to ${wheeled.scroll}, expected ${dragged.max - 240}`)
+  }
   await shot('electron-ladder')
 
   await read(`document.getElementById('closeSettingsDone').focus()`)

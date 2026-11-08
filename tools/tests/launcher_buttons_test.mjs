@@ -96,12 +96,19 @@ if (/\$\('openSettings'\)\.(textContent|innerText|innerHTML)\s*=/.test(script)) 
   fail('the script writes text into the Settings gear', 'the launcher script', 'the gear holds an SVG cog and its hexagon; leave its contents alone')
 }
 
-// The ladder's rungs are 1px lines placed on whole pixels. A transform on the rail can leave it on
-// half a pixel, which smears every rung across two.
+// The ladder's rungs are 1px lines placed on whole pixels and the arrow has to share a pixel with
+// its tick. railSnap pins the rail's top margin to get there, by layout; a transform on the rail -
+// in the stylesheet or set by script - smears every rung, because rungs are snapped before it.
 for (const rule of markup.matchAll(/^\s*\.section-rail\s*\{[^}]*\}/gm)) {
   if (/transform\s*:/.test(rule[0])) {
-    fail('the section rail is positioned with a transform', '.section-rail in index.html', 'centre it with top: 0; bottom: 0; margin: auto 0, so the ladder stays on whole pixels')
+    fail('the section rail is positioned with a transform', '.section-rail in index.html', 'centre it with top: 0; bottom: 0; margin: auto 0; railSnap lands it on a whole pixel')
   }
+}
+if (/rail\.style\.(transform|translate)\s*=/.test(script)) {
+  fail('the script moves the section rail with a transform', 'the launcher script', 'move it by layout (railSnap sets marginTop): a transform is applied after the 1px rungs are snapped, so it smears them')
+}
+if (!/function railSnap[\s\S]*?rail\.style\.marginTop\s*=/.test(script)) {
+  fail('railSnap no longer pins the rail onto a whole pixel', 'railSnap in the launcher script', 'keep it: auto margins leave the rail on half a pixel whenever the leftover is odd, and the arrow then sits half a pixel off its tick')
 }
 
 // Update has two homes and placeUpdate moves it between them. Setting display on it anywhere else
