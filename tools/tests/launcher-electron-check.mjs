@@ -14,7 +14,9 @@ import { join } from 'node:path'
 
 const [exe, outDir] = process.argv.slice(2)
 const PORT = 9333
-const DEADLINE_MS = 90000
+// The whole run, from launch. The gear and the ladder's four real clicks added about 20s to a run
+// that already took most of 90, so 90 started firing on a launcher that was answering fine.
+const DEADLINE_MS = 150000
 const NXM_KEY = 'HKCU\\Software\\Classes\\nxm\\shell\\open\\command'
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const failures = []
@@ -161,13 +163,18 @@ async function run () {
       clipOnButton: getComputedStyle(play).clipPath,
       faceClip: getComputedStyle(play.querySelector('.face')).clipPath.slice(0, 7),
       reduced: matchMedia('(prefers-reduced-motion: reduce)').matches,
+      // Chromium stops drawing a window that is covered, minimised or on a locked screen, and then
+      // nothing that needs a frame happens: no animation starts and a smooth scroll never moves.
+      painting: await new Promise((r) => { let seen = 0; const tick = () => { if (++seen >= 3) r(true); else requestAnimationFrame(tick) }; requestAnimationFrame(tick); setTimeout(() => r(false), 1500) }),
+      visible: document.visibilityState,
       version: document.getElementById('footerVersion').textContent,
       chrome: navigator.userAgent.match(/Chrome\\/(\\d+)/)?.[1],
       width: innerWidth,
       height: innerHeight
     }
   })()`)
-  console.log(`running: ${facts.version}, Chromium ${facts.chrome}, window ${facts.width}x${facts.height}, animations ${facts.reduced ? 'OFF' : 'on'}`)
+  console.log(`running: ${facts.version}, Chromium ${facts.chrome}, window ${facts.width}x${facts.height}, animations ${facts.reduced ? 'OFF' : 'on'}, ${facts.painting ? 'painting' : 'NOT PAINTING'} (${facts.visible})`)
+  check(facts.painting, 'the window is drawing frames', 'it is covered, minimised or on a locked screen, so anything that needs a frame (the glitch, a smooth scroll) cannot be judged - bring it to the front and run again')
   check(facts.kitButtons >= 4, `the button kit is in this build (${facts.kitButtons} buttons)`, 'this exe was not built from the kit commit')
   check(facts.playLayers && facts.playLabel === 'JACK IN', 'JACK IN has its layers and its label', 'something wrote textContent on it; use setHudButton')
   check(facts.fontLoaded && facts.playFont.includes('NCO Display'), 'the display font loads in the packaged app', 'fonts/ is missing from the package or the CSP blocks it')
@@ -249,8 +256,21 @@ async function run () {
     await send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code, windowsVirtualKeyCode: vk })
   }
   const gear = await centre('openSettings')
-  await mouse('mouseMoved', gear)
-  await sleep(80)
+  for (let tries = 0; tries < 8; tries++) {
+    for (const step of [40, 20, 10, 0]) {
+      await mouse('mouseMoved', { x: gear.x - step, y: gear.y })
+      await sleep(60)
+    }
+    if (await read(`document.getElementById('openSettings').matches(':hover')`)) break
+    await sleep(250)
+  }
+  await sleep(400)
+  const gearHover = await read(`(() => {
+    const g = document.getElementById('openSettings')
+    return { line: getComputedStyle(g.querySelector('.hx-line')).backgroundColor, ticks: [...g.querySelectorAll('.bolt-ticks i')].map((i) => getComputedStyle(i).opacity), cog: getComputedStyle(g.querySelector('.cog')).transform }
+  })()`)
+  check(gearHover.line === 'rgb(255, 42, 50)' && gearHover.ticks.every((o) => o === '1'), 'hover on the gear lights its hairline and fills its ticks', `${JSON.stringify(gearHover)}; ${await under(gear, 'openSettings')}`)
+  if (!facts.reduced) check(gearHover.cog.startsWith('matrix(0.707'), 'hover turns the cog one tooth', `the cog reads ${gearHover.cog}`)
   await mouse('mousePressed', gear, { button: 'left', buttons: 1, clickCount: 1 })
   await mouse('mouseReleased', gear, { button: 'left', buttons: 0, clickCount: 1 })
   await sleep(600)
@@ -299,6 +319,48 @@ async function run () {
   })()`)
   check(bracket.dots.every((d) => d === '1') && bracket.colour === 'rgb(255, 42, 50)', 'hover on a bracket button turns its corners red and fills its dots', `${JSON.stringify(bracket)}; ${await under(checkup, 'runCheckup')}`)
   if (!facts.reduced) check(bracket.corner.includes('2, 2'), 'hover closes the corners in', `the first corner reads ${bracket.corner}`)
+
+  // The ladder: every number on a rung, the rungs ending on the first and last numbers, and a real
+  // click on each number scrolling to its section with the pointer's middle on that number's tick.
+  // zeldfep, 2026-11-08: "make sure we align the ladder to the numbers".
+  const rail = await read(`(() => {
+    const track = document.getElementById('railTrack')
+    const ladder = track.querySelector('.rail-ladder')
+    const nums = [...track.querySelectorAll('.rail-num')]
+    if (!ladder || nums.length === 0) return { shown: false, count: nums.length }
+    const top = parseFloat(ladder.style.top)
+    const pitch = parseFloat(ladder.style.getPropertyValue('--rung'))
+    const ys = nums.map((n) => parseFloat(n.style.top))
+    return {
+      shown: !document.getElementById('sectionRail').hidden, count: nums.length, ys, pitch,
+      onRungs: ys.every((y) => Number.isInteger(y) && (y - top) % pitch === 0),
+      ends: top === ys[0] && top + parseFloat(ladder.style.height) - 1 === ys[ys.length - 1]
+    }
+  })()`)
+  check(rail.shown && rail.count >= 3 && rail.onRungs && rail.ends, `the ladder puts every number on a rung (${rail.count} numbers)`, JSON.stringify(rail))
+  const scrolled = () => read(`document.querySelector('#settingsModal .modal-body').scrollTop`)
+  for (let i = (rail.count || 0) - 1; i >= 0; i--) {
+    const at = await read(`(() => { const r = document.querySelectorAll('#railTrack .rail-num')[${i}].getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 } })()`)
+    await mouse('mouseMoved', at)
+    await sleep(60)
+    await mouse('mousePressed', at, { button: 'left', buttons: 1, clickCount: 1 })
+    await mouse('mouseReleased', at, { button: 'left', buttons: 0, clickCount: 1 })
+    let last = -1
+    for (let t = 0; t < 30; t++) {
+      await sleep(100)
+      const now = await scrolled()
+      if (now === last) break
+      last = now
+    }
+    await sleep(250)
+    const landed = await read(`(() => {
+      const nums = [...document.querySelectorAll('#railTrack .rail-num')]
+      const p = document.querySelector('#railTrack .rail-pointer').getBoundingClientRect()
+      return { lit: nums.findIndex((n) => n.classList.contains('on')), off: +Math.abs(p.top + p.height / 2 - (nums[${i}].getBoundingClientRect().top + 6.5)).toFixed(3), pos: document.getElementById('railPos').textContent }
+    })()`)
+    check(landed.lit === i && landed.off === 0, `a click on rail number ${String(i + 1).padStart(2, '0')} lands there, lit, with the pointer on its tick`, `${JSON.stringify(landed)}; ${await under(at, 'railTrack')}`)
+  }
+  await shot('electron-ladder')
 
   await read(`document.getElementById('closeSettingsDone').focus()`)
   await key('Tab', 'Tab', 9)
