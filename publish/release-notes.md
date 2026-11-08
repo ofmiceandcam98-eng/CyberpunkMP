@@ -44,6 +44,20 @@ launcher will tell you if your game is on the wrong version.
 - **Two new start-up screens** (the CD PROJEKT RED account prompt and one more) now appear
   before the menu. Skip them; we will make the launcher skip them again.
 
+**The launcher, redrawn** - same buttons, same places:
+
+- **New buttons.** JACK IN, Verify and the mods panel lift when you point at them, sink when
+  you press and flicker once on a click; Tab shows a clear ring.
+- **Update stands in your path**, right above JACK IN, and shows each step while it works.
+- **Settings, reorganised.** Tools are grouped into numbered sections, the tabs stay put, the
+  keyboard stays inside until Escape or Done, and Uninstall the launcher is on the Remove tab.
+- **The rail is a gauge.** Drag its striped arrow to scroll, click a number to jump, or use
+  the wheel over it.
+- **A new Settings gear**, and stripes and slanted edges drawn pixel by pixel, not ragged.
+- **Smaller fixes:** patch notes keep their paragraphs whole; logging out clears the network
+  invite; JACK IN's reason stops pointing at a button you cannot see; your own mods stay
+  listed when there are no recommended ones.
+
 ## What changed — v0.3.126
 
 A launcher-only release. **No gameplay change** — the mod and the server are untouched,

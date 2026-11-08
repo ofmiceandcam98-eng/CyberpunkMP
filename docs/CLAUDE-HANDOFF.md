@@ -229,6 +229,9 @@ Backslashes and unescaped quotes in the body break the JSON — the API says
   `build.files` or the release is dead on arrival (v0.3.97).
 - **CSS specificity in the launcher:** base `button.action` (0,1,1) beats bare class
   rules; overrides must be `button.action.x`. Two shipped "fixes" never rendered.
+- **The launcher's interface** has its own row in the map's code map (Launcher UI): the
+  pixel grid every stripe and diagonal obeys, the tests `Verify.ps1` skips, and how to see a
+  change in the stage and prove it in the packaged app.
 - **PowerShell 5.1 `-Encoding UTF8` writes a BOM**, which makes redscript fail with
   "syntax error at 1:1" naming nothing.
 - **Python with Windows paths:** use heredocs or the Write tool, never `python -c` with
