@@ -878,6 +878,10 @@ private:
     float m_incomingHealth{-1.f};
     bool m_downed{false};
 
+    // Between telling the server we left and its answer to the next spawn, the id we hold
+    // names an entity that no longer exists - so nothing may be streamed for it.
+    bool m_leftWorld{false};
+
     // Uploads somebody else started, as (server id, state) pairs waiting for script.
     Vector<uint64_t> m_incomingUploads;
     Vector<uint32_t> m_incomingUploadStates;

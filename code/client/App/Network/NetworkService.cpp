@@ -369,6 +369,24 @@ void NetworkService::AuthorizeSpawn()
     m_spawnAuthorized = true;
 }
 
+/**
+ * The way back to the state above, for a connection that outlives a world.
+ *
+ * A spawn used to be owed exactly once per connection: held when the menu connected and spent
+ * when the player entered. But LeaveWorld makes the server destroy the puppet and keeps the
+ * connection, so the next PLAY needs a spawn just as much as the first did - and with nothing
+ * held, EnterWorld read that as "a route that already spawned" and said nothing. The player
+ * then stood in the city with no body on the server: no saves, nobody could see them, and
+ * /respawn answered "You are not in the world yet".
+ *
+ * Atlas: re-entering-the-city-from-the-selector-while-still-connected.
+ */
+void NetworkService::HoldSpawnUntilEntry()
+{
+    m_spawnAuthorized = false;
+    m_spawnDeferred = true;
+}
+
 void NetworkService::SendSpawnCharacterRequest()
 {
     /*

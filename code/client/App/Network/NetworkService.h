@@ -78,6 +78,9 @@ public:
     // "The player has now asked to be in the world." Said by EnterWorld(), which is PLAY.
     void AuthorizeSpawn();
 
+    // "The player has left the world but is still connected." Said by LeaveWorld().
+    void HoldSpawnUntilEntry();
+
     // Is a spawn still owed? True between authenticating at the menu and entering the
     // world.
     bool IsSpawnDeferred() const { return m_spawnDeferred; }

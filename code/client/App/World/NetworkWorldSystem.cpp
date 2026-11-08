@@ -2363,6 +2363,11 @@ void NetworkWorldSystem::LeaveWorld()
     client::LeaveWorldRequest request;
     service->Send(request);
 
+    // The server has just destroyed the body. So the next PLAY owes it a new spawn, and until
+    // that is answered nothing we send can be about an entity that still exists.
+    service->HoldSpawnUntilEntry();
+    m_leftWorld = true;
+
     spdlog::info("[Character] told the server we left the world (back at the selector)");
 }
 
@@ -3273,6 +3278,8 @@ void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::
     // that found the vehicle-mount crash. Cheap: this runs once per join.
     spdlog::info("[SpawnResponse] entered");
 
+    m_leftWorld = false;
+
     if (!aMessage.has_id())
     {
         spdlog::error("Failed to spawn our character on the server...");
@@ -3522,7 +3529,9 @@ void NetworkWorldSystem::UpdatePlayerLocation() const
     Red::Handle<Red::GameObject> player;
     system->GetLocalPlayerControlledGameObject(player);
 
-    if (!player || !GetRemotePlayerId())
+    // m_leftWorld: test.68 sent ~770 moves in 20 seconds for a puppet the selector had already
+    // released, each one a server-side "Attempt to move invalid entity".
+    if (!player || !GetRemotePlayerId() || m_leftWorld)
         return;
 
     auto puppet = Red::Cast<Red::game::Puppet>(player);
@@ -4440,6 +4449,8 @@ void NetworkWorldSystem::OnConnected()
 
 void NetworkWorldSystem::OnDisconnected(Client::EDisconnectReason aReason)
 {
+    m_leftWorld = false;
+
     // Release the microphone and the speakers before anything else. Leaving a capture
     // thread running after a disconnect would hold somebody's headset open for a session
     // that no longer exists - and on a reconnect, try to open it twice.
