@@ -590,6 +590,50 @@ if (-not $SkipTests) {
         }
         else { Pass "$($t.BaseName): $luaOk checks" }
     }
+
+    # The launcher's own tests. Only Ship -Launcher ran them, so a launcher change committed
+    # any other way met no gate at all: a break reached port/2.5 after the button kit was
+    # branched and was caught only because somebody ran the selftests by hand.
+    Head "launcher tests"
+
+    $launcherDir = Join-Path $Repo "code\launcher-lite"
+
+    if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+        Write-Host "  !!    node is not on PATH - launcher tests SKIPPED" -ForegroundColor Yellow
+    }
+    elseif (-not (Test-Path (Join-Path $launcherDir "node_modules"))) {
+        Write-Host "  !!    code\launcher-lite\node_modules is missing - launcher tests SKIPPED. A fresh worktree starts without it: run pnpm install in that folder." -ForegroundColor Yellow
+    }
+    else {
+        $launcherTests = @(
+            (Join-Path $launcherDir "manifest.selftest.mjs"),
+            (Join-Path $launcherDir "prereq.selftest.mjs"),
+            (Join-Path $launcherDir "renderer.selftest.mjs"),
+            (Join-Path $PSScriptRoot "tests\launcher_buttons_test.mjs")
+        )
+
+        foreach ($test in $launcherTests) {
+            $name = Split-Path $test -Leaf
+
+            # Continue, not Stop: node writing anything to stderr must fail on its exit code
+            # with the failures printed, not abort this whole script at the first line.
+            $savedPreference = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            Push-Location $launcherDir
+            $r = node $test 2>&1
+            $code = $LASTEXITCODE
+            Pop-Location
+            $ErrorActionPreference = $savedPreference
+
+            if ($code -ne 0) {
+                Fail -Summary "$name is failing" `
+                     -What "a rule the launcher relies on is no longer true, and the next launcher release would ship it" `
+                     -Where (($r | Select-Object -Last 8 | ForEach-Object { "$_".Trim() }) -join ' ;; ') `
+                     -Fix "run it for the full output, from code\launcher-lite: node $test"
+            }
+            else { Pass $name }
+        }
+    }
 }
 
 # ---------------------------------------------------------------------------
