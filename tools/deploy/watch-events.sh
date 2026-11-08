@@ -33,6 +33,16 @@ CONTAINERS="${NCO_WATCH_CONTAINERS:-nco-authority-server cyberpunkmp-server}"
 COOLDOWN_S=3600        # per class+container; crashes use half of it
 DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1
 
+# A dry run reads the real state and writes none of it. It used to write since-<container> and
+# cool-<container>-<class> exactly as a real run does, so a dry run on the live box consumed that
+# window: on 2026-11-06 one ate three minutes of restarts and armed an hour of cooldown.
+if [ "$DRY" = 1 ]; then
+    real_state="$STATE_DIR"
+    STATE_DIR="$(mktemp -d)"
+    trap 'rm -rf "${STATE_DIR:?}"' EXIT
+    [ -d "$real_state" ] && cp -r "$real_state/." "$STATE_DIR/" 2>/dev/null
+fi
+
 # The event classes, one row per detector. Collapsed from five hand-copied blocks so a
 # new class is a line, not a paste. Fields are '@'-delimited (no pattern uses '@'):
 #
@@ -41,6 +51,8 @@ DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1
 # min-count is the count the window must REACH to fire: crash/proto/save trip on the first
 # matching line, a combat run needs 10, a restart LOOP needs 2+. Crashes get half the
 # cooldown. Case-insensitive (-i) only where the emitter's casing varies - crash and proto.
+#
+# The restart count is reduced by the clean stops in the window (see CLEAN_STOP below).
 #
 # Patterns quote the ACTUAL emitters (Server.cpp:325/336, GameServer.cpp ~912/947,
 # ChatSystem, Level), never a paraphrase - a regex that reworded a C++ string would watch
@@ -52,12 +64,17 @@ DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1
 # runaway shows up in client logs via PullLogs.ps1; the real fix is the server emitting
 # vehicle-churn events itself.
 DETECTORS=(
-    "crash@-aciE@1@$((COOLDOWN_S / 2))@watchdog|\[Crash\]|fatal|unhandled exception|terminate@CRASH-CLASS lines: %s"
+    "crash@-aciE@1@$((COOLDOWN_S / 2))@watchdog|\[Crash\]|fatal|unhandled exception|terminate|free\(\): |double free|malloc\(\): |corrupted (size|double-linked|unsorted|top)|Segmentation fault|\[shutdown\] SIGABRT@CRASH-CLASS lines: %s"
     "proto@-aciE@1@$COOLDOWN_S@was refused:|wrong server protocol|Connection attempt with client identifier|Refused connection@CONNECTION refusals (protocol/identifier/manifest): %s"
     "save@-acE@1@$COOLDOWN_S@REFUSED a save@IDENTITY save refusals: %s"
     "combat@-acE@10@$COOLDOWN_S@Refused a (shot|reload)@SUSTAINED combat refusals: %s"
     "restart@-acE@2@$COOLDOWN_S@Server started on port@RESTART LOOP: server started %s times in one window"
 )
+
+# Printed last by a server that stopped on purpose (Program.cs). Every stop used to abort, so
+# nothing could tell a deploy from a crash and two deliberate starts read as a RESTART LOOP. A
+# start that follows this line is somebody restarting the server, not the server falling over.
+CLEAN_STOP='[shutdown] Main returning to the runtime'
 
 mkdir -p "$STATE_DIR"
 
@@ -181,6 +198,10 @@ for c in $CONTAINERS; do
     for row in "${DETECTORS[@]}"; do
         IFS='@' read -r class flags min cooldown pattern message <<< "$row"
         n=$(grep "$flags" -- "$pattern" "$logfile" || true)
+        if [ "$class" = "restart" ]; then
+            clean=$(grep -acF -- "$CLEAN_STOP" "$logfile" || true)
+            n=$(( ${n:-0} - ${clean:-0} ))
+        fi
         if [ "${n:-0}" -ge "$min" ] && ! cooled "$c" "$class" "$cooldown"; then
             findings="$findings\n$(printf -- "$message" "$n")"
         fi
