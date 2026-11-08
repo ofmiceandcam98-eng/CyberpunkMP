@@ -22,7 +22,7 @@ function fail (what, where, fix) {
 }
 
 // Every hud button in the markup has the layers the kit expects.
-const HUD_BUTTONS = ['play', 'verify', 'update', 'verifyAllMods', 'addModBtn']
+const HUD_BUTTONS = ['play', 'verify', 'update', 'verifyAllMods', 'addModBtn', 'closeSettingsDone']
 for (const id of HUD_BUTTONS) {
   const match = markup.match(new RegExp(`<button[^>]*id="${id}"[^>]*>([\\s\\S]*?)</button>`))
   if (!match) {
@@ -50,9 +50,35 @@ for (const [, id, body] of script.matchAll(/\$\('(\w+)'\)\.addEventListener\('cl
   }
 }
 
-// .play looks like JACK IN's old class, but the settings modal's Done button still depends on it.
-if (!/class="action play" id="closeSettingsDone"/.test(markup) || !/^\s*\.play \{/m.test(markup)) {
-  fail("the settings modal's Done button lost its .play styling", 'the styles and #closeSettingsDone', 'keep the .play rules and class="action play" on Done')
+// Settings' buttons are the bracket button (.sb): the same layers as the kit, and the same rule -
+// their text goes through setHudButton, or textContent wipes the corners, the dots and the label.
+const SETTINGS_BUTTONS = [...markup.matchAll(/<button class="sb [^"]*"[^>]*\sid="(\w+)"/g)].map((m) => m[1])
+if (SETTINGS_BUTTONS.length < 30) {
+  fail(`only ${SETTINGS_BUTTONS.length} bracket buttons in Settings`, 'the settings markup in index.html', 'every settings action is a <button class="sb sb-bracket glitches"> - see THE BRACKET BUTTON')
+}
+for (const id of SETTINGS_BUTTONS) {
+  const match = markup.match(new RegExp(`<button[^>]*id="${id}"[^>]*>([\\s\\S]*?)</button>`))
+  if (!/class="label" data-text="/.test(match[1])) fail(`#${id} has no .label with data-text`, `<button id="${id}">`, 'copy the layers from another bracket button')
+  if (!/<span class="c"/.test(match[1])) fail(`#${id} has no corners`, `<button id="${id}">`, 'copy the layers from another bracket button')
+  if (!/aria-label="/.test(match[0])) fail(`#${id} has no aria-label`, `<button id="${id}">`, 'the glitch layers repeat the text, so name the button explicitly')
+}
+// Writes straight onto one of them, directly or through a variable bound to it in the same block.
+for (const block of script.split(/\n(?= {2}(?:async )?function |\n {2}\$\()/)) {
+  const bound = new Set()
+  for (const m of block.matchAll(/(?:const|let)\s+(\w+)\s*=\s*\$\('(\w+)'\)/g)) if (SETTINGS_BUTTONS.includes(m[2])) bound.add(m[1])
+  for (const id of SETTINGS_BUTTONS) {
+    if (new RegExp(`\\$\\('${id}'\\)\\.(textContent|innerText|innerHTML)\\s*=`).test(block)) {
+      fail(`#${id} has its text assigned directly`, 'the launcher script', 'use setHudButton(btn, text, state)')
+    }
+  }
+  for (const name of bound) {
+    const hit = block.match(new RegExp(`\\b${name}\\.(textContent|innerText|innerHTML)\\s*=.*`))
+    if (hit) fail(`a settings button has its text assigned directly: ${hit[0].trim().slice(0, 60)}`, 'the launcher script', 'use setHudButton(btn, text, state)')
+  }
+}
+// The bracket button draws nothing clipped, so its focus ring can never be cut off.
+for (const rule of markup.matchAll(/^\s*\.sb(\.[\w-]+)*\s*\{[^}]*clip-path/gm)) {
+  fail(`a clip-path sits on the bracket button: ${rule[0].trim().slice(0, 60)}`, 'THE BRACKET BUTTON', 'the bracket button has no clip; keep it that way so the focus ring shows')
 }
 
 // Update has two homes and placeUpdate moves it between them. Setting display on it anywhere else
@@ -91,4 +117,4 @@ if (failures.length) {
   console.error(`\n${failures.length} launcher button check(s) failed`)
   process.exit(1)
 }
-console.log(`launcher buttons: ${HUD_BUTTONS.length} hud buttons and ${looked.size} element lookups check out`)
+console.log(`launcher buttons: ${HUD_BUTTONS.length} hud buttons, ${SETTINGS_BUTTONS.length} bracket buttons and ${looked.size} element lookups check out`)

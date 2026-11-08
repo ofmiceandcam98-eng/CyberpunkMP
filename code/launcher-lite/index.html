@@ -186,12 +186,6 @@
   .voice-meter-fill.hot { background: repeating-linear-gradient(
       90deg, #e05555 0 6px, transparent 6px 9px); }
 
-  /* While waiting for a key. The button has to look like it is listening, or a press that
-     did not register is indistinguishable from one that did. */
-  .action.listening {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
 
   .accounts { display: flex; align-items: center; gap: 1.5rem; }
 
@@ -378,19 +372,6 @@
   .bin:active { transform: scale(.94); }
   .bin:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
 
-  .mod-btn {
-    font-size: var(--fs-micro);
-    letter-spacing: .04em;
-    padding: .22rem .45rem;
-    border-radius: var(--radius);
-    border: 1px solid rgba(255,255,255,.14);
-    background: transparent;
-    color: var(--ink);
-    cursor: pointer;
-    white-space: nowrap;
-  }
-  .mod-btn:hover { background: rgba(255,255,255,.08); }
-
   .col-left {
     min-height: 0;
     display: flex;
@@ -467,31 +448,6 @@
     gap: .5rem;
     flex-wrap: wrap;
     justify-content: center;
-  }
-
-  .play {
-    background: var(--accent);
-    color: #140406;
-    border-color: var(--accent);
-    min-width: 12rem;
-    font-size: var(--fs-lead);
-    font-family: 'NCO Display', var(--mono);
-    letter-spacing: .12em;
-    position: relative;
-    padding-left: 2.6rem;
-    padding-right: 2.6rem;
-  }
-  /* The HUD kit's banner treatment: fine hatch lines leading in, chevrons trailing
-     out. Hidden while the button is a loading bar. */
-  .play::before {
-    content: ""; position: absolute; left: 13px; top: 9px; bottom: 9px; width: 15px;
-    background: repeating-linear-gradient(120deg, #140406 0 2px, transparent 2px 6px);
-    opacity: .75; pointer-events: none;
-  }
-  .play::after {
-    content: "\276E\276E"; position: absolute; right: 13px; top: 50%; transform: translateY(-52%);
-    font-family: var(--mono); font-size: .72em; letter-spacing: .08em; color: #140406;
-    opacity: .8; pointer-events: none;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -848,6 +804,9 @@
     border: 1px solid var(--line);
     border-radius: 0;
     width: min(44rem, 100%);
+    /* One height for every pane. Sized to its content, the window re-centred on each tab and
+       the tab bar travelled up to 177px under the pointer (the 2026-11-07 settings review). */
+    height: 100%;
     max-height: 100%;
     display: flex; flex-direction: column;
     overflow: hidden;
@@ -892,22 +851,33 @@
   @keyframes backdropIn { from { opacity: 0; } to { opacity: 1; } }
   .modal-backdrop { animation: backdropIn 200ms ease; }
 
+  /* Plate tabs (zeldfep, 2026-11-08, from the settings test: "keep the tab system from C").
+     Each tab is a notched steel plate and the open one is lit red. The plate is a layer behind
+     the text, so the clip never reaches the focus ring. */
   .tabs {
-    display: flex; gap: 1.6rem; flex-wrap: wrap;
+    display: flex; gap: .4rem; flex-wrap: wrap;
     justify-content: center;
-    padding: 0 1.25rem; border-bottom: 1px solid var(--line);
+    padding: .55rem 1.25rem; border-bottom: 1px solid var(--line);
     background: var(--surface);
   }
   .tabs button {
-    background: none; border: none; cursor: pointer;
+    position: relative; isolation: isolate;
+    background: none; border: 0; cursor: pointer;
     font-family: var(--mono); font-size: var(--fs-label); font-weight: 700;
     letter-spacing: .12em; text-transform: uppercase;
-    color: var(--ink-dim); padding: .6rem .7rem .5rem;
-    border-bottom: 2px solid transparent;
+    color: var(--ink); padding: .42rem .9rem .38rem;
   }
-  .tabs button:hover { color: var(--ink); }
-  .tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
-  .tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .tabs button::before {
+    content: ""; position: absolute; inset: 0; z-index: -1; background: var(--steel);
+    clip-path: polygon(7px 0, 100% 0, 100% calc(100% - 7px), calc(100% - 7px) 100%, 0 100%, 0 7px);
+    transition: background-color 120ms ease;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .tabs button:hover:not(.active)::before { background: var(--accent-3); }
+  }
+  .tabs button.active { color: #140406; }
+  .tabs button.active::before { background: var(--accent); }
+  .tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   /* One pane at a time; the tabs are the navigation the scrollbar used to be. */
   .modal-body > section.panel { display: none; }
@@ -918,6 +888,7 @@
      scrollbar (zeldfep, 2026-09-04: "I dont want scroll bar"). The section rail on the
      right is the navigation; the wheel and keyboard still work underneath. */
   .modal-body {
+    flex: 1;
     padding: 1.25rem;
     padding-right: 3.4rem; /* room for the section rail */
     overflow-y: auto;
@@ -1004,18 +975,12 @@
     padding: .9rem 1.25rem; border-top: 1px solid var(--line);
   }
 
+  /* A pane has no frame of its own: its groups are the frames (the module bays below), so a
+     frame is never drawn inside a frame. */
   .panel {
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: 0;
-    padding: 1rem 1.1rem;
-    display: flex; flex-direction: column; gap: .9rem;
+    display: flex; flex-direction: column; gap: 1.1rem;
     position: relative;
   }
-  /* Bracket corners, after the reference kit's target frames. */
-  .panel::before, .panel::after { content: ""; position: absolute; width: 12px; height: 12px; pointer-events: none; }
-  .panel::before { top: -1px; left: -1px; border-top: 2px solid var(--accent); border-left: 2px solid var(--accent); }
-  .panel::after { bottom: -1px; right: -1px; border-bottom: 2px solid var(--accent); border-right: 2px solid var(--accent); }
   .panel h3 {
     margin: 0; font-family: var(--mono); font-size: var(--fs-small); font-weight: 700;
     letter-spacing: .14em; text-transform: uppercase; color: var(--ink);
@@ -1026,19 +991,9 @@
       linear-gradient(var(--line), var(--line)) left 0 bottom 1px / 100% 1px no-repeat;
   }
   .panel h3::before { content: "/// "; color: var(--accent); }
-  .panel.danger { border-color: #4a2b2b; }
   .panel.danger h3 { color: var(--bad); }
-  .panel-warn { margin: -.4rem 0 0; font-size: var(--fs-small); color: var(--ink-dim); }
 
-  .field { display: flex; flex-direction: column; gap: .4rem; }
-  .field-label { font-size: var(--fs-body); font-weight: 600; }
   .field-hint { font-size: var(--fs-small); color: var(--ink-dim); }
-  .pathbox {
-    font-family: var(--mono); font-size: var(--fs-small);
-    background: #0c0e12; border: 1px solid var(--line); border-radius: 0;
-    padding: .5rem .6rem; word-break: break-all; color: var(--ink);
-  }
-  .field-actions { display: flex; gap: .5rem; }
 
   /* Green ticks and red crosses, so state is readable without parsing sentences. */
   .checks { display: flex; flex-direction: column; gap: .15rem; }
@@ -1066,30 +1021,166 @@
   .field-narrow { flex: 0 0 auto; width: 72px; }
   .field-block  { flex: none; width: 100%; margin-top: .4rem; padding: .35rem .5rem; font-size: var(--fs-small); }
 
-  /* Section headings inside a pane. zeldfep, 2026-09-07: "too much scrolling I think it
-     should be 4 total inside tools tabs" - the rail was indexing every individual setting
-     row, so Tools read 01/13 and stepping through it was thirteen presses. These are what
-     the rail counts now, and they use the same label treatment as .admin-title so a new
-     kind of heading did not have to be invented for them. */
-  .rail-group {
-    font-family: var(--mono); font-size: var(--fs-label); font-weight: 700;
-    letter-spacing: .14em; text-transform: uppercase; color: var(--ink-dim);
-    margin: .35rem 0 -.35rem; padding-bottom: .35rem;
-    border-bottom: 1px solid var(--line);
-  }
-  .modal-body > section.panel > .rail-group:first-of-type { margin-top: 0; }
+  /* THE MODULE BAYS (zeldfep, 2026-11-08, "C's bays full"). Each group of settings is a
+     device bay: a notched frame on a hairline, a lit label tab carrying its number, a hatch
+     block on the step, a spec line and a four-dot greeble. The ornament sits on the edges, so
+     the rows inside stay calm. The frame is two clipped layers - a hairline under a fill -
+     because a border on a clip-path loses its diagonals.
 
-  .tool { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+     The label tabs are still the section headings the rail counts. zeldfep, 2026-09-07: "too
+     much scrolling I think it should be 4 total inside tools tabs" - one per bay, not one per
+     row. The rail measures the bay (railTop), because the tab sits pinned inside it. */
+  .grp {
+    position: relative; isolation: isolate;
+    display: flex; flex-direction: column; gap: .9rem;
+    margin-top: .4rem; padding: 2.15rem 1rem 1.15rem;
+    --bay: polygon(0 0, 46% 0, calc(46% + 10px) 10px, calc(100% - 18px) 10px, 100% 28px,
+                   100% calc(100% - 10px), calc(100% - 10px) 100%, 14px 100%, 0 calc(100% - 14px));
+  }
+  .grp::before, .grp::after { content: ""; position: absolute; z-index: -1; clip-path: var(--bay); }
+  .grp::before { inset: 0; background: var(--accent-2); }
+  .grp::after { inset: 1px; background: var(--surface); }
+  .rail-group {
+    position: absolute; left: 0; top: 0; margin: 0; height: 1.3rem; padding: 0 1.3rem 0 .6rem;
+    display: flex; align-items: center; background: var(--accent); color: #140406;
+    font-family: var(--mono); font-size: var(--fs-label); font-weight: 700;
+    letter-spacing: .14em; text-transform: uppercase;
+    clip-path: polygon(0 0, 100% 0, calc(100% - 9px) 100%, 0 100%);
+  }
+  /* Flex trims the space after the number, so it is a margin instead. */
+  .rail-group > span { margin-right: .55em; }
+  .bay-spec {
+    position: absolute; top: 14px; right: 1.4rem;
+    font-family: var(--mono); font-size: var(--fs-micro); font-weight: 500;
+    letter-spacing: .14em; text-transform: uppercase; color: var(--ink-dim);
+  }
+  .bay-hatch {
+    position: absolute; top: 2px; left: calc(46% + 16px); width: 36px; height: 6px;
+    background: repeating-linear-gradient(120deg, var(--accent-2) 0 3px, transparent 3px 7px);
+  }
+  .bay-pips {
+    position: absolute; right: 18px; bottom: 5px; width: 21px; height: 3px; opacity: .6;
+    background: repeating-linear-gradient(90deg, var(--ink-dim) 0 3px, transparent 3px 6px);
+  }
+  /* Rows are split by a dotted tick run, not a border. */
+  .grp > .tool + .tool, .grp > .folder + .folder {
+    padding-top: .9rem;
+    background: repeating-linear-gradient(90deg, var(--steel) 0 2px, transparent 2px 6px) top left / 100% 1px no-repeat;
+  }
+
+  /* A row: what it is on the left, its action in one column on the right. */
+  .tool { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .45rem 1rem; align-items: start; }
+  .tool .txt { min-width: 0; }
   .tool-name { font-size: var(--fs-body); font-weight: 600; }
   .tool-desc { font-size: var(--fs-small); color: var(--ink-dim); line-height: 1.45; margin-top: .15rem; }
+  .act { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+  .act.side { flex-direction: row; flex-wrap: wrap; align-items: center; gap: .75rem; }
   .ghost { background: #22262e; color: var(--ink); white-space: nowrap; }
+
+  /* Folders: the path is a readout with a label plate, not a box inside a box. */
+  .folder { display: flex; flex-direction: column; gap: .45rem; min-width: 0; }
+  .readout { display: flex; align-items: stretch; min-width: 0; background: var(--ground); border: 1px solid var(--line); }
+  .readout .tag {
+    flex: none; display: flex; align-items: center; padding: 0 .55rem; background: var(--steel); color: var(--ink);
+    font-family: var(--mono); font-size: var(--fs-micro); font-weight: 700; letter-spacing: .14em;
+  }
+  .readout .path { min-width: 0; padding: .45rem .6rem; font-family: var(--mono); font-size: var(--fs-small); color: var(--ink); word-break: break-all; }
+
+  /* Nexus signed in: who you are, and Change key - not the setup steps. */
+  .signed {
+    display: flex; align-items: center; gap: .5rem; margin-top: .45rem;
+    font-family: var(--mono); font-size: var(--fs-label); font-weight: 700; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--ok);
+  }
+  .keyentry { display: flex; flex-direction: column; gap: .45rem; margin-top: .55rem; font-size: var(--fs-small); color: var(--ink-dim); line-height: 1.45; }
+  .keyentry b { color: var(--ink); }
+  .keyentry .field-block { margin-top: 0; }
+  #settingsModal [hidden] { display: none !important; }
+
+  /* A flat hazard plate. Flat yellow is a warning; striped yellow is the rail's "you are here". */
+  .flat-warn {
+    margin: 0; align-self: flex-start; padding: .35rem 1.1rem .35rem .7rem; background: var(--hazard); color: #140406;
+    font-family: var(--mono); font-size: var(--fs-label); font-weight: 700; letter-spacing: .14em; text-transform: uppercase;
+    clip-path: polygon(0 0, 100% 0, calc(100% - 8px) 100%, 0 100%);
+  }
+
+  /* THE BRACKET BUTTON (S2), Settings' one button: zeldfep, 2026-11-08, "S2 and C's bays".
+     8rem by 26px on the label step. No plate - the label sits inside four registration corners.
+     It keeps the kit's three moments: hover or Tab closes the corners in, turns them red and
+     fills the dots under the label; pressing flashes a steel fill; the click glitch fires once.
+     Nothing is clipped, so the focus ring always shows. Write its text with setHudButton. */
+  .sb {
+    position: relative; display: inline-grid; place-items: center; flex: none;
+    width: 8rem; height: 26px; padding: 0; border: 0; background: none; cursor: pointer;
+    color: var(--ink); font-family: var(--mono); font-size: var(--fs-label); font-weight: 700;
+    letter-spacing: .1em; text-transform: uppercase;
+    --glitch-h: 26px; --sb-mark: var(--ink-dim);
+  }
+  .sb:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .sb:disabled { cursor: not-allowed; }
+  .sb:disabled .label { color: var(--ink-dim); }
+  .sb[data-state="checking"] { cursor: progress; }
+  .sb .label { position: relative; z-index: 2; margin-top: -3px; white-space: nowrap; }
+  .sb[data-state="ok"] .label { color: var(--ok); }
+  .sb .fill { position: absolute; inset: 0; background: var(--steel); opacity: 0; transition: opacity 120ms ease; }
+  .sb .c i { position: absolute; width: 7px; height: 7px; border: 0 solid var(--sb-mark); transition: transform 140ms var(--ease-out), border-color 120ms ease; }
+  .sb .c i:nth-child(1) { top: 0; left: 0; border-top-width: 1px; border-left-width: 1px; }
+  .sb .c i:nth-child(2) { top: 0; right: 0; border-top-width: 1px; border-right-width: 1px; }
+  .sb .c i:nth-child(3) { bottom: 0; left: 0; border-bottom-width: 1px; border-left-width: 1px; }
+  .sb .c i:nth-child(4) { bottom: 0; right: 0; border-bottom-width: 1px; border-right-width: 1px; }
+  .sb .pips { position: absolute; z-index: 3; bottom: 3px; left: 50%; transform: translateX(-50%); display: flex; gap: 2px; }
+  .sb .pips i { --i: 0; width: 2px; height: 2px; background: currentColor; opacity: .3; transition: opacity 120ms ease; }
+  .sb .pips i:nth-child(2) { --i: 1; }
+  .sb .pips i:nth-child(3) { --i: 2; }
+  .sb .pips i:nth-child(4) { --i: 3; }
+  .sb:focus-visible .c i, .sb.listening .c i { border-color: var(--accent); }
+  .sb:focus-visible .c i:nth-child(1) { transform: translate(2px, 2px); }
+  .sb:focus-visible .c i:nth-child(2) { transform: translate(-2px, 2px); }
+  .sb:focus-visible .c i:nth-child(3) { transform: translate(2px, -2px); }
+  .sb:focus-visible .c i:nth-child(4) { transform: translate(-2px, -2px); }
+  .sb:focus-visible .pips i { opacity: 1; transition-delay: calc(var(--i) * 50ms); }
+  @media (hover: hover) and (pointer: fine) {
+    .sb:hover:not(:disabled) .c i { border-color: var(--accent); }
+    .sb:hover:not(:disabled) .c i:nth-child(1) { transform: translate(2px, 2px); }
+    .sb:hover:not(:disabled) .c i:nth-child(2) { transform: translate(-2px, 2px); }
+    .sb:hover:not(:disabled) .c i:nth-child(3) { transform: translate(2px, -2px); }
+    .sb:hover:not(:disabled) .c i:nth-child(4) { transform: translate(-2px, -2px); }
+    .sb:hover:not(:disabled) .pips i { opacity: 1; transition-delay: calc(var(--i) * 50ms); }
+  }
+  .sb:active:not(:disabled) .fill, .sb[data-state="checking"] .fill { opacity: 1; transition-duration: 50ms; }
+  .sb:active:not(:disabled) .pips i { opacity: 1; transition-delay: 0ms; }
+  .sb[data-state="checking"] .pips i { animation: pip-chase 800ms linear infinite; animation-delay: calc(var(--i) * 120ms); }
+  /* Waiting for a key, or a microphone test running: it is listening, so it says so. */
+  .sb.listening .label { color: var(--accent); }
+  /* Anything that deletes: a red label in red corners. */
+  .sb.danger { --sb-mark: var(--accent-2); }
+  .sb.danger .label { color: var(--accent); }
+  /* The test-build list's disclosure toggle: the same button, square. */
+  .sb.sb-square { width: 26px; }
+
+  /* Done closes the window, so it stays the loud one: the kit's red plate. */
+  .plate.set-done {
+    width: 11rem; height: 40px; font-family: 'NCO Display', var(--mono); font-size: var(--fs-body); letter-spacing: .16em;
+    --lug: 6px; --pip: 3px; --plate-fill: var(--accent); --plate-base: var(--accent-2); --plate-text: #140406;
+    --glitch-2: var(--ink); --glitch-h: 40px;
+  }
+  .plate.set-done .hatch { left: 12px; width: 16px; }
+  .plate.set-done .chev { right: 12px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .sb *, .sb *::before, .sb *::after { animation: none !important; transition-property: opacity, color, background-color, border-color !important; }
+    .sb .c i { transform: none !important; }
+    /* Here, after .modal's own rule. The older block near the top of the file says the same
+       thing but comes first, so .modal's animation won and the window flickered open anyway. */
+    .modal, .modal-backdrop { animation: none; }
+  }
 
   /* Shown in full and selectable on purpose: the whole point is to copy it out into
      another tool. Wraps rather than scrolls, so nothing is silently cut off. */
   .devkey {
     margin-top: .5rem;
     padding: .45rem .6rem;
-    background: #0c0e13;
+    background: var(--ground);
     border: 1px solid var(--line);
     border-radius: 0;
     font-family: "Cascadia Mono", Consolas, monospace;
@@ -1211,7 +1302,9 @@
   <!-- Settings. Everything that is occasional, diagnostic or destructive lives in
        here rather than cluttering the main screen. -->
   <div class="modal-backdrop" id="settingsModal" style="display:none">
-    <div class="modal">
+    <!-- A dialog in fact as well as in look: openSettings moves focus in and makes everything
+         behind it inert, Tab stays inside, and closeSettings hands focus back to the gear. -->
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
       <div class="section-rail" id="sectionRail" hidden>
         <button class="rail-step" id="railUp" aria-label="Previous section">&#9650;</button>
         <div class="rail-track" id="railTrack"></div>
@@ -1219,7 +1312,7 @@
         <span class="rail-pos" id="railPos"><b>01</b>/01</span>
       </div>
       <div class="modal-head">
-        <h2>Settings</h2>
+        <h2 id="settingsTitle">Settings</h2>
         <button class="modal-close" id="closeSettings" aria-label="Close">&times;</button>
       </div>
 
@@ -1235,31 +1328,32 @@
       <div class="modal-body">
 
         <!-- VOICE
-             Phase 1 of the voice system: find the devices and let someone pick.
-             Nothing captures or transmits yet - this is the part that has to be right
-             first, because every voice problem after it starts with "which microphone".
-
-             Enumerated through the browser engine rather than native WASAPI. Chromium
-             already asks Windows for its audio endpoints and hands back the real device
-             names, which is the same list a native implementation would build - and it
-             works today rather than after a native audio layer lands. -->
+             The devices, keys and levels the game is handed at JACK IN. Devices are
+             enumerated through the browser engine rather than native WASAPI: Chromium already
+             asks Windows for its audio endpoints and hands back the real device names, which
+             is the same list a native implementation would build. -->
         <section class="panel" data-pane="voice">
           <h3>Voice</h3>
 
-          <h4 class="rail-group">Devices</h4>
+          <div class="grp">
+            <h4 class="rail-group bay-tag" data-name="Devices"><span aria-hidden="true">01 ·</span>Devices</h4>
+            <span class="bay-spec" aria-hidden="true">3 controls · audio</span><span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Audio devices</div>
               <div class="tool-desc" id="voiceHint">
                 Windows has to allow microphone access before it will tell us device names.
                 Press Find devices - if Windows asks, allow it.
               </div>
             </div>
-            <button class="action ghost" id="voiceScan">Find devices</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="voiceScan" type="button" aria-label="Find devices">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Find devices">Find devices</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Microphone</div>
               <div class="tool-desc">What other players hear you through.</div>
               <select id="voiceInput" class="voice-select" disabled>
@@ -1273,11 +1367,14 @@
                 <div class="tool-desc" id="voiceMeterText">Say something.</div>
               </div>
             </div>
-            <button class="action ghost" id="voiceTest">Test</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="voiceTest" type="button" aria-label="Test">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Test">Test</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Voice output</div>
               <div class="tool-desc">
                 Where you hear other players. Separate from game audio, so voice can go to a
@@ -1288,31 +1385,40 @@
               </select>
             </div>
           </div>
+          </div>
 
-          <h4 class="rail-group">Keys and mode</h4>
+          <div class="grp">
+            <h4 class="rail-group bay-tag" data-name="Keys and mode"><span aria-hidden="true">02 ·</span>Keys and mode</h4>
+            <span class="bay-spec" aria-hidden="true">3 controls · input</span><span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Push-to-talk key</div>
               <div class="tool-desc">
                 Held to talk. Any key, or a mouse button - side buttons work.
               </div>
             </div>
-            <button class="action ghost" id="voiceBindKey">V</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="voiceBindKey" type="button" aria-label="Y">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Y">Y</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Voice range key</div>
               <div class="tool-desc">
                 Cycles whisper &rarr; local &rarr; yell. Separate from talking: pressing it
                 changes how far you carry, it does not put you on air.
               </div>
             </div>
-            <button class="action ghost" id="voiceBindRangeKey">B</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="voiceBindRangeKey" type="button" aria-label="F12">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="F12">F12</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Voice mode</div>
               <div class="tool-desc">
                 Hold to talk is the default on purpose - voice activation sends whatever
@@ -1325,61 +1431,74 @@
               </select>
             </div>
           </div>
+          </div>
 
-          <h4 class="rail-group">Levels</h4>
+          <div class="grp">
+            <h4 class="rail-group bay-tag" data-name="Levels"><span aria-hidden="true">03 ·</span>Levels</h4>
+            <span class="bay-spec" aria-hidden="true">2 levels · 0-200%</span><span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Microphone volume</div>
               <div class="tool-desc">How loud you are to everyone else.</div>
               <input type="range" id="voiceMicVolume" class="voice-range" min="0" max="200" value="100">
               <div class="tool-desc"><span id="voiceMicVolumeValue">100%</span></div>
             </div>
           </div>
-
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Voice chat volume</div>
               <div class="tool-desc">How loud everyone else is to you.</div>
               <input type="range" id="voiceChatVolume" class="voice-range" min="0" max="200" value="100">
               <div class="tool-desc"><span id="voiceChatVolumeValue">100%</span></div>
             </div>
           </div>
-
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name" id="voiceStatusTitle">Saved on this PC</div>
               <div class="tool-desc" id="voiceStatus">
                 These are passed to the game when you press JACK IN, so change them before
-                launching. Voice capture itself is still being built - nothing transmits yet.
+                launching.
               </div>
             </div>
           </div>
+          </div>
         </section>
 
-        <!-- FOLDERS -->
+        <!-- FOLDERS. One frame per folder, not three: the path is a readout with a label plate. -->
         <section class="panel pane-active" data-pane="folders">
           <h3>Folders</h3>
 
-          <div class="field">
-            <div class="field-label">Cyberpunk 2077</div>
-            <div class="field-hint">Folder containing bin\x64\Cyberpunk2077.exe</div>
-            <div class="pathbox" id="gamePathBox">not detected</div>
+          <div class="grp">
+            <h4 class="rail-group bay-tag" data-name="Paths"><span aria-hidden="true">01 ·</span>Paths</h4>
+            <span class="bay-spec" aria-hidden="true">2 paths · local disk</span><span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
+          <div class="folder">
+            <div class="tool-name">Cyberpunk 2077</div>
+            <div class="tool-desc">Folder containing bin\x64\Cyberpunk2077.exe</div>
+            <div class="readout"><span class="tag">PATH</span><span class="path" id="gamePathBox">not detected</span></div>
             <div class="checks" id="gameChecks"></div>
-            <div class="field-actions">
-              <button class="action ghost" id="viewGameDir">View</button>
-              <button class="action ghost" id="browseGameDir">Browse</button>
+            <div class="act side">
+              <button class="sb sb-bracket glitches" id="viewGameDir" type="button" aria-label="View">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="View">View</span>
+              </button>
+              <button class="sb sb-bracket glitches" id="browseGameDir" type="button" aria-label="Browse">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Browse">Browse</span>
+              </button>
             </div>
           </div>
-
-          <div class="field">
-            <div class="field-label">Mod folder</div>
-            <div class="field-hint">Where the multiplayer mod is installed.</div>
-            <div class="pathbox" id="modPathBox">not installed</div>
+          <div class="folder">
+            <div class="tool-name">Mod folder</div>
+            <div class="tool-desc">Where the multiplayer mod is installed.</div>
+            <div class="readout"><span class="tag">PATH</span><span class="path" id="modPathBox">not installed</span></div>
             <div class="checks" id="modChecks"></div>
-            <div class="field-actions">
-              <button class="action ghost" id="viewModDir">View</button>
-              <button class="action ghost" id="browseModDir">Browse</button>
+            <div class="act side">
+              <button class="sb sb-bracket glitches" id="viewModDir" type="button" aria-label="View">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="View">View</span>
+              </button>
+              <button class="sb sb-bracket glitches" id="browseModDir" type="button" aria-label="Browse">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Browse">Browse</span>
+              </button>
             </div>
+          </div>
           </div>
         </section>
 
@@ -1387,9 +1506,11 @@
         <section class="panel" data-pane="tools">
           <h3>Tools</h3>
 
-          <h4 class="rail-group">Connection</h4>
+          <div class="grp">
+            <h4 class="rail-group bay-tag" data-name="Connection"><span aria-hidden="true">01 ·</span>Connection</h4>
+            <span class="bay-spec" aria-hidden="true">3 tools · network</span><span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
           <div class="tool">
-            <div>
+            <div class="txt">
               <div class="tool-name">Join the server's network</div>
               <div class="tool-desc">
                 Opens the network invite. You need this once, before the game server can
@@ -1397,11 +1518,14 @@
                 network it joined.
               </div>
             </div>
-            <button class="action ghost" id="openTailscaleInvite">Open invite</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="openTailscaleInvite" type="button" aria-label="Open invite">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Open invite">Open invite</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Checkup</div>
               <div class="tool-desc">
                 Runs the whole checklist at once - launcher, game, mod, frameworks,
@@ -1410,11 +1534,14 @@
               </div>
               <div id="checkupResults" style="margin-top:8px"></div>
             </div>
-            <button class="action ghost" id="runCheckup">Run checkup</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="runCheckup" type="button" aria-label="Run checkup">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Run checkup">Run checkup</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Test server connection</div>
               <div class="tool-desc">
                 Checks every link between this PC and the game server - internet,
@@ -1423,58 +1550,85 @@
               </div>
               <div id="connTestResults" style="margin-top:8px"></div>
             </div>
-            <button class="action ghost" id="runConnTest">Run test</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="runConnTest" type="button" aria-label="Run test">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Run test">Run test</span>
+              </button>
+            </div>
           </div>
-          <h4 class="rail-group">Install</h4>
+          </div>
 
+          <div class="grp">
+            <h4 class="rail-group bay-tag" data-name="Install"><span aria-hidden="true">02 ·</span>Install</h4>
+            <span class="bay-spec" aria-hidden="true">2 tools · nexus</span><span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
           <div class="tool">
-            <div>
+            <div class="txt">
               <div class="tool-name">Install everything</div>
               <div class="tool-desc">
                 Downloads and installs the mod and all six required mods. Use this on a
                 fresh setup.
               </div>
             </div>
-            <button class="action ghost" id="installAll">Install</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="installAll" type="button" aria-label="Install">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Install">Install</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div>
+            <div class="txt">
               <div class="tool-name">Nexus Mods account</div>
-              <div class="tool-desc">
-                Needed to download the server's mod list.
-                <div style="margin-top:.35rem">
-                  <b>1.</b> Press <b>Get my key</b> — it opens your Nexus API page.<br>
+              <div class="tool-desc">Needed to download the server's mod list.</div>
+              <!-- Signed in, this is all the row says. The steps and the key box come back
+                   when signed out, or when Change key is pressed (refreshNexus). -->
+              <div class="signed" id="nexusSigned" hidden><span class="dot on"></span><span id="nexusState">Not signed in</span></div>
+              <div class="keyentry" id="nexusKeyEntry">
+                <div>
+                  <b>1.</b> Press <b>Get my key</b> - it opens your Nexus API page.<br>
                   <b>2.</b> Scroll to <b>Personal API Key</b> and copy it.<br>
-                  <b>3.</b> Paste it below and press Save.
+                  <b>3.</b> Paste it below and press <b>Save key</b>.
                 </div>
-                <div style="margin-top:.4rem"><span id="nexusState">Not signed in</span></div>
-
                 <input id="nexusKey" type="password" placeholder="Paste your Nexus API key here"
                        class="field field-block">
-                <button class="mod-btn" id="nexusSave" style="margin-top:.35rem">Save key</button>
+                <div class="act side">
+                  <button class="sb sb-bracket glitches" id="nexusGetKey" type="button" aria-label="Get my key">
+                    <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Get my key">Get my key</span>
+                  </button>
+                  <button class="sb sb-bracket glitches" id="nexusSave" type="button" aria-label="Save key">
+                    <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Save key">Save key</span>
+                  </button>
+                </div>
 
                 <!-- Nexus SSO - the one-click browser approval - only works for
                      applications Nexus has approved, and rejects everything else with an
                      unhelpful "problem authenticating your request". Kept because it
                      starts working the moment they whitelist us, but not offered as the
                      way in, because today it fails. -->
-                <details style="margin-top:.5rem">
+                <details>
                   <summary style="cursor:pointer;font-size: var(--fs-label)">One-click sign-in (needs Nexus approval)</summary>
-                  <div style="margin-top:.3rem;font-size: var(--fs-label)">
+                  <div style="margin:.3rem 0 .45rem;font-size: var(--fs-label)">
                     Nexus only allows this for approved mod managers. It will fail until
                     they whitelist Night City Online.
                   </div>
-                  <button class="mod-btn" id="nexusLogin" style="margin-top:.35rem">Try it anyway</button>
+                  <button class="sb sb-bracket glitches" id="nexusLogin" type="button" aria-label="Try it anyway">
+                    <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Try it anyway">Try it anyway</span>
+                  </button>
                 </details>
               </div>
             </div>
-            <button class="action ghost" id="nexusGetKey">Get my key</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="nexusChangeKey" type="button" aria-label="Change key" hidden>
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Change key">Change key</span>
+              </button>
+            </div>
           </div>
-          <h4 class="rail-group">This PC</h4>
+          </div>
 
+          <div class="grp">
+            <h4 class="rail-group bay-tag" data-name="This PC"><span aria-hidden="true">03 ·</span>This PC</h4>
+            <span class="bay-spec" aria-hidden="true">2 tools · windows</span><span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
           <div class="tool">
-            <div>
+            <div class="txt">
               <div class="tool-name">Desktop shortcut</div>
               <div class="tool-desc">
                 Puts Night City Online Launcher on your Desktop and in the Start Menu.
@@ -1482,46 +1636,62 @@
                 shortcut and choose "Pin to taskbar" for that.
               </div>
             </div>
-            <button class="action ghost" id="makeShortcut">Create</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="makeShortcut" type="button" aria-label="Create">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Create">Create</span>
+              </button>
+            </div>
           </div>
-
           <!-- Hidden entirely unless the signed-in account is a dev/admin. Shown as a
                row like the others rather than tucked away, because a toggle you cannot
                find is a toggle you leave in the wrong state. -->
           <div class="tool" id="debugTool" style="display:none">
-            <div>
+            <div class="txt">
               <div class="tool-name">Developer overlay</div>
               <div class="tool-desc" id="debugDesc">
                 Shows the in-game debug menu bar. Devs and admins only.
               </div>
             </div>
-            <button class="action ghost" id="toggleDebug">Off</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="toggleDebug" type="button" aria-label="Off">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Off">Off</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div>
+            <div class="txt">
               <div class="tool-name">Launcher folder</div>
               <div class="tool-desc">
                 Opens where the launcher is installed. The uninstaller lives here too.
               </div>
             </div>
-            <button class="action ghost" id="openInstallDir">Open</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="openInstallDir" type="button" aria-label="Open">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Open">Open</span>
+              </button>
+            </div>
           </div>
-          <h4 class="rail-group">Repair and remove</h4>
+          </div>
 
+          <div class="grp">
+            <h4 class="rail-group bay-tag" data-name="Repair"><span aria-hidden="true">04 ·</span>Repair</h4>
+            <span class="bay-spec" aria-hidden="true">4 tools · mod files</span><span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
           <div class="tool">
-            <div>
+            <div class="txt">
               <div class="tool-name">Verify game files</div>
               <div class="tool-desc">
                 Checks the mod files are present and current. Reports everything wrong at
                 once rather than one problem at a time.
               </div>
             </div>
-            <button class="action ghost" id="verifyFiles">Verify</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="verifyFiles" type="button" aria-label="Verify">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Verify">Verify</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div>
+            <div class="txt">
               <div class="tool-name">Direct install from Nexus</div>
               <div class="tool-desc">
                 Installs every mod on the server's list that is missing here, straight
@@ -1530,22 +1700,28 @@
                 and it lands here automatically either way.
               </div>
             </div>
-            <button class="action ghost" id="nexusDirectInstall">Install missing</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="nexusDirectInstall" type="button" aria-label="Install missing">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Install missing">Install missing</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div>
+            <div class="txt">
               <div class="tool-name">Reinstall mod files</div>
               <div class="tool-desc">
                 Re-downloads the current build over the top. Fixes a corrupted or partial
                 install. Your other mods are not touched.
               </div>
             </div>
-            <button class="action ghost" id="reinstallMod">Reinstall</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="reinstallMod" type="button" aria-label="Reinstall">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Reinstall">Reinstall</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div>
+            <div class="txt">
               <div class="tool-name">Deep clean</div>
               <div class="tool-desc">
                 Hunts leftovers from old installs - stale data folders, dead Windows
@@ -1554,19 +1730,12 @@
                 same sweep, so uninstalling leaves nothing behind.
               </div>
             </div>
-            <button class="action ghost" id="deepClean">Scan</button>
-          </div>
-
-          <div class="tool">
-            <div>
-              <div class="tool-name">Uninstall launcher</div>
-              <div class="tool-desc">
-                Removes the launcher and everything it saved on this PC - your sign-in,
-                settings, keys. Your game and the mod are left alone - use "Remove mod"
-                above first if you want that gone as well.
-              </div>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="deepClean" type="button" aria-label="Scan">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Scan">Scan</span>
+              </button>
             </div>
-            <button class="action ghost" id="uninstallLauncher">Uninstall</button>
+          </div>
           </div>
         </section>
 
@@ -1577,8 +1746,11 @@
         <section class="panel role-hidden" id="devPanel" data-pane="dev">
           <h3>Dev</h3>
 
+          <div class="grp">
+            <h4 class="rail-group bay-tag" data-name="Dev tools"><span aria-hidden="true">01 ·</span>Dev tools</h4>
+            <span class="bay-spec" aria-hidden="true">5 tools · devs only</span><span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Dev key</div>
               <div class="tool-desc">
                 Paste this into your Claude so it can read and post updates alongside the
@@ -1586,11 +1758,14 @@
               </div>
               <div class="devkey" id="devKeyValue" style="display:none"></div>
             </div>
-            <button class="action ghost" id="revealDevKey">Reveal</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="revealDevKey" type="button" aria-label="Reveal">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Reveal">Reveal</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Server</div>
               <div class="tool-desc" id="devServerHint">
                 Which server Launch connects to. Leave blank to follow the published
@@ -1605,28 +1780,34 @@
                        class="field field-narrow">
               </div>
             </div>
-            <div class="btn-col">
-              <button class="action ghost" id="devServerApply">Apply</button>
-              <button class="action ghost" id="devServerClear">Default</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="devServerApply" type="button" aria-label="Apply">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Apply">Apply</span>
+              </button>
+              <button class="sb sb-bracket glitches" id="devServerClear" type="button" aria-label="Default">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Default">Default</span>
+              </button>
             </div>
           </div>
-
           <!-- The test deployment is its own tailnet node, so it needs its own device
                share - a share is bound to one device id and cannot cover both servers.
                Accepting the main one does not get you onto this. -->
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Join the test server's network</div>
               <div class="tool-desc">
                 Separate from the main invite - accepting that one does not get you here.
                 You need this once before the test server can reach you.
               </div>
             </div>
-            <button class="action ghost" id="openTailscaleTestInvite">Open invite</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="openTailscaleTestInvite" type="button" aria-label="Open invite">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Open invite">Open invite</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div style="min-width:0;flex:1">
+            <div class="txt">
               <div class="tool-name">Test builds</div>
               <div class="tool-desc">
                 Pre-releases from GitHub. Players never see these - their launchers only
@@ -1635,66 +1816,108 @@
               </div>
               <div id="prereleaseList" style="margin-top:8px"></div>
             </div>
-            <div class="btn-col">
-              <button class="action ghost" id="prereleaseRefresh">Refresh</button>
-              <button class="action ghost" id="prereleaseRestore">Restore</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="prereleaseRefresh" type="button" aria-label="Refresh">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Refresh">Refresh</span>
+              </button>
+              <button class="sb sb-bracket glitches" id="prereleaseRestore" type="button" aria-label="Restore">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Restore">Restore</span>
+              </button>
             </div>
           </div>
-
           <!-- The address is typed in, not shipped: this file goes out to every player,
                and the box's name is placeholdered everywhere else for that reason. -->
           <div class="tool">
-            <div style="min-width:0;flex:1">
+            <div class="txt">
               <div class="tool-name">The Atlas</div>
               <div class="tool-desc">
                 The mind map across every project - what is open, blocked, parked or just
                 thought of, on the same board both assistants write to. The address fills
                 itself in from your dev role; the box is there for overriding it.
               </div>
-              <input type="text" id="atlasUrl" style="margin-top:8px"
+              <input type="text" id="atlasUrl" class="field field-block"
                      placeholder="http://host:11782" spellcheck="false" autocomplete="off">
             </div>
-            <div class="btn-col">
-              <button class="action ghost" id="atlasOpen">Open</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="atlasOpen" type="button" aria-label="Open">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Open">Open</span>
+              </button>
             </div>
+          </div>
           </div>
         </section>
 
-        <!-- REMOVE -->
+        <!-- REMOVE. Everything that deletes, in one place - Uninstall launcher used to sit in
+             Tools and point at a "Remove mod above" that was really on this tab. -->
         <section class="panel danger" data-pane="remove">
           <h3>Remove data</h3>
-          <p class="panel-warn">Permanent. Cannot be undone.</p>
+          <p class="flat-warn">/// Permanent · cannot be undone</p>
 
+          <div class="grp">
+            <h4 class="rail-group bay-tag" data-name="Mod and launcher"><span aria-hidden="true">01 ·</span>Mod and launcher</h4>
+            <span class="bay-spec" aria-hidden="true">3 actions · cannot be undone</span><span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
           <div class="tool">
-            <div>
+            <div class="txt">
               <div class="tool-name">Remove the mod</div>
               <div class="tool-desc" id="removeModPath">
                 Deletes the multiplayer mod folder. Your game, saves and other mods are
                 left alone.
               </div>
             </div>
-            <button class="action stop" id="removeMod">Remove</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches danger" id="removeMod" type="button" aria-label="Remove">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Remove">Remove</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div>
+            <div class="txt">
               <div class="tool-name">Remove launcher files</div>
               <div class="tool-desc" id="removeDataPath">
                 Deletes your saved sign-in and settings. You will sign in again next time.
               </div>
             </div>
-            <button class="action stop" id="removeData">Remove</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches danger" id="removeData" type="button" aria-label="Remove">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Remove">Remove</span>
+              </button>
+            </div>
+          </div>
+          <div class="tool">
+            <div class="txt">
+              <div class="tool-name">Uninstall launcher</div>
+              <div class="tool-desc">
+                Removes the launcher and everything it saved on this PC - your sign-in,
+                settings, keys. Your game is left alone. Remove the mod first, above, if you
+                want that gone too.
+              </div>
+            </div>
+            <div class="act">
+              <button class="sb sb-bracket glitches danger" id="uninstallLauncher" type="button" aria-label="Uninstall">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Uninstall">Uninstall</span>
+              </button>
+            </div>
+          </div>
           </div>
         </section>
 
         <!-- ABOUT -->
         <section class="panel" data-pane="about">
+          <h3>About</h3>
+
+          <div class="grp">
+            <h4 class="rail-group bay-tag" data-name="This launcher"><span aria-hidden="true">01 ·</span>This launcher</h4>
+            <span class="bay-spec" aria-hidden="true">version · source</span><span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
           <div class="tool">
-            <div>
+            <div class="txt">
               <div class="tool-name" id="launcherVersion">Launcher</div>
               <div class="tool-desc">Mod updates are checked every time the launcher opens.</div>
             </div>
-            <button class="action ghost" id="checkFromSettings">Check</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="checkFromSettings" type="button" aria-label="Check">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Check">Check</span>
+              </button>
+            </div>
           </div>
 
           <!-- Attribution, in the launcher rather than only in the README.
@@ -1704,7 +1927,7 @@
                is still theirs. The link goes through the data-link allowlist rather than
                a raw anchor, so it cannot become "open any URL". -->
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Built on CyberpunkMP</div>
               <div class="tool-desc">
                 Night City Online is a fork of CyberpunkMP, the multiplayer mod created by
@@ -1712,7 +1935,12 @@
                 with the source.
               </div>
             </div>
-            <button class="action ghost" data-link="upstream">Source</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" type="button" aria-label="Source" data-link="upstream">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Source">Source</span>
+              </button>
+            </div>
+          </div>
           </div>
         </section>
 
@@ -1720,7 +1948,10 @@
 
       <div class="modal-foot">
         <div class="status" id="settingsStatus"></div>
-        <button class="action play" id="closeSettingsDone">Done</button>
+        <button class="hud plate set-done glitches" id="closeSettingsDone" type="button" aria-label="Done">
+          <span class="back"></span>
+          <span class="face"><span class="scan"></span><span class="pips"><i></i><i></i><i></i><i></i></span><span class="hatch"></span><span class="label" data-text="Done">Done</span><span class="chev" aria-hidden="true"></span></span>
+        </button>
       </div>
     </div>
   </div>
@@ -2055,6 +2286,9 @@
   // main Update button installs on a test build (see renderUpdateState). Null otherwise.
   let newerTestBuild = null
 
+  // True while the Nexus row is showing the key box for a signed-in account (Change key).
+  let nexusChangingKey = false
+
   // True while the main Update button's applyUpdate runs, so its steps go on the wire. Settings'
   // own installs report through the same channel and stay in Settings.
   let updateRunning = false
@@ -2145,7 +2379,7 @@
     const toolBtn = $('openTailscaleInvite')
     if (toolBtn) {
       toolBtn.disabled = !verified
-      toolBtn.textContent = verified ? 'Open invite' : 'Members only'
+      setHudButton(toolBtn, verified ? 'Open invite' : 'Members only')
       toolBtn.title = verified ? '' : 'Sign in and join the Night City Online Discord first.'
     }
   }
@@ -3079,6 +3313,20 @@
 
   // --- settings modal --------------------------------------------------------
 
+  // A bracket button for rows the script builds (the test-build list): the same layers as the
+  // ones in the page, so it reads, moves and glitches the same. Text goes in with setHudButton.
+  const SB_LAYERS = '<span class="fill"></span><span class="scan"></span>' +
+    '<span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span>' +
+    '<span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label"></span>'
+  function makeSettingsButton (text, { danger = false, square = false } = {}) {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'sb sb-bracket glitches' + (danger ? ' danger' : '') + (square ? ' sb-square' : '')
+    btn.innerHTML = SB_LAYERS
+    setHudButton(btn, text)
+    return btn
+  }
+
   function setSettingsStatus (msg, kind) {
     const el = $('settingsStatus')
     el.textContent = msg || ''
@@ -3110,7 +3358,7 @@
     if (!box || !btn) return
 
     btn.disabled = true
-    btn.textContent = 'Checking...'
+    setHudButton(btn, 'Checking...', 'checking')
 
     try {
       const result = await window.launcher.checkup()
@@ -3129,7 +3377,7 @@
       box.innerHTML = check(false, 'The checkup itself failed - try again.')
     } finally {
       btn.disabled = false
-      btn.textContent = 'Run checkup'
+      setHudButton(btn, 'Run checkup')
     }
   }
 
@@ -3156,7 +3404,7 @@
 
     // Install is only meaningful when it is not already there; Reinstall covers the
     // rest. Showing both as equally available invites people to pick the wrong one.
-    $('installAll').textContent = paths.modDir ? 'Reinstall all' : 'Install'
+    setHudButton($('installAll'), paths.modDir ? 'Reinstall all' : 'Install')
 
 
     // The dev section rides on the same answer that decides the server controls, so a
@@ -3169,7 +3417,7 @@
     // a key in the next screenshot.
     $('devKeyValue').style.display = 'none'
     $('devKeyValue').textContent = ''
-    $('revealDevKey').textContent = 'Reveal'
+    setHudButton($('revealDevKey'), 'Reveal')
     $('revealDevKey').disabled = false
 
     if (debug && debug.admin) {
@@ -3185,13 +3433,13 @@
     const button = $('revealDevKey')
 
     button.disabled = true
-    button.textContent = 'Fetching...'
+    setHudButton(button, 'Fetching...', 'checking')
 
     const result = await window.launcher.devKey()
 
     if (!result.ok) {
       button.disabled = false
-      button.textContent = 'Reveal'
+      setHudButton(button, 'Reveal')
       setSettingsStatus(result.error, 'bad')
       return
     }
@@ -3207,7 +3455,7 @@
       `Auth:  Authorization: Bearer <key>`
 
     box.style.display = 'block'
-    button.textContent = 'Copy'
+    setHudButton(button, 'Copy')
     button.disabled = false
 
     button.onclick = async () => {
@@ -3227,13 +3475,13 @@
     const btn = $('runConnTest')
 
     btn.disabled = true
-    btn.textContent = 'Testing...'
+    setHudButton(btn, 'Testing...', 'checking')
     box.innerHTML = ''
 
     const result = await window.launcher.connectivityTest()
 
     btn.disabled = false
-    btn.textContent = 'Run test'
+    setHudButton(btn, 'Run test')
     if (!result.ok) { setSettingsStatus('The test itself failed - try again.', 'error'); return }
 
     box.innerHTML = result.steps.map(s => check(s.ok, `${s.name} - ${s.detail}`)).join('')
@@ -3349,14 +3597,10 @@
         'padding:10px 12px;border-left:2px solid var(--line,#2a1418);font-family:inherit;' +
         'font-size:12.5px;line-height:1.5;opacity:.85'
 
-      const twisty = document.createElement('button')
-      twisty.className = 'action ghost'
-      // Centred by the box, not by the glyph's own metrics: the collapsed and expanded
-      // characters are different shapes with different bearings, so padding plus
-      // line-height put them in two different places. A fixed square that centres its
-      // content lands both identically.
-      twisty.style.cssText = 'flex:none;display:flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;line-height:1'
-      twisty.textContent = release.notes ? '›' : ' '
+      // A fixed square that centres its glyph, so the collapsed and expanded characters -
+      // different shapes with different bearings - land in the same place.
+      const twisty = makeSettingsButton(release.notes ? '›' : '\u00a0', { square: true })
+      twisty.setAttribute('aria-label', 'What is this build for?')
       twisty.disabled = !release.notes
       twisty.setAttribute('aria-expanded', 'false')
       if (release.notes) twisty.title = 'What is this build for?'
@@ -3364,7 +3608,8 @@
       twisty.addEventListener('click', () => {
         const open = body.hidden
         body.hidden = !open
-        twisty.textContent = open ? '⌄' : '›'
+        setHudButton(twisty, open ? '⌄' : '›')
+        twisty.setAttribute('aria-label', open ? 'Hide the notes' : 'What is this build for?')
         twisty.setAttribute('aria-expanded', String(open))
       })
 
@@ -3383,9 +3628,7 @@
 
       // The installed build's button becomes Uninstall - testing builds one at a time
       // means getting OUT of one cleanly matters as much as getting in.
-      const button = document.createElement('button')
-      button.className = release.active ? 'action stop' : 'action ghost'
-      button.textContent = release.active ? 'Uninstall' : 'Install'
+      const button = makeSettingsButton(release.active ? 'Uninstall' : 'Install', { danger: release.active })
       // Installable means "has something install can use" - a payload OR a bare DLL.
       //
       // This asked for a DLL specifically, from when a test build was one. Install prefers
@@ -3402,11 +3645,11 @@
         button.disabled = true
 
         if (release.active) {
-          button.textContent = 'Removing...'
+          setHudButton(button, 'Removing...', 'checking')
           const restored = await window.launcher.prereleaseRestore()
           if (!restored.ok) {
             button.disabled = false
-            button.textContent = 'Uninstall'
+            setHudButton(button, 'Uninstall')
             setSettingsStatus(restored.error, 'bad')
             return
           }
@@ -3415,13 +3658,13 @@
           return
         }
 
-        button.textContent = 'Installing...'
+        setHudButton(button, 'Installing...', 'checking')
         setSettingsStatus(`Downloading ${release.tag}...`)
 
         const installed = await window.launcher.prereleaseInstall(release.tag)
         if (!installed.ok) {
           button.disabled = false
-          button.textContent = 'Install'
+          setHudButton(button, 'Install')
           setSettingsStatus(installed.error, 'bad')
           return
         }
@@ -3441,9 +3684,8 @@
 
       // The body is capped at 4000 characters in main, so the full page stays one click
       // away. Passes the TAG, not a URL - links:open is an allow-list and this respects it.
-      const more = document.createElement('button')
-      more.className = 'action ghost'
-      more.textContent = 'Open the full notes on GitHub'
+      const more = makeSettingsButton('Full notes')
+      more.title = 'Open the full notes on GitHub'
       more.style.cssText = 'margin:0 0 10px 22px'
       more.hidden = true
       more.addEventListener('click', () => window.launcher.prereleaseOpenNotes(release.tag))
@@ -3467,7 +3709,15 @@
     refreshPrereleases()
   })
 
+  // Settings is a dialog: while it is open nothing behind it can be reached, by Tab or by a
+  // screen reader, and closing it hands focus back to the gear. Tab past Done used to land
+  // on JACK IN behind the window, where Enter launched the game with Settings still open.
+  function settingsBehind () {
+    return [...document.body.children].filter((el) => el !== $('settingsModal') && el.tagName !== 'SCRIPT')
+  }
+
   function openSettings () {
+    settingsBehind().forEach((el) => { el.inert = true })
     $('settingsModal').style.display = 'flex'
     selectSettingsTab(currentSettingsTab)
     setSettingsStatus('')
@@ -3477,10 +3727,15 @@
     // open. Showing defaults over somebody's saved binding would look like the launcher
     // had forgotten it.
     loadVoicePrefs()
+
+    const tab = document.querySelector('#settingsTabs .active')
+    if (tab) tab.focus()
   }
 
   function closeSettings () {
     $('settingsModal').style.display = 'none'
+    settingsBehind().forEach((el) => { el.inert = false })
+    $('openSettings').focus()
 
     // Never leave the microphone open behind a closed dialog. Windows shows a recording
     // indicator, and a launcher that appears to be listening after you have walked away
@@ -3541,13 +3796,20 @@
   // lights and pressing it looks like it does nothing at all - zeldfep, 2026-09-09, on the
   // Tools tab: "this on tools has a 4 that leads to nothing". The rail was advertising a
   // position the pane could not physically reach.
+  // Where a section starts inside the scrolling body. A heading is measured on its bay: it is
+  // the bay's label tab, pinned inside it, so its own offsetTop is always 0.
+  function railTop (body, sec) {
+    const el = sec.classList.contains('rail-group') ? (sec.closest('.grp') || sec) : sec
+    return el.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop
+  }
+
   function railCurrent (body, sections) {
     if (sections.length === 0) return 0
     if (body.scrollTop + body.clientHeight >= body.scrollHeight - 4) return sections.length - 1
 
     let current = 0
     for (let i = 0; i < sections.length; i++) {
-      if (sections[i].offsetTop <= body.scrollTop + 12) current = i
+      if (railTop(body, sections[i]) <= body.scrollTop + 12) current = i
     }
     return current
   }
@@ -3629,7 +3891,7 @@
         mark.dataset.index = String(i)
         mark.textContent = railPad(i + 1)
         const name = sec.classList.contains('rail-group') ? sec : sec.querySelector('.tool-name')
-        const label = name ? name.textContent.trim() : 'Section ' + (i + 1)
+        const label = sec.dataset.name || (name ? name.textContent.trim() : 'Section ' + (i + 1))
         // The number is the visible label, so the section name has to arrive some other
         // way - title for the mouse, aria-label for a screen reader.
         mark.title = label
@@ -3669,7 +3931,7 @@
     const { sections } = railSections()
     if (!body || sections.length === 0) return
     const i = Math.max(0, Math.min(sections.length - 1, index))
-    body.scrollTo({ top: i === 0 ? 0 : sections[i].offsetTop - 8, behavior: 'smooth' })
+    body.scrollTo({ top: i === 0 ? 0 : railTop(body, sections[i]) - 8, behavior: 'smooth' })
   }
 
   function railStep (dir) {
@@ -3697,11 +3959,24 @@
     if (e.key === 'Escape' && $('settingsModal').style.display !== 'none') closeSettings()
   })
 
+  // Tab and Shift+Tab wrap inside the window instead of leaving it.
+  $('settingsModal').addEventListener('keydown', (e) => {
+    if (e.key !== 'Tab') return
+    const stops = [...$('settingsModal').querySelectorAll('button, input, select, summary')]
+      .filter((el) => !el.disabled && el.getClientRects().length)
+    if (!stops.length) return
+    const first = stops[0]
+    const last = stops[stops.length - 1]
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+  })
+
   async function refreshNexus () {
     const status = await window.launcher.nexusStatus()
-    $('nexusState').textContent = status.signedIn
-      ? '✓ Signed in as ' + (status.name || 'Nexus user')
-      : 'Not signed in'
+    const signedIn = Boolean(status.signedIn)
+    if (!signedIn) nexusChangingKey = false
+    $('nexusState').textContent = signedIn ? 'Signed in · ' + (status.name || 'Nexus user') : 'Not signed in'
+    renderNexusRow(signedIn)
 
     // The header says the same thing, because that is where people look.
     //
@@ -3710,6 +3985,21 @@
     // so "Install does nothing" was the first anyone heard of it.
     renderNexusHeader(status)
   }
+
+  // Signed in, the row says who you are and offers Change key. The steps and the key box are
+  // for signing in, so they show only when signed out, or while the key is being changed.
+  function renderNexusRow (signedIn) {
+    $('nexusSigned').hidden = !signedIn
+    $('nexusChangeKey').hidden = !signedIn
+    $('nexusKeyEntry').hidden = signedIn && !nexusChangingKey
+    setHudButton($('nexusChangeKey'), nexusChangingKey ? 'Cancel' : 'Change key')
+  }
+
+  $('nexusChangeKey').addEventListener('click', () => {
+    nexusChangingKey = !nexusChangingKey
+    renderNexusRow(true)
+    if (nexusChangingKey) $('nexusKey').focus()
+  })
 
   // Shown next to the Discord account, in the same shape, because they are two halves of
   // one question: who are you here, and who are you on Nexus.
@@ -3850,7 +4140,7 @@
   async function scanVoiceDevices () {
     const btn = $('voiceScan')
     btn.disabled = true
-    btn.textContent = 'Searching...'
+    setHudButton(btn, 'Searching...', 'checking')
 
     try {
       // Permission FIRST. enumerateDevices returns entries either way, but the labels are
@@ -3892,7 +4182,7 @@
       $('voiceHint').textContent = 'Could not read the audio devices: ' + err.message
     } finally {
       btn.disabled = false
-      btn.textContent = 'Find devices'
+      setHudButton(btn, 'Find devices')
     }
   }
 
@@ -3915,11 +4205,11 @@
 
     const key = saved.pushToTalkKey || 'IK_Y'
     $('voiceBindKey').dataset.key = key
-    $('voiceBindKey').textContent = prettyKey(key)
+    setHudButton($('voiceBindKey'), prettyKey(key))
 
     const rangeKey = saved.cycleRangeKey || 'IK_F12'
     $('voiceBindRangeKey').dataset.key = rangeKey
-    $('voiceBindRangeKey').textContent = prettyKey(rangeKey)
+    setHudButton($('voiceBindRangeKey'), prettyKey(rangeKey))
 
     $('voiceMode').value = saved.mode || 'ptt'
 
@@ -4033,7 +4323,7 @@
 
       micTest = { stream, ctx, frame: 0 }
       $('voiceMeterRow').style.display = ''
-      btn.textContent = 'Stop'
+      setHudButton(btn, 'Stop')
       btn.classList.add('listening')
 
       tick()
@@ -4061,7 +4351,7 @@
     micTest = null
 
     $('voiceMeterRow').style.display = 'none'
-    $('voiceTest').textContent = 'Test'
+    setHudButton($('voiceTest'), 'Test')
     $('voiceTest').classList.remove('listening')
   }
 
@@ -4157,8 +4447,8 @@
 
     const btn = $(buttonId)
     const other = $(buttonId === 'voiceBindKey' ? 'voiceBindRangeKey' : 'voiceBindKey')
-    const previous = btn.textContent
-    btn.textContent = 'Press a key...'
+    const previous = btn.querySelector('.label').textContent
+    setHudButton(btn, 'Press a key...')
     btn.classList.add('listening')
 
     const finish = async (gameKey) => {
@@ -4168,7 +4458,7 @@
       btn.classList.remove('listening')
 
       if (!gameKey) {
-        btn.textContent = previous
+        setHudButton(btn, previous)
         return
       }
 
@@ -4176,7 +4466,7 @@
       // likely to be pressed together, and one key doing both means every range change
       // also puts you on air.
       if (other.dataset.key === gameKey) {
-        btn.textContent = previous
+        setHudButton(btn, previous)
         setSettingsStatus(prettyKey(gameKey) + ' is already your other voice key - '
           + 'talking and changing range need different keys.', 'error')
         return
@@ -4185,7 +4475,7 @@
       // The game's id is what gets saved and passed at launch; the button only ever shows
       // the readable form, so both have to be carried.
       btn.dataset.key = gameKey
-      btn.textContent = prettyKey(gameKey)
+      setHudButton(btn, prettyKey(gameKey))
 
       await saveVoicePrefs()
 
@@ -4300,7 +4590,7 @@
       $('voiceStatus').textContent = looksLikeLoopback(chosen)
         ? 'That device carries your computer\'s own audio. Other players would hear your game, '
           + 'music and Discord instead of you. Pick a microphone unless you know you want this.'
-        : 'Saved. Voice capture is not built yet - this only chooses the devices it will use.'
+        : 'Saved. Applies next time you launch.'
     })
   }
 
@@ -4312,12 +4602,13 @@
   $('nexusLogin').addEventListener('click', async () => {
     const btn = $('nexusLogin')
     btn.disabled = true
-    btn.textContent = 'Waiting for Nexus...'
+    setHudButton(btn, 'Waiting...', 'checking')
     setSettingsStatus('Nexus opened in your browser - press Authorise there.')
 
     const result = await window.launcher.nexusSsoLogin()
 
     btn.disabled = false
+    setHudButton(btn, 'Try it anyway')
 
     if (result.ok) {
       setSettingsStatus(
@@ -4338,6 +4629,7 @@
       // Cleared immediately. There is no reason for a live credential to sit in a
       // text box for the rest of the session.
       $('nexusKey').value = ''
+      nexusChangingKey = false
       setSettingsStatus(
         'Signed in as ' + result.name + (result.premium ? ' (Premium)' : ' (free account - installs open Nexus)'),
         'ok')
@@ -4365,8 +4657,8 @@
       return
     }
 
-    $('debugTool').style.display = 'flex'
-    $('toggleDebug').textContent = state.enabled ? 'On' : 'Off'
+    $('debugTool').style.display = ''
+    setHudButton($('toggleDebug'), state.enabled ? 'On' : 'Off')
     $('debugDesc').textContent = state.enabled
       ? 'The in-game debug menu bar will be shown next time you launch.'
       : 'Shows the in-game debug menu bar. Devs and admins only.'

@@ -115,7 +115,7 @@ this when something needs to read as a HUD element rather than a web control.
 
 | Pattern | Where | Says |
 |---|---|---|
-| `120deg`, fine, 2px/6px | `.play::before` | this is the primary control |
+| `120deg`, fine, 2px/6px | `.plate .hatch` (JACK IN, Done) | this is the primary control |
 | `-45deg`, 14px, animated | a working `.hud` button | working, do not press again |
 | `45deg`, 3px/7px, hazard | rail caps | end of travel |
 | `45deg`, 5px/10px, hazard | rail active plate | you are here |
@@ -163,7 +163,22 @@ It is the plate in `--update` orange with `#140406` text; white on that orange i
 - **A newer test build blocks nothing**, so the same button sits in the row beside Verify as a steel
   plate with orange dots. `placeUpdate` is the only thing that shows, hides or moves it.
 
-`.play` is still in use: the settings modal's Done button is an `.action.play`.
+**Settings has its own small button, the bracket** (zeldfep, 2026-11-08, from two test pages:
+*"S2 and C's bays full"*). Settings is a dense list of rows, so its actions are small and quiet.
+
+- **One size: 8rem by 26px**, on the label step. No plate: the label sits inside four registration
+  corners. Hover or Tab closes the corners in, turns them red and fills the dots under the label;
+  a press flashes a steel fill; the click glitch fires once. Anything that deletes has a red label
+  in red corners. Nothing on it is clipped, so its focus ring always shows.
+- **Write its text with `setHudButton`**, like the kit. `launcher_buttons_test.mjs` fails a direct
+  `textContent` write on any of them.
+- **Each group is a module bay**: a notched frame on a hairline, a lit label tab with the group's
+  number, a hatch block on the step, a spec line in machine-label text (`3 TOOLS · NETWORK`) and a
+  four-dot greeble. The pane draws no frame of its own, so frames are never nested.
+- **The tabs are plates**: steel, with the open one lit red.
+- **Done stays the kit's red plate.** It closes the window, so it stays the loud one.
+- **The window keeps one height**, so the tab bar never moves, and it is a real dialog: focus moves
+  in, Tab stays inside, and the launcher behind it is inert until it closes.
 
 See any state of the real page in a browser with `node tools/tests/launcher-stage.mjs`.
 

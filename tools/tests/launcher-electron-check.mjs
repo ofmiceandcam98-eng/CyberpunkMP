@@ -162,7 +162,6 @@ async function run () {
       faceClip: getComputedStyle(play.querySelector('.face')).clipPath.slice(0, 7),
       reduced: matchMedia('(prefers-reduced-motion: reduce)').matches,
       version: document.getElementById('footerVersion').textContent,
-      doneBackground: getComputedStyle(document.getElementById('closeSettingsDone')).backgroundColor,
       chrome: navigator.userAgent.match(/Chrome\\/(\\d+)/)?.[1],
       width: innerWidth,
       height: innerHeight
@@ -173,7 +172,6 @@ async function run () {
   check(facts.playLayers && facts.playLabel === 'JACK IN', 'JACK IN has its layers and its label', 'something wrote textContent on it; use setHudButton')
   check(facts.fontLoaded && facts.playFont.includes('NCO Display'), 'the display font loads in the packaged app', 'fonts/ is missing from the package or the CSP blocks it')
   check(facts.clipOnButton === 'none' && facts.faceClip === 'polygon', 'the clip-path is on the inner layer, not the button', 'the focus ring would be cut off')
-  check(facts.doneBackground === 'rgb(255, 42, 50)', "the settings modal's Done button kept its red", 'the .play rules were removed')
   await shot('electron-rest')
 
   // A real pointer sends a stream of moves. Chromium can drop a single synthetic one before the
@@ -244,6 +242,78 @@ async function run () {
   })()`)
   check(focus.id === 'verifyAllMods' && focus.visible && focus.outline === 'solid' && focus.dots.every((d) => d === '1'), 'keyboard focus shows the ring and fills the load bar', JSON.stringify(focus))
   await shot('electron-focus')
+
+  // Settings, opened the way a player opens it: a real click on the gear.
+  const key = async (k, code, vk) => {
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk })
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code, windowsVirtualKeyCode: vk })
+  }
+  const gear = await centre('openSettings')
+  await mouse('mouseMoved', gear)
+  await sleep(80)
+  await mouse('mousePressed', gear, { button: 'left', buttons: 1, clickCount: 1 })
+  await mouse('mouseReleased', gear, { button: 'left', buttons: 0, clickCount: 1 })
+  await sleep(600)
+  const settings = await read(`(async () => {
+    const modal = document.getElementById('settingsModal')
+    const open = getComputedStyle(modal).display !== 'none'
+    const focusInside = modal.contains(document.activeElement)
+    const behindInert = [...document.body.children].filter((el) => el !== modal && el.tagName !== 'SCRIPT').every((el) => el.inert)
+    const tops = []
+    for (const t of document.querySelectorAll('#settingsTabs [data-tab]')) {
+      if (t.style.display === 'none') continue
+      t.click()
+      await new Promise((r) => setTimeout(r, 80))
+      tops.push(Math.round(document.getElementById('settingsTabs').getBoundingClientRect().top))
+    }
+    document.querySelector('#settingsTabs [data-tab="tools"]').click()
+    const brackets = [...modal.querySelectorAll('.sb')]
+    return {
+      open, focusInside, behindInert, tops: [...new Set(tops)],
+      brackets: brackets.length,
+      layered: brackets.every((b) => b.querySelector('.label') && b.querySelectorAll('.c i').length === 4),
+      bays: modal.querySelectorAll('.grp').length,
+      doneFace: getComputedStyle(document.querySelector('#closeSettingsDone .face')).backgroundColor
+    }
+  })()`)
+  check(settings.open && settings.focusInside && settings.behindInert, 'Settings opens as a dialog: focus inside, the launcher behind it inert', JSON.stringify({ open: settings.open, focusInside: settings.focusInside, behindInert: settings.behindInert }))
+  check(settings.tops.length === 1, 'the tab bar stays put on every tab', `tab bar tops: ${settings.tops.join(', ')}`)
+  check(settings.bays >= 10 && settings.brackets >= 30 && settings.layered, `Settings has its bays and bracket buttons (${settings.bays} bays, ${settings.brackets} buttons)`, 'this exe was not built from the settings commit, or something wrote textContent on a bracket button')
+  check(settings.doneFace === 'rgb(255, 42, 50)', "Done is the kit's red plate", `its face reads ${settings.doneFace}`)
+  await sleep(300)
+  await shot('electron-settings')
+
+  const checkup = await centre('runCheckup')
+  for (let tries = 0; tries < 8; tries++) {
+    for (const step of [40, 20, 10, 0]) {
+      await mouse('mouseMoved', { x: checkup.x - step, y: checkup.y })
+      await sleep(60)
+    }
+    if (await read(`document.getElementById('runCheckup').matches(':hover')`)) break
+    await sleep(250)
+  }
+  await sleep(500)
+  const bracket = await read(`(() => {
+    const b = document.getElementById('runCheckup')
+    return { dots: [...b.querySelectorAll('.pips i')].map((i) => getComputedStyle(i).opacity), corner: getComputedStyle(b.querySelector('.c i')).transform, colour: getComputedStyle(b.querySelector('.c i')).borderTopColor }
+  })()`)
+  check(bracket.dots.every((d) => d === '1') && bracket.colour === 'rgb(255, 42, 50)', 'hover on a bracket button turns its corners red and fills its dots', `${JSON.stringify(bracket)}; ${await under(checkup, 'runCheckup')}`)
+  if (!facts.reduced) check(bracket.corner.includes('2, 2'), 'hover closes the corners in', `the first corner reads ${bracket.corner}`)
+
+  await read(`document.getElementById('closeSettingsDone').focus()`)
+  await key('Tab', 'Tab', 9)
+  await sleep(150)
+  const wrapped = await read(`(() => ({ inside: document.getElementById('settingsModal').contains(document.activeElement), on: document.activeElement.id || document.activeElement.className }))()`)
+  check(wrapped.inside, 'Tab past Done stays inside Settings', `focus went to ${wrapped.on}`)
+
+  await key('Escape', 'Escape', 27)
+  await sleep(300)
+  const closed = await read(`(() => ({
+    hidden: getComputedStyle(document.getElementById('settingsModal')).display === 'none',
+    onGear: document.activeElement === document.getElementById('openSettings'),
+    released: [...document.body.children].every((el) => !el.inert)
+  }))()`)
+  check(closed.hidden && closed.onGear && closed.released, 'Escape closes Settings, hands focus back to the gear and frees the launcher', JSON.stringify(closed))
 
   check(pageErrors.length === 0, 'no page errors or CSP blocks', pageErrors.slice(0, 3).join(' | '))
   socket.close()
