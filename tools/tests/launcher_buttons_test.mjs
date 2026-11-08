@@ -81,6 +81,29 @@ for (const rule of markup.matchAll(/^\s*\.sb(\.[\w-]+)*\s*\{[^}]*clip-path/gm)) 
   fail(`a clip-path sits on the bracket button: ${rule[0].trim().slice(0, 60)}`, 'THE BRACKET BUTTON', 'the bracket button has no clip; keep it that way so the focus ring shows')
 }
 
+// The gear (G1) is a drawn cog in a clipped hexagon. Its name is all a screen reader gets, a clip on
+// the button itself hides its focus ring, and a text write wipes the cog and the hexagon.
+const gear = markup.match(/<button class="gear[^"]*"[^>]*\sid="openSettings"[^>]*>/)
+if (!gear) {
+  fail('the Settings gear is missing', 'the header markup in index.html', 'keep <button class="gear glitches" id="openSettings"> with its hexagon, cog and ticks')
+} else if (!/aria-label="[^"]+"/.test(gear[0])) {
+  fail('the Settings gear has no aria-label', 'the header markup in index.html', 'it is an icon; give it aria-label="Settings"')
+}
+for (const rule of markup.matchAll(/^\s*\.gear\s*\{[^}]*clip-path/gm)) {
+  fail(`a clip-path sits on the gear button: ${rule[0].trim().slice(0, 60)}`, 'THE GEAR', 'clip the .hx layers, so the focus ring still shows')
+}
+if (/\$\('openSettings'\)\.(textContent|innerText|innerHTML)\s*=/.test(script)) {
+  fail('the script writes text into the Settings gear', 'the launcher script', 'the gear holds an SVG cog and its hexagon; leave its contents alone')
+}
+
+// The ladder's rungs are 1px lines placed on whole pixels. A transform on the rail can leave it on
+// half a pixel, which smears every rung across two.
+for (const rule of markup.matchAll(/^\s*\.section-rail\s*\{[^}]*\}/gm)) {
+  if (/transform\s*:/.test(rule[0])) {
+    fail('the section rail is positioned with a transform', '.section-rail in index.html', 'centre it with top: 0; bottom: 0; margin: auto 0, so the ladder stays on whole pixels')
+  }
+}
+
 // Update has two homes and placeUpdate moves it between them. Setting display on it anywhere else
 // shows it without its wire, or hides it and leaves the wire pointing at nothing.
 for (const line of script.split('\n')) {

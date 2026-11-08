@@ -51,7 +51,7 @@ the waiting queue row, the `/// WARNING ///` prefix, the busy spinner. It ALSO c
 section rail, by zeldfep's call on 2026-09-07. The two are kept apart **by form, not by hue**:
 
 - **Flat hazard = a warning.**
-- **Striped hazard = position.** The rail's active plate and its end caps are the only striped
+- **Striped hazard = position.** The rail's pointer and its end caps are the only striped
   hazard in the app.
 
 So a new warning state is flat. Always. A striped one now reads as "you are here", and the
@@ -108,7 +108,7 @@ Avatars are the only exception — they are pictures of people.
 clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px));
 ```
 
-Top-right and bottom-left notched. Used on the rail's arrows and its active plate. Reach for
+Top-right and bottom-left notched. Used on the rail's arrows. Reach for
 this when something needs to read as a HUD element rather than a web control.
 
 **Hatching and striping carry meaning, and each angle is spoken for:**
@@ -118,7 +118,7 @@ this when something needs to read as a HUD element rather than a web control.
 | `120deg`, fine, 2px/6px | `.plate .hatch` (JACK IN, Done) | this is the primary control |
 | `-45deg`, 14px, animated | a working `.hud` button | working, do not press again |
 | `45deg`, 3px/7px, hazard | rail caps | end of travel |
-| `45deg`, 5px/10px, hazard | rail active plate | you are here |
+| `45deg`, 3px/6px, hazard | the rail's pointer | you are here |
 
 The plate hatch starts a gap in from its corner, so it ends on whole strokes rather than a sliver
 in two corners; the phase is worked out for JACK IN's box and Done's, so a hatch that changes size
@@ -200,6 +200,19 @@ See any state of the real page in a browser with `node tools/tests/launcher-stag
 - **Navigate by section, not by row.** Panes carry `.rail-group` headings and the rail counts
   those. A pane with no headings falls back to counting `.tool` rows — that is a fallback, not
   a target. If a pane grows past about six rows, group it.
+- **The rail is a ladder** (R3, zeldfep, 2026-11-08: *"R3 and G1 but make sure we align the ladder
+  to the numbers"*). Each section is a numbered major tick at the point you scroll to to reach it,
+  and a striped pointer rides the ladder as you scroll. The rungs are built from the numbers: each
+  number is snapped onto the 7px rung grid, every y is a whole pixel, the digits are trimmed to
+  cap height so their middle is the tick, and the pointer is centred on that same line. The
+  pointer interpolates between the numbers' own scroll points, so it is on a number exactly when
+  you are at that section. A fixed pattern from the top, with numbers placed independently, is
+  how the first cut put 02 and 03 between rungs. Keep the rail off `transform`: half a pixel
+  smears every rung. `launcher_buttons_test.mjs` fails one.
+- **The gear is a hex bolt** (G1, the same pick): a hexagon plate, a red hairline over steel,
+  holding a drawn cog on `--fs-icon`, with three ticks under it as its load bar. Hover or Tab
+  lights the hairline, fills the ticks and turns the cog one tooth; a click drops the scan line.
+  The cog is an SVG because every font draws the gear glyph differently.
 - **Space with `gap`**, not per-element margins.
 - **No inline `style=` for anything the kit has a class for.** Six inputs each carrying their
   own inline styling is how three radii and an undeclared colour token got in.

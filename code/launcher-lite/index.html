@@ -453,8 +453,11 @@
   @media (prefers-reduced-motion: reduce) {
     .dot.busy:not(.on) { animation: none; }
     .modal, .modal-backdrop { animation: none; }
-    .rail-num, .section-rail button.rail-step,
+    .rail-num, .rail-pointer, .section-rail button.rail-step,
     .section-rail::before, .section-rail::after { transition: none; }
+    /* The gear still lights and fills its ticks; the cog does not turn and the scan does not drop. */
+    .gear .cog { transform: none !important; transition: none; }
+    .gear .scan { animation: none !important; }
   }
 
   button.action:disabled {
@@ -793,13 +796,40 @@
   }
 
   /* --- settings modal --- */
+  /* THE GEAR (G1, the hex bolt) - zeldfep, 2026-11-08, from the rail and gear test page. A
+     hexagon plate, a red hairline over steel, holding a drawn cog; three ticks under it are its
+     load bar. Hover or Tab lights the hairline, fills the ticks and turns the cog one tooth (45
+     degrees of eight teeth, so it lands looking the same); a click drops the kit's scan line
+     once. The cog is an SVG, not the ⚙ glyph every font draws differently, and it sits on the
+     type doc's step for the gear, --fs-icon. The hexagon is clipped on inner layers, so the
+     focus ring always shows. */
   .gear {
-    background: none; border: none; color: var(--ink-dim);
-    font-size: var(--fs-icon); cursor: pointer; padding: .2rem .4rem; line-height: 1;
-    margin-left: .75rem;
+    position: relative; display: inline-grid; place-items: center; flex: none;
+    width: 40px; height: 36px; margin-left: .75rem; padding: 0; border: 0; background: none;
+    color: var(--ink); cursor: pointer; --glitch-h: 36px;
   }
-  .gear:hover { color: var(--ink); }
-  .gear:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius); }
+  .gear .hx { position: absolute; inset: 0; clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); }
+  .gear .hx-line { background: var(--accent-2); transition: background-color 120ms ease; }
+  .gear .hx-fill { inset: 1px; background: var(--steel); overflow: hidden; }
+  .gear .scan { z-index: 3; }
+  .gear .cog {
+    position: relative; z-index: 2; width: var(--fs-icon); height: var(--fs-icon); fill: currentColor;
+    transition: transform 220ms var(--ease-out);
+  }
+  .gear .bolt-ticks { position: absolute; z-index: 2; bottom: -6px; left: 50%; transform: translateX(-50%); display: flex; gap: 2px; }
+  .gear .bolt-ticks i { width: 3px; height: 2px; background: var(--ink-dim); opacity: .4; transition: opacity 120ms ease; }
+  .gear:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .gear:focus-visible .hx-line { background: var(--accent); }
+  .gear:focus-visible .bolt-ticks i { opacity: 1; }
+  .gear:focus-visible .cog { transform: rotate(45deg); }
+  @media (hover: hover) and (pointer: fine) {
+    .gear:hover .hx-line { background: var(--accent); }
+    .gear:hover .bolt-ticks i { opacity: 1; }
+    .gear:hover .bolt-ticks i:nth-child(2) { transition-delay: 50ms; }
+    .gear:hover .bolt-ticks i:nth-child(3) { transition-delay: 100ms; }
+    .gear:hover .cog { transform: rotate(45deg); }
+  }
+  .gear:active .cog { transform: rotate(45deg) scale(.9); transition-duration: 70ms; }
 
   .modal-backdrop {
     position: fixed; inset: 0; z-index: 50;
@@ -916,10 +946,12 @@
      apart BY FORM rather than by hue: warnings are flat hazard, and the rail's active
      marker is the only STRIPED hazard plate in the app. If you add a new warning state,
      keep it flat - striping now reads as "you are here", not "something is wrong". */
+  /* Centred by auto margins, not translateY(-50%): a transform can leave the rail on half a
+     pixel, and every rung on the ladder is a 1px line that then smears across two. */
   .section-rail {
-    position: absolute; right: .5rem; top: 50%; transform: translateY(-50%);
-    display: flex; flex-direction: column; align-items: center; gap: .3rem;
-    width: 2.4rem; z-index: 3; user-select: none;
+    position: absolute; right: .35rem; top: 0; bottom: 0; height: fit-content; margin: auto 0;
+    display: flex; flex-direction: column; align-items: center; gap: .4rem;
+    width: 2.6rem; z-index: 3; user-select: none;
   }
   /* Caution caps. Dim while there is room to move, solid the instant you hit an end -
      which is the one thing a numeric readout cannot tell you without being read. */
@@ -945,28 +977,46 @@
   .section-rail button.rail-step:disabled { color: var(--ink-dim); opacity: .45; cursor: default; }
   .section-rail button.rail-step:focus-visible { outline: 2px solid var(--hazard); outline-offset: -2px; }
 
-  /* Every section is a numbered readout - the dense mono index the HUD this launcher is
-     dressed as actually uses. Each one is a destination, so the arrows are a convenience
-     rather than the only way through. */
-  .rail-track {
-    display: flex; flex-direction: column; align-items: stretch; gap: 1px;
-    padding: .25rem 0; width: 100%;
+  /* THE LADDER (R3) - zeldfep, 2026-11-08, from the rail and gear test page: "R3 and G1 but
+     make sure we align the ladder to the numbers". A HUD tick gauge: each section is a numbered
+     major tick at the point you scroll to to reach it, and a striped pointer rides the ladder as
+     you scroll. Each number is a destination, so the arrows are a convenience rather than the
+     only way through.
+
+     The ladder is built FROM the numbers. The test page drew a fixed 7px pattern from the top
+     and put each number at its exact share of the scroll, so 02 and 03 fell between rungs and
+     the pattern stopped short of 04. Now every number is snapped onto the 7px rung grid (at
+     most 3.5px from its exact share), every y is a whole pixel, the label's digits are trimmed
+     to their cap height so their middle is the tick, and the pointer is centred on the same
+     line. The pointer interpolates between the numbers' own scroll points, so it lands on a
+     number exactly when you are at that section, snapped or not. railLadder does the sums. */
+  /* The pointer lives INSIDE the rail, left of the spine: hung outside it, as on the test page,
+     it overlapped the bays' right edge by 5.6px. */
+  .rail-track { position: relative; width: 100%; height: 230px; flex: none; }
+  .rail-track::before { content: ""; position: absolute; left: 9px; top: 0; bottom: 0; width: 1px; background: var(--accent-2); }
+  .rail-ladder {
+    position: absolute; left: 10px; width: 4px; pointer-events: none;
+    background: repeating-linear-gradient(180deg, var(--ink-dim) 0 1px, transparent 1px var(--rung, 7px));
   }
+  /* 13px tall with its top 6px above the tick, so the tick is a whole pixel and the label's
+     middle is the middle of that pixel. */
   .rail-num {
-    font-family: var(--mono); font-size: var(--fs-micro); font-weight: 500; letter-spacing: .04em;
-    font-variant-numeric: tabular-nums; text-align: center;
-    padding: 2px 0; border: 0; background: transparent; color: var(--ink-dim);
-    cursor: pointer; opacity: .5;
-    transition: opacity .14s ease, color .14s ease;
+    position: absolute; left: 0; right: 0; height: 13px; margin-top: -6px; padding: 0 0 0 23px;
+    display: flex; align-items: center; border: 0; background: none; cursor: pointer;
+    font-family: var(--mono); font-size: var(--fs-micro); font-weight: 700; letter-spacing: .04em;
+    font-variant-numeric: tabular-nums; color: var(--ink-dim);
+    transition: color .14s ease;
   }
-  .rail-num:hover { opacity: 1; color: var(--hazard); }
-  /* A skipped run. Not a control: no pointer, no hover, hidden from a screen reader. */
-  .rail-gap { opacity: .3; cursor: default; pointer-events: none; }
+  .rail-num span { line-height: 1; text-box: trim-both cap alphabetic; }
+  .rail-num::before { content: ""; position: absolute; left: 9px; top: 6px; width: 11px; height: 1px; background: var(--ink); }
+  .rail-num:hover, .rail-num.on { color: var(--ink); }
   .rail-num:focus-visible { outline: 1px solid var(--hazard); outline-offset: 1px; }
-  .rail-num.on {
-    opacity: 1; color: #140406; font-weight: 700;
-    background: repeating-linear-gradient(45deg, var(--hazard) 0 5px, #d8ae0b 5px 10px);
-    clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 5px, 100% 100%, 5px 100%, 0 calc(100% - 5px));
+  /* The ONE striped hazard plate on the rail - "you are here" (2026-09-07). Centred on the
+     middle of its tick's pixel: 9px tall, 4px above the line and 4px below it. */
+  .rail-pointer {
+    position: absolute; left: 0; width: 9px; height: 9px; margin-top: -4px; pointer-events: none;
+    background: repeating-linear-gradient(45deg, var(--hazard) 0 3px, #d8ae0b 3px 6px);
+    clip-path: polygon(0 0, 100% 50%, 0 100%); transition: top 120ms var(--ease-out);
   }
 
   /* Horizontal, tabular and zero-padded. The readout this replaced was set in
@@ -1308,7 +1358,7 @@
 
     </div>
 
-    <button class="gear" id="openSettings" title="Settings" aria-label="Settings">&#9881;</button>
+    <button class="gear glitches" id="openSettings" type="button" title="Settings" aria-label="Settings"><span class="hx hx-line"></span><span class="hx hx-fill"><span class="scan"></span></span><svg class="cog" viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M10.06 3.93L10.45 1.11L13.55 1.11L13.94 3.93L16.34 4.92L18.60 3.20L20.80 5.40L19.08 7.66L20.07 10.06L22.89 10.45L22.89 13.55L20.07 13.94L19.08 16.34L20.80 18.60L18.60 20.80L16.34 19.08L13.94 20.07L13.55 22.89L10.45 22.89L10.06 20.07L7.66 19.08L5.40 20.80L3.20 18.60L4.92 16.34L3.93 13.94L1.11 13.55L1.11 10.45L3.93 10.06L4.92 7.66L3.20 5.40L5.40 3.20L7.66 4.92ZM15.4 12A3.4 3.4 0 1 0 8.6 12A3.4 3.4 0 1 0 15.4 12Z"/></svg><span class="bolt-ticks" aria-hidden="true"><i></i><i></i><i></i></span></button>
   </header>
 
   <!-- Settings. Everything that is occasional, diagnostic or destructive lives in
@@ -3828,34 +3878,42 @@
 
   const railPad = (n) => String(n).padStart(2, '0')
 
-  // Which section numbers the rail can actually show, given its height.
+  // THE LADDER'S SUMS: where each section's number sits on the rail, in whole pixels.
   //
-  // Returns indices in order, with null wherever a run was skipped. Always keeps the first,
-  // the last and the current one, then widens outwards from current until it runs out of
-  // room - so the numbers nearest where you are stay visible, which is what makes it TRACK
-  // rather than merely fit.
-  function railPlan (count, current, track) {
-    const probe = track.querySelector('.rail-num')
-    const tickH = probe ? Math.max(12, probe.getBoundingClientRect().height + 1) : 18
-    const avail = track.clientHeight || (track.parentElement ? track.parentElement.clientHeight : 0)
-    const max = Math.max(3, Math.floor(avail / tickH))
-    if (count <= max) return Array.from({ length: count }, (_, i) => i)
+  // A section's reach is where railGo takes you for it - its top less 8px, clamped to how far
+  // the pane scrolls. Numbers are spread by reach from the top rung (01, reach 0) to the bottom
+  // rung (the last section, which is current from its reach to the end of the scroll), snapped
+  // to the rung grid, with two rungs between neighbours so labels never touch; a number pushed
+  // to make room keeps its order. The pitch is 7px unless that cannot give every number a rung
+  // of its own (dozens of sections - Tools had thirteen stops before its groups existed), and
+  // then it tightens rather than letting numbers pile up.
+  const RAIL_RUNG = 7
+  const RAIL_INSET = 6
+  function railLadder (body, sections, height) {
+    const n = sections.length
+    const max = Math.max(1, body.scrollHeight - body.clientHeight)
+    const span = Math.max(1, height - RAIL_INSET * 2)
+    const pitch = Math.max(2, Math.min(RAIL_RUNG, Math.floor(span / Math.max(1, n - 1))))
+    const rungs = Math.floor(span / pitch)
+    const gap = Math.max(1, Math.min(2, Math.floor(rungs / Math.max(1, n - 1))))
+    const reach = sections.map((sec, i) => (i === 0 ? 0 : Math.max(0, Math.min(railTop(body, sec) - 8, max))))
+    const last = Math.max(1, reach[n - 1])
+    const at = reach.map((r) => Math.round(r / last * rungs))
+    for (let i = 1; i < n; i++) at[i] = Math.max(at[i], at[i - 1] + gap)
+    at[n - 1] = Math.min(at[n - 1], rungs)
+    for (let i = n - 2; i >= 0; i--) at[i] = Math.min(at[i], at[i + 1] - gap)
+    return { reach, pitch, y: at.map((u) => RAIL_INSET + Math.max(0, u) * pitch) }
+  }
 
-    const keep = new Set([0, count - 1, current])
-    for (let radius = 1; keep.size + 2 < max; radius += 1) {
-      const before = keep.size
-      if (current - radius > 0) keep.add(current - radius)
-      if (current + radius < count - 1) keep.add(current + radius)
-      if (keep.size === before) break
-    }
-
-    const idx = [...keep].sort((a, b) => a - b)
-    const out = []
-    idx.forEach((v, i) => {
-      if (i > 0 && v !== idx[i - 1] + 1) out.push(null)
-      out.push(v)
-    })
-    return out
+  // The pointer: how far through the pane you are, drawn between the numbers' own reaches, so
+  // it is ON a number exactly when you are at that number's section, however far the number
+  // was snapped or pushed - and it rests on the last one from its reach to the end.
+  function railPointerY (scroll, reach, y) {
+    let i = 0
+    for (let k = 0; k < reach.length; k++) if (reach[k] <= scroll) i = k
+    if (i === reach.length - 1) return y[i]
+    const t = (scroll - reach[i]) / Math.max(1, reach[i + 1] - reach[i])
+    return Math.round(y[i] + t * (y[i + 1] - y[i]))
   }
 
   function updateRail () {
@@ -3870,38 +3928,31 @@
 
     const current = railCurrent(body, sections)
 
-    // The rail tracks however many sections exist, instead of assuming they all fit.
-    //
-    // One tick per section works while there are four; it silently overflows the rail once
-    // there are a dozen, and Tools had thirteen stops before the groups existed. So measure
-    // what fits and, when there are more, keep the ends, keep a window around where you are,
-    // and mark the gaps - the position readout underneath still names the true index, so
-    // nothing is lost by not drawing every number.
-    const plan = railPlan(sections.length, current, track)
+    const ladder = railLadder(body, sections, track.clientHeight || 230)
 
-    // Rebuild ONLY when the visible set actually changes. This runs on every scroll event;
-    // replacing the DOM under the pointer would kill :hover mid-aim and throw away focus if
-    // someone is tabbing through. The signature covers the window shifting, not just the
-    // count changing.
-    const sig = plan.join(',')
+    // Rebuild ONLY when the ladder actually changes - its positions depend on the content, not
+    // on the scroll. This runs on every scroll event; replacing the DOM under the pointer would
+    // kill :hover mid-aim and throw away focus if someone is tabbing through.
+    const sig = ladder.pitch + ':' + ladder.y.join(',')
     if (track.dataset.railSig !== sig) {
       track.dataset.railSig = sig
       track.textContent = ''
-      plan.forEach((i) => {
-        if (i === null) {
-          const gap = document.createElement('span')
-          gap.className = 'rail-num rail-gap'
-          gap.textContent = '·'
-          gap.setAttribute('aria-hidden', 'true')
-          track.appendChild(gap)
-          return
-        }
-        const sec = sections[i]
+      const rungs = document.createElement('span')
+      rungs.className = 'rail-ladder'
+      rungs.setAttribute('aria-hidden', 'true')
+      rungs.style.top = ladder.y[0] + 'px'
+      rungs.style.height = (ladder.y[ladder.y.length - 1] - ladder.y[0] + 1) + 'px'
+      rungs.style.setProperty('--rung', ladder.pitch + 'px')
+      track.appendChild(rungs)
+      sections.forEach((sec, i) => {
         const mark = document.createElement('button')
         mark.type = 'button'
         mark.className = 'rail-num'
         mark.dataset.index = String(i)
-        mark.textContent = railPad(i + 1)
+        mark.style.top = ladder.y[i] + 'px'
+        const digits = document.createElement('span')
+        digits.textContent = railPad(i + 1)
+        mark.appendChild(digits)
         const name = sec.classList.contains('rail-group') ? sec : sec.querySelector('.tool-name')
         const label = sec.dataset.name || (name ? name.textContent.trim() : 'Section ' + (i + 1))
         // The number is the visible label, so the section name has to arrive some other
@@ -3911,12 +3962,18 @@
         mark.addEventListener('click', () => railGo(i))
         track.appendChild(mark)
       })
+      const pointer = document.createElement('span')
+      pointer.className = 'rail-pointer'
+      pointer.setAttribute('aria-hidden', 'true')
+      track.appendChild(pointer)
     }
 
     for (const mark of track.children) {
       if (mark.dataset.index === undefined) continue
       mark.classList.toggle('on', Number(mark.dataset.index) === current)
     }
+    const pointer = track.querySelector('.rail-pointer')
+    if (pointer) pointer.style.top = railPointerY(body.scrollTop, ladder.reach, ladder.y) + 'px'
 
     // Only rewrite the readout when it actually changed - it is otherwise a DOM write on
     // every scroll frame for text that did not move.
@@ -3943,7 +4000,9 @@
     const { sections } = railSections()
     if (!body || sections.length === 0) return
     const i = Math.max(0, Math.min(sections.length - 1, index))
-    body.scrollTo({ top: i === 0 ? 0 : railTop(body, sections[i]) - 8, behavior: 'smooth' })
+    // With animations turned off the pane jumps, like everything else that would travel.
+    const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    body.scrollTo({ top: i === 0 ? 0 : railTop(body, sections[i]) - 8, behavior: calm ? 'auto' : 'smooth' })
   }
 
   function railStep (dir) {
@@ -3956,6 +4015,8 @@
   $('railUp').addEventListener('click', () => railStep(-1))
   $('railDown').addEventListener('click', () => railStep(1))
   document.querySelector('#settingsModal .modal-body').addEventListener('scroll', updateRail, { passive: true })
+  // The ladder's positions come from the layout, so a resize that reflows the pane moves them.
+  window.addEventListener('resize', updateRail)
   // Content inside the panes changes after async loads (the checkup, mod lists) - keep
   // the rail honest without wiring every producer: observe and debounce.
   {
