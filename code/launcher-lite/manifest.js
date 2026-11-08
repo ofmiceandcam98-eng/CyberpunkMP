@@ -885,6 +885,44 @@ export function dllLoadWarning ({ isSymlink, linkTarget } = {}) {
  * newest, or nothing installable is published - and then the button stays hidden, because a
  * lit Update that can only print a refusal is the bug this exists to fix.
  */
+/**
+ * Which log belongs to the session that just crashed.
+ *
+ * The newest file is not enough: a crash that kills the game before the mod's logger starts
+ * leaves nothing new, and the newest file is then a healthy old session wearing a fresh crash
+ * stamp - seven weeks old, once. So a log has to have been written since this launch. Empty
+ * files are never evidence. Without a launch time, the newest non-empty file is the best there
+ * is. Pure, so the selftest can hold it to that.
+ */
+export function sessionCrashLog (logs, launchedAtMs, slackMs = 10000) {
+  return (logs || [])
+    .filter((f) => f.size > 0 && (!launchedAtMs || f.time >= launchedAtMs - slackMs))
+    .sort((a, b) => b.time - a.time)[0] || null
+}
+
+/**
+ * What to tell somebody when a call to GitHub fails.
+ *
+ * Axios's own sentence, "Request failed with status code 503", reads as if the launcher or our
+ * server broke. On 2026-11-08 it was GitHub timing out for unauthenticated callers, which is
+ * every call this launcher makes.
+ */
+export function releaseChannelError (err) {
+  const status = err?.response?.status
+  const timedOut = err?.code === 'ECONNABORTED' || /timeout/i.test(err?.message || '')
+
+  if ((status >= 500 && status < 600) || timedOut) {
+    return 'GitHub is not answering right now, so the list could not be read. ' +
+      'Nothing is wrong with your install - try again in a minute.'
+  }
+
+  if (status === 403 || status === 429) {
+    return 'GitHub is limiting requests from this connection. Try again in a few minutes.'
+  }
+
+  return err?.message || 'Could not reach GitHub.'
+}
+
 export function newerTestBuild (prereleases, installedTag) {
   const newest = (prereleases || [])
     .filter((r) => r && r.installable && r.tag && r.publishedAt)

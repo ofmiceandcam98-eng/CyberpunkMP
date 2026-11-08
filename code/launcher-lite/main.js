@@ -2296,10 +2296,24 @@ async function shipClientLogs (reason) {
  * path is on the clipboard. Three ways to hand it over, because the person who just
  * crashed is annoyed and should not also be given a scavenger hunt.
  */
-function handleGameCrash (exitCode) {
+function handleGameCrash (exitCode, launchedAt) {
+  const modDir = findModDir()
+  const loaderLog = findLoaderLog(modDir, launchedAt)
+
+  // Into the trail BEFORE the shipment below, because the trail is what reaches the dev server
+  // whether or not the mod ever wrote a line. The end of this file is what names a startup crash.
+  if (loaderLog) {
+    try {
+      const tail = readFileSync(loaderLog.full, 'utf8').trim().split(/\r?\n/).slice(-12)
+      launcherLog(`loader log for this crash (${loaderLog.name}), last ${tail.length} line(s):`)
+      for (const line of tail) launcherLog(`  ${line}`)
+    } catch (err) {
+      launcherLog(`could not read the loader log ${loaderLog.name}: ${err.message}`)
+    }
+  }
+
   shipClientLogs('game crash')
 
-  const modDir = findModDir()
   const hex = '0x' + (exitCode >>> 0).toString(16).toUpperCase()
 
   // 0xC0000005 is an access violation - worth naming, because it is the signature of
@@ -2310,6 +2324,7 @@ function handleGameCrash (exitCode) {
 
   try {
     const logDir = path.join(modDir || '', 'logs')
+    let newest = null
 
     if (modDir && existsSync(logDir)) {
       // EMPTY LOGS ARE NOT EVIDENCE, and handing one over is worse than handing over
@@ -2318,21 +2333,25 @@ function handleGameCrash (exitCode) {
       // 0 bytes on the Desktop and a dialog saying it had been sent. shipClientLogs
       // already skips these (size > 0); this did not, so the two disagreed about whether
       // there was anything to hand over.
-      const newest = readdirSync(logDir)
+      newest = ManifestKit.sessionCrashLog(readdirSync(logDir)
         .filter((f) => f.startsWith('CyberpunkMP_') && f.endsWith('.log'))
         .map((f) => {
           const full = path.join(logDir, f)
           const stat = statSync(full)
           return { name: f, full, time: stat.mtimeMs, size: stat.size }
-        })
-        .filter((f) => f.size > 0)
-        .sort((a, b) => b.time - a.time)[0]
+        }), launchedAt)
+    }
 
-      if (newest) {
-        const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19)
-        savedTo = path.join(app.getPath('desktop'), `NightCityOnline-CRASH-${stamp}.log`)
-        writeFileSync(savedTo, readFileSync(newest.full))
-      }
+    // The loader's log rides along: on an early crash the mod's own holds one line, and this
+    // is the file somebody used to have to go and fetch by hand.
+    if (newest || loaderLog) {
+      const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19)
+      savedTo = path.join(app.getPath('desktop'), `NightCityOnline-CRASH-${stamp}.log`)
+
+      const parts = []
+      if (newest) parts.push(readFileSync(newest.full, 'utf8'))
+      if (loaderLog) parts.push(`===== ${loaderLog.name} =====\n${readFileSync(loaderLog.full, 'utf8')}`)
+      writeFileSync(savedTo, parts.join('\n'))
     }
   } catch (err) {
     console.error('Could not copy the crash log:', err.message)
@@ -2366,6 +2385,27 @@ function handleGameCrash (exitCode) {
   }).then((choice) => {
     if (savedTo && choice.response === 0) shell.showItemInFolder(savedTo)
   })
+}
+
+// RED4ext's log for this session: <game>\red4ext\logs, two up from the mod's folder. It says
+// which plugin a startup crash stopped in, which the mod's own log cannot.
+function findLoaderLog (modDir, launchedAt) {
+  if (!modDir) return null
+
+  try {
+    const dir = path.resolve(modDir, '..', '..', 'logs')
+    if (!existsSync(dir)) return null
+
+    return ManifestKit.sessionCrashLog(readdirSync(dir)
+      .filter((f) => /^red4ext.*\.log$/i.test(f))
+      .map((f) => {
+        const full = path.join(dir, f)
+        const stat = statSync(full)
+        return { name: f, full, time: stat.mtimeMs, size: stat.size }
+      }), launchedAt)
+  } catch {
+    return null
+  }
 }
 
 function isProcessRunning (imageName) {
@@ -3850,6 +3890,8 @@ async function launchGame () {
     }
   }
 
+  const launchedAt = Date.now()
+
   // Watch for a crash.
   //
   // The child is detached and unref'd so the game outlives the launcher, but as long as
@@ -3868,7 +3910,7 @@ async function launchGame () {
     // this project has spent days on. Anything else non-zero is also worth capturing.
     if (code === 0 || code === null) return
 
-    handleGameCrash(code)
+    handleGameCrash(code, launchedAt)
   }
 
   const child = spawn(exe, args, {
@@ -6437,7 +6479,7 @@ ipcMain.handle('prerelease:list', async () => {
 
     return { ok: true, prereleases, activeTag, newer }
   } catch (err) {
-    return { ok: false, error: err.message }
+    return { ok: false, error: ManifestKit.releaseChannelError(err) }
   }
 })
 

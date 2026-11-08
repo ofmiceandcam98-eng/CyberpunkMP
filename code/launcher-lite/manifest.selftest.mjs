@@ -41,6 +41,8 @@ import {
   removeRetiredFiles,
   applyBundledZip,
   dllLoadWarning,
+  sessionCrashLog,
+  releaseChannelError,
   newerTestBuild,
   resolveArchiveStrip
 } from './manifest.js'
@@ -607,6 +609,32 @@ function mockZip (paths) {
 // array) is deliberately not unit-tested here: forcing rmSync to throw deterministically
 // needs an fs mock or a platform-specific illegal path, neither worth the fragility. The
 // no-failures assertion above covers the same return-shape on the success side.
+
+// sessionCrashLog: the file handed over for a crash has to be from that session.
+{
+  const launch = 1000000
+  const old = { name: 'old', time: launch - 4000000000, size: 500 }
+  const fresh = { name: 'fresh', time: launch + 300, size: 107 }
+  const fresher = { name: 'fresher', time: launch + 900, size: 40 }
+  const empty = { name: 'empty', time: launch + 2000, size: 0 }
+  check('sessionCrashLog: seven weeks old is not this crash', sessionCrashLog([old], launch), null)
+  check('sessionCrashLog: written since the launch counts', sessionCrashLog([old, fresh], launch), fresh)
+  check('sessionCrashLog: the newest of this session wins', sessionCrashLog([fresh, fresher, old], launch), fresher)
+  check('sessionCrashLog: an empty file is never evidence', sessionCrashLog([empty], launch), null)
+  check('sessionCrashLog: no launch time falls back to the newest non-empty', sessionCrashLog([old, empty]), old)
+  check('sessionCrashLog: nothing is nothing', sessionCrashLog([], launch), null)
+}
+
+// releaseChannelError: GitHub's outage must not read as ours.
+{
+  const says = (err) => releaseChannelError(err)
+  check('releaseChannelError: a 503 says GitHub, not the status code',
+    /GitHub is not answering/.test(says({ response: { status: 503 }, message: 'Request failed with status code 503' })), true)
+  check('releaseChannelError: a 504 too', /GitHub is not answering/.test(says({ response: { status: 504 } })), true)
+  check('releaseChannelError: a timeout too', /GitHub is not answering/.test(says({ code: 'ECONNABORTED', message: 'timeout of 8000ms exceeded' })), true)
+  check('releaseChannelError: a rate limit says so', /limiting/.test(says({ response: { status: 403 } })), true)
+  check('releaseChannelError: anything else keeps its own words', says({ message: 'getaddrinfo ENOTFOUND' }), 'getaddrinfo ENOTFOUND')
+}
 
 // dllLoadWarning: a DevInstall symlink parks the installed build and the install/launch must
 // say so loudly instead of reporting success. Tested on the decision, not on a real symlink
