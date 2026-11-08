@@ -545,14 +545,22 @@
   .plate .back::before { content: ""; position: absolute; inset: 0; clip-path: var(--notch); background: var(--plate-base); }
   .plate .back::after { content: ""; position: absolute; left: 26%; bottom: -6px; width: 52px; height: 3px; background: repeating-linear-gradient(120deg, var(--plate-base) 0 18px, transparent 18px 24px); }
   .plate .face { padding-top: var(--lug); clip-path: var(--notch); background: var(--plate-fill); color: var(--plate-text); transition: transform 160ms var(--ease-out), background-color 160ms ease; }
-  .plate .hatch { position: absolute; left: 14px; top: calc(var(--lug) + 12px); bottom: 12px; width: 22px; background: repeating-linear-gradient(120deg, currentColor 0 2px, transparent 2px 6px); opacity: .75; transition: transform 160ms var(--ease-out); }
-  .plate .chev { position: absolute; right: 16px; top: calc(50% + var(--lug) / 2); font-family: var(--mono); font-size: .72em; letter-spacing: .08em; opacity: .8; transform: translateY(-52%); transition: transform 160ms var(--ease-out); }
-  .plate .chev::before { content: "\276E\276E"; }
+  /* The hatch's stripes start a gap in from its corner. A 2px/6px stripe that starts AT the corner
+     leaves a sliver of a stroke in the top-left and bottom-right corners, and on Done's small plate
+     that was most of the hatch: a fleck, one stroke and a dot (zeldfep, 2026-11-08: "rendered a
+     little wrong on the lines"). 3.5px is half the spare length at both sizes the kit uses, so
+     JACK IN (22x28) and Done (14x18) both end on whole strokes. Resize a hatch, re-check that. */
+  .plate .hatch { position: absolute; left: 14px; top: calc(var(--lug) + 12px); bottom: 12px; width: 22px; background: repeating-linear-gradient(120deg, transparent 0 3.5px, currentColor 3.5px 5.5px, transparent 5.5px 6px); opacity: .75; transition: transform 160ms var(--ease-out); }
+  /* The trailing mark is drawn, not typed. U+276E is in none of the kit's fonts, so it fell back to a
+     symbol font that draws it as two soft arcs at button size - "((" rather than a point. Two clipped
+     chevrons keep the mark and its .72em sizing, at about the hatch's 2px line weight. */
+  .plate .chev { position: absolute; right: 16px; top: calc(50% + var(--lug) / 2); display: flex; gap: .16em; font-size: .72em; opacity: .8; transform: translateY(-50%); transition: transform 160ms var(--ease-out); }
+  .plate .chev::before, .plate .chev::after { content: ""; width: .5em; height: 1.3em; background: currentColor; clip-path: polygon(58% 0, 100% 0, 42% 50%, 100% 100%, 58% 100%, 0 50%); }
   @media (hover: hover) and (pointer: fine) {
     .plate:hover:not(:disabled) .back { transform: translate(-6px, 6px); }
     .plate:hover:not(:disabled) .face { transform: translate(1px, -1px); }
     .plate:hover:not(:disabled) .hatch { transform: translateX(3px); }
-    .plate:hover:not(:disabled) .chev { transform: translate(-3px, -52%); }
+    .plate:hover:not(:disabled) .chev { transform: translate(-3px, -50%); }
   }
   .plate:active:not(:disabled) .face { transform: translate(-3px, 3px); transition-duration: 70ms; }
   .plate:active:not(:disabled) .back { transform: translate(-4px, 4px); transition-duration: 70ms; }
@@ -660,7 +668,7 @@
     .hud *, .hud *::before, .hud *::after { animation: none !important; transition-property: opacity, color, background-color !important; }
     .hud .face, .plate .hatch, .bin { transform: none !important; }
     .plate .back { transform: translate(-4px, 4px) !important; }
-    .plate .chev { transform: translateY(-52%) !important; }
+    .plate .chev { transform: translateY(-50%) !important; }
     .wired .pulse, .update-wire .pulse { display: none; }
     .hud-update.arrive, .update-wire.arrive path { animation: none !important; }
     .hud-update.leaving, .update-wire.leaving { transform: none !important; }
@@ -1164,7 +1172,8 @@
     --lug: 6px; --pip: 3px; --plate-fill: var(--accent); --plate-base: var(--accent-2); --plate-text: #140406;
     --glitch-2: var(--ink); --glitch-h: 40px;
   }
-  .plate.set-done .hatch { left: 12px; width: 16px; }
+  /* JACK IN's hatch in proportion - about half the body's height - so it stays a block of strokes. */
+  .plate.set-done .hatch { left: 12px; width: 14px; top: calc(var(--lug) + 8px); bottom: 8px; }
   .plate.set-done .chev { right: 12px; }
 
   @media (prefers-reduced-motion: reduce) {

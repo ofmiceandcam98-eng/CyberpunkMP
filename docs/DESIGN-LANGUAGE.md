@@ -120,8 +120,14 @@ this when something needs to read as a HUD element rather than a web control.
 | `45deg`, 3px/7px, hazard | rail caps | end of travel |
 | `45deg`, 5px/10px, hazard | rail active plate | you are here |
 
-**Marks:** `❮❮` (`\276E\276E`) trails an action. `///` prefixes a warning
-(`/// WARNING ///`). `›` leads a list item.
+The plate hatch starts a gap in from its corner, so it ends on whole strokes rather than a sliver
+in two corners; the phase is worked out for JACK IN's box and Done's, so a hatch that changes size
+gets it re-checked (the rule in the CSS says how). Done's hatch is JACK IN's in proportion, not a
+narrower copy - squeezed into 16x10 it rendered as a fleck, a stroke and a dot.
+
+**Marks:** `❮❮` trails an action. On a plate it is drawn - two clipped chevrons - not typed:
+`\276E` is in none of our fonts, and the fallback draws it as two soft arcs at button size.
+`///` prefixes a warning (`/// WARNING ///`). `›` leads a list item.
 
 ---
 
