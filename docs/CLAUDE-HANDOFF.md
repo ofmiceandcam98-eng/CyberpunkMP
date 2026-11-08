@@ -258,6 +258,10 @@ mechanics). Neither ever goes in this public repository.
 
 ## 7. State as of this handoff (2026-09-04)
 
+A dated snapshot, kept for what it records. What is open now is on the Atlas, the current public
+release is whatever GitHub says, and the "byte-identical" below was doubted later and can no
+longer be re-measured.
+
 - **Current release v0.3.114**, shipped with the first **signed** manifest. Test channel
   is one build: `v0.3.114-worldstate-test.19` (byte-identical payload; its notes carry
   the two-human checklist).
