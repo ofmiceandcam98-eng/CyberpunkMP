@@ -77,6 +77,32 @@
 
     --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
     --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+
+    /* THE PIXEL STRIPES - zeldfep, 2026-11-08, on the hatch, the bay hatch and the rail caps:
+       "the render is bad ... it keeps drawing everywhere, lets make sure its uniform and the grid
+       is drawn correctly". Every stripe was a repeating-linear-gradient, and a gradient's hard
+       edge is not smoothed: on the launcher's screen each stripe came out a ragged staircase -
+       widths jumping between 2 and 3px, steps of 1 and 2 rows - with broken fragments wherever
+       a stripe met the edge of its box. These are exact drawings instead: whole stripes, one
+       row of whole pixels at a time, used as masks so the colour still comes from the token.
+       Two slopes only, the two that step evenly: 45 degrees (1px across per row) and steep 2:1
+       (1px across per two rows). Generated, not hand-written - change the generator
+       (node tools/pixel-stripes.mjs) and paste its output here; never a gradient for a stripe.
+       launcher_buttons_test.mjs fails these if they drift from the generator. */
+    /* JACK IN's hatch: 4 whole stripes, steep 2:1 - 33x28 */
+    --px-hatch-play: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='33' height='28' viewBox='0 0 33 28' shape-rendering='crispEdges'%3E%3Cpath d='M0 26h2v2h-2zM1 24h2v2h-2zM2 22h2v2h-2zM3 20h2v2h-2zM4 18h2v2h-2zM5 16h2v2h-2zM6 14h2v2h-2zM7 12h2v2h-2zM8 10h2v2h-2zM9 8h2v2h-2zM10 6h2v2h-2zM11 4h2v2h-2zM12 2h2v2h-2zM13 0h2v2h-2zM6 26h2v2h-2zM7 24h2v2h-2zM8 22h2v2h-2zM9 20h2v2h-2zM10 18h2v2h-2zM11 16h2v2h-2zM12 14h2v2h-2zM13 12h2v2h-2zM14 10h2v2h-2zM15 8h2v2h-2zM16 6h2v2h-2zM17 4h2v2h-2zM18 2h2v2h-2zM19 0h2v2h-2zM12 26h2v2h-2zM13 24h2v2h-2zM14 22h2v2h-2zM15 20h2v2h-2zM16 18h2v2h-2zM17 16h2v2h-2zM18 14h2v2h-2zM19 12h2v2h-2zM20 10h2v2h-2zM21 8h2v2h-2zM22 6h2v2h-2zM23 4h2v2h-2zM24 2h2v2h-2zM25 0h2v2h-2zM18 26h2v2h-2zM19 24h2v2h-2zM20 22h2v2h-2zM21 20h2v2h-2zM22 18h2v2h-2zM23 16h2v2h-2zM24 14h2v2h-2zM25 12h2v2h-2zM26 10h2v2h-2zM27 8h2v2h-2zM28 6h2v2h-2zM29 4h2v2h-2zM30 2h2v2h-2zM31 0h2v2h-2z'/%3E%3C/svg%3E");
+    /* Done's hatch: JACK IN's in proportion, 3 stripes - 22x18 */
+    --px-hatch-done: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='18' viewBox='0 0 22 18' shape-rendering='crispEdges'%3E%3Cpath d='M0 16h2v2h-2zM1 14h2v2h-2zM2 12h2v2h-2zM3 10h2v2h-2zM4 8h2v2h-2zM5 6h2v2h-2zM6 4h2v2h-2zM7 2h2v2h-2zM8 0h2v2h-2zM6 16h2v2h-2zM7 14h2v2h-2zM8 12h2v2h-2zM9 10h2v2h-2zM10 8h2v2h-2zM11 6h2v2h-2zM12 4h2v2h-2zM13 2h2v2h-2zM14 0h2v2h-2zM12 16h2v2h-2zM13 14h2v2h-2zM14 12h2v2h-2zM15 10h2v2h-2zM16 8h2v2h-2zM17 6h2v2h-2zM18 4h2v2h-2zM19 2h2v2h-2zM20 0h2v2h-2z'/%3E%3C/svg%3E");
+    /* the bay's hatch block on its step: 6 stripes - 34x6 */
+    --px-hatch-bay: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='34' height='6' viewBox='0 0 34 6' shape-rendering='crispEdges'%3E%3Cpath d='M0 4h2v2h-2zM1 2h2v2h-2zM2 0h2v2h-2zM6 4h2v2h-2zM7 2h2v2h-2zM8 0h2v2h-2zM12 4h2v2h-2zM13 2h2v2h-2zM14 0h2v2h-2zM18 4h2v2h-2zM19 2h2v2h-2zM20 0h2v2h-2zM24 4h2v2h-2zM25 2h2v2h-2zM26 0h2v2h-2zM30 4h2v2h-2zM31 2h2v2h-2zM32 0h2v2h-2z'/%3E%3C/svg%3E");
+    /* the two dashes under a plate's base, 45-degree ends - 44x3 */
+    --px-dashes: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='3' viewBox='0 0 44 3' shape-rendering='crispEdges'%3E%3Cpath d='M0 2h18v1h-18zM1 1h18v1h-18zM2 0h18v1h-18zM24 2h18v1h-18zM25 1h18v1h-18zM26 0h18v1h-18z'/%3E%3C/svg%3E");
+    /* the rail's caution caps: 3 hazard stripes at 45 degrees - 24x5 */
+    --px-caps: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='5' viewBox='0 0 24 5' shape-rendering='crispEdges'%3E%3Cpath d='M0 4h4v1h-4zM1 3h4v1h-4zM2 2h4v1h-4zM3 1h4v1h-4zM4 0h4v1h-4zM8 4h4v1h-4zM9 3h4v1h-4zM10 2h4v1h-4zM11 1h4v1h-4zM12 0h4v1h-4zM16 4h4v1h-4zM17 3h4v1h-4zM18 2h4v1h-4zM19 1h4v1h-4zM20 0h4v1h-4z'/%3E%3C/svg%3E");
+    /* the arrow's stripes: a 6px 45-degree tile, 3 on 3 off - 6x6 */
+    --px-hazard: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='6' viewBox='0 0 6 6' shape-rendering='crispEdges'%3E%3Cpath d='M0 5h3v1h-3zM1 4h3v1h-3zM2 3h3v1h-3zM3 2h3v1h-3zM4 1h2v1h-2zM0 1h1v1h-1zM5 0h1v1h-1zM0 0h2v1h-2z'/%3E%3C/svg%3E");
+    /* the working tread: a 40px 45-degree tile leaning the other way - 40x40 */
+    --px-tread: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 40 40' shape-rendering='crispEdges'%3E%3Cpath d='M0 0h20v1h-20zM1 1h20v1h-20zM2 2h20v1h-20zM3 3h20v1h-20zM4 4h20v1h-20zM5 5h20v1h-20zM6 6h20v1h-20zM7 7h20v1h-20zM8 8h20v1h-20zM9 9h20v1h-20zM10 10h20v1h-20zM11 11h20v1h-20zM12 12h20v1h-20zM13 13h20v1h-20zM14 14h20v1h-20zM15 15h20v1h-20zM16 16h20v1h-20zM17 17h20v1h-20zM18 18h20v1h-20zM19 19h20v1h-20zM20 20h20v1h-20zM21 21h19v1h-19zM0 21h1v1h-1zM22 22h18v1h-18zM0 22h2v1h-2zM23 23h17v1h-17zM0 23h3v1h-3zM24 24h16v1h-16zM0 24h4v1h-4zM25 25h15v1h-15zM0 25h5v1h-5zM26 26h14v1h-14zM0 26h6v1h-6zM27 27h13v1h-13zM0 27h7v1h-7zM28 28h12v1h-12zM0 28h8v1h-8zM29 29h11v1h-11zM0 29h9v1h-9zM30 30h10v1h-10zM0 30h10v1h-10zM31 31h9v1h-9zM0 31h11v1h-11zM32 32h8v1h-8zM0 32h12v1h-12zM33 33h7v1h-7zM0 33h13v1h-13zM34 34h6v1h-6zM0 34h14v1h-14zM35 35h5v1h-5zM0 35h15v1h-15zM36 36h4v1h-4zM0 36h16v1h-16zM37 37h3v1h-3zM0 37h17v1h-17zM38 38h2v1h-2zM0 38h18v1h-18zM39 39h1v1h-1zM0 39h19v1h-19z'/%3E%3C/svg%3E");
   }
 
   * { box-sizing: border-box; }
@@ -114,8 +140,8 @@
   header::before {
     content: ""; position: absolute; top: 0; left: 0; right: 0; height: 10px;
     background:
-      linear-gradient(120deg, var(--accent) 0, var(--accent-2) 55%, var(--accent-4) calc(100% - 7px), transparent calc(100% - 7px)) left 0 top 0 / 320px 100% no-repeat,
-      linear-gradient(120deg, transparent 5px, var(--accent-3) 5px, var(--accent-4) calc(100% - 5px), transparent calc(100% - 5px)) left 334px top 0 / 26px 100% no-repeat;
+      linear-gradient(135deg, var(--accent) 0, var(--accent-2) 55%, var(--accent-4) calc(100% - 7px), transparent calc(100% - 7px)) left 0 top 0 / 320px 100% no-repeat,
+      linear-gradient(135deg, transparent 5px, var(--accent-3) 5px, var(--accent-4) calc(100% - 5px), transparent calc(100% - 5px)) left 334px top 0 / 26px 100% no-repeat;
     filter: drop-shadow(0 0 6px rgba(255, 42, 50, .4));
     pointer-events: none;
   }
@@ -528,11 +554,13 @@
   @keyframes pip-chase { 0%, 100% { opacity: .25; } 35% { opacity: 1; } }
   @keyframes pip-arm { from { opacity: 1; transform: scale(1.8); } to { opacity: .3; transform: none; } }
 
-  /* Working: the -45deg stripe, moved with transform so it stays smooth while the launcher
-     is busy. The label sits on a solid plate, because near-black on the dark stripe is hard
-     to read. */
-  .hud .tread { display: none; position: absolute; inset: 0 -56px; background: repeating-linear-gradient(-45deg, var(--accent) 0 14px, var(--tread-2) 14px 28px); animation: tread 1.1s linear infinite; }
-  @keyframes tread { to { transform: translateX(39.6px); } }
+  /* Working: the tread, the one stripe leaning '\', moved with transform so it stays smooth while
+     the launcher is busy - exactly one 40px tile per loop, so it repeats seamlessly. Drawn from
+     the pixel stripes (--px-tread) over the darker shade. The label sits on a solid plate,
+     because near-black on the dark stripe is hard to read. */
+  .hud .tread { display: none; position: absolute; inset: 0 -56px; background: var(--tread-2); animation: tread 1.1s linear infinite; }
+  .hud .tread::before { content: ""; position: absolute; inset: 0; background: var(--accent); mask: var(--px-tread) 0 0 / 40px 40px repeat; }
+  @keyframes tread { to { transform: translateX(40px); } }
   .hud[data-state="busy"] .tread { display: block; }
   /* The hatch and chevrons say "press this", and neither of these can be pressed. Clearing them
      also keeps "Game running" from running into them in the launcher's narrowest window. */
@@ -546,19 +574,20 @@
   .plate.hud-wide { --plate-fill: var(--steel); --plate-base: var(--accent-3); --plate-text: var(--ink); }
   .plate .back { position: absolute; inset: 0; transform: translate(-4px, 4px); transition: transform 160ms var(--ease-out); }
   .plate .back::before { content: ""; position: absolute; inset: 0; clip-path: var(--notch); background: var(--plate-base); }
-  .plate .back::after { content: ""; position: absolute; left: 26%; bottom: -6px; width: 52px; height: 3px; background: repeating-linear-gradient(120deg, var(--plate-base) 0 18px, transparent 18px 24px); }
+  /* Two whole dashes under the base, their ends cut at 45 degrees (--px-dashes). */
+  .plate .back::after { content: ""; position: absolute; left: 26%; bottom: -6px; width: 44px; height: 3px; background: var(--plate-base); mask: var(--px-dashes) 0 0 / 44px 3px no-repeat; }
   .plate .face { padding-top: var(--lug); clip-path: var(--notch); background: var(--plate-fill); color: var(--plate-text); transition: transform 160ms var(--ease-out), background-color 160ms ease; }
-  /* The hatch's stripes start a gap in from its corner. A 2px/6px stripe that starts AT the corner
-     leaves a sliver of a stroke in the top-left and bottom-right corners, and on Done's small plate
-     that was most of the hatch: a fleck, one stroke and a dot (zeldfep, 2026-11-08: "rendered a
-     little wrong on the lines"). 3.5px is half the spare length at both sizes the kit uses, so
-     JACK IN (22x28) and Done (14x18) both end on whole strokes. Resize a hatch, re-check that. */
-  .plate .hatch { position: absolute; left: 14px; top: calc(var(--lug) + 12px); bottom: 12px; width: 22px; background: repeating-linear-gradient(120deg, transparent 0 3.5px, currentColor 3.5px 5.5px, transparent 5.5px 6px); opacity: .75; transition: transform 160ms var(--ease-out); }
+  /* The hatch: a block of whole stripes, steep 2:1, in the plate's text colour (--px-hatch-play).
+     It was a 120deg gradient clipped to a rectangle, which left broken stripe ends in its corners
+     - on Done's small plate a fleck, one stroke and a dot (zeldfep, 2026-11-08: "rendered a little
+     wrong on the lines") - and drew every stripe as a ragged staircase. Now the block's sides run
+     with the stripes, so every stripe is whole, and every row is whole pixels. */
+  .plate .hatch { position: absolute; left: 14px; top: calc(var(--lug) + 12px); width: 33px; height: 28px; background: currentColor; mask: var(--px-hatch-play) 0 0 / 100% 100% no-repeat; opacity: .75; transition: transform 160ms var(--ease-out); }
   /* The trailing mark is drawn, not typed. U+276E is in none of the kit's fonts, so it fell back to a
      symbol font that draws it as two soft arcs at button size - "((" rather than a point. Two clipped
      chevrons keep the mark and its .72em sizing, at about the hatch's 2px line weight. */
   .plate .chev { position: absolute; right: 16px; top: calc(50% + var(--lug) / 2); display: flex; gap: .16em; font-size: .72em; opacity: .8; transform: translateY(-50%); transition: transform 160ms var(--ease-out); }
-  .plate .chev::before, .plate .chev::after { content: ""; width: .5em; height: 1.3em; background: currentColor; clip-path: polygon(58% 0, 100% 0, 42% 50%, 100% 100%, 58% 100%, 0 50%); }
+  .plate .chev::before, .plate .chev::after { content: ""; width: .525em; height: 1.3em; background: currentColor; clip-path: polygon(.325em 0, .525em 0, .2em .65em, .525em 1.3em, .325em 1.3em, 0 .65em); }
   @media (hover: hover) and (pointer: fine) {
     .plate:hover:not(:disabled) .back { transform: translate(-6px, 6px); }
     .plate:hover:not(:disabled) .face { transform: translate(1px, -1px); }
@@ -580,8 +609,8 @@
   /* THE WIRED PLATE, for the mods panel: a ring node and a trace feed the plate, so a badge
      or a text box visibly leads to the button that acts on it. */
   .wired { --wire-w: 32px; --cham: 10px; }
-  .wired.hud-wide { --wire-path: path('M8.5 29H14L24 20H32'); }
-  .wired.hud-add { --wire-w: 22px; --cham: 8px; --wire-path: path('M5.5 22H9L16 14H22'); }
+  .wired.hud-wide { --wire-path: path('M8.5 29H15L24 20H32'); }
+  .wired.hud-add { --wire-w: 22px; --cham: 8px; --wire-path: path('M5.5 22H8L16 14H22'); }
   .wired.hud-mini { --wire-w: 14px; --cham: 5px; --wire-path: path('M0 15H5L9 11H14'); }
   .wired .wire { position: absolute; left: 0; top: 0; width: var(--wire-w); height: 100%; overflow: visible; fill: none; stroke: var(--ink-dim); stroke-width: 1; }
   .wired .pulse { position: absolute; left: 0; top: 0; width: 5px; height: 5px; background: var(--ink); opacity: 0; offset-path: var(--wire-path); offset-rotate: 0deg; offset-distance: 0%; }
@@ -608,7 +637,8 @@
                       --plate-fill: var(--update); --plate-base: var(--update-2); --plate-text: #140406; --glitch-2: var(--ink); --glitch-h: 44px; }
   .plate.hud-update.optional { --plate-fill: var(--steel); --plate-base: var(--accent-3); --plate-text: var(--ink); --glitch-2: var(--accent); }
   .hud-update.optional .pips i { background: var(--update); }
-  .hud-update .tread { background: repeating-linear-gradient(-45deg, var(--update) 0 14px, var(--update-tread) 14px 28px); }
+  .hud-update .tread { background: var(--update-tread); }
+  .hud-update .tread::before { background: var(--update); }
   .plate.hud-update[data-state="busy"] .face, .hud-update[data-state="busy"] .label { background: var(--update); color: #140406; }
   .plate.hud-update[data-state="busy"] .back::before { background: var(--update-2); }
   /* Done reads as the orange going away: green on orange is 2.3:1, green on steel is 7.3:1. */
@@ -622,7 +652,7 @@
   .update-wire svg { position: absolute; left: calc(70% - 40px); top: 0; width: 60px; height: 22px; overflow: visible; fill: none; stroke: var(--update); stroke-width: 1.5; }
   .update-wire circle { fill: var(--update); }
   .update-wire .pulse { position: absolute; left: calc(70% - 40px); top: 0; width: 5px; height: 5px; background: var(--ink); opacity: 0;
-                        offset-path: path('M30 0V6L40 14V19'); offset-rotate: 0deg; offset-distance: 0%; }
+                        offset-path: path('M30 0V4L40 14V19'); offset-rotate: 0deg; offset-distance: 0%; }
   .update-wire.arrive path { stroke-dasharray: 30; animation: draw 260ms var(--ease-out) 120ms backwards; }
   @keyframes draw { from { stroke-dashoffset: 30; } to { stroke-dashoffset: 0; } }
   /* The step the update is on, printed on the wire: a tiny mono readout, so --fs-micro. */
@@ -808,9 +838,9 @@
     width: 40px; height: 36px; margin-left: .75rem; padding: 0; border: 0; background: none;
     color: var(--ink); cursor: pointer; --glitch-h: 36px;
   }
-  .gear .hx { position: absolute; inset: 0; clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); }
+  .gear .hx { position: absolute; inset: 0; clip-path: polygon(9px 0, 31px 0, 40px 18px, 31px 36px, 9px 36px, 0 18px); }
   .gear .hx-line { background: var(--accent-2); transition: background-color 120ms ease; }
-  .gear .hx-fill { inset: 1px; background: var(--steel); overflow: hidden; }
+  .gear .hx-fill { clip-path: polygon(9.5px 1px, 30.5px 1px, 39px 18px, 30.5px 35px, 9.5px 35px, 1px 18px); background: var(--steel); overflow: hidden; }
   .gear .scan { z-index: 3; }
   .gear .cog {
     position: relative; z-index: 2; width: var(--fs-icon); height: var(--fs-icon); fill: currentColor;
@@ -862,8 +892,8 @@
   .modal-head::after {
     content: ""; position: absolute; left: 0; right: 0; bottom: -8px; height: 8px;
     background:
-      linear-gradient(120deg, var(--accent) 0, var(--accent-2) 55%, var(--accent-4) calc(100% - 6px), transparent calc(100% - 6px)) left 0 top 0 / 150px 100% no-repeat,
-      linear-gradient(120deg, transparent 4px, var(--accent-3) 4px, var(--accent-4) calc(100% - 4px), transparent calc(100% - 4px)) left 162px top 0 / 16px 100% no-repeat,
+      linear-gradient(135deg, var(--accent) 0, var(--accent-2) 55%, var(--accent-4) calc(100% - 6px), transparent calc(100% - 6px)) left 0 top 0 / 150px 100% no-repeat,
+      linear-gradient(135deg, transparent 4px, var(--accent-3) 4px, var(--accent-4) calc(100% - 4px), transparent calc(100% - 4px)) left 162px top 0 / 16px 100% no-repeat,
       linear-gradient(270deg, var(--accent-3), transparent) right 0 center / calc(100% - 196px) 2px no-repeat;
     opacity: .92; pointer-events: none;
   }
@@ -959,8 +989,8 @@
      which is the one thing a numeric readout cannot tell you without being read. */
   .section-rail::before,
   .section-rail::after {
-    content: ""; width: 1.6rem; height: 5px; flex: none;
-    background: repeating-linear-gradient(45deg, var(--hazard) 0 3px, #140406 3px 7px);
+    content: ""; width: 24px; height: 5px; flex: none;
+    background: var(--hazard); mask: var(--px-caps) 0 0 / 24px 5px no-repeat;
     opacity: .22; transition: opacity .18s ease;
   }
   .section-rail.at-top::before,
@@ -978,6 +1008,11 @@
      as present-and-refusing, not as missing. */
   .section-rail button.rail-step:disabled { color: var(--ink-dim); opacity: .45; cursor: default; }
   .section-rail button.rail-step:focus-visible { outline: 2px solid var(--hazard); outline-offset: -2px; }
+  /* The step tabs' carets are drawn, on the same 45-degree grid as everything else: the font's
+     triangles rendered soft and a pixel off centre. */
+  .section-rail button.rail-step::before { content: ""; display: block; width: 8px; height: 4px; margin: 0 auto;
+    background: currentColor; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+  .section-rail button#railDown::before { clip-path: polygon(0 0, 100% 0, 50% 100%); }
 
   /* THE LADDER (R3) - zeldfep, 2026-11-08, from the rail and gear test page: "R3 and G1 but
      make sure we align the ladder to the numbers". A HUD tick gauge: each section is a numbered
@@ -1021,19 +1056,28 @@
      the numbers and the step tabs already do everything it does, from the keyboard. */
   .rail-pointer {
     position: absolute; left: 0; width: 13px; height: 17px; margin-top: -8px;
-    cursor: grab; touch-action: none; transition: top 120ms var(--ease-out);
+    cursor: grab; touch-action: none; transition: top 120ms var(--ease-out), filter 120ms ease;
   }
-  .rail-pointer::before {
+  /* The arrow: the darker yellow underneath, the hazard stripes over it from the pixel stripes
+     (--px-hazard), both clipped to the same triangle - 2px across per row, so its edges step
+     evenly too. */
+  .rail-pointer::before, .rail-pointer::after {
     content: ""; position: absolute; left: 0; top: 4px; width: 9px; height: 9px;
-    background: repeating-linear-gradient(45deg, var(--hazard) 0 3px, #d8ae0b 3px 6px);
-    clip-path: polygon(0 0, 100% 50%, 0 100%); transition: filter 120ms ease;
+    clip-path: polygon(0 0, 100% 50%, 0 100%);
   }
+  .rail-pointer::before { background: #d8ae0b; }
+  .rail-pointer::after { background: var(--hazard); mask: var(--px-hazard) 0 0 / 6px 6px repeat; }
   /* Brighter, not bigger, under the cursor: moving it would take the tip off the spine. */
-  @media (hover: hover) and (pointer: fine) { .rail-pointer:hover::before { filter: brightness(1.2); } }
+  @media (hover: hover) and (pointer: fine) { .rail-pointer:hover { filter: brightness(1.2); } }
   /* While dragging it follows the cursor with no lag, and the cursor holds while off the arrow. */
   .rail-track.dragging, .rail-track.dragging .rail-pointer { cursor: grabbing; }
-  .rail-track.dragging .rail-pointer { transition: none; }
-  .rail-track.dragging .rail-pointer::before { filter: brightness(1.2); }
+  .rail-track.dragging .rail-pointer { transition: none; filter: brightness(1.2); }
+  /* Animations off: nothing on the rail glides. This has to come AFTER the rail's own rules - the
+     same block higher up the file was outranked by them and never applied. */
+  @media (prefers-reduced-motion: reduce) {
+    .rail-num, .rail-pointer, .section-rail button.rail-step,
+    .section-rail::before, .section-rail::after { transition: none; }
+  }
 
   /* Horizontal, tabular and zero-padded. The readout this replaced was set in
      writing-mode: vertical-rl, which turned a two-character number into something you
@@ -1061,7 +1105,7 @@
     padding-bottom: .5rem;
     /* The motif, minimized: a slant-cut block accent over a hairline rule. */
     background:
-      linear-gradient(120deg, var(--accent) 0, var(--accent-4) calc(100% - 5px), transparent calc(100% - 5px)) left 0 bottom 0 / 34px 3px no-repeat,
+      linear-gradient(135deg, var(--accent) 0, var(--accent-4) calc(100% - 5px), transparent calc(100% - 5px)) left 0 bottom 0 / 34px 3px no-repeat,
       linear-gradient(var(--line), var(--line)) left 0 bottom 1px / 100% 1px no-repeat;
   }
   .panel h3::before { content: "/// "; color: var(--accent); }
@@ -1115,11 +1159,11 @@
   .grp::before { inset: 0; background: var(--accent-2); }
   .grp::after { inset: 1px; background: var(--surface); }
   .rail-group {
-    position: absolute; left: 0; top: 0; margin: 0; height: 1.3rem; padding: 0 1.3rem 0 .6rem;
+    position: absolute; left: 0; top: 0; margin: 0; height: 20px; padding: 0 1.3rem 0 .6rem;
     display: flex; align-items: center; background: var(--accent); color: #140406;
     font-family: var(--mono); font-size: var(--fs-label); font-weight: 700;
     letter-spacing: .14em; text-transform: uppercase;
-    clip-path: polygon(0 0, 100% 0, calc(100% - 9px) 100%, 0 100%);
+    clip-path: polygon(0 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
   }
   /* Flex trims the space after the number, so it is a margin instead. */
   .rail-group > span { margin-right: .55em; }
@@ -1128,9 +1172,10 @@
     font-family: var(--mono); font-size: var(--fs-micro); font-weight: 500;
     letter-spacing: .14em; text-transform: uppercase; color: var(--ink-dim);
   }
+  /* Six whole stripes, the plate hatch's steep 2:1 (--px-hatch-bay). */
   .bay-hatch {
-    position: absolute; top: 2px; left: calc(46% + 16px); width: 36px; height: 6px;
-    background: repeating-linear-gradient(120deg, var(--accent-2) 0 3px, transparent 3px 7px);
+    position: absolute; top: 2px; left: calc(46% + 16px); width: 34px; height: 6px;
+    background: var(--accent-2); mask: var(--px-hatch-bay) 0 0 / 34px 6px no-repeat;
   }
   .bay-pips {
     position: absolute; right: 18px; bottom: 5px; width: 21px; height: 3px; opacity: .6;
@@ -1173,9 +1218,9 @@
 
   /* A flat hazard plate. Flat yellow is a warning; striped yellow is the rail's "you are here". */
   .flat-warn {
-    margin: 0; align-self: flex-start; padding: .35rem 1.1rem .35rem .7rem; background: var(--hazard); color: #140406;
+    margin: 0; align-self: flex-start; padding: 4px 1.1rem 4px .7rem; line-height: 12px; background: var(--hazard); color: #140406;
     font-family: var(--mono); font-size: var(--fs-label); font-weight: 700; letter-spacing: .14em; text-transform: uppercase;
-    clip-path: polygon(0 0, 100% 0, calc(100% - 8px) 100%, 0 100%);
+    clip-path: polygon(0 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
   }
 
   /* THE BRACKET BUTTON (S2), Settings' one button: zeldfep, 2026-11-08, "S2 and C's bays".
@@ -1241,8 +1286,8 @@
     --lug: 6px; --pip: 3px; --plate-fill: var(--accent); --plate-base: var(--accent-2); --plate-text: #140406;
     --glitch-2: var(--ink); --glitch-h: 40px;
   }
-  /* JACK IN's hatch in proportion - about half the body's height - so it stays a block of strokes. */
-  .plate.set-done .hatch { left: 12px; width: 14px; top: calc(var(--lug) + 8px); bottom: 8px; }
+  /* JACK IN's hatch in proportion - about half the body's height, three whole stripes. */
+  .plate.set-done .hatch { left: 12px; width: 22px; top: calc(var(--lug) + 8px); height: 18px; mask-image: var(--px-hatch-done); }
   .plate.set-done .chev { right: 12px; }
 
   @media (prefers-reduced-motion: reduce) {
@@ -1276,8 +1321,8 @@
   footer::before {
     content: ""; position: absolute; left: 0; right: 0; top: -8px; height: 8px;
     background:
-      linear-gradient(60deg, transparent 6px, var(--accent-4) 6px, var(--accent-2) 45%, var(--accent) 100%) right 0 top 0 / 220px 100% no-repeat,
-      linear-gradient(60deg, transparent 4px, var(--accent-4) 4px, var(--accent-3) calc(100% - 4px), transparent calc(100% - 4px)) right 232px top 0 / 16px 100% no-repeat,
+      linear-gradient(45deg, transparent 6px, var(--accent-4) 6px, var(--accent-2) 45%, var(--accent) 100%) right 0 top 0 / 220px 100% no-repeat,
+      linear-gradient(45deg, transparent 4px, var(--accent-4) 4px, var(--accent-3) calc(100% - 4px), transparent calc(100% - 4px)) right 232px top 0 / 16px 100% no-repeat,
       linear-gradient(90deg, transparent, var(--accent-3)) left 0 center / calc(100% - 270px) 2px no-repeat;
     opacity: .8; pointer-events: none;
   }
@@ -1384,9 +1429,9 @@
          behind it inert, Tab stays inside, and closeSettings hands focus back to the gear. -->
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
       <div class="section-rail" id="sectionRail" hidden>
-        <button class="rail-step" id="railUp" aria-label="Previous section">&#9650;</button>
+        <button class="rail-step" id="railUp" type="button" aria-label="Previous section"></button>
         <div class="rail-track" id="railTrack"></div>
-        <button class="rail-step" id="railDown" aria-label="Next section">&#9660;</button>
+        <button class="rail-step" id="railDown" type="button" aria-label="Next section"></button>
         <span class="rail-pos" id="railPos"><b>01</b>/01</span>
       </div>
       <div class="modal-head">
@@ -2122,7 +2167,7 @@
           <span class="back"></span>
           <span class="face"><span class="tread"></span><span class="scan"></span><span class="pips"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Update">Update</span></span>
         </button>
-        <div class="update-wire" id="updateWire" aria-hidden="true" style="display:none"><svg viewBox="0 0 60 22"><path d="M30 0V6L40 14V19"></path><circle cx="40" cy="19.5" r="2.5"></circle></svg><span class="pulse"></span></div>
+        <div class="update-wire" id="updateWire" aria-hidden="true" style="display:none"><svg viewBox="0 0 60 22"><path d="M30 0V4L40 14V19"></path><circle cx="40" cy="19.5" r="2.5"></circle></svg><span class="pulse"></span></div>
         <div class="update-readout" id="updateReadout" aria-live="polite"></div>
 
         <button class="hud plate hud-play glitches" id="play" aria-label="JACK IN" disabled>
@@ -2217,7 +2262,7 @@
         </div>
 
         <button class="hud wired hud-wide glitches" id="verifyAllMods" aria-label="Verify all">
-          <svg class="wire" viewBox="0 0 32 38" aria-hidden="true"><circle cx="5" cy="29" r="3.5"></circle><path d="M8.5 29H14L24 20H32"></path></svg>
+          <svg class="wire" viewBox="0 0 32 38" aria-hidden="true"><circle cx="5" cy="29" r="3.5"></circle><path d="M8.5 29H15L24 20H32"></path></svg>
           <span class="pulse"></span>
           <span class="face"><span class="scan"></span><span class="pips"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Verify all">Verify all</span></span>
         </button>
@@ -2254,7 +2299,7 @@
                  class="input" aria-label="Nexus mod link or number"
                  spellcheck="false">
           <button class="hud wired hud-add glitches" id="addModBtn" aria-label="Add mod">
-            <svg class="wire" viewBox="0 0 22 36" aria-hidden="true"><circle cx="3" cy="22" r="2.5"></circle><path d="M5.5 22H9L16 14H22"></path></svg>
+            <svg class="wire" viewBox="0 0 22 36" aria-hidden="true"><circle cx="3" cy="22" r="2.5"></circle><path d="M5.5 22H8L16 14H22"></path></svg>
             <span class="pulse"></span>
             <span class="face"><span class="scan"></span><span class="pips"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Add mod">Add mod</span></span>
           </button>

@@ -8,7 +8,7 @@
 // the launcher, so an id lost in a markup change is checked for here too.
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const FILE = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'code', 'launcher-lite', 'index.html')
 const html = readFileSync(FILE, 'utf8')
@@ -109,6 +109,50 @@ if (/rail\.style\.(transform|translate)\s*=/.test(script)) {
 }
 if (!/function railSnap[\s\S]*?rail\.style\.marginTop\s*=/.test(script)) {
   fail('railSnap no longer pins the rail onto a whole pixel', 'railSnap in the launcher script', 'keep it: auto margins leave the rail on half a pixel whenever the leftover is odd, and the arrow then sits half a pixel off its tick')
+}
+
+// THE PIXEL GRID (zeldfep, 2026-11-08: "make sure its uniform and the grid is drawn correctly").
+// A gradient's hard edge is not smoothed on the launcher's screen, so a diagonal at any slope but
+// 45 degrees or 2:1 steps unevenly, and a striped gradient comes out ragged with broken ends.
+// Stripes are the pixel drawings from tools/pixel-stripes.mjs; everything else stays on the grid.
+const styles = markup.replace(/\/\*[\s\S]*?\*\//g, '')
+for (const m of styles.matchAll(/repeating-linear-gradient\(\s*(-?\d+)deg/g)) {
+  if (Number(m[1]) % 90 !== 0) {
+    fail(`a ${m[1]}deg striped gradient`, 'the styles in index.html', 'draw diagonal stripes from the pixel stripes (tools/pixel-stripes.mjs, --px-*), never a gradient')
+  }
+}
+for (const m of styles.matchAll(/(?<!repeating-)linear-gradient\(\s*(-?\d+)deg/g)) {
+  if (Number(m[1]) % 45 !== 0) {
+    fail(`a ${m[1]}deg gradient - its hard edge steps unevenly`, 'the styles in index.html', 'cut it at 45 or 135 degrees, which step 1px per row')
+  }
+}
+const { STRIPES } = await import(pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'pixel-stripes.mjs')).href)
+for (const [name, s] of Object.entries(STRIPES)) {
+  const at = styles.indexOf(`${name}: `)
+  const value = at < 0 ? null : styles.slice(at + name.length + 2, styles.indexOf(';\n', at))
+  if (value !== s.url) {
+    fail(`${name} ${value === null ? 'is missing' : 'does not match the generator'}`, ':root in index.html', 'run node tools/pixel-stripes.mjs and paste its output into :root')
+  } else if (!styles.includes(`var(${name})`)) {
+    fail(`${name} is drawn but never used`, 'the styles in index.html', 'use it, or drop it from tools/pixel-stripes.mjs')
+  }
+}
+// Wires and traces: every bend at 45 degrees. (Icons such as the gear's cog are smoothed SVG and
+// are not held to this.)
+const wires = [
+  ...[...html.matchAll(/<svg class="wire"[\s\S]*?<\/svg>|id="updateWire"[\s\S]*?<\/svg>/g)].flatMap((s) => [...s[0].matchAll(/d="(M[^"]+)"/g)]),
+  ...styles.matchAll(/path\('(M[^']+)'\)/g)
+]
+if (wires.length < 5) fail(`only ${wires.length} wire paths found`, 'the wire SVGs and --wire-path in index.html', 'the wire check lost its targets - fix its selectors')
+for (const m of wires) {
+  let x = 0; let y = 0
+  for (const [, cmd, a, b] of m[1].matchAll(/([MLHV])\s*(-?[\d.]+)(?:\s+(-?[\d.]+))?/g)) {
+    const nx = cmd === 'V' ? x : Number(a)
+    const ny = cmd === 'H' ? y : cmd === 'V' ? Number(a) : Number(b)
+    if (cmd === 'L' && nx !== x && ny !== y && Math.abs(nx - x) !== Math.abs(ny - y)) {
+      fail(`a wire bends at ${Math.abs(ny - y)}:${Math.abs(nx - x)} in ${m[1]}`, 'the wire paths in index.html', 'make the diagonal run as far across as down, so it steps 1px per row')
+    }
+    x = nx; y = ny
+  }
 }
 
 // Update has two homes and placeUpdate moves it between them. Setting display on it anywhere else

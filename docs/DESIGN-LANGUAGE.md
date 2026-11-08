@@ -111,19 +111,32 @@ clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 cal
 Top-right and bottom-left notched. Used on the rail's arrows. Reach for
 this when something needs to read as a HUD element rather than a web control.
 
-**Hatching and striping carry meaning, and each angle is spoken for:**
+**The pixel grid** (zeldfep, 2026-11-08: *"lets make sure its uniform and the grid is drawn
+correctly"*). The launcher's screen does not smooth a gradient's hard edge or a clipped shape's
+diagonal, so the pixel grid shows through: a diagonal at any slope but two steps unevenly, and a
+gradient stripe comes out ragged with broken ends where it meets its box. So:
 
-| Pattern | Where | Says |
+- **Two slopes only: 45 degrees** (1px across per row) **and steep 2:1** (1px across every two
+  rows). Chamfers, notches, the bay's step, the motif's slant cuts (`135deg` / `45deg` gradients),
+  wires, the chevrons, the gear's hexagon, the warning tag, the rail's carets - all one of the two.
+- **No stripe is a gradient.** Every striped mark is a pixel drawing from
+  `tools/pixel-stripes.mjs` - whole stripes, whole pixels - pasted into `:root` as `--px-*` and used
+  as a CSS mask, so its colour is still a token. A block's slanted sides run with its stripes, so no
+  stripe is cut into a fragment.
+- `launcher_buttons_test.mjs` fails a diagonal stripe gradient, a gradient cut at any angle but a
+  multiple of 45, a wire bent off 45, and a `--px-*` that no longer matches the generator.
+
+**Striping carries meaning, and each stripe is spoken for:**
+
+| Stripe | Where | Says |
 |---|---|---|
-| `120deg`, fine, 2px/6px | `.plate .hatch` (JACK IN, Done) | this is the primary control |
-| `-45deg`, 14px, animated | a working `.hud` button | working, do not press again |
-| `45deg`, 3px/7px, hazard | rail caps | end of travel |
-| `45deg`, 3px/6px, hazard | the rail's pointer | you are here |
+| hatch: steep 2:1, 2px on 4 off, whole stripes | `.plate .hatch` (JACK IN, Done), the bay's step | this is the primary control |
+| tread: 45deg leaning `\`, 20px, animated | a working `.hud` button | working, do not press again |
+| hazard: 45deg, 4px on 4 off, 3 whole stripes | rail caps | end of travel |
+| hazard: 45deg, 3px on 3 off, two yellows | the rail's pointer | you are here |
 
-The plate hatch starts a gap in from its corner, so it ends on whole strokes rather than a sliver
-in two corners; the phase is worked out for JACK IN's box and Done's, so a hatch that changes size
-gets it re-checked (the rule in the CSS says how). Done's hatch is JACK IN's in proportion, not a
-narrower copy - squeezed into 16x10 it rendered as a fleck, a stroke and a dot.
+Done's hatch is JACK IN's in proportion (3 stripes, 18px tall), not a narrower copy - squeezed into
+16x10 the old gradient rendered as a fleck, a stroke and a dot.
 
 **Marks:** `❮❮` trails an action. On a plate it is drawn - two clipped chevrons - not typed:
 `\276E` is in none of our fonts, and the fallback draws it as two soft arcs at button size.
