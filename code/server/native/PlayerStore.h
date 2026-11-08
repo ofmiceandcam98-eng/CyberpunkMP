@@ -1293,6 +1293,12 @@ struct PlayerStore
         return true;
     }
 
+    // Whether a change is waiting for Flush - for the shutdown trace in ~GameServer.
+    bool IsDirty() const
+    {
+        return m_dirty;
+    }
+
     /**
      * Persist every record, without ever leaving players.json truncated.
      *

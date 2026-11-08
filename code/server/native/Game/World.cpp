@@ -30,9 +30,14 @@ World::World(const FlecsConfig& acFlecsConfig)
 
     if (acFlecsConfig.IsEnabled())
     {
+        // ipaddr must be flecs's own copy. EcsRest's destructor hook calls ecs_os_free on it,
+        // and set() assigns the struct shallowly - so this used to hand flecs a pointer into
+        // the config's std::string, and ecs_fini freed it on every stop: the free(): invalid
+        // pointer, exit 139, that ended every shutdown of both servers, traced to
+        // World::~World on 2026-11-06. atlas:both-game-servers-abort-with-free-invalid-pointer-on-every-s
         set<flecs::Rest>({
             .port = acFlecsConfig.GetPort(),
-            .ipaddr = const_cast<char*>(acFlecsConfig.GetIpAddress()),
+            .ipaddr = ecs_os_strdup(acFlecsConfig.GetIpAddress()),
             .impl = nullptr
         });
         spdlog::info("Running Flecs REST API on {}:{}", acFlecsConfig.IpAddress, acFlecsConfig.Port);

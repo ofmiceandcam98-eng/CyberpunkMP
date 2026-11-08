@@ -169,9 +169,19 @@ GameServer::~GameServer()
      *
      * Forced rather than FlushIfDue, because there is no later tick to rely on. Both are
      * no-ops when nothing is dirty, so a stop with nothing outstanding costs nothing.
+     *
+     * The [shutdown] lines go to stderr for the reason given in ServerAPI::Exit. The second
+     * one is the answer to "did the final save run": past it, whatever kills the process
+     * kills it with the stores already on disk.
      */
+    std::fprintf(stderr, "[shutdown] ~GameServer: final save (players %s, messages %s)\n",
+                 m_players.IsDirty() ? "unsaved" : "clean", m_messages.IsDirty() ? "unsaved" : "clean");
+
     m_messages.Flush();
     m_players.Flush();
+
+    std::fprintf(stderr, "[shutdown] ~GameServer: final save done (players %s, messages %s) - members next\n",
+                 m_players.IsDirty() ? "STILL UNSAVED" : "on disk", m_messages.IsDirty() ? "STILL UNSAVED" : "on disk");
 
     GServer = nullptr;
 }
@@ -184,7 +194,7 @@ void GameServer::Kill()
 
 void GameServer::Run()
 {
-    while (m_run && IsListening())
+    while (m_run && !s_stopRequested && IsListening())
         Update();
 }
 
