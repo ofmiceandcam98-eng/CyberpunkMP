@@ -1113,14 +1113,17 @@
   }
 
   /* THE BRACKET BUTTON (S2), Settings' one button: zeldfep, 2026-11-08, "S2 and C's bays".
-     8rem by 26px on the label step. No plate - the label sits inside four registration corners.
+     8rem by 26px, its label on the micro step: the type doc (_internal-docs/type-scale.html) draws
+     Settings' row buttons there in its own Settings mock, beside the mod buttons and .hud-mini. It
+     was on the label step, the doc's step for tabs and headings (zeldfep, 2026-11-08: "please see
+     type scale for the buttons"). No plate - the label sits inside four registration corners.
      It keeps the kit's three moments: hover or Tab closes the corners in, turns them red and
      fills the dots under the label; pressing flashes a steel fill; the click glitch fires once.
      Nothing is clipped, so the focus ring always shows. Write its text with setHudButton. */
   .sb {
     position: relative; display: inline-grid; place-items: center; flex: none;
     width: 8rem; height: 26px; padding: 0; border: 0; background: none; cursor: pointer;
-    color: var(--ink); font-family: var(--mono); font-size: var(--fs-label); font-weight: 700;
+    color: var(--ink); font-family: var(--mono); font-size: var(--fs-micro); font-weight: 700;
     letter-spacing: .1em; text-transform: uppercase;
     --glitch-h: 26px; --sb-mark: var(--ink-dim);
   }

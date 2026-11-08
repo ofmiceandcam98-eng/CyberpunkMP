@@ -172,7 +172,9 @@ It is the plate in `--update` orange with `#140406` text; white on that orange i
 **Settings has its own small button, the bracket** (zeldfep, 2026-11-08, from two test pages:
 *"S2 and C's bays full"*). Settings is a dense list of rows, so its actions are small and quiet.
 
-- **One size: 8rem by 26px**, on the label step. No plate: the label sits inside four registration
+- **One size: 8rem by 26px**, its label on `--fs-micro` - the step the type doc gives Settings' row
+  buttons in its own Settings mock, with the mod buttons and `.hud-mini`. The first cut used the label
+  step, which is the tabs' and headings' step. No plate: the label sits inside four registration
   corners. Hover or Tab closes the corners in, turns them red and fills the dots under the label;
   a press flashes a steel fill; the click glitch fires once. Anything that deletes has a red label
   in red corners. Nothing on it is clipped, so its focus ring always shows.
