@@ -230,7 +230,8 @@ See any state of the real page in a browser with `node tools/tests/launcher-stag
   how the first cut put 02 and 03 between rungs. **The arrow is also the handle** (*"make the rail
   arrow on ladder scrollable"*): drag it and the pane scrolls with it, through the same sums run
   backwards, so it stays under the cursor and dropping it on a number lands at that section; a
-  press on the bare ladder jumps it there; the wheel over the rail scrolls the pane. The numbers
+  press on the bare ladder jumps it there; the wheel over the rail moves the arrow two rungs a
+  notch and the pane follows at the ladder's scale, as it does for a drag. The numbers
   and the step tabs stay, and they are the keyboard's way in. Keep the rail on whole pixels BY
   LAYOUT (`railSnap` pins its top margin): the rungs are snapped before any transform is
   applied, so a transform smears them, and an unsnapped rail leaves the arrow half a pixel off

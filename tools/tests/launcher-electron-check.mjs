@@ -392,10 +392,21 @@ async function run () {
     check(dragged.scroll === dragged.max && dragged.lit === rail.count - 1 && dragged.off === 0 && !dragged.dragging, 'dragging the arrow onto the last number scrolls to the end, with the arrow on its tick', `${JSON.stringify(dragged)}; ${await under(handle, 'railTrack')}`)
 
     const over = await read(`(() => { const r = document.getElementById('railTrack').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 } })()`)
+    // A 240px wheel is 33.6px of ladder, as a drag would move it, and the pane follows at the ladder's scale.
+    const scale = await read(`(() => {
+      const body = document.querySelector('#settingsModal .modal-body')
+      const track = document.getElementById('railTrack')
+      const { reach, y } = railLadder(body, railSections().sections, track.clientHeight || 230)
+      return reach[reach.length - 1] / (y[y.length - 1] - y[0])
+    })()`)
+    const arrow = `parseFloat(document.querySelector('#railTrack .rail-pointer').style.top)`
+    const arrowBefore = await read(arrow)
     await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: over.x, y: over.y, deltaX: 0, deltaY: -240 })
-    await sleep(300)
+    await sleep(600)
     const wheeled = await read(state)
-    check(wheeled.scroll === dragged.max - 240, 'the wheel over the rail scrolls the pane', `scrolled from ${dragged.max} to ${wheeled.scroll}, expected ${dragged.max - 240}`)
+    const arrowMoved = arrowBefore - await read(arrow)
+    const expected = 240 * 0.14 * scale
+    check(Math.abs(dragged.max - wheeled.scroll - expected) <= 2 && Math.abs(arrowMoved - 33.6) <= 3, 'the wheel over the rail moves the arrow like a drag and the pane follows', `pane moved ${dragged.max - wheeled.scroll}, expected ${Math.round(expected)}; arrow moved ${arrowMoved}, expected about 34`)
   }
   await shot('electron-ladder')
 

@@ -1121,6 +1121,7 @@
   /* While dragging it follows the cursor with no lag, and the cursor holds while off the arrow. */
   .rail-track.dragging, .rail-track.dragging .rail-pointer { cursor: grabbing; }
   .rail-track.dragging .rail-pointer { transition: none; filter: brightness(1.2); }
+  .rail-track.wheeling .rail-pointer { transition: none; }
   /* Animations off: nothing on the rail glides. This has to come AFTER the rail's own rules - the
      same block higher up the file was outranked by them and never applied. */
   @media (prefers-reduced-motion: reduce) {
@@ -4278,15 +4279,55 @@
     track.addEventListener('lostpointercapture', end)
   }
 
-  // The wheel over the rail scrolls the pane, as it would over a scrollbar. The rail sits outside
-  // the scrolling body, so without this the wheel did nothing there.
-  $('sectionRail').addEventListener('wheel', (e) => {
-    const body = document.querySelector('#settingsModal .modal-body')
-    if (!body) return
-    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? body.clientHeight : 1
-    body.scrollBy({ top: e.deltaY * unit, behavior: 'auto' })
-    e.preventDefault()
-  }, { passive: false })
+  // The wheel over the rail works like the drag: it moves the arrow along the ladder and the pane
+  // follows at the ladder's scale. zeldfep, 2026-11-09: "it just tries to land it to the next
+  // number it should work like the drag feature". It used to move the pane a fixed 100px a notch,
+  // which is a quarter of the way to the next number in one jump, or all of it in a short section.
+  // A notch is now two rungs wherever you are. It eases over a few frames so the arrow and the pane
+  // read as one motion; with animations turned off it goes straight there.
+  {
+    const track = $('railTrack')
+    const LADDER_PER_WHEEL = 14 / 100
+    let at = 0
+    let target = null
+    let frame = 0
+    const stop = () => {
+      cancelAnimationFrame(frame)
+      target = null
+      track.classList.remove('wheeling')
+    }
+    const step = () => {
+      const body = document.querySelector('#settingsModal .modal-body')
+      if (!body || target === null) return stop()
+      at += (target - at) * 0.35
+      if (Math.abs(target - at) < 0.5) at = target
+      body.scrollTop = at
+      updateRail()
+      if (at === target) stop()
+      else frame = requestAnimationFrame(step)
+    }
+    $('sectionRail').addEventListener('wheel', (e) => {
+      e.preventDefault()
+      const body = document.querySelector('#settingsModal .modal-body')
+      const { sections } = railSections()
+      if (!body || sections.length < 2 || track.classList.contains('dragging')) return
+      const { reach, y } = railLadder(body, sections, track.clientHeight || 230)
+      const panePerLadder = reach[reach.length - 1] / Math.max(1, y[y.length - 1] - y[0])
+      const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? body.clientHeight : 1
+      const max = Math.max(0, body.scrollHeight - body.clientHeight)
+      if (target === null) { at = body.scrollTop; target = at }
+      target = Math.max(0, Math.min(max, target + e.deltaY * unit * LADDER_PER_WHEEL * panePerLadder))
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        body.scrollTop = target
+        updateRail()
+        stop()
+      } else if (!track.classList.contains('wheeling')) {
+        track.classList.add('wheeling')
+        frame = requestAnimationFrame(step)
+      }
+    }, { passive: false })
+    track.addEventListener('pointerdown', stop)
+  }
   // Content inside the panes changes after async loads (the checkup, mod lists) - keep
   // the rail honest without wiring every producer: observe and debounce.
   {
