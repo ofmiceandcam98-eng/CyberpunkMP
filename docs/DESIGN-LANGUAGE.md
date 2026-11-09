@@ -285,14 +285,16 @@ builds, so read this before drawing a second ink screen.
 
 ## In-game ink screens (look and behaviour)
 
-From the character selector and the trade overlay. Their mockups are out of date now, so each
-rule here has been checked against the code that shipped.
+From the character selector and the trade overlay. Both are still being worked: the 2.5 update set
+them back and their design pages are live again (zeldfep, 2026-11-09). Everything here is checked
+against the code that shipped, except the last block, **Designs still in play**, which is what
+those pages ask for and the code does not do yet.
 
 **Building one**
 
 - **Build the tree at runtime from primitives** (`MpCsRect`, `MpCsText`, `MpCsBorder`). An
   `.inkwidget` authored from the command line hard-crashed the client when it was spawned
-  (2026-09-13). The JSON round trip is not byte-exact either, so never edit
+  (2026-09-13, on 2.31, and not tried since). The JSON round trip is not byte-exact either, so never edit
   `multiplayer_ui.inkwidget`, which holds chat, emotes and the job list.
 - **An `inkImage` binds an `.inkatlas`, never a raw `.xbm`.** The selector's backdrop is a
   single-texture atlas.
@@ -316,6 +318,9 @@ rule here has been checked against the code that shipped.
 
 **HUD overlays**
 
+- **A HUD widget gets no mouse.** Keyboard works through our own `UIBase` actions. A modal push
+  half-captures input: it broke chat typing and still gave no cursor. Clicking needs the overlay to
+  be a menu controller, like `ServerListController`.
 - **A tool for dealing with someone sits beside the conversation.** The trade overlay is drawn on
   the chat controller with chat live to its left, not as a full-screen menu. Trades get negotiated
   in text, and a full-screen menu pulls you out of an RP scene.
@@ -326,7 +331,8 @@ rule here has been checked against the code that shipped.
 - **Over live gameplay, panels are see-through**: a low-alpha fill, background blur and a bright
   border, so each box reads as its own (zeldfep, 2026-09-14: *"blur see through"*).
 - **No clipped-corner diamonds in ink.** zeldfep read them as clutter on the selector and the talk
-  button (2026-09-14), and nothing draws them now. The clipped corner is a launcher mark.
+  button (2026-09-14), and nothing draws them now. The clipped corner is a launcher mark. The trade
+  page still draws cut corners; this call came after it.
 - **Changing an offer clears both confirmations.** The server enforces it: somebody who agreed to
   the old offer has not agreed to this one.
 
@@ -354,6 +360,35 @@ rule here has been checked against the code that shipped.
   are instead of guessing"*. When placement is in dispute, list the numbers the code actually
   passes so they can be read and corrected. Date that list, because the first layout change makes
   it stale.
+
+**Designs still in play**
+
+Not in the code yet. What is open is tracked on the Atlas (`trade-menu-approved-never-built`,
+`character-select-mockup-items-never-built`).
+
+- **Where trade sits is unsettled.** The design page puts one panel on chat's bottom line, so the
+  two read as one strip. zeldfep's rework in game (2026-09-10) split it into the four floating boxes
+  to the right of chat that the code draws. Neither has replaced the other on paper.
+- **Two columns:** what you offer and what they offer. At real size there is no room for a third,
+  so the inventory stays in the game's own screen, and clicking one of your rows adds or removes it.
+- **Limits show before anyone confirms.** Weight and eddies sit in the header, because a trade that
+  would put you over your carry limit has to be refusable before both sides confirm. Nothing
+  refuses one yet.
+- **Eddies are typed.** Reaching 2500 by pressing + is not a design. The field comes first, steppers
+  cover the last unit or two, and it stops at what you carry. Today the arrow keys step it.
+- **Say the rule where the decision is.** A line beside the panel says any change to either offer
+  clears both confirmations.
+- **Colour says whose it is:** cyan for your side, red for theirs, gold for money.
+- **The overlay never decides a trade.** It drives the server's trade session. Applying the same
+  trade twice moves the money twice, so a confirm from the UI must never apply one itself.
+- **The selector arrives; it does not appear.** A short fade or slide on open, because showing up
+  at full opacity is most of what makes a runtime-built screen feel bolted on.
+- **An authored layout is still the goal.** Named parts in a resource with a bound controller
+  (`JobListController` is the closest shape) instead of hand-placed rectangles, so the screen is
+  the mockup rather than an approximation of it and the next change is a five-minute job. It needs
+  a new library and a way to load it that does not crash the game.
+- **The dossier's missing fields:** street cred, last location, play time and the portrait. The
+  portrait is the expensive one, because an appearance is a blob and not an image.
 
 ---
 
