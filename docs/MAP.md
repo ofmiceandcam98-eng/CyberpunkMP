@@ -51,7 +51,20 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
     here and in CLAUDE.md as well as posted - the feed scrolls, and the other stream reads
     law from the rulebook.
 
-- **Auditing the Atlas includes the internal docs** (zeldfep, 2026-11-05): *"lets make sure these
+- **Log the fix the MOMENT you have it - and run the logged fix before re-testing the
+  symptom** (zeldfep, 2026-11-09: *"lets try to log fixes as we are going through them so we
+  stop this loop of constant re-test ... if we had the fix and didn't log the actual solution
+  to the problem we are faced with lost tokens, time and patience"*). Two halves, both law:
+  - **Found a cause, committed a fix, built a candidate? The branch gets the SOLUTION the
+    moment it exists** - mechanism, commit hash, and how to confirm, as a dated layer in the
+    branch text - not at landing. Landing only adds the proof. A fix that lives in a session
+    and not on the board costs the next session the whole investigation again.
+  - **Before re-testing a symptom, read the branch's latest layer and execute the logged
+    next step FIRST.** The case that bought this decree: the own-character-appearance branch
+    carried a built candidate fix ("Route A", be695136, two admin buttons on test.94) for
+    FOUR DAYS while two sessions re-proved the symptom it was built to fix - the branch's
+    own text said "Route A's admin buttons were not tried". Re-measuring a known symptom
+    with an untried fix on the board is the loop, and it is a bug by definition. *"lets make sure these
   .md are getting audited when auditing atlas"*. Every audit also walks the docs on the server,
   following the ledger at `/mnt/vol/projects/_internal-docs/DOC-AUDIT.md`. Anything still open and
   unbranched gets a branch; each doc is marked live, stale or history.
