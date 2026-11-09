@@ -950,6 +950,9 @@ const GITHUB_REPO = 'ofmiceandcam98-eng/CyberpunkMP'
 // matching code change in a shipped binary - a launcher already in someone's hands could
 // never see a release published after it. Releases are now versioned (v0.1.4, v0.1.5...)
 // and this always resolves to the current one.
+// Every request to GitHub in this file goes through this, so no download path can forget.
+ManifestKit.installReleaseRetry(axios, { log: (line) => launcherLog(line) })
+
 const RELEASE_API = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`
 
 // ---------------------------------------------------------------------------
@@ -1047,7 +1050,7 @@ let manifestStateAt = 0
 const MANIFEST_TTL_MS = 10 * 60 * 1000
 
 async function refreshManifestState (force = false) {
-  if (!force && manifestState && Date.now() - manifestStateAt < MANIFEST_TTL_MS) return manifestState
+  if (!force && manifestState && Date.now() - manifestStateAt < ManifestKit.manifestStateTtlMs(manifestState.state, MANIFEST_TTL_MS)) return manifestState
 
   let fetchedBytes = null
   let fetchedSigText = null
@@ -3853,6 +3856,34 @@ async function launchGame () {
     launcherLog(`game version: ${version.have} - supported`)
   }
 
+  // A dev joining the test server on the public release: anything odd after this reads as a
+  // bug in the build under test, so say it before the game starts. Cancel is the default;
+  // launching anyway stays possible because a release client against test is sometimes the
+  // thing being tested.
+  if (ManifestKit.testBuildMissing({
+    isStaff: isAdmin(),
+    serverSource: server.source,
+    serverHost: server.host,
+    publishedHost: publishedServer?.host,
+    testBuildTag: loadSettings().testBuildTag
+  })) {
+    launcherLog(`test build: none installed, and ${server.host} is not the public server`)
+    const answer = dialog.showMessageBoxSync(mainWindow, {
+      type: 'warning',
+      buttons: ['Launch anyway', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      title: 'Test build not installed',
+      message: 'Test build not installed.',
+      detail: `This launcher is pointed at ${server.host}, which is not the public server, but it has ` +
+              'the public release installed. Install a test build from Settings > Dev > Test builds, ' +
+              'or launch anyway if the public release is what you mean to test.'
+    })
+
+    if (answer === 1) throw new Error('Test build not installed. Install one from Settings > Dev > Test builds.')
+    launcherLog('test build: user chose to launch anyway')
+  }
+
   // Boot policy self-heal, deliberately not awaited: an installed Fast Launch is a
   // cheap no-op check, and a missing one downloading in the background must not
   // delay the JACK IN that was just pressed - it lands for the next boot.
@@ -5930,7 +5961,7 @@ ipcMain.handle('install:everything', async () => {
     return { ok: true, ...result }
   } catch (err) {
     launcherLog(`install everything: FAILED - ${err.message}`)
-    return { ok: false, error: err.message }
+    return { ok: false, error: ManifestKit.releaseChannelError(err, 'the download could not finish') }
   }
 })
 
@@ -5973,7 +6004,8 @@ ipcMain.handle('update:apply', async () => {
     lastUpdateCheck = await checkForUpdates()
     return { ok: true, ...result }
   } catch (err) {
-    return { ok: false, error: err.message }
+    launcherLog(`update: FAILED - ${err.message}`)
+    return { ok: false, error: ManifestKit.releaseChannelError(err, 'the update could not finish') }
   }
 })
 
@@ -6608,7 +6640,7 @@ ipcMain.handle('prerelease:install', async (_event, tag) => {
 
     return { ok: true, tag, payload: Boolean(payload), warning: dllWarning || undefined }
   } catch (err) {
-    return { ok: false, error: err.message }
+    return { ok: false, error: ManifestKit.releaseChannelError(err, 'the test build could not be downloaded') }
   }
 })
 
@@ -6679,7 +6711,7 @@ ipcMain.handle('prerelease:restore', async () => {
 
     return { ok: true, source: 'local backup (offline) - Reinstall mod files if the game will not start' }
   } catch (err) {
-    return { ok: false, error: err.message }
+    return { ok: false, error: ManifestKit.releaseChannelError(err, 'the public release could not be downloaded') }
   }
 })
 
