@@ -7,7 +7,7 @@ written down. Everything here is already in `code/launcher-lite/index.html` — 
 rulebook for it, not a proposal. **The launcher is the truth; if this file disagrees with the
 code, the code won.**
 
-Design records that show a decision being made live in `docs/design/`.
+Design records that show a decision being made are internal; `docs/design/README.md` says where.
 
 ---
 
@@ -283,6 +283,80 @@ builds, so read this before drawing a second ink screen.
 
 ---
 
+## In-game ink screens (look and behaviour)
+
+From the character selector and the trade overlay. Their mockups are out of date now, so each
+rule here has been checked against the code that shipped.
+
+**Building one**
+
+- **Build the tree at runtime from primitives** (`MpCsRect`, `MpCsText`, `MpCsBorder`). An
+  `.inkwidget` authored from the command line hard-crashed the client when it was spawned
+  (2026-09-13). The JSON round trip is not byte-exact either, so never edit
+  `multiplayer_ui.inkwidget`, which holds chat, emotes and the job list.
+- **An `inkImage` binds an `.inkatlas`, never a raw `.xbm`.** The selector's backdrop is a
+  single-texture atlas.
+- **A full-screen canvas stays non-interactive.** An interactive one swallows input and soft-locks
+  the game.
+- **When you probe the engine, give silence a branch.** An unresolvable resource never calls back,
+  so a probe with only success and failure paths reports nothing. Run a known-good control beside
+  it.
+
+**Menu screens**
+
+- **A menu screen replaces the menu.** zeldfep, 2026-09-08: *"not as an overlay — as a new layer
+  within the menu"*. The game has no moddable way to add a menu scenario, because the name one
+  opens is registered in the engine, so hiding the menu list is the only way there. It is also a
+  correctness fix: clicks that missed a hit rectangle were landing on the buttons behind it.
+- **Putting the menu back comes first and is unconditional.** `PopulateMenuItemList` shows the
+  list before it decides anything, because a hidden list with no way back is a main menu nobody
+  can use. Hide after the menu's own refresh, or the refresh puts it straight back.
+- **A screen you can close needs a way back in.** CHARACTER SELECT is in the connected menu for
+  this reason. Escape arrives as both `back` and `cancel`, so handle both.
+
+**HUD overlays**
+
+- **A tool for dealing with someone sits beside the conversation.** The trade overlay is drawn on
+  the chat controller with chat live to its left, not as a full-screen menu. Trades get negotiated
+  in text, and a full-screen menu pulls you out of an RP scene.
+- **Place it as a fraction of the measured root**, not in pixels (`MpTrShiftFracX/Y`). zeldfep,
+  2026-09-14: *"move them right past the chat box; dynamic to monitor size"*.
+- **Tune the size live, then bake it.** The trade mockup was honest about game scale and the
+  shipped overlay still needed a zoom of 2.6 on a real screen. `/trsave` keeps a tuned placement.
+- **Over live gameplay, panels are see-through**: a low-alpha fill, background blur and a bright
+  border, so each box reads as its own (zeldfep, 2026-09-14: *"blur see through"*).
+- **No clipped-corner diamonds in ink.** zeldfep read them as clutter on the selector and the talk
+  button (2026-09-14), and nothing draws them now. The clipped corner is a launcher mark.
+- **Changing an offer clears both confirmations.** The server enforces it: somebody who agreed to
+  the old offer has not agreed to this one.
+
+**Legible from across the room**
+
+- **A token is where colour starts; it still has to be read against what is behind it.** The
+  selector's yellow shipped at double the token on two channels, which is bloom, and was illegible
+  over the city backdrop (zeldfep, 2026-09-09: *"make it a bit darker"*). Stay at or just above 1.0.
+- **One accent per screen.** Gold on the selector, cyan on trade. Red is the shared warning.
+- **Text over an image gets a scrim.** The selector puts black at .55 under the roster and .45
+  along the bottom.
+- **Selection moves as well as recolours.** The selected card steps 14 units right, which reads
+  when colour alone does not.
+- **One filled control per screen: the one that ends it.** ENTER NIGHT CITY is the only solid
+  button on the selector. Everything else is an outline.
+
+**Mocking one up**
+
+- **Mock at game scale, on the ground it will sit on.** Author inside a 1920×1080 stage and scale
+  the stage as one piece, so 14 means 14 game units. Put something busy behind it: a transparent
+  panel over a flat ground looks identical to an opaque one.
+- **Say which numbers are read from the code and which are proposals.** Treat the proposals as
+  unproven until a real screen has judged them.
+- **Draw it, don't guess it.** zeldfep, 2026-09-08: *"how about you let me draw where the buttons
+  are instead of guessing"*. When placement is in dispute, list the numbers the code actually
+  passes so they can be read and corrected. Date that list, because the first layout change makes
+  it stale.
+
+---
+
 ## Copy
 
 Write from the player's side of the screen. A control says what happens; the result says it
@@ -292,6 +366,43 @@ diagnosis, not an apology.
 
 Release notes are for players, not for us. Say what changed, say what did not, and say plainly
 when a build contains no gameplay change so nobody hunts for a fix that is not in it.
+
+---
+
+## Documents
+
+Working pages, mockup write-ups and reports have their own look, and it is not the launcher's.
+zeldfep, 2026-11-05, on the Selector Draw Map: *"it had a simple yet unique style"*, and on whether
+it should shape the launcher: *"Just for documents"*. The seven type sizes are the launcher's and
+do not apply here.
+
+| Part | Treatment |
+|---|---|
+| Eyebrow | mono 12px, `.38em`, uppercase, `--hazard` |
+| Title | 42px bold, uppercase, line-height `.98` |
+| Sub line | mono 13px, `.2em`, uppercase, faint: what it is and its date |
+| Rule | 1px, `--accent` fading to nothing |
+| Section label | mono 13px, `.24em`, uppercase, `--accent`, a hairline running out to the edge |
+| Body | 15px at 1.55, lines held to about 76 characters |
+| Table head | mono 11px, `.16em`, uppercase, faint |
+| Numbers and code | mono, cyan `#3ce8ef`, tabular figures |
+
+- **Colour sorts the page by job**: gold eyebrow, red section labels, cyan numbers and code, white
+  row names, grey notes. The colours are the launcher's tokens plus `#6b5f61` for faint text. Cyan
+  means data here; the rule that keeps it to the click glitch is the launcher's.
+- **Almost no boxes.** A section is a label and a hairline. Tables have row hairlines and no cell
+  borders.
+- **Loud once.** One box with a hazard strip, for the thing that bit, and nothing competing with
+  it. Cut the strip at 45 degrees: the old pages' 115-degree gradient steps unevenly on a screen
+  that does not smooth it.
+- **Open with the words of whoever asked**, in bold, then the numbers.
+- **Say how you know.** Tag each item with its state (works, unproven, open, blocked, measured),
+  and give a table of facts a column for how each was established. A build succeeding is not a
+  result.
+- **A stale page says so at the top**, names what is still live, and stays where it is.
+- **Fonts:** the pages name Chakra Petch and Share Tech Mono without loading them, so they render
+  in system fallbacks, and that is the look zeldfep kept (2026-11-05). A mockup of the game does
+  load a face close to the game's.
 
 ---
 
