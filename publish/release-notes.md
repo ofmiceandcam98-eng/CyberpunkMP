@@ -38,9 +38,9 @@ launcher will tell you if your game is on the wrong version.
   was saving the default body over characters, and this release is built so that cannot
   happen. Until this is fixed, changing your look at a mirror or ripperdoc, and the look of
   a brand-new character, are not saved on 2.5.
-- **No voice chat and no on-screen key hints in the city.** The part of the mod that draws
-  them does not load on 2.5 yet, so push-to-talk, the Talk / Emote / Disconnect hints and
-  the job keys are missing. Text chat works.
+- **Voice chat has not been proven on 2.5 yet.** It starts up, and the Talk / Emote /
+  Disconnect hints show in the city, but nobody has tested two players talking to each
+  other on this patch. Text chat works.
 - **Two new start-up screens** (the CD PROJEKT RED account prompt and one more) now appear
   before the menu. Skip them; we will make the launcher skip them again.
 
