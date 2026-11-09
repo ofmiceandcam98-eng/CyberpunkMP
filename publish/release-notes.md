@@ -20,8 +20,9 @@ launcher will tell you if your game is on the wrong version.
 - **Quitting the game while connected no longer crashes it.** This one was older than 2.5 -
   closing the game without disconnecting first ended in a crash on the way out.
 - **The server you connect to is up to date again.** The public server had been left on
-  older code since September, so recent launcher builds could not talk to it. It now runs
-  the same code as this release.
+  older code since September, so recent launcher builds could not talk to it.
+- **Your progress is saved on 2.5.** Inventory, money, attributes and perks come back when
+  you rejoin.
 - **Trading: the eddies offer moves by 1 per press** instead of 500.
 - **Update now brings the frameworks with it.** RED4ext and the other five frameworks the
   mod runs on used to change only with a full Install everything, so an old copy could
@@ -31,8 +32,8 @@ launcher will tell you if your game is on the wrong version.
 
 **Still broken on 2.5 - known, and being worked on:**
 
-- **Inventory, money, attributes and perks are not saved on 2.5 yet.** Nothing you pick up,
-  earn, spend or level on 2.5 is kept between sessions. This is the next fix in line.
+- **Two parts of saving are not fully proven.** Nobody has tested a respec or level-up yet.
+  If your money looks wrong after you rejoin, tell us on Discord.
 - **You look like the default character to yourself.** Your saved look is applied but does
   not show on your own body yet. Your look is SAFE on the server - an early 2.5 test build
   was saving the default body over characters, and this release is built so that cannot
