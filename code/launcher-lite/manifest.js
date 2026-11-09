@@ -154,16 +154,20 @@ function describeError (err) {
   return (err && err.message) ? err.message : String(err)
 }
 
-// The cache the caller persists on a 'valid' verdict is { manifestVersion,
-// bytes } (doc §2.1: "version + bytes"), but a caller that keeps the parsed
-// object around may hand that in instead - both are accepted, because this
-// function should not dictate main.js's storage format.
+// main.js persists the verified manifest itself on a 'valid' verdict. The doc's
+// { manifestVersion, bytes } (§2.1: "version + bytes") and a { manifestVersion,
+// manifest } wrapper are accepted too, because this function should not dictate
+// main.js's storage format.
 function readCachedManifest (cached) {
   if (!cached) return null
   if (cached.manifest && typeof cached.manifest === 'object') return cached.manifest
   if (cached.bytes != null) {
     try { return JSON.parse(Buffer.isBuffer(cached.bytes) ? cached.bytes.toString('utf8') : String(cached.bytes)) } catch { return null }
   }
+  // The bare manifest, which is what main.js writes. Missing this made the offline
+  // fallback unreachable in production: every failed fetch reported that no manifest
+  // had ever been verified, and the game launched with nothing to attest.
+  if (typeof cached.manifestVersion === 'string' && cached.manifestVersion !== '') return cached
   return null
 }
 
@@ -177,7 +181,8 @@ function readCachedManifest (cached) {
  *                     on the asset, not a network failure)
  *   fetchedSigText    contents of server-manifest.json.sig, or null when absent
  *   fetchError        set when the channel could not be reached at all
- *   cached            the last-accepted manifest: { manifestVersion, bytes } or
+ *   cached            the last-accepted manifest: the manifest itself (what
+ *                     main.js persists), { manifestVersion, bytes } or
  *                     { manifestVersion, manifest }
  *   pinnedPubkeyLines the launcher's pinned `ed25519-public:...` lines
  *

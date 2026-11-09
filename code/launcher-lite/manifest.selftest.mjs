@@ -262,6 +262,26 @@ check('state: unreachable with no cache -> unverified-offline',
   })(),
   ['unverified-offline', null])
 
+// The shape main.js really persists: JSON.stringify(evaluated.manifest), the bare manifest with
+// no { bytes } or { manifest } wrapper. cachedEntry above is not what production writes, which
+// is how a launcher that had verified a manifest 25 minutes earlier said none had ever been
+// verified, the first time GitHub answered 504 at JACK IN on an armed server (2026-11-09).
+const persistedByMain = { schema: 1, manifestVersion: '2026.08.21.02' }
+
+check('state: unreachable with the cache main.js writes -> cached',
+  (() => {
+    const r = evaluateManifestState({ fetchError: new Error('Request failed with status code 504'), cached: persistedByMain, pinnedPubkeyLines: pinned })
+    return [r.state, r.manifest?.manifestVersion]
+  })(),
+  ['cached', '2026.08.21.02'])
+
+check('state: rollback against the cache main.js writes keeps that manifest',
+  (() => {
+    const r = evaluateManifestState({ fetchedBytes: older.bytes, fetchedSigText: older.sig, cached: persistedByMain, pinnedPubkeyLines: pinned })
+    return [r.state, r.manifest?.manifestVersion]
+  })(),
+  ['rollback', '2026.08.21.02'])
+
 // absent: migration fallback, caller uses the legacy path
 check('state: absent',
   (() => {
