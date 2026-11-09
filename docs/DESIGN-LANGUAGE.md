@@ -31,7 +31,7 @@ happened here twice, and both cleanups cost an evening.
 | `--line` | `#2a1418` | every border and rule |
 | `--ink` | `#e8e2e2` | text you are meant to read |
 | `--ink-dim` | `#9a8b8d` | text that supports it — descriptions, labels, disabled |
-| `--accent` | `#ff2a32` | **you can act here.** Play, focus rings, primary controls |
+| `--accent` | `#f73932` | **you can act here.** Play, focus rings, primary controls |
 | `--hazard` | `#f3c50f` | **stop and read this** — plus the section rail, see below |
 | `--ok` | `#3ddc64` | it worked |
 | `--bad` | `#f0a05a` | it did not |
@@ -39,12 +39,19 @@ happened here twice, and both cleanups cost an evening.
 | `--update-2` | `#6b3410` | the Update plate's base — a shade of `--update`, never a new hue |
 | `--update-tread` | `#9a4a14` | the second band of the Update plate's working stripe |
 | `--steel` | `#2b303a` | inert chrome — secondary plates, scrollbar thumb |
-| `--accent-2` | `#7c1015` | the accent ramp: the red fade on the motifs and the progress bar |
-| `--accent-3` | `#5a0c11` | deeper in the ramp — a secondary plate's base, trailing plates and hairlines |
+| `--accent-2` | `#79221b` | the accent ramp: the red fade on the lines and the progress bar |
+| `--accent-3` | `#542226` | deeper in the ramp — a secondary plate's base, trailing plates and hairlines |
 | `--accent-4` | `#26060a` | where the ramp ends, just above the ground |
 | `--plate-dead` | `#2a0d11` | a kit button that cannot be pressed yet |
-| `--tread-2` | `#b81f26` | the second band of the working stripe |
+| `--tread-2` | `#ae3b36` | the second band of the working stripe |
 | `--glitch` | `#3ce8ef` | **the click glitch and nothing else.** The one hue outside this palette |
+
+**The red is the game's own** (zeldfep, 2026-11-09: *"the red is good its just a bit vibrant check
+the cyberpunk color pallet"*). The old `#ff2a32` had the game's hue with more saturation than any
+red in `base\gameplay\gui\common\main_colors.inkstyle`. `--accent` is that file's
+`NameplateBackground`; `--accent-2`, `--accent-3` and `--tread-2` are its
+`Fullscreen_PrimaryForegroundDarker`, `Fullscreen_SecondaryBackground3` and `MildRed`. A new red
+comes from that file too.
 
 **The hazard rule, and it is the subtle one.** Yellow means *warning* everywhere in this app —
 the waiting queue row, the `/// WARNING ///` prefix, the busy spinner. It ALSO carries the
@@ -100,7 +107,7 @@ button, not the page, and making it absolute breaks it the moment the button cha
 ## Shape
 
 **Square.** `--radius: 2px`, and most of the kit is `0`. Round corners are not this app.
-Avatars are the only exception — they are pictures of people.
+Avatars are cut as the gear's hexagon, with a red ring.
 
 **The signature is the clipped corner, not a radius:**
 
@@ -117,7 +124,7 @@ diagonal, so the pixel grid shows through: a diagonal at any slope but two steps
 gradient stripe comes out ragged with broken ends where it meets its box. So:
 
 - **Two slopes only: 45 degrees** (1px across per row) **and steep 2:1** (1px across every two
-  rows). Chamfers, notches, the bay's step, the motif's slant cuts (`135deg` / `45deg` gradients),
+  rows). Chamfers, notches, the bay's step, the main window's bar and traces,
   wires, the chevrons, the gear's hexagon, the warning tag, the rail's carets - all one of the two.
 - **No stripe is a gradient.** Every striped mark is a pixel drawing from
   `tools/pixel-stripes.mjs` - whole stripes, whole pixels - pasted into `:root` as `--px-*` and used
@@ -232,6 +239,18 @@ See any state of the real page in a browser with `node tools/tests/launcher-stag
   holding a drawn cog on `--fs-icon`, with three ticks under it as its load bar. Hover or Tab
   lights the hairline, fills the ticks and turns the cog one tooth; a click drops the scan line.
   The cog is an SVG because every font draws the gear glyph differently.
+- **The main window is three bays on one set of columns** (zeldfep, 2026-11-08). `--cols` is shared
+  by the header and `main`, so the name sits over the left bay, the user tabs over the middle and
+  the gear at the far end. The sides are equal, so the middle stays on the window's centre. The
+  bays are Settings' module bays in the boxes' own colours: `--surface` and a `--line` hairline,
+  with only the shape new. **No boxes around the name or the user tabs.**
+- **Its lines are drawings, not gradients**: the top-left bar and echo dash (*"I think it adds
+  character"*, so the design stays), and the thick bus along the header and footer, two traces
+  through one 45-degree bend to their own pads. They come from `tools/pixel-stripes.mjs --lines` and
+  `launcher_buttons_test.mjs` fails them if they drift.
+- **Its bays stay on whole pixels.** A clip-path edge is not snapped the way a border is, so a bay
+  on a fraction blurs its 1px frame. `--cols` rounds the middle to an even width, the footer has a
+  whole height, and `snapBays` lands the bays that sit under text of fractional height.
 - **Space with `gap`**, not per-element margins.
 - **No inline `style=` for anything the kit has a class for.** Six inputs each carrying their
   own inline styling is how three radii and an undeclared colour token got in.

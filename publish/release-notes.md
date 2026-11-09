@@ -54,6 +54,8 @@ launcher will tell you if your game is on the wrong version.
 - **The rail is a gauge.** Drag its striped arrow to scroll, click a number to jump, or use
   the wheel over it.
 - **A new Settings gear**, and stripes and slanted edges drawn pixel by pixel, not ragged.
+- **The main window, recut.** The three panels are numbered and cut like Settings' sections, the
+  lines along the top and bottom are thicker and cleaner, and the red is now the game's own.
 - **Smaller fixes:** patch notes keep their paragraphs whole; logging out clears the network
   invite; JACK IN's reason stops pointing at a button you cannot see; your own mods stay
   listed when there are no recommended ones.
