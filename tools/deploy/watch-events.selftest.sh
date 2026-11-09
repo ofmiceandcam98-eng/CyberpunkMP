@@ -81,6 +81,31 @@ echo "2026-11-05T05:41:00.000Z [info] Server started on port 11778" >> "$T/post"
 out="$(run 2026-11-05T05:30:00Z)"
 check "a restart loop on a healthy log still fires" "$out" 'RESTART LOOP: server started 2 times'
 
+# A deliberate stop and start is not a loop: a clean stop explains the start after it.
+for i in $(seq 1 400); do echo "2026-11-05T05:00:00.000Z [info] line $i"; done > "$T/post"
+{
+  echo "2026-11-05T05:40:00.000Z [info] Server started on port 11778"
+  echo "2026-11-05T05:41:00.000Z [shutdown] Main returning to the runtime"
+  echo "2026-11-05T05:41:05.000Z [info] Server started on port 11778"
+} >> "$T/post"
+refute "a clean stop then a start is not a restart loop" "$(run 2026-11-05T05:30:00Z)" 'RESTART LOOP'
+
+# glibc's own words for a heap abort. The server stopped this way on every single stop for
+# months and the watcher called it quiet, because none of its patterns said it.
+for i in $(seq 1 400); do echo "2026-11-05T05:00:00.000Z [info] line $i"; done > "$T/post"
+echo "2026-11-05T05:41:00.000Z free(): invalid pointer" >> "$T/post"
+check "a heap abort is seen as a crash" "$(run 2026-11-05T05:30:00Z)" 'CRASH-CLASS lines: 1'
+
+# A dry run reads the real state and leaves it exactly as it found it.
+for i in $(seq 1 400); do echo "2026-11-05T05:00:00.000Z [info] line $i"; done > "$T/post"
+echo "2026-11-05T05:40:00.000Z [error] unhandled exception" >> "$T/post"
+rm -f "$T/home/.nco-event-watcher/"*
+echo "2026-11-05T05:30:00Z" > "$T/home/.nco-event-watcher/since-fake"
+out="$(HOME="$T/home" PATH="$T/bin:$PATH" NCO_WATCH_CONTAINERS=fake /bin/bash "$HERE/watch-events.sh" --dry-run 2>&1)"
+check "a dry run still reports what it found" "$out" 'CRASH-CLASS lines: 1'
+check "a dry run leaves the real window alone" "$(cat "$T/home/.nco-event-watcher/since-fake")" '^2026-11-05T05:30:00Z$'
+refute "a dry run arms no cooldown" "$(ls -A "$T/home/.nco-event-watcher")" 'cool-'
+
 # A read that fails must not advance the window, or that stretch is skipped forever.
 rm -f "$T/home/.nco-event-watcher/"*
 echo "2026-11-05T05:30:00Z" > "$T/home/.nco-event-watcher/since-fake"
