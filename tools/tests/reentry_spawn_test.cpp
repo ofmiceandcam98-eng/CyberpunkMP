@@ -126,6 +126,18 @@ int main()
               "the crash reporter is installed before anything in the mod's load can fault");
     }
 
+    // ---------------------------------------------------------------- 5. THE OVERLAY DRAWS
+    // ImGui is not pinned, and 1.92 stopped filling ImDrawData::CmdListsCount. Every reader saw
+    // zero, so the overlay built its bar and handed the renderer nothing, with no error at all.
+    {
+        const auto backend = ReadRepoFile("code/client/App/Rendering/dx12.cpp");
+        const auto overlay = ReadRepoFile("code/client/App/Rendering/ImGuiService.cpp");
+        Check(backend.find("CmdListsCount") == std::string::npos && overlay.find("CmdListsCount") == std::string::npos,
+              "the overlay reads CmdLists.Size, the count ImGui still fills in");
+        Check(overlay.find("cyber_engine_tweaks.asi") != std::string::npos,
+              "the overlay will not start beside Cyber Engine Tweaks");
+    }
+
     std::printf("\n%d checks, %d failed\n", s_checks, s_failures);
     return s_failures == 0 ? 0 : 1;
 }

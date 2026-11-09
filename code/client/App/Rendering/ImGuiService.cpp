@@ -264,7 +264,7 @@ void ImGuiService::OnPresent()
         return;
 
     OVERLAY_LOG_ONCE("[ImGuiService] first frame with something to draw: {} draw list(s), {} vertices, display {}x{}",
-                     m_imguiDrawDataBuffers[0].CmdListsCount, m_imguiDrawDataBuffers[0].TotalVtxCount,
+                     m_imguiDrawDataBuffers[0].CmdLists.Size, m_imguiDrawDataBuffers[0].TotalVtxCount,
                      m_imguiDrawDataBuffers[0].DisplaySize.x, m_imguiDrawDataBuffers[0].DisplaySize.y);
 
     const auto bufferIndex = GetSwapChain()->GetCurrentBackBufferIndex();
@@ -316,7 +316,7 @@ void ImGuiService::OnReset(bool aCompleteReset)
 
         for (auto& drawData : m_imguiDrawDataBuffers)
         {
-            for (auto i = 0; i < drawData.CmdListsCount; ++i)
+            for (auto i = 0; i < drawData.CmdLists.Size; ++i)
                 IM_DELETE(drawData.CmdLists[i]);
             drawData.Clear();
         }
@@ -400,14 +400,14 @@ void ImGuiService::PrepareUpdate()
 
     auto& drawData = m_imguiDrawDataBuffers[2];
 
-    for (auto i = 0; i < drawData.CmdListsCount; ++i)
+    for (auto i = 0; i < drawData.CmdLists.Size; ++i)
         IM_DELETE(drawData.CmdLists[i]);
     drawData.Clear();
 
     drawData = *ImGui::GetDrawData();
 
     ImVector<ImDrawList*> copiedDrawLists;
-    for (auto i = 0; i < drawData.CmdListsCount; ++i)
+    for (auto i = 0; i < drawData.CmdLists.Size; ++i)
         copiedDrawLists.push_back(drawData.CmdLists[i]->CloneOutput());
     drawData.CmdLists = copiedDrawLists;
 
