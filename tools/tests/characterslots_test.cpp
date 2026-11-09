@@ -147,6 +147,11 @@ int main()
               "nobody can select past the ceiling, not even the owner");
         Check(store.SelectSlot("1", -1, EPermissionLevel::kOwner) == "slot_out_of_range",
               "a negative slot is out of range rather than a wraparound");
+
+        // A brand-new account has no record and is already on slot 0, so that is a success.
+        // It used to answer no_account, which told every new player their character failed.
+        Check(store.SelectSlot("never-seen", 0, EPermissionLevel::kPlayer).empty(), "slot 0 on an account with no record succeeds");
+        Check(store.SelectSlot("never-seen", 1, EPermissionLevel::kOwner) == "no_account", "another slot on an account with no record is still refused");
     }
 
     // ---------------------------------------------------------------- THE GUARANTEE

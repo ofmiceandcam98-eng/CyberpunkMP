@@ -141,9 +141,9 @@ void VehicleSystem::OnInitialize(const RED4ext::JobHandle& aJob)
     pNetworkService->RegisterHandler<&VehicleSystem::HandleAuthorityRevoked>(this);
     pNetworkService->RegisterHandler<&VehicleSystem::HandleEntityUnload>(this);
 
-    m_pSpawnVehicle = Red::Detail::GetFunction(GetType(), "SpawnVehicle");
-    m_pEnterVehicle = Red::Detail::GetFunction(GetType(), "EnterVehicle");
-    m_pExitVehicle = Red::Detail::GetFunction(GetType(), "ExitVehicle");
+    m_pSpawnVehicle = Red::GetFunction(GetType(), "SpawnVehicle");
+    m_pEnterVehicle = Red::GetFunction(GetType(), "EnterVehicle");
+    m_pExitVehicle = Red::GetFunction(GetType(), "ExitVehicle");
 }
 
 std::optional<uint64_t> VehicleSystem::GetVehicleRemoteId() const
@@ -403,7 +403,7 @@ bool VehicleSystem::HandleVehicleLoadMessage(const PacketEvent<server::NotifyVeh
     const auto quat = glm::quat(eulerAngles);
     Red::Quaternion rotation = Game::ToRed(quat);
 
-    if (!Red::Detail::CallFunctionWithArgs(m_pSpawnVehicle, handle, id, aMessage.get_tweak_id(), position, rotation))
+    if (!Red::CallFunction(handle, m_pSpawnVehicle, id, aMessage.get_tweak_id(), position, rotation))
         return false;
 
     if (!id.IsDynamic())
@@ -458,7 +458,7 @@ bool VehicleSystem::HandleVehicleEnterMessage(const PacketEvent<server::NotifyVe
     // 
     // const auto sit = Red::CName(aMessage.get_sit_id());
 
-    // if (!Red::Detail::CallFunctionWithArgs(m_pEnterVehicle, handle, res, character, vehicle, sit))
+    // if (!Red::CallFunction(handle, m_pEnterVehicle, res, character, vehicle, sit))
     //     return false;
 
     return true;
@@ -575,7 +575,7 @@ bool VehicleSystem::HandleVehicleExitMessage(const PacketEvent<server::NotifyVeh
         const auto handle = Red::Handle(this);
         bool res;
         spdlog::info("[VehicleSystem] HandleVehicleExitMessage: ExitVehicle vcall");
-        Red::Detail::CallFunctionWithArgs(m_pExitVehicle, handle, res, character);
+        Red::CallFunction(handle, m_pExitVehicle, res, character);
         spdlog::info("[VehicleSystem] HandleVehicleExitMessage: ExitVehicle returned {}", res);
     }
     else
@@ -723,7 +723,7 @@ void VehicleSystem::DoMount(flecs::entity aCharacter, Red::EntityID aVehicle, Re
     spdlog::info("[VehicleSystem] DoMount: entering character {:x} into vehicle {:x} seat {} ({})",
                  character.hash, vehicle->id.hash, aSit.hash,
                  (m_vehicleGameId && *m_vehicleGameId == aVehicle) ? "OUR live car" : "network copy");
-    Red::Detail::CallFunctionWithArgs(m_pEnterVehicle, handle, res, character, vehicle->id, aSit);
+    Red::CallFunction(handle, m_pEnterVehicle, res, character, vehicle->id, aSit);
     spdlog::info("[VehicleSystem] DoMount: EnterVehicle returned {}", res);
 
     if (aCharacter && aCharacter.is_alive())

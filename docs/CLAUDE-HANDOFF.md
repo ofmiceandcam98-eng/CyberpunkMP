@@ -92,8 +92,15 @@ rather than quietly fixing: it said 9 GB and called it measured, on the strength
 when it had ~48 GB free. Measure with the platform's own tool, and when a number decides
 somebody's next action, take it twice.
 
-**Observed 2026-09-14 on zeldfep's box** (his note, not measured here): redscript compiles,
-live-install works, prerequisites verify; no REDmod, no local WolvenKit, no Linux toolchain.
+**Observed 2026-11-02 on zeldfep's build box** (measured): **game 2.5** (Steam build
+26161058, exe ProductVersion "2.5") - it was kept on 2.31 until this date and moved because
+Verify compiling against 2.31 scripts let 2.5 script errors reach the play PC. Prerequisites at
+the 2.5 manifest versions after one launcher Install (RED4ext 1.31.0, redscript 0.5.32,
+Codeware 1.21.2, ArchiveXL 1.28.6, TweakXL 1.12.0, InputLoader 0.2.6) - the Steam update did
+NOT wipe the install here, it left the 2.31 versions in place, so check versions rather than
+presence. Full Verify green including `redscript compiles` against 2.5; 229 GB free. The 2.31
+launcher, payloads and prerequisite zips are archived at `/mnt/vol/backups/launcher-2.31-20261102/`
+(README + SHA256SUMS inside). No REDmod, no local WolvenKit, no Linux toolchain.
 
 Anything above older than a week is a belief, not a fact — re-run the checks and update the
 two lines above rather than arguing from them.
@@ -222,6 +229,9 @@ Backslashes and unescaped quotes in the body break the JSON — the API says
   `build.files` or the release is dead on arrival (v0.3.97).
 - **CSS specificity in the launcher:** base `button.action` (0,1,1) beats bare class
   rules; overrides must be `button.action.x`. Two shipped "fixes" never rendered.
+- **The launcher's interface** has its own row in the map's code map (Launcher UI): the
+  pixel grid every stripe and diagonal obeys, the tests `Verify.ps1` skips, and how to see a
+  change in the stage and prove it in the packaged app.
 - **PowerShell 5.1 `-Encoding UTF8` writes a BOM**, which makes redscript fail with
   "syntax error at 1:1" naming nothing.
 - **Python with Windows paths:** use heredocs or the Write tool, never `python -c` with
@@ -241,7 +251,16 @@ A stream's memory directory is a CACHE of these. Carry it if convenient; never t
 as a source of truth, and correct it against the map when they disagree — the old
 machine's memory still contains a dead feed address, which is exactly the failure mode.
 
+**Added later (this brief predates the Atlas):** the **Atlas** (2026-09-09) is the source
+of truth for STATE — `CLAUDE.md` has the decree — and its visualiser's LIBRARY/MOCKUPS
+panes are where internal docs and design mockups are read (the map's audit decree has the
+mechanics). Neither ever goes in this public repository.
+
 ## 7. State as of this handoff (2026-09-04)
+
+A dated snapshot, kept for what it records. What is open now is on the Atlas, the current public
+release is whatever GitHub says, and the "byte-identical" below was doubted later and can no
+longer be re-measured.
 
 - **Current release v0.3.114**, shipped with the first **signed** manifest. Test channel
   is one build: `v0.3.114-worldstate-test.19` (byte-identical payload; its notes carry

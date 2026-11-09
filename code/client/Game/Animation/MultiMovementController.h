@@ -82,4 +82,12 @@ struct MultiMovementController
     // logs once per controller, on the animation thread, then stays quiet.
     bool m_nullPlacementLogged = false;
     bool m_runawayLogged = false;
+    // First-call markers for the 2.5 re-test: test.74 crashed 2.2s after an attach and nobody
+    // could say which engine call into us did it. Each stage logs once per controller, so the
+    // last line before a crash names the stage. Appended after every engine-visible field and
+    // non-virtual, so neither the layout the engine reads (+8) nor the 19-slot vtable moves.
+    uint64_t m_ownerHash = 0;
+    bool m_tickLogged = false;
+    bool m_deltaLogged = false;
+    bool m_sendLogged = false;
 };

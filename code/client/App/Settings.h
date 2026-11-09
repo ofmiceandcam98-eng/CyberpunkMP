@@ -137,6 +137,14 @@ struct Settings
     // The A/B lever for retiring the legacy idle-controller hijack.
     bool puppetDriverAll = false;
 
+    // Off 2.31, use the ORIGINAL engine-attached MultiMovementController for remote players
+    // instead of AI-move-command steering. The DEFAULT since test.87: every interface it touches
+    // was measured identical on 2.5 (2026-11-03), it ran crash-free on test.85 and test.86, and
+    // steering measured 3-10m behind the real position with 2-38 unsticks per 10s (test.86,
+    // hezbollahcartel's log). Steering stays as a per-machine fallback (mod-steered-movement.on)
+    // because the test.74 observer crash that once retired this controller was never explained.
+    bool originalMovement = true;
+
     /**
      * PHASE 1 EXPERIMENT - make the LOCAL player a mod-spawned puppet.
      *
@@ -146,10 +154,12 @@ struct Settings
      * the two can coexist is itself one of the questions.
      *
      * WHY THIS EXISTS. Every attempt to change the local player's body in-world failed:
-     * InitializeState, ReFinalizeState and FinalizeState are all refused during gameplay,
-     * and InitializeOptionsFromFinalizedState is accepted but does not rebuild the body -
-     * confirmed visually after a female appearance was applied and Cam did not become
-     * female. The appearance lives in the save and cannot be overwritten on a live V.
+     * InitializeOptionsFromFinalizedState runs but does not rebuild the body - confirmed
+     * visually after a female appearance was applied and Cam did not become female.
+     * CORRECTED 2026-11-05: InitializeState, ReFinalizeState and FinalizeState were never
+     * refused, they never ran - they return Bool and were called with no out-value, which the
+     * SDK skips. So "cannot be overwritten on a live V" is unproven, not established; see
+     * NetworkWorldSystem::ApplyStoredAppearance and DressLocalBodyFromStoredLook.
      *
      * Remote players never had this problem, because they are built the other way round:
      * the gendered record is chosen BEFORE the puppet exists. This flag tests whether the

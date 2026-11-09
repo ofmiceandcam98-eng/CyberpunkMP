@@ -19,6 +19,9 @@ private:
     // does not work on 2.31.
     static void SendChatCommand(const char* apCommand);
 
+    // The 2.5 self-look experiment - see NetworkWorldSystem::DressLocalBodyFromStoredLook.
+    static void DressLocalBody(bool aReplaceTemplateKeys);
+
     // Ping and packet loss, right-aligned in the menu bar, coloured by severity.
     static void DrawConnectionStatus();
 };

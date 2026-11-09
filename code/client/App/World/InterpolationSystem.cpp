@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <deque>
 #include <fstream>
+#include <atomic>
+#include <unordered_map>
 #include <unordered_set>
 
 #include <App/Settings.h>
@@ -82,6 +85,7 @@ void SyncTraceOut(const uint64_t aId, const int64_t aRenderTick, const glm::vec3
 #include "App/Components/InterpolationComponent.h"
 #include "App/Components/SpawningComponent.h"
 #include "Game/Utils.h"
+#include "Game/CharacterCustomizationSystem.h" // IsGame231Layout
 #include "Game/Movement.h"
 #include "Game/Animation/AnimationData.h"
 #include "Game/Animation/MultiMovementController.h"
@@ -98,6 +102,302 @@ inline void SetSimpleMovement(Red::vehicle::IMoveSystem* apMoveSystem, const Red
 // engine pipeline, works on any record type.
 static Core::RawFunc<1828854026UL, void (*)(Red::IPlacedComponent*, const Red::WorldTransform&)>
     PlacedComponent_SetTransform;
+
+// Steers a remote puppet with the game's own AI move commands - the transform-only (off 2.31)
+// half of DriveEntity.
+//
+// Every remote body is a Character.Panam-based NPC carrying her whole combat brain, and on 2.5
+// nothing of ours outranked it. The 2.31 controller swap that used to is what crashed the
+// observer (74de8dfd); a placed-transform write is put back by the body's own movement
+// component; and a teleport ten times a second did not visibly move it either (test.79). Worse,
+// --hackable-puppets makes the body hostile to the local player, so once they fight anything the
+// brain joins in and walks the body wherever IT likes - a different way on each client
+// (2026-11-03, after a police fight, exactly as on 2026-11-01).
+//
+// An active AIMoveToCommand is what the behaviour tree yields movement to - in combat too, while
+// ignoreInCombat is false (tweakAIConditionChecks.script:3417) - and OPEN//77 measured on 2.5
+// that re-issued move commands override the tree's own movement. It also walks the body with
+// the engine's locomotion, so this is the first 2.5 path with a walk cycle at all.
+//
+// Re-issued at most 4 a second: when the target has moved 0.75m, when the gait band changes,
+// and at least once a second regardless, so a command is never missing long enough for the
+// brain to take over.
+//
+// Every decision is made HERE from the last measured body position; the script only carries
+// it out (mode 0 pathfind, 1 straight line, 2 snap). Tuned from test.82's two logs:
+//
+//   - Aim ahead. The body chased where the player WAS and trailed by design; the target now
+//     leads by 0.4s of their measured horizontal velocity, capped at 3m.
+//   - Catch up by running, not jumping. One gait faster past 2.5m behind, sprint past 5m.
+//   - Snap only as a last resort: more than 8m behind for a full second, or 20m at once, at most
+//     every 2s. A brief spike no longer teleports the body, which is what read as "jumps".
+//   - Straight line inside 3m. The pathfinder counts ~2m as arrived, and the old 2m cut-over
+//     left a stopped body parked 2.2-2.5m short of the player for minutes.
+//   - Unstick. A body that has not gained 0.5m in 1.5s while more than 2m off goes straight
+//     at the target instead of trusting a path it is not following.
+//
+// Snaps go through the AI's own AITeleportCommand (TeleportationFacility moved nothing on 2.5,
+// test.80) and get 0.5s to land before the next move; every move cancels a teleport still
+// pending, because a dead one sat in the queue and froze the body at a constant 12-15m (test.82).
+//
+// test.83 (both players): running reads right, but a jump made the other body FLOAT - it was
+// being walked, and sometimes snapped, to a point in mid-air, and an AI walk cannot jump. So the
+// body steers to GROUND level: the lowest height the player has been at in the last 0.8s, which
+// sits still through a jump and follows stairs and ramps. Gaps are measured horizontally, with
+// height only counting past 2.5m (a different floor), so a jump is never "falling behind". The
+// lead grew to 0.6s and the catch-up gaits start sooner, for the lag that was left.
+static void SteerPuppet(NetworkWorldSystem* apSystem, const Red::Handle<Red::Entity>& aEntity,
+                        uint64_t aIdHash, const glm::vec3& aPosition, float aYaw, float aSpeed,
+                        std::chrono::steady_clock::time_point aNow)
+{
+    using Clock = std::chrono::steady_clock;
+
+    struct SteerState
+    {
+        Clock::time_point At{};
+        Clock::time_point LastSnapAt{};
+        Clock::time_point WindowStart{};
+        Clock::time_point FarSince{};
+        Clock::time_point ProgressAt{};
+        Clock::time_point SampleAt{};
+        glm::vec3 Target{};
+        glm::vec3 Body{};
+        glm::vec3 SamplePosition{};
+        glm::vec3 Velocity{};
+        std::deque<std::pair<Clock::time_point, float>> Heights;
+        float ProgressGap{0.f};
+        int32_t Band{-1};
+        uint32_t Commands{0};
+        uint32_t Snaps{0};
+        uint32_t SnapsLanded{0};
+        uint32_t Unsticks{0};
+        float WorstGap{0.f};
+        bool HasBody{false};
+        bool HasSample{false};
+        bool SnapPending{false};
+        bool Logged{false};
+    };
+    static std::unordered_map<uint64_t, SteerState> s_steer;
+
+    constexpr auto cMinInterval = std::chrono::milliseconds(250);
+    constexpr auto cMaxInterval = std::chrono::milliseconds(1000);
+    constexpr auto cSnapSettle = std::chrono::milliseconds(500);
+    constexpr auto cSnapInterval = std::chrono::seconds(2);
+    constexpr auto cFarFor = std::chrono::seconds(1);
+    constexpr auto cStuckFor = std::chrono::milliseconds(1500);
+    constexpr auto cSummaryWindow = std::chrono::seconds(10);
+    constexpr float cRetargetSq = 0.75f * 0.75f;
+    constexpr float cLandedGap = 3.f;
+    constexpr float cLeadSeconds = 0.6f;
+    constexpr float cMaxLead = 4.f;
+    constexpr float cDirectGap = 3.f;
+    constexpr float cRunGap = 1.5f;
+    constexpr float cSprintGap = 3.5f;
+    constexpr float cFarGap = 8.f;
+    constexpr float cHugeGap = 20.f;
+    constexpr float cProgressStep = 0.5f;
+    constexpr float cVerticalSlack = 2.5f;
+    constexpr auto cGroundWindow = std::chrono::milliseconds(800);
+
+    auto& state = s_steer[aIdHash];
+
+    // Velocity from the interpolated positions, every frame and smoothed - the lead needs it even
+    // on frames that send nothing. A respawn or snap makes a huge one-frame jump; the lead is
+    // capped, so that costs at most a moment of aiming off. Heights ride the same cadence.
+    if (!state.HasSample)
+    {
+        state.HasSample = true;
+        state.SamplePosition = aPosition;
+        state.SampleAt = aNow;
+        state.Heights.emplace_back(aNow, aPosition.z);
+    }
+    else if (const float dt = std::chrono::duration<float>(aNow - state.SampleAt).count(); dt >= 0.05f)
+    {
+        state.Velocity = glm::mix(state.Velocity, (aPosition - state.SamplePosition) / dt, 0.4f);
+        state.SamplePosition = aPosition;
+        state.SampleAt = aNow;
+        state.Heights.emplace_back(aNow, aPosition.z);
+    }
+
+    while (state.Heights.size() > 1 && aNow - state.Heights.front().first > cGroundWindow)
+        state.Heights.pop_front();
+
+    // Ground under the player: their lowest height in the window - still through a jump, and
+    // following a stair or a ramp within a fraction of a second.
+    float groundZ = aPosition.z;
+    for (const auto& [at, z] : state.Heights)
+        groundZ = std::min(groundZ, z);
+    const glm::vec3 truth{aPosition.x, aPosition.y, groundZ};
+
+    // How far behind, as the steering sees it: horizontal, plus height only past a floor's worth.
+    const auto behind = [](const glm::vec3& aFrom, const glm::vec3& aTo)
+    {
+        const float horizontal = glm::length(glm::vec2{aTo.x - aFrom.x, aTo.y - aFrom.y});
+        return horizontal + std::max(0.f, std::abs(aTo.z - aFrom.z) - cVerticalSlack);
+    };
+
+    // From the last measured body to the ground truth (never the lead).
+    const float lastGap = state.HasBody ? behind(state.Body, truth) : 0.f;
+
+    // Gait from the mover's real speed in m/s - stand, walk, run, sprint - raised when behind.
+    // A standing target is walked up to, never run at.
+    int32_t band = aSpeed < 0.3f ? 0 : aSpeed < 2.5f ? 1 : aSpeed < 5.5f ? 2 : 3;
+    if (lastGap > cSprintGap)
+        band = 3;
+    else if (lastGap > cRunGap && band > 0)
+        band = std::min(band + 1, 3);
+
+    const auto sinceLast = aNow - state.At;
+    const auto delta = aPosition - state.Target;
+
+    if (sinceLast < cMinInterval || aNow - state.LastSnapAt < cSnapSettle)
+        return;
+    if (band == state.Band && glm::dot(delta, delta) < cRetargetSq && sinceLast < cMaxInterval)
+        return;
+
+    state.At = aNow;
+    state.Target = aPosition;
+    state.Band = band;
+
+    // Far for long enough, or very far at once - and never more than one snap per 2s.
+    if (lastGap > cFarGap)
+    {
+        if (state.FarSince == Clock::time_point{})
+            state.FarSince = aNow;
+    }
+    else
+    {
+        state.FarSince = {};
+    }
+
+    const bool snapDue = state.HasBody && aNow - state.LastSnapAt >= cSnapInterval &&
+                         (lastGap > cHugeGap || (state.FarSince != Clock::time_point{} && aNow - state.FarSince >= cFarFor));
+
+    // Progress: has the gap shrunk by 0.5m in the last 1.5s? If not, while it is more than 2m, the
+    // path is not working - go straight.
+    if (!state.HasBody || lastGap < state.ProgressGap - cProgressStep || lastGap <= cRunGap - 0.5f)
+    {
+        state.ProgressGap = lastGap;
+        state.ProgressAt = aNow;
+    }
+    const bool stuck = state.HasBody && lastGap > 2.f && aNow - state.ProgressAt >= cStuckFor;
+
+    int32_t mode = 0;
+    if (snapDue)
+        mode = 2;
+    else if (!state.HasBody || lastGap < cDirectGap || stuck)
+        mode = 1;
+
+    if (mode == 1 && stuck)
+        ++state.Unsticks;
+
+    // Aim ahead of a moving target along its horizontal velocity. A snap lands on the truth -
+    // on the ground, never in the air.
+    glm::vec3 target = truth;
+    if (mode != 2 && aSpeed >= 0.3f)
+    {
+        glm::vec3 lead = state.Velocity * cLeadSeconds;
+        lead.z = 0.f;
+        const float length = glm::length(lead);
+        if (length > cMaxLead)
+            lead *= cMaxLead / length;
+        target += lead;
+    }
+
+    // The script answers with where the body was BEFORE acting (W = -1: no puppet to steer).
+    Red::Vector4 body{0.f, 0.f, 0.f, -1.f};
+    Red::CallVirtual(apSystem, "MpSteerPuppet", body, aEntity,
+                     Red::Vector4{target.x, target.y, target.z, 0.f}, aYaw, band, mode);
+
+    if (body.W < 0.f)
+        return;
+
+    state.Body = {body.X, body.Y, body.Z};
+    state.HasBody = true;
+    const float gap = behind(state.Body, truth);
+    const bool snapped = mode == 2;
+
+    // Did the previous snap land? Measured here, on the first look at the body after it.
+    if (state.SnapPending)
+    {
+        state.SnapPending = false;
+        if (gap < cLandedGap)
+            ++state.SnapsLanded;
+    }
+
+    if (snapped)
+    {
+        state.LastSnapAt = aNow;
+        state.SnapPending = true;
+    }
+
+    // What the engine thinks of the body - attached, appearance, AI LOD and state - because test.80
+    // steered a body right next to each player for 30s and nobody could see it, and nothing in the
+    // log could say why.
+    const auto describe = [&]
+    {
+        Red::CString description;
+        Red::CallVirtual(apSystem, "MpDescribePuppet", description, aEntity);
+        return std::string(description.c_str());
+    };
+
+    if (!state.Logged)
+    {
+        state.Logged = true;
+        state.WindowStart = aNow;
+        spdlog::info("[Driver] puppet {:x} first steer (AI move command, off 2.31) - body {:.1f}m from target{} - {}",
+                     aIdHash, gap, snapped ? ", snapped" : "", describe());
+        return;
+    }
+
+    ++state.Commands;
+    if (snapped)
+        ++state.Snaps;
+    state.WorstGap = std::max(state.WorstGap, gap);
+
+    // How well it follows, every 10s per puppet: a body that keeps snapping, or whose gap grows,
+    // is losing to something - and this is the line that says so. Both positions, so a stuck body
+    // says WHERE it is stuck (under the floor, in a wall, at the spawn point).
+    const auto window = aNow - state.WindowStart;
+    if (window >= cSummaryWindow)
+    {
+        spdlog::info("[Driver] puppet {:x} steering: {} command(s), {} snap(s) ({} landed), {} unstick(s) in {}s - body ({:.1f}, {:.1f}, {:.1f}) "
+                     "is {:.1f}m from target ({:.1f}, {:.1f}, {:.1f}), worst {:.1f}m - {}",
+                     aIdHash, state.Commands, state.Snaps, state.SnapsLanded, state.Unsticks,
+                     std::chrono::duration_cast<std::chrono::seconds>(window).count(), state.Body.x, state.Body.y,
+                     state.Body.z, gap, aPosition.x, aPosition.y, aPosition.z, state.WorstGap, describe());
+        state.WindowStart = aNow;
+        state.Commands = 0;
+        state.Snaps = 0;
+        state.SnapsLanded = 0;
+        state.Unsticks = 0;
+        state.WorstGap = 0.f;
+    }
+}
+
+// The puppet's DriverComponent - or, for a puppet the registry says is a driver but which has
+// none, a shared transform-only stand-in (no PuppetDriver, no exit grace).
+//
+// The registry is written at spawn on the main thread and is the authority on driver-ness; the
+// component is set later, by the spawn promotion. test.78 had driver-registered puppets reach
+// the interpolator with no DriverComponent at all, so they took neither path and stood still
+// with nothing in the log. Falling back to the registry means that can never freeze one again.
+static const DriverComponent* FindDriver(flecs::entity aEntity, const EntityComponent& aEntityComponent)
+{
+    if (const auto* pDriver = aEntity.get<DriverComponent>())
+        return pDriver;
+
+    if (!App::PuppetRegistry::IsDriver(aEntityComponent.Id.hash))
+        return nullptr;
+
+    static std::unordered_set<uint64_t> s_reported;
+    if (s_reported.insert(aEntityComponent.Id.hash).second)
+        spdlog::warn("[Driver] puppet {:x} is registered as a driver but has no DriverComponent - "
+                     "driving it transform-only anyway", aEntityComponent.Id.hash);
+
+    static const DriverComponent s_transformOnly{};
+    return &s_transformOnly;
+}
 
 // Place a driver-puppet and advance its animation for this frame.
 static void DriveEntity(const DriverComponent& aDriver, const EntityComponent& aEntityComponent,
@@ -126,24 +426,43 @@ static void DriveEntity(const DriverComponent& aDriver, const EntityComponent& a
     const auto entityHandle = pSystem->GetEntity(aEntityComponent.Id);
 
     // Every early-out logs ONCE per puppet: a frozen puppet must name its gate.
+    //
+    // Including in transform-only mode, where there is no PuppetDriver to hold GateLogged.
+    // These gates used to log only through it, so on 2.5 all three went silent and test.77
+    // showed a remote player standing still with no line saying which gate stopped him.
+    const auto gateOnce = [&aDriver, &aEntityComponent]
+    {
+        if (aDriver.Driver)
+            return !std::exchange(aDriver.Driver->GateLogged, true);
+
+        static std::unordered_set<uint64_t> s_gated;
+        return s_gated.insert(aEntityComponent.Id.hash).second;
+    };
+
     if (!entityHandle)
     {
-        if (aDriver.Driver && !aDriver.Driver->GateLogged)
-        {
-            aDriver.Driver->GateLogged = true;
+        if (gateOnce())
             spdlog::warn("[Driver] puppet {:x} has no engine entity - cannot move it", aEntityComponent.Id.hash);
-        }
         return;
     }
 
     if (!entityHandle->placedComponent)
     {
-        if (aDriver.Driver && !aDriver.Driver->GateLogged)
-        {
-            aDriver.Driver->GateLogged = true;
-            spdlog::warn("[Driver] puppet {:x} has no placedComponent - transform writes have nowhere to go",
-                         aEntityComponent.Id.hash);
-        }
+        if (gateOnce())
+            spdlog::warn("[Driver] puppet {:x} has no placedComponent - transform writes have nowhere to go{}",
+                         aEntityComponent.Id.hash, aDriver.Driver ? "" : " (steering it instead)");
+
+        // Transform-only mode steers, which needs only the entity.
+        if (!aDriver.Driver)
+            SteerPuppet(pSystem, entityHandle, aEntityComponent.Id.hash, aPosition, aYaw, aSpeed, now);
+        return;
+    }
+
+    // Off 2.31 (no PuppetDriver) the body is steered, never placed - see SteerPuppet. A
+    // per-frame transform write here would only fight the move command it is walking under.
+    if (!aDriver.Driver)
+    {
+        SteerPuppet(pSystem, entityHandle, aEntityComponent.Id.hash, aPosition, aYaw, aSpeed, now);
         return;
     }
 
@@ -315,11 +634,49 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
     // delay away. Client-only; addresses jitter-driven starvation - a steady high-latency
     // link with near-zero jitter would still need server-sent ping (the flag-day option).
     constexpr float cJitterMargin = 2.f;      // cover ~2x the smoothed jitter
-    constexpr float cMaxJitterMargin = 200.f; // never add more than this many ms of delay
+    // Was 200. With the original controller back on 2.5 the body sits exactly on the buffered
+    // position, so every millisecond here is visible lag (test.85: "smoother, but the lag is
+    // still there"); the 10s stats below say whether 100 starves anybody.
+    constexpr float cMaxJitterMargin = 100.f; // never add more than this many ms of delay
     const float jitterExtra = std::clamp(cJitterMargin * aInterpolation.ArrivalJitter, 0.f, cMaxJitterMargin);
-    const int64_t renderTick =
-        static_cast<int64_t>(NetworkWorldSystem::GetTick()) -
-        static_cast<int64_t>(aSimulationDelay + jitterExtra);
+
+    // The buffer must also cover THIS remote's transit plus one arrival gap, or the next sample
+    // is still in flight when render time reaches it (InterpolationComponent::AvgTransit). The
+    // session base stays the floor, so two players close together on a good link are drawn
+    // exactly as before (test.91: transit 20-30 + gap 33 + margin < 65 + margin). A distant
+    // player - the server thins updates to 7.5/s past 200m - or a slow link gets the room it
+    // needs instead of extrapolating: test.91 measured 236 dry frames in 10s at 8/s, and after
+    // test.86 cut the base to 65 a ~100ms link would starve on every frame (Atlas
+    // high-ping-vs-interpolation-budget). Smoothed inputs move this gradually, and it is capped.
+    constexpr float cMaxDelay = 400.f;
+    const float floorDelay = aSimulationDelay + jitterExtra;
+    const float neededDelay = aInterpolation.AvgTransit + aInterpolation.AvgInterval + jitterExtra;
+    const float delay = std::min(std::max(floorDelay, neededDelay), std::max(cMaxDelay, floorDelay));
+
+    const int64_t now = static_cast<int64_t>(NetworkWorldSystem::GetTick());
+    const int64_t renderTick = now - static_cast<int64_t>(delay);
+
+    // The 10s delay/starvation line - see InterpolationComponent::StatsStartTick.
+    if (aInterpolation.StatsStartTick == 0)
+        aInterpolation.StatsStartTick = now;
+    ++aInterpolation.StatsFrames;
+    aInterpolation.StatsDelaySum += delay;
+    if (now - aInterpolation.StatsStartTick >= 10000 && aInterpolation.StatsFrames > 0)
+    {
+        spdlog::info("[Interpolation] {} {:x}: drawn {:.0f}ms behind on average (base {:.0f} + jitter margin, jitter now {:.1f}ms; "
+                     "transit {:.0f}ms, arrival gap {:.0f}ms) - buffer ran dry on {} of {} frames while moving, {} past the "
+                     "guess window; {} sample(s) buffered",
+                     aEntityComponent.IsVehicle ? "vehicle" : "puppet", aEntityComponent.Id.hash,
+                     aInterpolation.StatsDelaySum / static_cast<float>(aInterpolation.StatsFrames), aSimulationDelay,
+                     aInterpolation.ArrivalJitter, aInterpolation.AvgTransit, aInterpolation.AvgInterval,
+                     aInterpolation.StatsExtrapolated, aInterpolation.StatsFrames, aInterpolation.StatsStarved,
+                     aInterpolation.TimePoints.size());
+        aInterpolation.StatsStartTick = now;
+        aInterpolation.StatsFrames = 0;
+        aInterpolation.StatsExtrapolated = 0;
+        aInterpolation.StatsStarved = 0;
+        aInterpolation.StatsDelaySum = 0.f;
+    }
 
     TraceDriverless(aEntity, aEntityComponent, aInterpolation, renderTick, "enter");
 
@@ -361,7 +718,9 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
     //
     // Logged once per entity. This runs every frame for every remote player, so an
     // unconditional line would be thousands a minute and would bury what it reveals.
-    if (!aEntity.has<DriverComponent>())
+    const DriverComponent* const pDriverComponent = FindDriver(aEntity, aEntityComponent);
+
+    if (!pDriverComponent)
     {
         const auto pEntityStubSystem = Red::GetGameSystem<Red::game::IEntityStubSystem>();
         const auto* pStub = pEntityStubSystem->FindStub(aEntityComponent.Id);
@@ -403,6 +762,14 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
 
         // A difference, so float is safe here - this is milliseconds, not epoch time.
         const float ahead = static_cast<float>(renderTick - static_cast<int64_t>(first.Tick));
+
+        if (first.Velocity > 0.3f)
+        {
+            ++aInterpolation.StatsExtrapolated;
+            if (ahead > maxExtrapolationMs)
+                ++aInterpolation.StatsStarved;
+        }
+
         if (ahead <= 0.f || ahead > maxExtrapolationMs)
         {
             TraceDriverless(aEntity, aEntityComponent, aInterpolation, renderTick,
@@ -443,7 +810,7 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
                     aInterpolation.LastRenderTick = renderTick;
             }
         }
-        else if (const auto* pDriver = aEntity.get<DriverComponent>())
+        else if (const auto* pDriver = pDriverComponent)
         {
             const float frameDelta = (aInterpolation.LastRenderTick > 0)
                                          ? static_cast<float>(std::max(
@@ -581,7 +948,7 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
         const auto deltaAngle{DeltaAngle(first.Rotation.z, second.Rotation.z, true) * ratio};
         const auto direction = Mod(first.Rotation.z + deltaAngle, 2.f * static_cast<float>(Pi));
 
-        if (const auto* pDriver = aEntity.get<DriverComponent>())
+        if (const auto* pDriver = pDriverComponent)
         {
             // Driver path FIRST - it outranks any controller a hook race may have
             // attached before the suppressor registered this puppet as driver-owned.
@@ -598,6 +965,22 @@ void InterpolateEntity(flecs::entity aEntity, const EntityComponent& aEntityComp
             // Legacy path: the engine-attached controller (NPC-record puppets).
             const auto pos = Red::Vector4{position.x, position.y, position.z, 0.f};
             aEntityComponent.Controller->SetTransform(pos, direction, speed, second.Locomotion);
+        }
+        else
+        {
+            // Movement is arriving and there is nothing to hand it to. This is exactly how a
+            // remote player stands still while 30 packets a second come in, and it used to
+            // say nothing. Once per entity - this runs every frame.
+            //
+            // Not for a puppet registered as a driver: its DriverComponent is set by a deferred
+            // command and can land a frame after EntityComponent, so it passes through here
+            // once on its way to the driver path. test.77 printed this for exactly that frame
+            // and it read as the cause.
+            static std::unordered_set<uint64_t> reported;
+            if (!App::PuppetRegistry::IsDriver(aEntityComponent.Id.hash) &&
+                reported.insert(aEntityComponent.Id.hash).second)
+                spdlog::warn("[Interpolation] puppet {:x} has movement but no controller - the idle hook never "
+                             "attached one, so it will not move", aEntityComponent.Id.hash);
         }
     }
 
@@ -649,10 +1032,25 @@ void InterpolationSystem::OnConnected()
 {
     const auto pNetworkService = Core::Container::Get<NetworkService>();
 
-    const float cSimulationDelay = 50.f + (1500.f / pNetworkService->GetServerSettings().get_update_rate());
+    // How far behind real time remote players are drawn: one and a half send intervals, so the
+    // next sample is normally already here, plus 15ms of slack - 65ms at the 30/s the servers
+    // run. It was 50 + 1.5 intervals = 100ms, and with the original controller drawing exactly
+    // this position that whole buffer reads as lag (test.85). Per-remote jitter still widens it
+    // (InterpolateEntity), and the 10s [Interpolation] line says if 65 starves anyone.
+    const auto updateRate = std::max(1u, pNetworkService->GetServerSettings().get_update_rate());
+    const float cSimulationDelay = 15.f + 1.5f * (1000.f / static_cast<float>(updateRate));
+    spdlog::info("[InterpolationSystem] drawing remote players {:.0f}ms behind at {}/s (plus up to 100ms per-remote jitter margin)",
+                 cSimulationDelay, updateRate);
 
     const auto pSystem = Red::GetGameSystem<NetworkWorldSystem>();
     const auto pMoveSystem = Red::GetGameSystem<RED4ext::vehicle::IMoveSystem>();
+
+    // Called again from NetworkWorldSystem::OnWorldAttached when a world loads under a live
+    // connection (see there), so never stack a second interpolator on a first.
+    if (m_interpolator)
+        m_interpolator.destruct();
+
+    spdlog::info("[InterpolationSystem] interpolator started");
 
     m_interpolator = pSystem->system<const EntityComponent, InterpolationComponent>().each(
         [cSimulationDelay, pMoveSystem](flecs::entity aEntity, const EntityComponent& aEntityComponent, InterpolationComponent& aInterpolation)
@@ -858,6 +1256,32 @@ void InterpolationSystem::HandleNotifyEntityMove(const PacketEvent<server::Notif
     pInterpolation->LastTransit = transit;
     pInterpolation->HasTransit = true;
 
+    // Absolute transit and the arrival gap, smoothed - the two sizes the buffer has to cover
+    // (InterpolationComponent::AvgTransit). A negative transit is clock disagreement, never a
+    // sample from the future, so it counts as zero. Gaps of 500ms or more are pauses, not a rate.
+    {
+        const float transitMs = static_cast<float>(std::max<int64_t>(transit, 0));
+        pInterpolation->AvgTransit = pInterpolation->AvgTransit == 0.f
+                                         ? transitMs
+                                         : pInterpolation->AvgTransit + (transitMs - pInterpolation->AvgTransit) / 16.f;
+
+        const auto arrived = static_cast<int64_t>(NetworkWorldSystem::GetTick());
+        if (pInterpolation->LastArrivalTick != 0)
+        {
+            const int64_t gap = arrived - pInterpolation->LastArrivalTick;
+            // Zero is real - two packets handled in one frame - and leaving it out would bias the
+            // mean gap, and so the buffer, upward.
+            if (gap >= 0 && gap < 500)
+            {
+                const float gapMs = static_cast<float>(gap);
+                pInterpolation->AvgInterval = pInterpolation->AvgInterval == 0.f
+                                                  ? gapMs
+                                                  : pInterpolation->AvgInterval + (gapMs - pInterpolation->AvgInterval) / 16.f;
+            }
+        }
+        pInterpolation->LastArrivalTick = arrived;
+    }
+
     if (Settings::Get().syncTrace)
     {
         const auto* pEntityComponent = entity.get<EntityComponent>();
@@ -874,9 +1298,21 @@ static Core::RawFunc<4018412273UL, float (*)(Red::move::Component*, MultiMovemen
 void (*RealIdleController_SetAnimation)(Game::Controller*, AnimationData&);
 void HookIdleController_SetAnimation(Game::Controller* apController, AnimationData& data)
 {
+    // Proof of life, once. On 2.5 two players stood side by side and neither moved, and no
+    // line in either log said whether this hook ran at all - so "the hook never fires" and
+    // "the hook fires but never matches our puppet" were indistinguishable.
+    static std::atomic_bool s_firedLogged{false};
+    if (!s_firedLogged.exchange(true))
+        spdlog::info("[Interpolation] idle-controller hook is firing");
+
     auto* pMoveComponent = apController->MoveComponent;
-    Game::EntityPtr entity(pMoveComponent);
-    if (const auto pOwner = Red::Cast<Red::GameObject>(entity.GetValuePtr()))
+
+    // The owner through the SDK's IComponent::owner, which the 2.5 headers assert at 0x50,
+    // not the hand offset Game::EntityPtr (0x90) that was read off 2.31 and is past the end
+    // of IComponent on 2.5. A wrong owner here means no puppet ever matches the registry
+    // below, no multi controller is ever attached, and remote players stand still.
+    auto* pEntity = pMoveComponent ? pMoveComponent->owner : nullptr;
+    if (const auto pOwner = Red::Cast<Red::GameObject>(pEntity))
     {
         // This hook runs on the game's ANIMATION thread. Reading pOwner->tags here
         // walks a heap DynArray on an entity the main thread may still be building,
@@ -889,8 +1325,17 @@ void HookIdleController_SetAnimation(Game::Controller* apController, AnimationDa
             // driver (interpolation preferred a non-null Controller) and froze every
             // driver puppet solid - the 2026-08-19 live failure. Total silence for
             // them: no attach, and no vanilla idle writes either.
+            //
+            // Except off 2.31. There no PuppetDriver writes animation - the body is steered by
+            // AI move commands and has to be animated by the engine like any other NPC, and
+            // silencing its vanilla idle left it with no idle pose from anyone. test.80: a body
+            // the AI walked within 2m of each player for 30s, and neither player ever saw it.
             if (App::PuppetRegistry::IsDriver(pOwner->id.hash))
+            {
+                if (!IsGame231Layout())
+                    RealIdleController_SetAnimation(apController, data);
                 return;
+            }
 
             // A vehicle exit rebuilds this puppet's components over the next several
             // frames, and the engine hands it a fresh idle controller mid-teardown.
@@ -988,7 +1433,13 @@ void HookIdleController_SetAnimation(Game::Controller* apController, AnimationDa
 
 void InterpolationSystem::OnInitialize(const RED4ext::JobHandle& aJob)
 {
-    Hook<Game::IdleController_SetAnimation>(&HookIdleController_SetAnimation, &RealIdleController_SetAnimation);
+    // Checked, not assumed. If this does not attach, no remote player can ever move - and
+    // the return value used to be thrown away, so that failure was silent.
+    if (!Hook<Game::IdleController_SetAnimation>(&HookIdleController_SetAnimation, &RealIdleController_SetAnimation))
+        spdlog::error("[Interpolation] idle-controller hook FAILED to attach - remote players will not move "
+                      "(Game::IdleController_SetAnimation did not resolve on this game version)");
+    else
+        spdlog::info("[Interpolation] idle-controller hook attached");
 
     const auto pNetworkService = Core::Container::Get<NetworkService>();
     pNetworkService->RegisterHandler<&InterpolationSystem::HandleNotifyEntityMove>(this);

@@ -63,6 +63,27 @@ struct InterpolationComponent
     float ArrivalJitter{0.f};
     bool HasTransit{false};
 
+    // Per-remote buffer SIZE, beyond jitter. The next sample is usable only once it has
+    // arrived, so the buffer must cover this remote's transit plus one arrival gap. Transit here
+    // is ABSOLUTE - clock offset included, deliberately: render time is compared against sample
+    // ticks on exactly these clocks, so the offset is part of how late a sample really is. The
+    // gap is local arrival-to-arrival time; pauses (menus, standing still) are left out so they
+    // cannot inflate it. Both smoothed like ArrivalJitter. See InterpolateEntity.
+    float AvgTransit{0.f};
+    float AvgInterval{0.f};
+    int64_t LastArrivalTick{0};
+
+    // How far behind real time this remote is drawn, and how often its buffer ran dry while
+    // it was moving - logged every 10s per remote, because "there is still lag" (test.85, with
+    // the original controller drawing exactly the buffered position) has to become a number
+    // before the buffer can be tuned. Counted only while the remote moves: a player standing
+    // still sends nothing new, and an empty buffer then is correct, not a stall.
+    int64_t StatsStartTick{0};
+    uint32_t StatsFrames{0};
+    uint32_t StatsExtrapolated{0};
+    uint32_t StatsStarved{0};
+    float StatsDelaySum{0.f};
+
     // Recovery state for player dead reckoning. A late authoritative sample should
     // correct the guess over a short window instead of lurching to the wire position.
     glm::vec3 LastRenderedPosition{};

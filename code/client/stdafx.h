@@ -76,6 +76,15 @@
 #include "Core/Raw.hpp"
 #include "Core/Stl.h"
 
+// RedLib names the engine's SharedPtr unqualified inside namespace Red, and Red pulls in all
+// of RED4ext - so our own global SharedPtr (std::shared_ptr, Core/Stl.h) makes every such use
+// ambiguous since the SDK grew RED4ext::SharedPtr. A using-declaration in Red wins lookup.
+#include <RED4ext/Memory/SharedPtr.hpp>
+namespace Red
+{
+using RED4ext::SharedPtr;
+}
+
 #include "Red/Alias.hpp"
 #include "Red/Engine.hpp"
 #include "Red/Specializations.hpp"

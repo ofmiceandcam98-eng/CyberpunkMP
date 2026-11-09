@@ -31,19 +31,34 @@ happened here twice, and both cleanups cost an evening.
 | `--line` | `#2a1418` | every border and rule |
 | `--ink` | `#e8e2e2` | text you are meant to read |
 | `--ink-dim` | `#9a8b8d` | text that supports it — descriptions, labels, disabled |
-| `--accent` | `#ff2a32` | **you can act here.** Play, focus rings, primary controls |
+| `--accent` | `#f73932` | **you can act here.** Play, focus rings, primary controls |
 | `--hazard` | `#f3c50f` | **stop and read this** — plus the section rail, see below |
 | `--ok` | `#3ddc64` | it worked |
 | `--bad` | `#f0a05a` | it did not |
 | `--update` | `#c2621b` | an update is waiting |
-| `--steel` | `#2b303a` | inert chrome — verify button, scrollbar thumb |
+| `--update-2` | `#6b3410` | the Update plate's base — a shade of `--update`, never a new hue |
+| `--update-tread` | `#9a4a14` | the second band of the Update plate's working stripe |
+| `--steel` | `#2b303a` | inert chrome — secondary plates, scrollbar thumb |
+| `--accent-2` | `#79221b` | the accent ramp: the red fade on the lines and the progress bar |
+| `--accent-3` | `#542226` | deeper in the ramp — a secondary plate's base, trailing plates and hairlines |
+| `--accent-4` | `#26060a` | where the ramp ends, just above the ground |
+| `--plate-dead` | `#2a0d11` | a kit button that cannot be pressed yet |
+| `--tread-2` | `#ae3b36` | the second band of the working stripe |
+| `--glitch` | `#3ce8ef` | **the click glitch and nothing else.** The one hue outside this palette |
+
+**The red is the game's own** (zeldfep, 2026-11-09: *"the red is good its just a bit vibrant check
+the cyberpunk color pallet"*). The old `#ff2a32` had the game's hue with more saturation than any
+red in `base\gameplay\gui\common\main_colors.inkstyle`. `--accent` is that file's
+`NameplateBackground`; `--accent-2`, `--accent-3` and `--tread-2` are its
+`Fullscreen_PrimaryForegroundDarker`, `Fullscreen_SecondaryBackground3` and `MildRed`. A new red
+comes from that file too.
 
 **The hazard rule, and it is the subtle one.** Yellow means *warning* everywhere in this app —
 the waiting queue row, the `/// WARNING ///` prefix, the busy spinner. It ALSO carries the
 section rail, by zeldfep's call on 2026-09-07. The two are kept apart **by form, not by hue**:
 
 - **Flat hazard = a warning.**
-- **Striped hazard = position.** The rail's active plate and its end caps are the only striped
+- **Striped hazard = position.** The rail's pointer and its end caps are the only striped
   hazard in the app.
 
 So a new warning state is flat. Always. A striped one now reads as "you are here", and the
@@ -92,7 +107,7 @@ button, not the page, and making it absolute breaks it the moment the button cha
 ## Shape
 
 **Square.** `--radius: 2px`, and most of the kit is `0`. Round corners are not this app.
-Avatars are the only exception — they are pictures of people.
+Avatars are cut as the gear's hexagon, with a red ring.
 
 **The signature is the clipped corner, not a radius:**
 
@@ -100,20 +115,100 @@ Avatars are the only exception — they are pictures of people.
 clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px));
 ```
 
-Top-right and bottom-left notched. Used on the rail's arrows and its active plate. Reach for
+Top-right and bottom-left notched. Used on the rail's arrows. Reach for
 this when something needs to read as a HUD element rather than a web control.
 
-**Hatching and striping carry meaning, and each angle is spoken for:**
+**The pixel grid** (zeldfep, 2026-11-08: *"lets make sure its uniform and the grid is drawn
+correctly"*). The launcher's screen does not smooth a gradient's hard edge or a clipped shape's
+diagonal, so the pixel grid shows through: a diagonal at any slope but two steps unevenly, and a
+gradient stripe comes out ragged with broken ends where it meets its box. So:
 
-| Pattern | Where | Says |
+- **Two slopes only: 45 degrees** (1px across per row) **and steep 2:1** (1px across every two
+  rows). Chamfers, notches, the bay's step, the main window's bar and traces,
+  wires, the chevrons, the gear's hexagon, the warning tag, the rail's carets - all one of the two.
+- **No stripe is a gradient.** Every striped mark is a pixel drawing from
+  `tools/pixel-stripes.mjs` - whole stripes, whole pixels - pasted into `:root` as `--px-*` and used
+  as a CSS mask, so its colour is still a token. A block's slanted sides run with its stripes, so no
+  stripe is cut into a fragment.
+- `launcher_buttons_test.mjs` fails a diagonal stripe gradient, a gradient cut at any angle but a
+  multiple of 45, a wire bent off 45, and a `--px-*` that no longer matches the generator.
+
+**Striping carries meaning, and each stripe is spoken for:**
+
+| Stripe | Where | Says |
 |---|---|---|
-| `120deg`, fine, 2px/6px | `.play::before` | this is the primary control |
-| `-45deg`, 14px, animated | `.play.busy` | working, do not press again |
-| `45deg`, 3px/7px, hazard | rail caps | end of travel |
-| `45deg`, 5px/10px, hazard | rail active plate | you are here |
+| hatch: steep 2:1, 2px on 4 off, whole stripes | `.plate .hatch` (JACK IN, Done), the bay's step | this is the primary control |
+| tread: 45deg leaning `\`, 20px, animated | a working `.hud` button | working, do not press again |
+| hazard: 45deg, 4px on 4 off, 3 whole stripes | rail caps | end of travel |
+| hazard: 45deg, 3px on 3 off, two yellows | the rail's pointer | you are here |
 
-**Marks:** `❮❮` (`\276E\276E`) trails an action. `///` prefixes a warning
-(`/// WARNING ///`). `›` leads a list item.
+Done's hatch is JACK IN's in proportion (3 stripes, 18px tall), not a narrower copy - squeezed into
+16x10 the old gradient rendered as a fleck, a stroke and a dot.
+
+**Marks:** `❮❮` trails an action. On a plate it is drawn - two clipped chevrons - not typed:
+`\276E` is in none of our fonts, and the fallback draws it as two soft arcs at button size.
+`///` prefixes a warning (`/// WARNING ///`). `›` leads a list item.
+
+---
+
+## Buttons
+
+zeldfep, 2026-11-05, choosing from a live test page: *"I like A, C and D all at once"*. The main
+actions and the mods panel use one kit, in `THE BUTTON KIT` in `code/launcher-lite/index.html`:
+one button with separate moments, so its effects never compete.
+
+| Moment | The plate (`.hud.plate`) | The wired plate (`.hud.wired`) |
+|---|---|---|
+| Rest | solid plate on an offset base, a raised tab with four square dots | the same tab, fed by a ring node and a trace |
+| Hover or Tab | lifts off its base; the dots fill one at a time | a signal runs down the trace; the dots fill |
+| Press | drops into the base | pushes onto the trace |
+| Click | the text tears and a scan line drops, once | the same, except on the small Install size |
+| Working | the dots chase; the `-45deg` stripe runs on JACK IN | the dots chase |
+
+- **The little load bar is the hover cue.** The four dots say "this is live" on hover and on
+  keyboard Tab. **The glitch belongs on the click**, because hover would replay it constantly.
+- **The glitch never delays what the click does.** It plays over the click and the action starts at once.
+- **A working button keeps its lit plate.** Dark means it can't be pressed yet. Busy is not that.
+- **Don't show progress you can't measure, or a result you don't have.** "Files OK" only appears after
+  the check passed, and a check with no known length chases its dots instead of filling a bar.
+- **Every clip-path sits on an inner layer, never on the button**, or the keyboard focus ring is clipped
+  away with it. Plain `button.action` buttons still have that problem.
+- **Write the label with `setHudButton`.** `textContent` wipes out the layers inside the button with no
+  error. `tools/tests/launcher_buttons_test.mjs` checks for this.
+- **With animations turned off, nothing travels or tears.** Colour and the load bar still answer.
+
+**Update stands in your path** (zeldfep, 2026-11-07, picking option 2 of the Update test page).
+It is the plate in `--update` orange with `#140406` text; white on that orange is 4.15:1 and fails.
+
+- **When an update blocks JACK IN, Update sits above it**, with a wire down into JACK IN's raised
+  tab. Hover or Tab sends a signal down the wire and JACK IN's dots stir.
+- **Each real step is printed on the wire** as the main process reports it, as a `--fs-micro` mono
+  readout. A refusal is said there too, because the status line is far below the button.
+- **Done, it turns steel with a green "Updated", then lifts away**, and JACK IN comes alive when the
+  next check confirms the files. Green on the orange would be 2.3:1.
+- **A newer test build blocks nothing**, so the same button sits in the row beside Verify as a steel
+  plate with orange dots. `placeUpdate` is the only thing that shows, hides or moves it.
+
+**Settings has its own small button, the bracket** (zeldfep, 2026-11-08, from two test pages:
+*"S2 and C's bays full"*). Settings is a dense list of rows, so its actions are small and quiet.
+
+- **One size: 8rem by 26px**, its label on `--fs-micro` - the step the type doc gives Settings' row
+  buttons in its own Settings mock, with the mod buttons and `.hud-mini`. The first cut used the label
+  step, which is the tabs' and headings' step. No plate: the label sits inside four registration
+  corners. Hover or Tab closes the corners in, turns them red and fills the dots under the label;
+  a press flashes a steel fill; the click glitch fires once. Anything that deletes has a red label
+  in red corners. Nothing on it is clipped, so its focus ring always shows.
+- **Write its text with `setHudButton`**, like the kit. `launcher_buttons_test.mjs` fails a direct
+  `textContent` write on any of them.
+- **Each group is a module bay**: a notched frame on a hairline, a lit label tab with the group's
+  number, a hatch block on the step, a spec line in machine-label text (`3 TOOLS · NETWORK`) and a
+  four-dot greeble. The pane draws no frame of its own, so frames are never nested.
+- **The tabs are plates**: steel, with the open one lit red.
+- **Done stays the kit's red plate.** It closes the window, so it stays the loud one.
+- **The window keeps one height**, so the tab bar never moves, and it is a real dialog: focus moves
+  in, Tab stays inside, and the launcher behind it is inert until it closes.
+
+See any state of the real page in a browser with `node tools/tests/launcher-stage.mjs`.
 
 ---
 
@@ -125,6 +220,37 @@ this when something needs to read as a HUD element rather than a web control.
 - **Navigate by section, not by row.** Panes carry `.rail-group` headings and the rail counts
   those. A pane with no headings falls back to counting `.tool` rows — that is a fallback, not
   a target. If a pane grows past about six rows, group it.
+- **The rail is a ladder** (R3, zeldfep, 2026-11-08: *"R3 and G1 but make sure we align the ladder
+  to the numbers"*). Each section is a numbered major tick at the point you scroll to to reach it,
+  and a striped pointer rides the ladder as you scroll. The rungs are built from the numbers: each
+  number is snapped onto the 7px rung grid, every y is a whole pixel, the digits are trimmed to
+  cap height so their middle is the tick, and the pointer is centred on that same line. The
+  pointer interpolates between the numbers' own scroll points, so it is on a number exactly when
+  you are at that section. A fixed pattern from the top, with numbers placed independently, is
+  how the first cut put 02 and 03 between rungs. **The arrow is also the handle** (*"make the rail
+  arrow on ladder scrollable"*): drag it and the pane scrolls with it, through the same sums run
+  backwards, so it stays under the cursor and dropping it on a number lands at that section; a
+  press on the bare ladder jumps it there; the wheel over the rail scrolls the pane. The numbers
+  and the step tabs stay, and they are the keyboard's way in. Keep the rail on whole pixels BY
+  LAYOUT (`railSnap` pins its top margin): the rungs are snapped before any transform is
+  applied, so a transform smears them, and an unsnapped rail leaves the arrow half a pixel off
+  its tick. `launcher_buttons_test.mjs` fails either.
+- **The gear is a hex bolt** (G1, the same pick): a hexagon plate, a red hairline over steel,
+  holding a drawn cog on `--fs-icon`, with three ticks under it as its load bar. Hover or Tab
+  lights the hairline, fills the ticks and turns the cog one tooth; a click drops the scan line.
+  The cog is an SVG because every font draws the gear glyph differently.
+- **The main window is three bays on one set of columns** (zeldfep, 2026-11-08). `--cols` is shared
+  by the header and `main`, so the name sits over the left bay, the user tabs over the middle and
+  the gear at the far end. The sides are equal, so the middle stays on the window's centre. The
+  bays are Settings' module bays in the boxes' own colours: `--surface` and a `--line` hairline,
+  with only the shape new. **No boxes around the name or the user tabs.**
+- **Its lines are drawings, not gradients**: the top-left bar and echo dash (*"I think it adds
+  character"*, so the design stays), and the thick bus along the header and footer, two traces
+  through one 45-degree bend to their own pads. They come from `tools/pixel-stripes.mjs --lines` and
+  `launcher_buttons_test.mjs` fails them if they drift.
+- **Its bays stay on whole pixels.** A clip-path edge is not snapped the way a border is, so a bay
+  on a fraction blurs its 1px frame. `--cols` rounds the middle to an even width, the footer has a
+  whole height, and `snapBays` lands the bays that sit under text of fractional height.
 - **Space with `gap`**, not per-element margins.
 - **No inline `style=` for anything the kit has a class for.** Six inputs each carrying their
   own inline styling is how three radii and an undeclared colour token got in.
@@ -177,7 +303,7 @@ decisions were made in a minute from a page and would have been an argument with
 **The mockup is a decision aid, not a record.** zeldfep, 2026-09-07: *"its built in so I dont
 mind the mock ups being missing, we'll just build on what we have."* Once a decision ships, the
 code IS the record and this file is the rulebook for it — a page that disagrees with the
-launcher is stale, not a spec. Keep one in `docs/design/` while it is still useful and let it
-go when it is not.
+launcher is stale, not a spec. Post one to the internal-docs share while it is still useful
+(`docs/design/README.md` says where and how it gets read) and let it go when it is not.
 
 **Never copy one into `distrib/`** — the ship carries that directory wholesale to every player.

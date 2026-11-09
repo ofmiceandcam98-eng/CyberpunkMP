@@ -51,6 +51,16 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
     here and in CLAUDE.md as well as posted - the feed scrolls, and the other stream reads
     law from the rulebook.
 
+- **Auditing the Atlas includes the internal docs** (zeldfep, 2026-11-05): *"lets make sure these
+  .md are getting audited when auditing atlas"*. Every audit also walks the docs on the server,
+  following the ledger at `/mnt/vol/projects/_internal-docs/DOC-AUDIT.md`. Anything still open and
+  unbranched gets a branch; each doc is marked live, stale or history.
+  - **The Atlas visualiser is where posted docs are READ**: its LIBRARY pane carries the
+    share's written working docs plus indexed entries (artifact links and stored copies),
+    its MOCKUPS pane carries the share's design docs. A categories file beside the docs on
+    the share decides the pane; a doc posted to the share appears with no further step. The
+    panes are the reading surface — the share directory stays the storage and the audit
+    ledger stays the audit's spine.
 - **This repo is the open multiplayer service; operator tooling is maintained separately**
   (zeldfep, 2026-09-11). Scope boundary for what belongs in this repository:
   - **The multiplayer service and portability → here.** The client, server, protocol and
@@ -65,8 +75,8 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
 - **Read the type doc BEFORE turning a mockup into code** (zeldfep, 2026-09-09): *"server
   side we have a font doc i need you review that when pushing things from mockups"*. The doc
   is `/mnt/vol/projects/_internal-docs/type-scale.html` - INTERNAL, on the server, per the
-  working-checklists decree - and it exists because the launcher had grown 24 distinct font
-  sizes in one window (.54, .55, .58, .6, .62 ... nine rules agreeing on .72 and fifteen
+  working-checklists decree, served in the Atlas visualiser's MOCKUPS pane - and it exists
+  because the launcher had grown 24 distinct font sizes in one window (.54, .55, .58, .6, .62 ... nine rules agreeing on .72 and fifteen
   sizes used once or twice each). It collapses them onto SEVEN steps: `--fs-micro .58`,
   `--fs-label .68`, `--fs-small .74`, `--fs-body .84`, `--fs-lead 1.02`, `--fs-head 1.15`,
   `--fs-icon 1.2`. Same typefaces, same weights, same colours - only sizes move.
@@ -827,7 +837,7 @@ fixes — money is not server-authoritative today. See `docs/PHASE5-STAGE6B-MONE
   on his machine (browser protocol-block most likely); arrival + failure = the reason is
   in the line.
 
-- **The 2026-09-02 batch — SHIPPED `v0.3.114-worldstate-test.19 (the consolidated build - test.15-18 and the old .19 are deleted; byte-identical to v0.3.114, pairs with both servers)`, NONE of it played.**
+- **The 2026-09-02 batch — SHIPPED `v0.3.114-worldstate-test.19 (the consolidated build - test.15-18 and the old .19 are deleted; byte-identical to v0.3.114, pairs with both servers)`, NONE of it played.** ("Byte-identical" is what was claimed when this was written; the crash plan later doubted it, and that release is gone, so it cannot be re-measured.)
   feat/world-state @ `5a68517`; `main` untouched at `304b492`. Aboard: voice fix, phone
   calls in the real in-game phone, texting/contacts/blocking, character slots + selector +
   soft delete, vehicle seat validation, money confiscation fix (the destructive half of the
@@ -1560,13 +1570,20 @@ fixes — money is not server-authoritative today. See `docs/PHASE5-STAGE6B-MONE
   the stored blob over the character the player just made. The stored blob IS the contaminated
   one (9141 bytes, female) and is re-uploaded on every autosave and every disconnect (`sent
   9141 bytes of appearance to the server`), so the bad record keeps refreshing itself. The
-  commit is inert — why nobody is visibly Veronica: `ReFinalizeState`/`FinalizeState` are
-  refused in gameplay, `InitializeOptionsFromFinalizedState` is accepted and does not rebuild
-  the body — the restore "succeeds", changes nothing, and still gates saving
-  (`MaySaveCharacter` refuses on a FAILED restore). Cam, from the field: "im not the character
-  i just made, im some man but not my male character." Do NOT re-attempt the creator-only
-  commit functions (`InitializeState`/`ReFinalizeState`/`FinalizeState`) — all three are
-  measured and refused.
+  commit is inert — why nobody is visibly Veronica: `InitializeOptionsFromFinalizedState` runs
+  and does not rebuild the body, so the restore "succeeds", changes nothing, and still gates
+  saving (`MaySaveCharacter` refuses on a FAILED restore). Cam, from the field: "im not the
+  character i just made, im some man but not my male character."
+- **The creator commit calls were never refused - they never ran (CORRECTED 2026-11-05).**
+  `CallCustomizationFunction` (NetworkWorldSystem.cpp) passes no out-slot, and the SDK's
+  `ExecuteFunction` returns false WITHOUT calling a function that has a return type when the
+  out-slot is null (`Scripting/Utils-inl.hpp`). `InitializeState`, `ReFinalizeState` and
+  `FinalizeState` return Bool, so none ran; `InitializeOptionsFromFinalizedState` is void, so it
+  "worked". Do not fix the helper alone: the mirror calls InitOpts BEFORE ReFinalize, and
+  ReFinalize alone may blank the state. Route A is in the admin overlay (Test > "Dress my
+  body", `DressLocalBodyFromStoredLook`): stored look into a FRESH state, keys via
+  `CollectCustomizationKeys` (shared with the remote path), scheduled on the local player.
+  Touches no live state and no save. atlas:on-2-5-a-player-sees-themself-as-the-template-body-while-eve
 
 ### Manifest system: built, waiting on two keys and one deploy
 - **Cam's signing key: MINTED 2026-08-30 (`node tools/manifest/keygen.cjs`), deliberately
@@ -1985,8 +2002,8 @@ then refuses to create the containers** and leaves the OLD build running. The lo
   contains the specific change, **by string, not by timestamp**, before asking anyone to test.
   1. **Redscript does not ship with the build.** `xmake install -o distrib Client` prints
      "install ok!" and **leaves edited `.reds` at their previous contents**. Force-copy, then
-     check the deployed file. Never mirror/`/PURGE` - `distrib` legitimately carries
-     `World\CharacterProfile.reds` and `World\KiroshiScanner.reds`, which are not in `code`.
+     check the deployed file. `ShipTestBuild` now empties the folder and mirrors it on purpose;
+     the two files that once made mirroring unsafe no longer exist.
      `Ship.ps1` is safe (line 343 force-copies, 346-348 verify), so releases were never
      affected - only the manual path. **`tools\DevInstall.ps1` is the dev install path and it
      COPIES** - it mirrors `.reds` from source and verifies arrival, which is what closes this
@@ -2089,7 +2106,11 @@ scripts will take effect"*, naming exactly those twelve files.
   the ship works around for `distrib` but NOT for the game directory. Mirrored by hand.
   **Two places rot; the ship only guards one.**
 
-- **TEST SERVER IS ARMED (2026-09-07) AND THE TWO DIGEST IMPLEMENTATIONS AGREE.** First time
+- **CORRECTED 2026-11-05: NEITHER SERVER IS ARMED.** Test was disarmed again the same day
+  (`config/server-manifest.json.disarmed-2026-09-07`), and both servers answer
+  `ManifestVersion: ""`. State: atlas:neither-server-has-the-install-check-on. What follows is the
+  record of 2026-09-07.
+- **TEST SERVER WAS ARMED (2026-09-07) AND THE TWO DIGEST IMPLEMENTATIONS AGREED.** First time
   that has ever been true.
   - `/mnt/vol/projects/CyberpunkMP-authority/config/server-manifest.json`, manifest
     `2026.09.07.03` off v0.3.117 (re-armed after the duplicate-script fix regenerated it). **Live is deliberately
@@ -2370,7 +2391,9 @@ cannot carry, both verified by a real clone). What the sweep actually found:
 | Making players targetable | `code/assets/Tweaks/CyberpunkMP.tweak` + `Hackable.reds` | `objectActions` on the puppet records; hostile attitude at spawn | **`MaMuppet`/`WaMuppet` inherit from `Character.Panam`, NOT from `Character.Muppet`** — editing Muppet does nothing. Quickhack action names in the game's scripts are WRONG (`BaseBlindHack` not `BlindHack`, `MadnessHackBase` not `MadnessLvl3Hack`) — they were dumped live. Hostile attitude satisfies BOTH gates: `Att_Hostile` for `TSF_EnemyNPC` and the fourth route to `IsAggressive()`. The entity templates were never missing targeting components (16 `gameTargetingComponent`s, confirmed via WolvenKit CLI). Behind `--hackable-puppets` — **which the launcher did not send until `feat/pvp` (2026-09-11)**: `Settings.hackablePuppets` defaults false and nothing else sets it, so on every normal launch players could not target each other at all, gun or no gun; the two-player tests that worked had the flag set by hand. The launcher now passes it unconditionally. The server was never the gate — `HandleCombatEventRequest` has no PvP check. Known cost, from `Hackable.reds`: hostility is what NCPD and NPC AI react to, so watch for bystanders treating players as threats |
 | Runtime inspection | `bin/x64/plugins/cyber_engine_tweaks/mods/nco_hackdump` (not in repo) | Dumps TweakDB data the game will not reveal statically | CET only honours `registerForEvent` from `init.lua`; a required module's registration is ignored. Mod globals are NOT reachable from the console — export by returning a table. `io` is sandboxed to the mod folder. **Lua output goes to `scripting.log`**, not `cyber_engine_tweaks.log` |
 | World/asset editing | External tool, not in repo: [WolvenKit](https://github.com/WolvenKit/Wolvenkit/releases) | Editor + CLI for the game's own resource formats (`.ent`, `.mesh`, `.app`, world/sector nodes, TweakDB) — the tool for any world-building, level-editing, or static-asset-inspection work, not just confirmation checks (already confirmed the puppet templates' `gameTargetingComponent`s statically — see the targeting row). **NAS updater LIVE 2026-08-29**: `tools/deploy/update-wolvenkit.sh` in `<nas-user>@<nas-host>`'s crontab (`0 * * * *`, self-throttled to ~72h internally — cron frequency and check cadence are deliberately decoupled, see the script's own header); seed run succeeded — `~/wolvenkit-console/VERSION` reads `8.20.0`, `~/wolvenkit-console/current/` holds the full `WolvenKit.ConsoleLinux` extraction. The script was hand-seeded on the box first (live wiring `ee12df2`) and is NOW TRACKED (`dcc67eb`) — the leftover untracked copy refused the NAS pull for hours until shelved to `~/update-wolvenkit.sh.shelved-20260903` (2026-09-03); the cron LINE still lives only in the crontab, so a rebuilt box needs it re-added by hand. **Local CLI, built from source 2026-08-30 — the route on Cam's PC to READ an asset now**: no installed WolvenKit there, only `C:\Users\Cam\Downloads\WolvenKit-main.zip` (source, 89MB); extract, then `dotnet build WolvenKit.CLI\WolvenKit.CLI.csproj -c Release` — needs the .NET SDK, and **the CLI targets `net10.0`**, so the exe lands at `WolvenKit.CLI\bin\Release\net10.0\WolvenKit.CLI.exe` (Cam's box has SDKs 6/8/9/10, so it builds; a box with only 9 will not). Decode with `convert serialize <file>` (writes `<file>.json` beside it; `convert deserialize` goes back). Proven use: decoding `prototype_hud.inkhud` + `multiplayer_ui.inkwidget` exonerated the asset in the invisible-chat-box bug BEFORE anyone "fixed" a file that was never at fault (see the SOLVED chat-box entry) — `multiplayer_ui` is field-for-field identical to `new_phone` apart from `ignoreHudScaleOverride`, and the chat canvas matches its authored state exactly (1000x1000, `Fixed`, `Fill/Fill`, opacity 1) | JSON traps that cost time: entry names are at `hudEntryName.'$value'`, NOT `.hudEntryName`; a widget library item's tree is at `item.package.Data.File.RootChunk.rootWidget`; and `rootWidget` is often `{"HandleRefId": "N"}` pointing at a `"HandleId": "N"` defined elsewhere in the same package — plain property walks fail, search the raw text for the id. **Version pin**: WolvenKit versions track specific game patches — check the releases page for the version matched to 2.31 before use; a mismatch can misread or corrupt resource formats it does not recognise. Read-only inspection (CLI dumps) is low-risk; anything that WRITES a resource file is engine-pin-grade — verify against 2.31 first |
+| HUD layout override | `code/assets/Archives/source/archive/base/gameplay/gui/prototype_hud.inkhud`, packed into `CyberpunkMP.archive` | The game's own HUD file plus ONE entry, `multiplayer_ui`, right after `new_phone` | **It replaces the whole file, so every game patch makes it stale**: ours sat on a 2024 copy into 2.5, missing `police`, `reaper_mq062` and `cyberware_mq062` and aiming the car HUD at a slot 2.5 renamed. After a patch: `WolvenKit.CLI unbundle` it from `basegame_1_engine.archive`, `convert serialize`, insert our entry, `convert deserialize`, and repack with only that file swapped. |
 | Launcher | `code/launcher-lite/main.js` | Discord identity (membership: only 200/404 are verdicts), roles (10-min memo), manifest state machine, install lock + queue, Nexus manager, game detect (A–Z drives), footprint/uninstall | **CSS specificity**: base `button.action` (0,1,1) beats bare class rules — trio overrides must be `button.action.x`. Electron packaged: new source files MUST be added to package.json `build.files` (v0.3.97 shipped importing a file it didn't contain). **Uninstall is a two-layer mirror**: footprint in main.js AND `build/installer.nsh` — a new write location goes in BOTH. The `nxm://` class is cleared only when its command points at OUR exe (Vortex/MO2 write the same key; empirically tested both ways 2026-08-22) |
+| Launcher UI | `code/launcher-lite/index.html` (markup, styles and renderer in one file) · rules in `docs/DESIGN-LANGUAGE.md` · stripes from `tools/pixel-stripes.mjs` | The button kit (plates, the Update wire, the mods panel), Settings (module bays, plate tabs, the bracket button, the ladder rail and its draggable arrow), the hex-bolt gear, the main window (three bays on `--cols`, the thick bus and top-left bar as generated drawings, the red from the game's own `main_colors.inkstyle`). Built 2026-11-08 on `design/launcher-settings` for v0.3.127, the main window 2026-11-09 | **The pixel grid**: a player's screen does not smooth a gradient's hard edge or a clipped shape's diagonal, so only 45-degree and 2:1 diagonals step evenly and a gradient stripe comes out ragged with broken ends - stripes are the `--px-*` drawings in `:root`, never gradients, and `launcher_buttons_test.mjs` fails a stripe gradient, an off-45 cut or wire, or a drawing that drifted from the generator. **`Verify.ps1` runs the launcher's tests**: `manifest`, `prereq` and `renderer` `.selftest.mjs` in `code/launcher-lite` (they need its `node_modules`) and `tools/tests/launcher_buttons_test.mjs`. See a change in `tools/tests/launcher-stage.mjs` (scenes, stubbed bridge); prove it in the packaged app with `tools/tests/launcher-electron-check.mjs <exe> [shots-dir]` - it says whether the window is drawing frames (a covered or locked window fails the glitch and the rail clicks for that alone) and its screenshots are lossless 1:1, the only honest view of pixels. **CSS order**: a `prefers-reduced-motion` block ABOVE the rules it targets is outranked by them - the modal's and the rail's both silently did nothing. One launcher per profile: a second copy hands off to the one already open |
 | Manifest kit | `code/launcher-lite/manifest.js` (+ selftest) | Signature verify vs pins, §2.1 availability states, install digest, ownership index, unmanaged classifier, tailnet check | Pure functions, Electron-free; run `node manifest.selftest.mjs` (82 checks) before shipping launcher changes |
 | Ship tooling | `tools/Ship.ps1`, `tools/manifest/*.cjs` | Gate battery, staging, carry-forward, manifest generate/sign/verify-vs-pins, prerelease→verify→promote | Ship bumps package.json but never commits — carry the bump or the next ship collides with an existing tag and silently uploads into an old release. `Ship.ps1:574` copies `distrib\launcher\mod\assets` wholesale and never cleans it — anything left in `assets\Archives\` ships to every player, so keep probes and experiments out of `distrib` |
 | Deploy | `tools/deploy/update-server.sh` | NAS cron: player-count gate + server-relevant-path filter + untracked-file shelving | **Deploys whatever branch the checkout is ON — production `/mnt/vol/projects/CyberpunkMP` is on `feat/world-state`, not main** (verified 2026-08-22). The repo dir is the script's first ARG and defaults to `~/CyberpunkMP`, which is not where production lives — calling it without the arg fails with "no such directory". Two traps beyond that: it DEFERS while Players>0 (so a deploy can silently not happen), and it skips the rebuild when no server-relevant path changed — a docs-only commit logs "pulled, nothing changed" and leaves earlier unbuilt server code still unbuilt. Verify a deploy by checking the running binary for a symbol, never by reading the log. **Untracked files kill pulls**: git refuses to overwrite an untracked file with an incoming one — three kills so far: the two coord-api publish files, then `tools/deploy/update-wolvenkit.sh` (hand-seeded on the box as the WolvenKit updater's live wiring, `ee12df2`, later committed to the repo, `dcc67eb`). Fingerprint in `~/nco-update.log`: `updating 3cde271 -> <new tip>` then `pull failed` every 10 minutes for hours. Diagnosed 2026-09-03 (zeldfep stream, from the NAS shell) — the remote (`origin` = ofmiceandcam98-eng, tracking `origin/feat/world-state`) and the fetch were both correct; neither suspected candidate was the cause. The byte-identical local copy was shelved to `~/update-wolvenkit.sh.shelved-20260903`, pull unblocked, checkout at the tip. HARDENED against the class, not the instance: the script now shelves ANY untracked file the incoming commits are about to create, with a loud log line naming it. Tracked local modifications still fail the pull ON PURPOSE — that is real divergence and deserves a human; do not "fix" it. Last trap: after a MANUAL pull the cron sees LOCAL==REMOTE and skips the rebuild — launch the rebuild yourself (why the 2026-09-03 rebuild was launched immediately by hand) |

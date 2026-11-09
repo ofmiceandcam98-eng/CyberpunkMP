@@ -652,8 +652,8 @@ public class ChatController extends inkHUDGameController {
         }
         // Typed fallbacks for the trade controls - guaranteed since typing always works. Eddies
         // -/+ and confirm; exit is /tradeoff.
-        if Equals(textEntered, "/tr+") { this.m_input.SetText(""); this.MpTrEddies(500); return; }
-        if Equals(textEntered, "/tr-") { this.m_input.SetText(""); this.MpTrEddies(-500); return; }
+        if Equals(textEntered, "/tr+") { this.m_input.SetText(""); this.MpTrEddies(1); return; }
+        if Equals(textEntered, "/tr-") { this.m_input.SetText(""); this.MpTrEddies(-1); return; }
         if Equals(textEntered, "/trok") { this.m_input.SetText(""); this.m_trSel = 1; this.MpTrActivate(); return; }
         if Equals(textEntered, "/tradehelp") { this.m_input.SetText(""); this.m_trHelp = !this.m_trHelp; this.MpTrOpen(); return; }
         // /trade <player> - the real-player trigger. Open the overlay WITH the modal cursor, and
@@ -792,8 +792,8 @@ public class ChatController extends inkHUDGameController {
                 if Equals(actionName, n"TradeExit") { this.MpTrClose(); return true; }
                 if Equals(actionName, n"TradeNavDown") { this.MpTrNav(1); return true; }
                 if Equals(actionName, n"TradeNavUp") { this.MpTrNav(-1); return true; }
-                if Equals(actionName, n"TradeOfferLess") { this.MpTrEddies(-500); return true; }
-                if Equals(actionName, n"TradeOfferMore") { this.MpTrEddies(500); return true; }
+                if Equals(actionName, n"TradeOfferLess") { this.MpTrEddies(-1); return true; }
+                if Equals(actionName, n"TradeOfferMore") { this.MpTrEddies(1); return true; }
                 if Equals(actionName, n"TradeAccept") { this.MpTrActivate(); return true; }
             }
         }

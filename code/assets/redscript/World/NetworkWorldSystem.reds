@@ -40,6 +40,9 @@ public class MpTakeDriverSeatCallback extends DelayCallback {
 
 public native class NetworkWorldSystem extends IGameSystem {
     public native func Connect() -> Void;
+    // The main menu's connects. Never spawns on its own: on 2.5 the menu stands on a live
+    // world, so "is there a player" cannot tell a menu press from an in-world one.
+    public native func ConnectFromMenu() -> Void;
     public native func Disconnect() -> Void;
     public native func RequestJoin() -> Void;
 
@@ -47,6 +50,7 @@ public native class NetworkWorldSystem extends IGameSystem {
     // "redscript will work it out". Without this line the call fails with
     // UNRESOLVED_METHOD and takes every other script in the mod down with it.
     public native func MarkNewCharacter() -> Void;
+    public native func ClearNewCharacter() -> Void;
 
     // Handing the player's possessions to the server. Declared on both sides, like every
     // native here - a missing declaration fails with UNRESOLVED_METHOD and takes every
@@ -458,9 +462,10 @@ public native class NetworkWorldSystem extends IGameSystem {
         let blackboard: ref<IBlackboard> = blackboardSystem.Get(GetAllBlackboardDefs().UIGameData);
         blackboard.SetBool(GetAllBlackboardDefs().UIGameData.UIMultiplayerConnectedToServer, true, true);
 
-        // Start draining quickhacks aimed at us. Effects arrive on the network thread into
-        // a native queue; this is the script side visiting it. See Combat.reds.
-        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(new MpStatusEffectPoll(), 0.25, false);
+        // Start visiting what the network thread queued for us: quickhacks, health, being put
+        // down. A no-op on a menu connect, where no player exists yet and the player's own
+        // OnGameAttached arms it instead. See Combat.reds.
+        MpArmStatusPoll(GetPlayer(GetGameInstance()) as PlayerPuppet);
         GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(new MpWeaponPoll(), 0.25, false);
 
         // The usual order is player-attaches-then-connects, so this is where the
@@ -647,6 +652,8 @@ public native class NetworkWorldSystem extends IGameSystem {
             let request = new UnmountingRequest();
             request.lowLevelMountingInfo = info;
             request.mountData = new MountEventData();
+            // They are about to be somewhere else, so there is nothing to animate.
+            request.mountData.isInstant = true;
 
             GameInstance.GetMountingFacility(GetGameInstance()).Unmount(request);
 
@@ -661,11 +668,202 @@ public native class NetworkWorldSystem extends IGameSystem {
             delayed.system = this;
             delayed.position = position;
             delayed.yaw = yaw;
+            delayed.attemptsLeft = 4;
             GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(delayed, 0.5, false);
             return;
         }
 
         this.DoTeleport(position, yaw);
+    }
+
+    /**
+     * The seat has had time to empty. Usually it has, and this just moves them.
+     *
+     * A player downed in a car can stay seated through all of the above: on test.86 the
+     * respawn moved hezbollahcartel on the server while the game kept him in a burning car,
+     * and neither /tp nor a reconnect could free him, only a game restart. The seat is a
+     * workspot, and the workspot system is what the game's own exit ends up calling
+     * (vehicleTransition.script, ExitWorkspot), so that is the last resort. It only runs on
+     * someone the polite route has already failed, and the attempts run out so that a seat
+     * which will not let go still ends in the teleport rather than a player left waiting.
+     */
+    public func FinishMountedTeleport(position: Vector4, yaw: Float, attemptsLeft: Int32) -> Void {
+        let game = GetGameInstance();
+        let player = GetPlayer(game);
+
+        if IsDefined(player) && attemptsLeft > 0 && VehicleComponent.IsMountedToVehicle(game, player) {
+            let vehicle: wref<VehicleObject>;
+            if VehicleComponent.GetVehicle(game, player, vehicle) {
+                FTLogWarning(s"[NetworkWorldSystem] still seated after the unmount - forcing the workspot out, \(attemptsLeft) attempt(s) left");
+                GameInstance.GetWorkspotSystem(game).UnmountFromVehicle(vehicle, player, true);
+            }
+
+            let again = new MpDelayedTeleportCallback();
+            again.system = this;
+            again.position = position;
+            again.yaw = yaw;
+            again.attemptsLeft = attemptsLeft - 1;
+            GameInstance.GetDelaySystem(game).DelayCallback(again, 0.5, false);
+            return;
+        }
+
+        this.DoTeleport(position, yaw);
+    }
+
+    /**
+     * Moves a REMOTE player's puppet, called from native off 2.31 (InterpolationSystem's
+     * transform-only driver path).
+     *
+     * A placed-transform write alone does not visibly move an NPC-record puppet: its own
+     * movement component writes the position back every frame. The teleportation facility
+     * goes through that component, and it is the game's declared, compiler-checked API - so
+     * it survives a patch the way the hand-decoded 2.31 movement controller did not.
+     * Throttled native-side; this does no bookkeeping of its own.
+     */
+    public func MpTeleportPuppet(entity: ref<Entity>, position: Vector4, yaw: Float) -> Void {
+        let puppet = entity as GameObject;
+        if !IsDefined(puppet) {
+            return;
+        }
+
+        // Same convention as DoTeleport below: radians on the wire, degrees in EulerAngles,
+        // built field by field.
+        let angles = new EulerAngles();
+        angles.Roll = 0.0;
+        angles.Pitch = 0.0;
+        angles.Yaw = yaw * 57.2957795;
+
+        GameInstance.GetTeleportationFacility(GetGameInstance()).Teleport(puppet, position, angles);
+    }
+
+    /**
+     * One line about a remote body for the native steering log: what the ENGINE thinks of it.
+     *
+     * test.80 steered a body to within 2m of each player for 30 seconds and neither player ever
+     * saw it - and nothing logged could say whether it was detached, had no appearance, or had
+     * been dropped to a low AI LOD. This says which.
+     */
+    public func MpDescribePuppet(entity: ref<Entity>) -> String {
+        let puppet = entity as ScriptedPuppet;
+        if !IsDefined(puppet) {
+            return "no puppet";
+        }
+
+        let line = "attached=" + ToString(puppet.IsAttached())
+            + " active=" + ToString(puppet.IsActive())
+            + " appearance=" + NameToString(puppet.GetCurrentAppearanceName());
+
+        let ai = puppet.GetAIControllerComponent();
+        if IsDefined(ai) {
+            line += " aiLod=" + ToString(ai.GetLOD())
+                + " highLevel=" + ToString(EnumInt(ai.GetHighLevelState()));
+        } else {
+            line += " ai=none";
+        }
+
+        return line;
+    }
+
+    /**
+     * Steers a REMOTE player's puppet toward where they really are, called from native off 2.31
+     * (InterpolationSystem's SteerPuppet, which decides when and how often).
+     *
+     * The body is a Panam-based NPC and on 2.5 her behaviour tree owns its movement: teleports
+     * lost to it, and in a fight it walked the body wherever it liked. An active move command is
+     * what the tree yields movement to - in combat too, while ignoreInCombat is false. The command
+     * never finishes on arrival, so one is always active and the body holds its spot instead of
+     * the brain filling the gap.
+     *
+     * The native side makes every decision; this only carries it out. band: 0 stand, 1 walk,
+     * 2 run, 3 sprint (already raised when the body is behind). mode: 0 pathfind to the target,
+     * 1 straight line to it, 2 snap there. Returns where the body was BEFORE acting, W = -1 when
+     * there was no puppet.
+     */
+    public func MpSteerPuppet(entity: ref<Entity>, position: Vector4, yaw: Float, band: Int32, mode: Int32) -> Vector4 {
+        let result: Vector4;
+        result.W = -1.0;
+
+        let puppet = entity as ScriptedPuppet;
+        if !IsDefined(puppet) {
+            return result;
+        }
+
+        let bodyPosition = puppet.GetWorldPosition();
+        result.X = bodyPosition.X;
+        result.Y = bodyPosition.Y;
+        result.Z = bodyPosition.Z;
+        result.W = 0.0;
+
+        let ai = puppet.GetAIControllerComponent();
+
+        if !IsDefined(ai) {
+            this.MpTeleportPuppet(entity, position, yaw);
+            return result;
+        }
+
+        // Snap through the AI's OWN teleport, which the behaviour tree carries out instead of
+        // resisting: test.80 snapped through TeleportationFacility and not one of hundreds moved
+        // the body.
+        if mode == 2 {
+            ai.CancelOrInterruptCommand(n"AIMoveToCommand", true, true);
+            ai.CancelOrInterruptCommand(n"AITeleportCommand", true, true);
+            let teleport = new AITeleportCommand();
+            teleport.position = position;
+            teleport.rotation = yaw * 57.2957795;
+            teleport.doNavTest = false;
+            ai.SendCommand(teleport);
+            return result;
+        }
+
+        // A teleport still pending by now is not going to land, and left in the queue it blocked
+        // every move behind it - test.82 had a body frozen at a constant 12-15m for over a minute.
+        ai.CancelOrInterruptCommand(n"AITeleportCommand", true, true);
+
+        let targetPosition: WorldPosition;
+        WorldPosition.SetVector4(targetPosition, position);
+        let target: AIPositionSpec;
+        AIPositionSpec.SetWorldPosition(target, targetPosition);
+
+        let command = new AIMoveToCommand();
+        command.movementTarget = target;
+        command.desiredDistanceFromTarget = 0.25;
+        command.finishWhenDestinationReached = false;
+        command.ignoreNavigation = mode == 1;
+        command.ignoreInCombat = false;
+        command.removeAfterCombat = false;
+        command.useStart = false;
+        command.useStop = band == 0;
+
+        if band >= 3 {
+            command.movementType = moveMovementType.Sprint;
+        } else {
+            if band == 2 {
+                command.movementType = moveMovementType.Run;
+            } else {
+                command.movementType = moveMovementType.Walk;
+            }
+        }
+
+        // Standing: turn to face the way they face. Moving: the body faces where it walks, as a
+        // player's does. Same heading convention as the native side: (-sin, cos) of the yaw.
+        if band == 0 {
+            let ahead: Vector4;
+            ahead.X = position.X - SinF(yaw) * 2.0;
+            ahead.Y = position.Y + CosF(yaw) * 2.0;
+            ahead.Z = position.Z;
+            ahead.W = 0.0;
+            let facingPosition: WorldPosition;
+            WorldPosition.SetVector4(facingPosition, ahead);
+            let facing: AIPositionSpec;
+            AIPositionSpec.SetWorldPosition(facing, facingPosition);
+            command.facingTarget = facing;
+            command.rotateEntityTowardsFacingTarget = true;
+        }
+
+        // Replace, never stack.
+        ai.CancelOrInterruptCommand(n"AIMoveToCommand", true, true);
+        ai.SendCommand(command);
+        return result;
     }
 
     public func DoTeleport(position: Vector4, yaw: Float) -> Void {
@@ -860,10 +1058,11 @@ public class MpDelayedTeleportCallback extends DelayCallback {
     public let system: wref<NetworkWorldSystem>;
     public let position: Vector4;
     public let yaw: Float;
+    public let attemptsLeft: Int32;
 
     public func Call() -> Void {
         if IsDefined(this.system) {
-            this.system.DoTeleport(this.position, this.yaw);
+            this.system.FinishMountedTeleport(this.position, this.yaw, this.attemptsLeft);
         }
     }
 }

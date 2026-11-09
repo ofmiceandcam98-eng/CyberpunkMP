@@ -4,10 +4,10 @@
 [![Build windows](https://github.com/ofmiceandcam98-eng/CyberpunkMP/actions/workflows/windows.yml/badge.svg)](https://github.com/ofmiceandcam98-eng/CyberpunkMP/actions/workflows/windows.yml)
 [![Build linux](https://github.com/ofmiceandcam98-eng/CyberpunkMP/actions/workflows/linux.yml/badge.svg)](https://github.com/ofmiceandcam98-eng/CyberpunkMP/actions/workflows/linux.yml)
 [![Discord](https://img.shields.io/badge/Discord-Night%20City%20Online-5865F2?logo=discord&logoColor=white)](https://discord.gg/M9NSWsndC7)
-[![Game patch](https://img.shields.io/badge/Cyberpunk%202077-2.31-f3c50f)](https://github.com/ofmiceandcam98-eng/CyberpunkMP#readme)
+[![Game patch](https://img.shields.io/badge/Cyberpunk%202077-2.5-f3c50f)](https://github.com/ofmiceandcam98-eng/CyberpunkMP#readme)
 
 A fork of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) carrying the changes
-needed to run on **Cyberpunk 2077 patch 2.31**, plus a launcher, Discord-backed
+needed to run on **Cyberpunk 2077 patch 2.5**, plus a launcher, Discord-backed
 permissions, chat with range, and server-side persistence. Upstream targets patch 2.2 and
 will not start on current game versions.
 

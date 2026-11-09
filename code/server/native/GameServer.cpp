@@ -1139,20 +1139,16 @@ void GameServer::AdmitPlayer(const ConnectionId aConnectionId, const std::string
     settings.set_interest_radius(Level::kLoadRadius);
     response.set_settings(settings);
 
-    // Tell them what character this ACCOUNT owns, before they can decide for themselves.
+    // Tell them what characters this ACCOUNT owns, before they can decide for themselves.
     //
     // Keyed on the Discord id the server just verified - never on anything the client
     // sent, and never on the Cyberpunk save sitting on their disk, which looks like an
-    // answer and is not one. One account, at most one character: the store is keyed that
-    // way, so "which of their characters" is not a question that can be asked.
+    // answer and is not one.
     //
     // Absent when Discord verification is disabled, because then there is no durable
     // account to hang a character on and every connection is effectively a stranger.
     if (!acDiscordId.empty())
     {
-        // One lookup, appended to a list. The store is keyed on Discord id so there can
-        // only be one - but the shape is a list, so the day slots exist this loop grows
-        // rather than every reader changing.
         // The allowance goes out whether or not they already have a character.
         //
         // Set outside the branch deliberately: an account with NO character is exactly the
@@ -1160,51 +1156,24 @@ void GameServer::AdmitPlayer(const ConnectionId aConnectionId, const std::string
         // has-a-character branch would tell everybody except the person about to create one.
         response.set_character_slots(PlayerStore::SlotsForLevel(aLevel));
 
-        if (const auto* pCharacter = m_players.FindCharacter(acDiscordId))
+        // EVERY character, with slot and is_active - the same roster NotifyCharacterList
+        // sends (one builder, ChatSystem::RosterOf). This sent only the ACTIVE slot's
+        // character, so an account pointed at an empty slot heard "no characters" at login:
+        // the selector drew every slot empty, a click on Pajeet's slot armed NEW CHARACTER,
+        // and the spawn moved the account to the next empty slot - every session since
+        // 2026-11-01 (Atlas pajeet-vanishes-from-the-connect-selector-after-multiplayer).
+        const auto* pRecord = m_players.Find(acDiscordId);
+
+        if (pRecord && !pRecord->Characters.empty())
         {
-            server::CharacterSummary summary;
+            response.set_characters(ChatSystem::RosterOf(*pRecord));
 
-            // Through c_str(): the project's String carries a custom allocator and is not
-            // interchangeable with std::string at this boundary.
-            summary.set_id(pCharacter->CharacterId.c_str());
-            summary.set_name(pCharacter->Name.c_str());
-            summary.set_spawned_before(pCharacter->SpawnedBefore);
-
-            // Sent as stored, uninterpreted. A character created before the field existed
-            // has none, and that is a normal row rather than a broken one.
-            summary.set_lifepath(pCharacter->Lifepath.c_str());
-
-            // The five attributes, sent as stored. See server.proto - this is the flag day
-            // that lets the selector show who somebody is rather than only what they are
-            // called.
-            Vector<server::Attribute> attributes;
-
-            for (const auto& attribute : pCharacter->Attributes)
-            {
-                server::Attribute wire;
-                wire.set_type(attribute.Type);
-                wire.set_value(attribute.Value);
-                attributes.push_back(wire);
-            }
-
-            summary.set_attributes(attributes);
-
-
-            // The record's own Level field, not a search through Proficiencies. Both hold
-            // it - the note in CharacterRecord explains why the overlap was kept - and
-            // this is the one the spawn path applies, so a selector that read the other
-            // could show a number the player never actually gets.
-            summary.set_level(pCharacter->Level);
-
-            // Set as a whole list, not appended: the generator emits set_X(vector) for
-            // repeated fields, the same shape SaveCharacterRequest's inventory uses.
-            Vector<server::CharacterSummary> characters;
-            characters.push_back(summary);
-            response.set_characters(characters);
-
-            spdlog::info("{} has character '{}' ({})", acUsername,
-                         pCharacter->Name.empty() ? "unnamed" : pCharacter->Name,
-                         pCharacter->SpawnedBefore ? "played" : "never spawned");
+            const auto* pActive = m_players.FindCharacter(acDiscordId);
+            spdlog::info("{} has {} character(s), active slot {} {}", acUsername, pRecord->Characters.size(),
+                         pRecord->ActiveSlot,
+                         pActive ? fmt::format("('{}', {})", pActive->Name.empty() ? "unnamed" : pActive->Name,
+                                               pActive->SpawnedBefore ? "played" : "never spawned")
+                                 : std::string("(EMPTY - the selector offers the others)"));
         }
         else
         {

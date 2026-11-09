@@ -274,6 +274,10 @@ protected cb func OnGameAttached() -> Bool {
     // NetworkWorldSystem.OnConnected is for.
     MpArmDeathFloor(this);
 
+    // Connecting from the main menu happens before this body exists, so this is the only
+    // moment that session has one to bind the poll to. See Combat.reds.
+    MpArmStatusPoll(this);
+
     return result;
 }
 

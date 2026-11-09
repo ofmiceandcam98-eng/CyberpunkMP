@@ -28,7 +28,11 @@
     --line:    #2a1418;
     --ink:     #e8e2e2;
     --ink-dim: #9a8b8d;
-    --accent:  #ff2a32;
+    /* The game's own red (zeldfep, 2026-11-09: "the red is good its just a bit vibrant check the
+       cyberpunk color pallet"). #ff2a32 had the game's hue with more saturation than any red in
+       base/gameplay/gui/common/main_colors.inkstyle; this is that file's NameplateBackground. The
+       ramp below and --tread-2 come from the same file. */
+    --accent:  #f73932;
     --hazard:  #f3c50f;
     --ok:      #3ddc64;
     --bad:     #f0a05a;
@@ -36,10 +40,36 @@
        ends up with three ambers and nobody able to say which one is correct. Same values
        as before - this changes nothing on screen, it just gives them one home. */
     --update:  #c2621b;
+    /* Shades OF --update for the Update plate's base and its working stripe - the same rule as
+       the accent ramp below: never new hues. */
+    --update-2: #6b3410;
+    --update-tread: #9a4a14;
     --steel:   #2b303a;
+    /* THE ACCENT RAMP - the red fade on the Play button, the rail and the progress bar. It
+       was pasted as hex into ten gradients (#7c1015 x4, #5a0c11 x5, #26060a x8), and the
+       progress bar read an --accent-2 nobody had declared, falling back to a fourth red,
+       #7a1016, one step off #7c1015. One home: shades OF the accent, never new hues - a new
+       shade goes here or does not exist. */
+    --accent-2: #79221b;
+    --accent-3: #542226;
+    --accent-4: #26060a;
+    /* What the button kit needs and nothing else has. --glitch is the one hue outside this
+       palette, and only the click glitch may use it. */
+    --glitch: #3ce8ef;
+    --plate-dead: #2a0d11;
+    --tread-2: #ae3b36;
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    /* Where a bay's top edge steps down. */
+    --step: 46%;
+    /* The main window's three columns, shared by the header and the bays so the header's parts
+       sit over them. Equal sides keep the middle's centre on the window's centre, and the middle
+       is the widest column at every size. Whole pixels: a clip-path edge is not snapped the way
+       a border is, so a bay on a fraction blurs its 1px frame, and an even middle leaves both
+       sides whole. */
+    --cols: minmax(14rem, 1fr) round(down, max(18rem, calc((100% - 2.5rem) / 3.25 * 1.25)), 2px) minmax(14rem, 1fr);
     /* ONE corner radius. This file had 2, 3, 4, 6 and 8px in it, none of them chosen -
        and the modal, the panels and the notes card are all square already, so square is
-       what the kit actually is. Avatars stay round; they are pictures of people. */
+       what the kit actually is. Avatars are cut as the gear's hex. */
     --radius:  2px;
     /* ONE TYPE SCALE. This file had TWENTY-FOUR distinct font sizes in it - .54 .55 .58
        .6 .62 .64 .66 .68 .7 .72 .74 .75 .76 .78 .8 .82 .84 .85 1 1.02 1.1 1.15 1.3 - and
@@ -59,6 +89,32 @@
 
     --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
     --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+
+    /* THE PIXEL STRIPES - zeldfep, 2026-11-08, on the hatch, the bay hatch and the rail caps:
+       "the render is bad ... it keeps drawing everywhere, lets make sure its uniform and the grid
+       is drawn correctly". Every stripe was a repeating-linear-gradient, and a gradient's hard
+       edge is not smoothed: on the launcher's screen each stripe came out a ragged staircase -
+       widths jumping between 2 and 3px, steps of 1 and 2 rows - with broken fragments wherever
+       a stripe met the edge of its box. These are exact drawings instead: whole stripes, one
+       row of whole pixels at a time, used as masks so the colour still comes from the token.
+       Two slopes only, the two that step evenly: 45 degrees (1px across per row) and steep 2:1
+       (1px across per two rows). Generated, not hand-written - change the generator
+       (node tools/pixel-stripes.mjs) and paste its output here; never a gradient for a stripe.
+       launcher_buttons_test.mjs fails these if they drift from the generator. */
+    /* JACK IN's hatch: 4 whole stripes, steep 2:1 - 33x28 */
+    --px-hatch-play: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='33' height='28' viewBox='0 0 33 28' shape-rendering='crispEdges'%3E%3Cpath d='M0 26h2v2h-2zM1 24h2v2h-2zM2 22h2v2h-2zM3 20h2v2h-2zM4 18h2v2h-2zM5 16h2v2h-2zM6 14h2v2h-2zM7 12h2v2h-2zM8 10h2v2h-2zM9 8h2v2h-2zM10 6h2v2h-2zM11 4h2v2h-2zM12 2h2v2h-2zM13 0h2v2h-2zM6 26h2v2h-2zM7 24h2v2h-2zM8 22h2v2h-2zM9 20h2v2h-2zM10 18h2v2h-2zM11 16h2v2h-2zM12 14h2v2h-2zM13 12h2v2h-2zM14 10h2v2h-2zM15 8h2v2h-2zM16 6h2v2h-2zM17 4h2v2h-2zM18 2h2v2h-2zM19 0h2v2h-2zM12 26h2v2h-2zM13 24h2v2h-2zM14 22h2v2h-2zM15 20h2v2h-2zM16 18h2v2h-2zM17 16h2v2h-2zM18 14h2v2h-2zM19 12h2v2h-2zM20 10h2v2h-2zM21 8h2v2h-2zM22 6h2v2h-2zM23 4h2v2h-2zM24 2h2v2h-2zM25 0h2v2h-2zM18 26h2v2h-2zM19 24h2v2h-2zM20 22h2v2h-2zM21 20h2v2h-2zM22 18h2v2h-2zM23 16h2v2h-2zM24 14h2v2h-2zM25 12h2v2h-2zM26 10h2v2h-2zM27 8h2v2h-2zM28 6h2v2h-2zM29 4h2v2h-2zM30 2h2v2h-2zM31 0h2v2h-2z'/%3E%3C/svg%3E");
+    /* Done's hatch: JACK IN's in proportion, 3 stripes - 22x18 */
+    --px-hatch-done: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='18' viewBox='0 0 22 18' shape-rendering='crispEdges'%3E%3Cpath d='M0 16h2v2h-2zM1 14h2v2h-2zM2 12h2v2h-2zM3 10h2v2h-2zM4 8h2v2h-2zM5 6h2v2h-2zM6 4h2v2h-2zM7 2h2v2h-2zM8 0h2v2h-2zM6 16h2v2h-2zM7 14h2v2h-2zM8 12h2v2h-2zM9 10h2v2h-2zM10 8h2v2h-2zM11 6h2v2h-2zM12 4h2v2h-2zM13 2h2v2h-2zM14 0h2v2h-2zM12 16h2v2h-2zM13 14h2v2h-2zM14 12h2v2h-2zM15 10h2v2h-2zM16 8h2v2h-2zM17 6h2v2h-2zM18 4h2v2h-2zM19 2h2v2h-2zM20 0h2v2h-2z'/%3E%3C/svg%3E");
+    /* the bay's hatch block on its step: 6 stripes - 34x6 */
+    --px-hatch-bay: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='34' height='6' viewBox='0 0 34 6' shape-rendering='crispEdges'%3E%3Cpath d='M0 4h2v2h-2zM1 2h2v2h-2zM2 0h2v2h-2zM6 4h2v2h-2zM7 2h2v2h-2zM8 0h2v2h-2zM12 4h2v2h-2zM13 2h2v2h-2zM14 0h2v2h-2zM18 4h2v2h-2zM19 2h2v2h-2zM20 0h2v2h-2zM24 4h2v2h-2zM25 2h2v2h-2zM26 0h2v2h-2zM30 4h2v2h-2zM31 2h2v2h-2zM32 0h2v2h-2z'/%3E%3C/svg%3E");
+    /* the two dashes under a plate's base, 45-degree ends - 44x3 */
+    --px-dashes: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='3' viewBox='0 0 44 3' shape-rendering='crispEdges'%3E%3Cpath d='M0 2h18v1h-18zM1 1h18v1h-18zM2 0h18v1h-18zM24 2h18v1h-18zM25 1h18v1h-18zM26 0h18v1h-18z'/%3E%3C/svg%3E");
+    /* the rail's caution caps: 3 hazard stripes at 45 degrees - 24x5 */
+    --px-caps: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='5' viewBox='0 0 24 5' shape-rendering='crispEdges'%3E%3Cpath d='M0 4h4v1h-4zM1 3h4v1h-4zM2 2h4v1h-4zM3 1h4v1h-4zM4 0h4v1h-4zM8 4h4v1h-4zM9 3h4v1h-4zM10 2h4v1h-4zM11 1h4v1h-4zM12 0h4v1h-4zM16 4h4v1h-4zM17 3h4v1h-4zM18 2h4v1h-4zM19 1h4v1h-4zM20 0h4v1h-4z'/%3E%3C/svg%3E");
+    /* the arrow's stripes: a 6px 45-degree tile, 3 on 3 off - 6x6 */
+    --px-hazard: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='6' viewBox='0 0 6 6' shape-rendering='crispEdges'%3E%3Cpath d='M0 5h3v1h-3zM1 4h3v1h-3zM2 3h3v1h-3zM3 2h3v1h-3zM4 1h2v1h-2zM0 1h1v1h-1zM5 0h1v1h-1zM0 0h2v1h-2z'/%3E%3C/svg%3E");
+    /* the working tread: a 40px 45-degree tile leaning the other way - 40x40 */
+    --px-tread: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 40 40' shape-rendering='crispEdges'%3E%3Cpath d='M0 0h20v1h-20zM1 1h20v1h-20zM2 2h20v1h-20zM3 3h20v1h-20zM4 4h20v1h-20zM5 5h20v1h-20zM6 6h20v1h-20zM7 7h20v1h-20zM8 8h20v1h-20zM9 9h20v1h-20zM10 10h20v1h-20zM11 11h20v1h-20zM12 12h20v1h-20zM13 13h20v1h-20zM14 14h20v1h-20zM15 15h20v1h-20zM16 16h20v1h-20zM17 17h20v1h-20zM18 18h20v1h-20zM19 19h20v1h-20zM20 20h20v1h-20zM21 21h19v1h-19zM0 21h1v1h-1zM22 22h18v1h-18zM0 22h2v1h-2zM23 23h17v1h-17zM0 23h3v1h-3zM24 24h16v1h-16zM0 24h4v1h-4zM25 25h15v1h-15zM0 25h5v1h-5zM26 26h14v1h-14zM0 26h6v1h-6zM27 27h13v1h-13zM0 27h7v1h-7zM28 28h12v1h-12zM0 28h8v1h-8zM29 29h11v1h-11zM0 29h9v1h-9zM30 30h10v1h-10zM0 30h10v1h-10zM31 31h9v1h-9zM0 31h11v1h-11zM32 32h8v1h-8zM0 32h12v1h-12zM33 33h7v1h-7zM0 33h13v1h-13zM34 34h6v1h-6zM0 34h14v1h-14zM35 35h5v1h-5zM0 35h15v1h-15zM36 36h4v1h-4zM0 36h16v1h-16zM37 37h3v1h-3zM0 37h17v1h-17zM38 38h2v1h-2zM0 38h18v1h-18zM39 39h1v1h-1zM0 39h19v1h-19z'/%3E%3C/svg%3E");
   }
 
   * { box-sizing: border-box; }
@@ -82,37 +138,31 @@
   }
 
   header {
-    display: flex;
+    display: grid;
+    grid-template-columns: var(--cols);
+    column-gap: 1.25rem;
     align-items: center;
-    justify-content: space-between;
     padding: 1rem 1.5rem;
-    border-bottom: 1px solid var(--line);
+    /* Keeps its 1px of height. The bus below is the header's rule now. */
+    border-bottom: 1px solid transparent;
     position: relative;
   }
-  /* THE MOTIF - solid lines with accents, one statement on the TOP edge, exactly
-     like the crop: a bold solid bar cut on the diagonal, one echo dash, then a thin
-     rule running out to the right edge. Nothing else competes with it; the header's
-     bottom border stays a plain hairline. */
-  header::before {
-    content: ""; position: absolute; top: 0; left: 0; right: 0; height: 10px;
-    background:
-      linear-gradient(120deg, var(--accent) 0, #7c1015 55%, #26060a calc(100% - 7px), transparent calc(100% - 7px)) left 0 top 0 / 320px 100% no-repeat,
-      linear-gradient(120deg, transparent 5px, #5a0c11 5px, #26060a calc(100% - 5px), transparent calc(100% - 5px)) left 334px top 0 / 26px 100% no-repeat;
-    filter: drop-shadow(0 0 6px rgba(255, 42, 50, .4));
-    pointer-events: none;
+  /* THE LINES, drawn in whole pixels (tools/pixel-stripes.mjs --lines; the button test fails them
+     if they drift). Top left: a solid bar cut on the diagonal and one echo dash. Bottom right and,
+     turned round, across the footer: the thick bus, two traces through one 45-degree bend to their
+     own square pads, a thin line leaving the far one and fading out. */
+  .ln-bar, .ln-trace {
+    position: absolute; overflow: visible; shape-rendering: crispEdges; pointer-events: none;
+    filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 40%, transparent));
   }
-  /* The circuit trace answers from the OPPOSITE corner - bottom right - so neither
-     side gets busy: it enters from the right edge, jogs down through a 45-degree
-     bend, and terminates on a square node pad pointing into the page. */
-  header::after {
-    content: ""; position: absolute; bottom: -8px; right: 0; width: 46%; height: 16px;
-    background: linear-gradient(270deg, var(--accent) 0, #7c1015 45%, #26060a 100%);
-    clip-path: polygon(
-      100% 2px, 80px 2px, 72px 10px, 12px 10px, 12px 2px, 0 2px,
-      0 14px, 12px 14px, 76px 14px, 84px 6px, 100% 6px);
-    filter: drop-shadow(0 0 6px rgba(255, 42, 50, .4));
-    pointer-events: none;
-  }
+  .ln-bar { left: 0; top: 0; }
+  header .ln-trace { right: 0; bottom: -15px; }
+  footer .ln-trace { left: 0; top: -14px; }
+  .ln-pad { fill: var(--accent); }
+  .ln-a { stop-color: var(--accent); }
+  .ln-a2 { stop-color: var(--accent-2); }
+  .ln-a3 { stop-color: var(--accent-3); }
+  .ln-out { stop-color: var(--accent-3); stop-opacity: 0; }
 
   .brand {
     font-family: 'NCO Display', var(--mono);
@@ -120,7 +170,9 @@
     letter-spacing: .16em;
     text-transform: uppercase;
     font-size: var(--fs-head);
+    white-space: nowrap;
   }
+  .gear { justify-self: end; }
   .brand::before { content: "/// "; font-family: var(--mono); font-weight: 700; color: var(--accent); }
   .brand span { color: var(--accent); }
 
@@ -168,23 +220,17 @@
   .voice-meter-fill.hot { background: repeating-linear-gradient(
       90deg, #e05555 0 6px, transparent 6px 9px); }
 
-  /* While waiting for a key. The button has to look like it is listening, or a press that
-     did not register is indistinguishable from one that did. */
-  .action.listening {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
 
-  .accounts { display: flex; align-items: center; gap: 1.5rem; }
+  /* Two whole-pixel slots centred over the middle bay: an even total on an even column keeps the
+     avatars on the grid. */
+  .accounts { display: grid; grid-template-columns: repeat(2, 168px); gap: 16px; justify-self: center; width: 352px; }
 
   /* Nexus has no avatar to show - the API returns a name, not a picture - so the slot
      is filled with a mark of the same size, keeping both rows the same height whether
      or not anyone is signed in. */
   .nexus-mark {
-    width: 34px; height: 34px; border-radius: 50%;
     display: grid; place-items: center;
     background: var(--surface);
-    border: 1px solid var(--line);
     overflow: hidden;
   }
   /* The actual Nexus Mods mark (their favicon art, shipped alongside this file) - a
@@ -201,10 +247,28 @@
   }
   .nexus-mark.on img { filter: none; }
 
-  .account { display: none; align-items: center; gap: .75rem; }
+  .account { display: none; position: relative; height: 36px; padding-left: 2px; align-items: center; gap: 10px; min-width: 0; }
   .account.visible { display: flex; }
-  .account img { width: 34px; height: 34px; border-radius: 50%; background: var(--surface); }
-  .account .who { line-height: 1.25; }
+  /* Hex avatars with a ring, the gear's shape and its red, 2:1 sides. */
+  .avatar-ring {
+    position: absolute; left: 0; top: 0; width: 36px; height: 36px; background: var(--accent-2);
+    clip-path: polygon(9px 0, 27px 0, 36px 18px, 27px 36px, 9px 36px, 0 18px);
+  }
+  .account img, .account .nexus-mark {
+    position: relative; width: 32px; height: 32px; flex: none; background: var(--surface);
+    clip-path: polygon(8px 0, 24px 0, 32px 16px, 24px 32px, 8px 32px, 0 16px);
+  }
+  .account .nexus-mark img { width: 100%; height: 100%; clip-path: none; }
+  /* A long name cuts off instead of pushing the row. */
+  .account .who { flex: 1; min-width: 0; line-height: 1.25; }
+  .account .name, .account .id { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .account .linkbtn { flex: none; }
+  /* On narrow windows the name reaches into the middle column, so the tabs tighten up and sit
+     against that column's right edge, clear of it. */
+  @media (max-width: 1100px) {
+    .accounts { grid-template-columns: repeat(2, 160px); gap: 12px; justify-self: end; width: 332px; }
+    .account { gap: 8px; }
+  }
   .account .name { font-size: var(--fs-body); font-weight: 600; }
   .account .id {
     font-family: var(--mono);
@@ -226,11 +290,8 @@
     flex: 1;
     min-height: 0;              /* lets a flex child actually shrink and scroll */
     display: grid;
-    /* Three columns: patch notes, the play controls, the mod list.
-       Fixed outer columns and a flexible middle, so the play controls - the thing
-       everyone is actually here for - keep the centre and never get squeezed to a
-       sliver by a long mod name. Sized to fit 1180px without stretching the window. */
-    grid-template-columns: minmax(17rem, 22rem) 1fr minmax(17rem, 22rem);
+    /* Three columns: patch notes, the play controls, the mod list. See --cols. */
+    grid-template-columns: var(--cols);
     gap: 1.25rem;
     padding: 1.5rem;
     overflow: hidden;
@@ -259,7 +320,7 @@
     margin-top: .5rem;
     border: 1px solid var(--line);
     border-left: 3px solid var(--accent);
-    background: rgba(255, 42, 50, .04);
+    background: color-mix(in srgb, var(--accent) 4%, transparent);
     padding: .45rem .6rem .5rem;
   }
   .modqueue-head {
@@ -288,7 +349,7 @@
   }
   .qbar > div {
     height: 100%;
-    background: linear-gradient(90deg, var(--accent), var(--accent-2, #7a1016));
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
     transition: width .3s ease;
   }
   /* No length from Nexus, or extraction - progress is real but unmeasurable, and a bar
@@ -306,9 +367,10 @@
     display: flex;
     align-items: center;
     gap: .5rem;
-    padding: .45rem .55rem;
-    background: rgba(255,255,255,.02);
-    border: 1px solid rgba(255,255,255,.06);
+    min-height: 38px;
+    padding: .375rem .5rem;
+    background: color-mix(in srgb, var(--ink) 2%, transparent);
+    border: 1px solid var(--line);
     border-radius: var(--radius);
   }
 
@@ -324,34 +386,46 @@
   }
 
   .mod-badge {
+    flex: none;
+    font-family: var(--mono);
     font-size: var(--fs-micro);
-    letter-spacing: .04em;
-    padding: .12rem .4rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    padding: .14rem .4rem;
     border-radius: var(--radius);
     white-space: nowrap;
   }
-  .mod-badge.ok      { background: rgba(70,200,120,.15); color: #6fdca0; }
-  .mod-badge.missing { background: rgba(255,255,255,.06); color: var(--ink-dim); }
-  .mod-badge.bad     { background: rgba(255,90,90,.15);  color: #ff8f8f; }
+  .mod-badge.ok      { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+  .mod-badge.missing { color: var(--ink-dim); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+  .mod-badge.bad     { color: var(--bad); background: color-mix(in srgb, var(--bad) 14%, transparent); }
 
-  .mod-btn {
-    font-size: var(--fs-micro);
-    letter-spacing: .04em;
-    padding: .22rem .45rem;
-    border-radius: var(--radius);
-    border: 1px solid rgba(255,255,255,.14);
-    background: transparent;
-    color: var(--ink);
+  /* Remove is a drawn bin: the emoji was a grey smudge at this size. */
+  .bin {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    background: var(--steel);
+    color: var(--ink-dim);
     cursor: pointer;
-    white-space: nowrap;
+    clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px);
+    transition: color 120ms ease, background-color 120ms ease, transform 110ms var(--ease-out);
   }
-  .mod-btn:hover { background: rgba(255,255,255,.08); }
-  .mod-btn.danger:hover { background: rgba(255,90,90,.15); color: #ff8f8f; }
+  .bin svg { width: 12px; height: 12px; }
+  @media (hover: hover) and (pointer: fine) {
+    .bin:hover { color: var(--ink); background: var(--accent-3); }
+  }
+  .bin:active { transform: scale(.94); }
+  .bin:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
 
   .col-left {
     min-height: 0;
     display: flex;
     flex-direction: column;
+    gap: 1.25rem;
   }
 
   .col-right {
@@ -366,8 +440,16 @@
     justify-content: flex-start;
     gap: .85rem;
     text-align: center;
-    overflow: hidden;
+    /* An admin's Server panel doesn't fit the real 1164x761 window, and the admin login row sits
+       at the bottom of it, so hiding the overflow made that row unreachable. The wheel crosses
+       it, with no visible bar. Nobody else's column is tall enough to scroll. */
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-width: none;
   }
+  /* A flex column shrinks its children before it scrolls, which would only move the overflow
+     inside the cards. */
+  .col-right > * { flex-shrink: 0; }
 
   h1 { font-size: var(--fs-head); margin: 0; font-weight: 600; }
   p.lede { color: var(--ink-dim); margin: 0; max-width: 30rem; line-height: 1.45; font-size: var(--fs-body); }
@@ -386,6 +468,31 @@
     width: 100%;
     max-width: 26rem;
   }
+
+  /* THE MAIN WINDOW'S BAYS (zeldfep, 2026-11-08: "keep color of the boxes i like the A bays").
+     Settings' module bays, in the boxes' own colours: the fill and hairline they always had, and
+     only the shape is new. A lit numbered tab, the step with its hatch, the spec line under it,
+     four pips. Like Settings', the frame is two clipped layers, because a border on a clip-path
+     loses its diagonals. */
+  .card.bay {
+    position: relative; isolation: isolate;
+    background: none; border: 0; border-radius: 0; padding-top: 2.35rem;
+    /* Never under the longest tab, "01 · Patch notes", which the narrowest side column would
+       otherwise run it into. */
+    --step: max(46%, 160px);
+  }
+  .card.bay::before, .card.bay::after { content: ""; position: absolute; z-index: -1; clip-path: var(--bay); pointer-events: none; }
+  .card.bay::before { inset: 0; background: var(--line); }
+  .card.bay::after { inset: 1px; background: var(--surface); }
+  .bay > .admin-head { display: block; position: absolute; left: 0; top: 0; right: 0; width: auto; height: 28px; }
+  .bay > .admin-head .admin-title {
+    position: absolute; left: 0; top: 0; height: 20px; display: flex; align-items: center;
+    padding: 0 1.3rem 0 .6rem; background: var(--accent); color: #140406;
+    clip-path: polygon(0 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
+  }
+  /* Flex trims the space after the number, so it is a margin (as in Settings' tabs). */
+  .bay > .admin-head .admin-title[data-n]::before { content: attr(data-n) " \00B7"; margin-right: .55em; }
+  .bay > .admin-head .serverstate { position: absolute; right: 1.4rem; top: 13px; }
 
   button.action {
     font-family: var(--mono);
@@ -408,8 +515,6 @@
 
   .discord { background: #5865f2; color: #fff; }
   .join { background: #5865f2; color: #fff; }
-  .update { background: var(--update); color: #fff; }
-  .verify { background: var(--steel); color: var(--ink); }
 
   /* Destructive and secondary actions, kept small and away from the main flow. */
   .footlinks {
@@ -420,49 +525,14 @@
     justify-content: center;
   }
 
-  .play {
-    background: var(--accent);
-    color: #140406;
-    border-color: var(--accent);
-    min-width: 12rem;
-    font-size: var(--fs-lead);
-    font-family: 'NCO Display', var(--mono);
-    letter-spacing: .12em;
-    position: relative;
-    padding-left: 2.6rem;
-    padding-right: 2.6rem;
-  }
-  /* The HUD kit's banner treatment: fine hatch lines leading in, chevrons trailing
-     out. Hidden while the button is a loading bar. */
-  .play::before {
-    content: ""; position: absolute; left: 13px; top: 9px; bottom: 9px; width: 15px;
-    background: repeating-linear-gradient(120deg, #140406 0 2px, transparent 2px 6px);
-    opacity: .75; pointer-events: none;
-  }
-  .play::after {
-    content: "\276E\276E"; position: absolute; right: 13px; top: 50%; transform: translateY(-52%);
-    font-family: var(--mono); font-size: .72em; letter-spacing: .08em; color: #140406;
-    opacity: .8; pointer-events: none;
-  }
-  .play.busy::before, .play.busy::after { display: none; }
-
-  /* Disabled has to LOOK disabled, not just be disabled - otherwise people
-     click it repeatedly and assume the app is broken. */
-  .play.busy, .play.busy:disabled {
-    color: #140406;
-    background: repeating-linear-gradient(-45deg, var(--accent) 0 14px, #8d1218 14px 28px);
-    background-size: 200% 100%;
-    animation: tread 1.1s linear infinite;
-    border-color: var(--accent);
-  }
-  @keyframes tread { to { background-position: -40px 0; } }
-
   @media (prefers-reduced-motion: reduce) {
     .dot.busy:not(.on) { animation: none; }
-    .play.busy, .play.busy:disabled { animation: none; }
     .modal, .modal-backdrop { animation: none; }
-    .rail-num, .section-rail button.rail-step,
+    .rail-num, .rail-pointer, .section-rail button.rail-step,
     .section-rail::before, .section-rail::after { transition: none; }
+    /* The gear still lights and fills its ticks; the cog does not turn and the scan does not drop. */
+    .gear .cog { transform: none !important; transition: none; }
+    .gear .scan { animation: none !important; }
   }
 
   button.action:disabled {
@@ -471,6 +541,236 @@
     cursor: not-allowed;
     border-color: var(--line);
   }
+
+  /* --- THE BUTTON KIT ---
+     zeldfep, 2026-11-05, choosing from a live test page: "I like A, C and D all at once".
+     One button with three moments, so they never compete: the plate lifts and presses in,
+     the little load bar fills on hover or Tab, and the glitch fires once on click. Keeping
+     the glitch off hover is deliberate - it would replay every time the pointer crossed.
+
+     Every clip-path sits on an inner layer, never on the button. A clip-path clips the
+     element's own outline too, which is why a button.action shows no keyboard focus ring.
+     The label is an inner span as well, so write it with setHudButton: textContent on one
+     of these buttons wipes out every layer inside it. */
+  .hud {
+    position: relative;
+    display: block;
+    flex: none;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    cursor: pointer;
+    font-family: var(--mono);
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  .hud:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }
+  .hud:disabled { cursor: not-allowed; }
+  .hud[data-state="busy"], .hud[data-state="checking"] { cursor: progress; }
+  .hud .face { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; }
+  .hud .label { position: relative; z-index: 2; white-space: nowrap; }
+  .hud[data-state="ok"] .label { color: var(--ok); }
+
+  .hud-stack { display: flex; flex-direction: column; gap: 1rem; width: 100%; }
+  #playReason:empty { display: none; }
+  .hud-row { align-items: flex-end; }
+  .hud-row > .hud { flex: 1 1 0; width: auto; min-width: 0; }
+
+  .hud-play { height: 60px; font-family: 'NCO Display', var(--mono); font-size: var(--fs-lead); letter-spacing: .16em; --lug: 8px; --pip: 4px; }
+  .hud-wide { font-size: var(--fs-body); letter-spacing: .07em; --lug: 6px; --pip: 3px; }
+  .plate.hud-wide { height: 44px; }
+  .wired.hud-wide { height: 38px; }
+  .hud-add { width: 122px; height: 36px; font-size: var(--fs-body); letter-spacing: .07em; --lug: 5px; --pip: 3px; }
+  .hud-mini { width: 74px; height: 24px; margin-left: -.5rem; font-size: var(--fs-micro); letter-spacing: .08em; --lug: 4px; --pip: 2px; }
+  .hud-add:focus-visible, .hud-mini:focus-visible { outline-offset: 2px; }
+
+  /* The little load bar: four square dots in the raised tab. It says "this is live" on
+     hover or Tab, and chases while the button is working. */
+  .hud .pips { position: absolute; z-index: 3; top: calc((var(--lug) - var(--pip)) / 2); left: calc(56% + var(--lug) + 4px); display: flex; gap: var(--pip); }
+  .hud .pips i { --i: 0; width: var(--pip); height: var(--pip); background: currentColor; opacity: .3; transition: opacity 120ms ease; }
+  .hud .pips i:nth-child(2) { --i: 1; }
+  .hud .pips i:nth-child(3) { --i: 2; }
+  .hud .pips i:nth-child(4) { --i: 3; }
+  .hud:focus-visible .pips i { opacity: 1; transition-delay: calc(var(--i) * 50ms); }
+  @media (hover: hover) and (pointer: fine) {
+    .hud:hover:not(:disabled) .pips i { opacity: 1; transition-delay: calc(var(--i) * 50ms); }
+  }
+  .hud:active:not(:disabled) .pips i { opacity: 1; transition-delay: 0ms; }
+  .hud[data-state="busy"] .pips i, .hud[data-state="checking"] .pips i { animation: pip-chase 800ms linear infinite; animation-delay: calc(var(--i) * 120ms); }
+  .hud.armed .pips i { animation: pip-arm 240ms var(--ease-out) backwards; animation-delay: calc(var(--i) * 50ms + 120ms); }
+  @keyframes pip-chase { 0%, 100% { opacity: .25; } 35% { opacity: 1; } }
+  @keyframes pip-arm { from { opacity: 1; transform: scale(1.8); } to { opacity: .3; transform: none; } }
+
+  /* Working: the tread, the one stripe leaning '\', moved with transform so it stays smooth while
+     the launcher is busy - exactly one 40px tile per loop, so it repeats seamlessly. Drawn from
+     the pixel stripes (--px-tread) over the darker shade. The label sits on a solid plate,
+     because near-black on the dark stripe is hard to read. */
+  .hud .tread { display: none; position: absolute; inset: 0 -56px; background: var(--tread-2); animation: tread 1.1s linear infinite; }
+  .hud .tread::before { content: ""; position: absolute; inset: 0; background: var(--accent); mask: var(--px-tread) 0 0 / 40px 40px repeat; }
+  @keyframes tread { to { transform: translateX(40px); } }
+  .hud[data-state="busy"] .tread { display: block; }
+  /* The hatch and chevrons say "press this", and neither of these can be pressed. Clearing them
+     also keeps "Game running" from running into them in the launcher's narrowest window. */
+  .hud[data-state="busy"] .hatch, .hud[data-state="busy"] .chev,
+  .hud[data-state="running"] .hatch, .hud[data-state="running"] .chev { display: none; }
+  .hud[data-state="busy"] .label { background: var(--accent); color: #140406; padding: .12em .6em; }
+
+  /* THE PLATE, for the main actions: a solid plate on an offset base, with the tab on top. */
+  .plate { --notch: polygon(9px var(--lug), 56% var(--lug), calc(56% + var(--lug)) 0, calc(88% - var(--lug)) 0, 88% var(--lug), 100% var(--lug), 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%, 0 calc(var(--lug) + 9px)); }
+  .plate.hud-play { --plate-fill: var(--accent); --plate-base: var(--accent-2); --plate-text: #140406; }
+  .plate.hud-wide { --plate-fill: var(--steel); --plate-base: var(--accent-3); --plate-text: var(--ink); }
+  .plate .back { position: absolute; inset: 0; transform: translate(-4px, 4px); transition: transform 160ms var(--ease-out); }
+  .plate .back::before { content: ""; position: absolute; inset: 0; clip-path: var(--notch); background: var(--plate-base); }
+  /* Two whole dashes under the base, their ends cut at 45 degrees (--px-dashes). */
+  .plate .back::after { content: ""; position: absolute; left: 26%; bottom: -6px; width: 44px; height: 3px; background: var(--plate-base); mask: var(--px-dashes) 0 0 / 44px 3px no-repeat; }
+  .plate .face { padding-top: var(--lug); clip-path: var(--notch); background: var(--plate-fill); color: var(--plate-text); transition: transform 160ms var(--ease-out), background-color 160ms ease; }
+  /* The hatch: a block of whole stripes, steep 2:1, in the plate's text colour (--px-hatch-play).
+     It was a 120deg gradient clipped to a rectangle, which left broken stripe ends in its corners
+     - on Done's small plate a fleck, one stroke and a dot (zeldfep, 2026-11-08: "rendered a little
+     wrong on the lines") - and drew every stripe as a ragged staircase. Now the block's sides run
+     with the stripes, so every stripe is whole, and every row is whole pixels. */
+  .plate .hatch { position: absolute; left: 14px; top: calc(var(--lug) + 12px); width: 33px; height: 28px; background: currentColor; mask: var(--px-hatch-play) 0 0 / 100% 100% no-repeat; opacity: .75; transition: transform 160ms var(--ease-out); }
+  /* The trailing mark is drawn, not typed. U+276E is in none of the kit's fonts, so it fell back to a
+     symbol font that draws it as two soft arcs at button size - "((" rather than a point. Two clipped
+     chevrons keep the mark and its .72em sizing, at about the hatch's 2px line weight. */
+  .plate .chev { position: absolute; right: 16px; top: calc(50% + var(--lug) / 2); display: flex; gap: .16em; font-size: .72em; opacity: .8; transform: translateY(-50%); transition: transform 160ms var(--ease-out); }
+  .plate .chev::before, .plate .chev::after { content: ""; width: .525em; height: 1.3em; background: currentColor; clip-path: polygon(.325em 0, .525em 0, .2em .65em, .525em 1.3em, .325em 1.3em, 0 .65em); }
+  @media (hover: hover) and (pointer: fine) {
+    .plate:hover:not(:disabled) .back { transform: translate(-6px, 6px); }
+    .plate:hover:not(:disabled) .face { transform: translate(1px, -1px); }
+    .plate:hover:not(:disabled) .hatch { transform: translateX(3px); }
+    .plate:hover:not(:disabled) .chev { transform: translate(-3px, -50%); }
+  }
+  .plate:active:not(:disabled) .face { transform: translate(-3px, 3px); transition-duration: 70ms; }
+  .plate:active:not(:disabled) .back { transform: translate(-4px, 4px); transition-duration: 70ms; }
+  .plate:disabled .face { background: var(--plate-dead); color: var(--ink-dim); }
+  .plate:disabled .back::before { background: var(--accent-4); }
+  .plate:disabled .back::after { opacity: .5; }
+  /* Working is not unavailable: a busy button keeps its lit plate. */
+  .plate[data-state="busy"] .face { background: var(--accent); color: #140406; }
+  .plate[data-state="checking"] .face, .plate[data-state="ok"] .face { background: var(--plate-fill); color: var(--plate-text); }
+  .plate[data-state="busy"] .back::before, .plate[data-state="checking"] .back::before, .plate[data-state="ok"] .back::before { background: var(--plate-base); }
+  .plate.armed .face { animation: plate-arm 260ms var(--ease-out); }
+  @keyframes plate-arm { from { transform: translate(-4px, 4px); filter: brightness(1.7); } to { transform: none; filter: none; } }
+
+  /* THE WIRED PLATE, for the mods panel: a ring node and a trace feed the plate, so a badge
+     or a text box visibly leads to the button that acts on it. */
+  .wired { --wire-w: 32px; --cham: 10px; }
+  .wired.hud-wide { --wire-path: path('M8.5 29H15L24 20H32'); }
+  .wired.hud-add { --wire-w: 22px; --cham: 8px; --wire-path: path('M5.5 22H8L16 14H22'); }
+  .wired.hud-mini { --wire-w: 14px; --cham: 5px; --wire-path: path('M0 15H5L9 11H14'); }
+  .wired .wire { position: absolute; left: 0; top: 0; width: var(--wire-w); height: 100%; overflow: visible; fill: none; stroke: var(--ink-dim); stroke-width: 1; }
+  .wired .pulse { position: absolute; left: 0; top: 0; width: 5px; height: 5px; background: var(--ink); opacity: 0; offset-path: var(--wire-path); offset-rotate: 0deg; offset-distance: 0%; }
+  .wired.hud-mini .pulse { width: 3px; height: 3px; }
+  .wired .face { left: var(--wire-w); padding-top: var(--lug); background: var(--steel); color: var(--ink); transition: transform 140ms var(--ease-out);
+                 clip-path: polygon(var(--cham) var(--lug), 56% var(--lug), calc(56% + var(--lug)) 0, calc(88% - var(--lug)) 0, 88% var(--lug), 100% var(--lug), 100% calc(100% - var(--cham)), calc(100% - var(--cham)) 100%, 0 100%, 0 calc(var(--lug) + var(--cham))); }
+  @media (hover: hover) and (pointer: fine) {
+    .wired:hover:not(:disabled) .pulse { opacity: 1; offset-distance: 100%; transition: offset-distance 200ms var(--ease-out); }
+  }
+  .wired:active:not(:disabled) .face { transform: translateX(-3px); transition-duration: 70ms; }
+  .wired:disabled .face { background: var(--plate-dead); color: var(--ink-dim); }
+  .wired:disabled .wire { stroke: var(--steel); }
+  .wired[data-state="checking"] .face, .wired[data-state="ok"] .face { background: var(--steel); color: var(--ink); }
+  .wired[data-state="checking"] .wire, .wired[data-state="ok"] .wire { stroke: var(--ink-dim); }
+
+  /* THE UPDATE PLATE: the plate in update orange. zeldfep, 2026-11-07, picking option 2 of the
+     Update test page, "In your path". When an update blocks JACK IN, Update sits ABOVE it with a
+     wire down into JACK IN's raised tab, each real step is printed on the wire, and once it is
+     done it lifts away and JACK IN comes alive. A newer test build blocks nothing, so the same
+     button sits in the row beside Verify as a steel plate with orange dots: the colour says
+     "update", the plate says "when you like". Near-black on --update is 4.82:1; the white the
+     old button carried was 4.15:1. */
+  .plate.hud-update { height: 44px; font-size: var(--fs-body); letter-spacing: .07em; --lug: 6px; --pip: 3px;
+                      --plate-fill: var(--update); --plate-base: var(--update-2); --plate-text: #140406; --glitch-2: var(--ink); --glitch-h: 44px; }
+  .plate.hud-update.optional { --plate-fill: var(--steel); --plate-base: var(--accent-3); --plate-text: var(--ink); --glitch-2: var(--accent); }
+  .hud-update.optional .pips i { background: var(--update); }
+  .hud-update .tread { background: var(--update-tread); }
+  .hud-update .tread::before { background: var(--update); }
+  .plate.hud-update[data-state="busy"] .face, .hud-update[data-state="busy"] .label { background: var(--update); color: #140406; }
+  .plate.hud-update[data-state="busy"] .back::before { background: var(--update-2); }
+  /* Done reads as the orange going away: green on orange is 2.3:1, green on steel is 7.3:1. */
+  .plate.hud-update[data-state="ok"] { --plate-fill: var(--steel); --plate-base: var(--accent-3); }
+  .hud-update.arrive { animation: drop-in 260ms var(--ease-out); }
+  .hud-update.leaving, .update-wire.leaving { opacity: 0; transform: translateY(-6px); transition: opacity 180ms ease, transform 180ms var(--ease-out); }
+  @keyframes drop-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+
+  /* The wire lands on JACK IN's raised tab (56%-88% of its width), so it reads as plugged in. */
+  .update-wire { position: relative; height: 22px; margin: -.5rem 0 -.6rem; }
+  .update-wire svg { position: absolute; left: calc(70% - 40px); top: 0; width: 60px; height: 22px; overflow: visible; fill: none; stroke: var(--update); stroke-width: 1.5; }
+  .update-wire circle { fill: var(--update); }
+  .update-wire .pulse { position: absolute; left: calc(70% - 40px); top: 0; width: 5px; height: 5px; background: var(--ink); opacity: 0;
+                        offset-path: path('M30 0V4L40 14V19'); offset-rotate: 0deg; offset-distance: 0%; }
+  .update-wire.arrive path { stroke-dasharray: 30; animation: draw 260ms var(--ease-out) 120ms backwards; }
+  @keyframes draw { from { stroke-dashoffset: 30; } to { stroke-dashoffset: 0; } }
+  /* The step the update is on, printed on the wire: a tiny mono readout, so --fs-micro. */
+  .update-readout { margin-top: -.55rem; font: var(--fs-micro) var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--update); text-align: right; padding-right: calc(30% + 8px); }
+  .update-readout:empty { display: none; }
+  .update-readout.error { color: var(--accent); font-weight: 700; }
+  /* Hover or Tab: a signal runs down the wire and JACK IN's dots stir. */
+  .hud-update.in-path:focus-visible + .update-wire .pulse { opacity: 1; offset-distance: 100%; transition: offset-distance 220ms var(--ease-out); }
+  .hud-stack:has(> .hud-update.in-path:focus-visible) .hud-play .pips i { opacity: .8; transition-delay: calc(var(--i) * 50ms + 160ms); }
+  @media (hover: hover) and (pointer: fine) {
+    .hud-update.in-path:hover:not(:disabled) + .update-wire .pulse { opacity: 1; offset-distance: 100%; transition: offset-distance 220ms var(--ease-out); }
+    .hud-stack:has(> .hud-update.in-path:hover:not(:disabled)) .hud-play .pips i { opacity: .8; transition-delay: calc(var(--i) * 50ms + 160ms); }
+  }
+
+  /* THE CLICK GLITCH: the text tears into slices and a scan line drops, once. It plays over
+     the click and never delays what the click does. */
+  .glitches { --glitch-2: var(--accent); --glitch-h: 38px; }
+  .plate.hud-play.glitches { --glitch-2: var(--ink); --glitch-h: 60px; }
+  .plate.hud-wide.glitches { --glitch-h: 44px; }
+  .hud-add.glitches { --glitch-h: 36px; }
+  .glitches .label::before, .glitches .label::after { content: attr(data-text); position: absolute; left: 0; top: 0; opacity: 0; pointer-events: none; }
+  .glitches .label::before { color: var(--glitch); }
+  .glitches .label::after { color: var(--glitch-2); }
+  .glitches .scan { position: absolute; z-index: 1; left: 0; right: 0; top: 0; height: 2px; background: var(--glitch-2); opacity: 0; }
+  .glitches.hit .label::before { animation: glitch-a 220ms steps(1) 1; }
+  .glitches.hit .label::after { animation: glitch-b 220ms steps(1) 1; }
+  .glitches.hit .scan { animation: glitch-scan 180ms linear 1; }
+  @keyframes glitch-a {
+    0% { opacity: 1; transform: translate(-3px, 0); clip-path: inset(0 0 55% 0); }
+    25% { opacity: 1; transform: translate(3px, -1px); clip-path: inset(60% 0 0 0); }
+    50% { opacity: 1; transform: translate(-2px, 1px); clip-path: inset(20% 0 40% 0); }
+    75% { opacity: 1; transform: translate(2px, 0); clip-path: inset(45% 0 10% 0); }
+    100% { opacity: 0; }
+  }
+  @keyframes glitch-b {
+    0% { opacity: 1; transform: translate(3px, 1px); clip-path: inset(50% 0 5% 0); }
+    25% { opacity: 1; transform: translate(-3px, 0); clip-path: inset(5% 0 60% 0); }
+    50% { opacity: 1; transform: translate(2px, -1px); clip-path: inset(55% 0 15% 0); }
+    75% { opacity: 1; transform: translate(-2px, 1px); clip-path: inset(10% 0 55% 0); }
+    100% { opacity: 0; }
+  }
+  @keyframes glitch-scan { from { opacity: .7; transform: translateY(0); } to { opacity: .7; transform: translateY(var(--glitch-h)); } }
+
+  /* Animations turned off: colour and the load bar still answer, nothing travels or tears. */
+  @media (prefers-reduced-motion: reduce) {
+    .hud *, .hud *::before, .hud *::after { animation: none !important; transition-property: opacity, color, background-color !important; }
+    .hud .face, .plate .hatch, .bin { transform: none !important; }
+    .plate .back { transform: translate(-4px, 4px) !important; }
+    .plate .chev { transform: translateY(-50%) !important; }
+    .wired .pulse, .update-wire .pulse { display: none; }
+    .hud-update.arrive, .update-wire.arrive path { animation: none !important; }
+    .hud-update.leaving, .update-wire.leaving { transform: none !important; }
+  }
+
+  .add-row { display: flex; align-items: stretch; }
+  /* Its own class. .field is declared twice in this file, as a settings form wrapper and as
+     a text input, so a .field input inherits the page's 16px - the largest text on screen. */
+  .input {
+    flex: 1;
+    min-width: 0;
+    padding: 0 .6rem;
+    background: var(--ground);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: var(--fs-small);
+  }
+  .input::placeholder { color: var(--ink-dim); }
+  .input:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 
   /* --- admin server panel --- */
   .admin { width: 100%; max-width: 26rem; gap: .7rem; }
@@ -575,13 +875,40 @@
   }
 
   /* --- settings modal --- */
+  /* THE GEAR (G1, the hex bolt) - zeldfep, 2026-11-08, from the rail and gear test page. A
+     hexagon plate, a red hairline over steel, holding a drawn cog; three ticks under it are its
+     load bar. Hover or Tab lights the hairline, fills the ticks and turns the cog one tooth (45
+     degrees of eight teeth, so it lands looking the same); a click drops the kit's scan line
+     once. The cog is an SVG, not the ⚙ glyph every font draws differently, and it sits on the
+     type doc's step for the gear, --fs-icon. The hexagon is clipped on inner layers, so the
+     focus ring always shows. */
   .gear {
-    background: none; border: none; color: var(--ink-dim);
-    font-size: var(--fs-icon); cursor: pointer; padding: .2rem .4rem; line-height: 1;
-    margin-left: .75rem;
+    position: relative; display: inline-grid; place-items: center; flex: none;
+    width: 40px; height: 36px; margin-left: .75rem; padding: 0; border: 0; background: none;
+    color: var(--ink); cursor: pointer; --glitch-h: 36px;
   }
-  .gear:hover { color: var(--ink); }
-  .gear:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius); }
+  .gear .hx { position: absolute; inset: 0; clip-path: polygon(9px 0, 31px 0, 40px 18px, 31px 36px, 9px 36px, 0 18px); }
+  .gear .hx-line { background: var(--accent-2); transition: background-color 120ms ease; }
+  .gear .hx-fill { clip-path: polygon(9.5px 1px, 30.5px 1px, 39px 18px, 30.5px 35px, 9.5px 35px, 1px 18px); background: var(--steel); overflow: hidden; }
+  .gear .scan { z-index: 3; }
+  .gear .cog {
+    position: relative; z-index: 2; width: var(--fs-icon); height: var(--fs-icon); fill: currentColor;
+    transition: transform 220ms var(--ease-out);
+  }
+  .gear .bolt-ticks { position: absolute; z-index: 2; bottom: -6px; left: 50%; transform: translateX(-50%); display: flex; gap: 2px; }
+  .gear .bolt-ticks i { width: 3px; height: 2px; background: var(--ink-dim); opacity: .4; transition: opacity 120ms ease; }
+  .gear:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .gear:focus-visible .hx-line { background: var(--accent); }
+  .gear:focus-visible .bolt-ticks i { opacity: 1; }
+  .gear:focus-visible .cog { transform: rotate(45deg); }
+  @media (hover: hover) and (pointer: fine) {
+    .gear:hover .hx-line { background: var(--accent); }
+    .gear:hover .bolt-ticks i { opacity: 1; }
+    .gear:hover .bolt-ticks i:nth-child(2) { transition-delay: 50ms; }
+    .gear:hover .bolt-ticks i:nth-child(3) { transition-delay: 100ms; }
+    .gear:hover .cog { transform: rotate(45deg); }
+  }
+  .gear:active .cog { transform: rotate(45deg) scale(.9); transition-duration: 70ms; }
 
   .modal-backdrop {
     position: fixed; inset: 0; z-index: 50;
@@ -594,6 +921,9 @@
     border: 1px solid var(--line);
     border-radius: 0;
     width: min(44rem, 100%);
+    /* One height for every pane. Sized to its content, the window re-centred on each tab and
+       the tab bar travelled up to 177px under the pointer (the 2026-11-07 settings review). */
+    height: 100%;
     max-height: 100%;
     display: flex; flex-direction: column;
     overflow: hidden;
@@ -611,9 +941,9 @@
   .modal-head::after {
     content: ""; position: absolute; left: 0; right: 0; bottom: -8px; height: 8px;
     background:
-      linear-gradient(120deg, var(--accent) 0, #7c1015 55%, #26060a calc(100% - 6px), transparent calc(100% - 6px)) left 0 top 0 / 150px 100% no-repeat,
-      linear-gradient(120deg, transparent 4px, #5a0c11 4px, #26060a calc(100% - 4px), transparent calc(100% - 4px)) left 162px top 0 / 16px 100% no-repeat,
-      linear-gradient(270deg, #5a0c11, transparent) right 0 center / calc(100% - 196px) 2px no-repeat;
+      linear-gradient(135deg, var(--accent) 0, var(--accent-2) 55%, var(--accent-4) calc(100% - 6px), transparent calc(100% - 6px)) left 0 top 0 / 150px 100% no-repeat,
+      linear-gradient(135deg, transparent 4px, var(--accent-3) 4px, var(--accent-4) calc(100% - 4px), transparent calc(100% - 4px)) left 162px top 0 / 16px 100% no-repeat,
+      linear-gradient(270deg, var(--accent-3), transparent) right 0 center / calc(100% - 196px) 2px no-repeat;
     opacity: .92; pointer-events: none;
   }
   .modal-head h2 {
@@ -638,22 +968,33 @@
   @keyframes backdropIn { from { opacity: 0; } to { opacity: 1; } }
   .modal-backdrop { animation: backdropIn 200ms ease; }
 
+  /* Plate tabs (zeldfep, 2026-11-08, from the settings test: "keep the tab system from C").
+     Each tab is a notched steel plate and the open one is lit red. The plate is a layer behind
+     the text, so the clip never reaches the focus ring. */
   .tabs {
-    display: flex; gap: 1.6rem; flex-wrap: wrap;
+    display: flex; gap: .4rem; flex-wrap: wrap;
     justify-content: center;
-    padding: 0 1.25rem; border-bottom: 1px solid var(--line);
+    padding: .55rem 1.25rem; border-bottom: 1px solid var(--line);
     background: var(--surface);
   }
   .tabs button {
-    background: none; border: none; cursor: pointer;
+    position: relative; isolation: isolate;
+    background: none; border: 0; cursor: pointer;
     font-family: var(--mono); font-size: var(--fs-label); font-weight: 700;
     letter-spacing: .12em; text-transform: uppercase;
-    color: var(--ink-dim); padding: .6rem .7rem .5rem;
-    border-bottom: 2px solid transparent;
+    color: var(--ink); padding: .42rem .9rem .38rem;
   }
-  .tabs button:hover { color: var(--ink); }
-  .tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
-  .tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .tabs button::before {
+    content: ""; position: absolute; inset: 0; z-index: -1; background: var(--steel);
+    clip-path: polygon(7px 0, 100% 0, 100% calc(100% - 7px), calc(100% - 7px) 100%, 0 100%, 0 7px);
+    transition: background-color 120ms ease;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .tabs button:hover:not(.active)::before { background: var(--accent-3); }
+  }
+  .tabs button.active { color: #140406; }
+  .tabs button.active::before { background: var(--accent); }
+  .tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   /* One pane at a time; the tabs are the navigation the scrollbar used to be. */
   .modal-body > section.panel { display: none; }
@@ -664,6 +1005,7 @@
      scrollbar (zeldfep, 2026-09-04: "I dont want scroll bar"). The section rail on the
      right is the navigation; the wheel and keyboard still work underneath. */
   .modal-body {
+    flex: 1;
     padding: 1.25rem;
     padding-right: 3.4rem; /* room for the section rail */
     overflow-y: auto;
@@ -675,7 +1017,7 @@
 
   /* The section rail. The scrollbar is gone, so this is both how the modal says where you
      are and how you travel, and it is built from marks the kit already owns: the clipped
-     corner, the caution striping off .play.busy, mono readouts.
+     corner, the caution striping off a working JACK IN, mono readouts.
 
      HAZARD YELLOW CARRIES THIS CONTROL - zeldfep's call, 2026-09-07, picking option B off
      the two mockups. Yellow is still the launcher's warning colour everywhere else (the
@@ -683,17 +1025,21 @@
      apart BY FORM rather than by hue: warnings are flat hazard, and the rail's active
      marker is the only STRIPED hazard plate in the app. If you add a new warning state,
      keep it flat - striping now reads as "you are here", not "something is wrong". */
+  /* Centred by auto margins, not translateY(-50%), which puts the rail on half a pixel whenever
+     its height is odd. Auto margins can too (an odd leftover), so railSnap pins the top margin
+     to land the track on a whole pixel - every rung is a 1px line and the arrow has to share a
+     pixel with its tick. A transform cannot do that job: see railSnap. */
   .section-rail {
-    position: absolute; right: .5rem; top: 50%; transform: translateY(-50%);
-    display: flex; flex-direction: column; align-items: center; gap: .3rem;
-    width: 2.4rem; z-index: 3; user-select: none;
+    position: absolute; right: .35rem; top: 0; bottom: 0; height: fit-content; margin: auto 0;
+    display: flex; flex-direction: column; align-items: center; gap: .4rem;
+    width: 2.6rem; z-index: 3; user-select: none;
   }
   /* Caution caps. Dim while there is room to move, solid the instant you hit an end -
      which is the one thing a numeric readout cannot tell you without being read. */
   .section-rail::before,
   .section-rail::after {
-    content: ""; width: 1.6rem; height: 5px; flex: none;
-    background: repeating-linear-gradient(45deg, var(--hazard) 0 3px, #140406 3px 7px);
+    content: ""; width: 24px; height: 5px; flex: none;
+    background: var(--hazard); mask: var(--px-caps) 0 0 / 24px 5px no-repeat;
     opacity: .22; transition: opacity .18s ease;
   }
   .section-rail.at-top::before,
@@ -711,29 +1057,75 @@
      as present-and-refusing, not as missing. */
   .section-rail button.rail-step:disabled { color: var(--ink-dim); opacity: .45; cursor: default; }
   .section-rail button.rail-step:focus-visible { outline: 2px solid var(--hazard); outline-offset: -2px; }
+  /* The step tabs' carets are drawn, on the same 45-degree grid as everything else: the font's
+     triangles rendered soft and a pixel off centre. */
+  .section-rail button.rail-step::before { content: ""; display: block; width: 8px; height: 4px; margin: 0 auto;
+    background: currentColor; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+  .section-rail button#railDown::before { clip-path: polygon(0 0, 100% 0, 50% 100%); }
 
-  /* Every section is a numbered readout - the dense mono index the HUD this launcher is
-     dressed as actually uses. Each one is a destination, so the arrows are a convenience
-     rather than the only way through. */
-  .rail-track {
-    display: flex; flex-direction: column; align-items: stretch; gap: 1px;
-    padding: .25rem 0; width: 100%;
+  /* THE LADDER (R3) - zeldfep, 2026-11-08, from the rail and gear test page: "R3 and G1 but
+     make sure we align the ladder to the numbers". A HUD tick gauge: each section is a numbered
+     major tick at the point you scroll to to reach it, and a striped pointer rides the ladder as
+     you scroll. Each number is a destination, so the arrows are a convenience rather than the
+     only way through.
+
+     The ladder is built FROM the numbers. The test page drew a fixed 7px pattern from the top
+     and put each number at its exact share of the scroll, so 02 and 03 fell between rungs and
+     the pattern stopped short of 04. Now every number is snapped onto the 7px rung grid (at
+     most 3.5px from its exact share), every y is a whole pixel, the label's digits are trimmed
+     to their cap height so their middle is the tick, and the pointer is centred on the same
+     line. The pointer interpolates between the numbers' own scroll points, so it lands on a
+     number exactly when you are at that section, snapped or not. railLadder does the sums. */
+  /* The pointer lives INSIDE the rail, left of the spine: hung outside it, as on the test page,
+     it overlapped the bays' right edge by 5.6px. */
+  .rail-track { position: relative; width: 100%; height: 230px; flex: none; }
+  .rail-track::before { content: ""; position: absolute; left: 9px; top: 0; bottom: 0; width: 1px; background: var(--accent-2); }
+  .rail-ladder {
+    position: absolute; left: 10px; width: 4px; pointer-events: none;
+    background: repeating-linear-gradient(180deg, var(--ink-dim) 0 1px, transparent 1px var(--rung, 7px));
   }
+  /* 13px tall with its top 6px above the tick, so the tick is a whole pixel and the label's
+     middle is the middle of that pixel. */
   .rail-num {
-    font-family: var(--mono); font-size: var(--fs-micro); font-weight: 500; letter-spacing: .04em;
-    font-variant-numeric: tabular-nums; text-align: center;
-    padding: 2px 0; border: 0; background: transparent; color: var(--ink-dim);
-    cursor: pointer; opacity: .5;
-    transition: opacity .14s ease, color .14s ease;
+    position: absolute; left: 0; right: 0; height: 13px; margin-top: -6px; padding: 0 0 0 23px;
+    display: flex; align-items: center; border: 0; background: none; cursor: pointer;
+    font-family: var(--mono); font-size: var(--fs-micro); font-weight: 700; letter-spacing: .04em;
+    font-variant-numeric: tabular-nums; color: var(--ink-dim);
+    transition: color .14s ease;
   }
-  .rail-num:hover { opacity: 1; color: var(--hazard); }
-  /* A skipped run. Not a control: no pointer, no hover, hidden from a screen reader. */
-  .rail-gap { opacity: .3; cursor: default; pointer-events: none; }
+  .rail-num span { line-height: 1; text-box: trim-both cap alphabetic; }
+  .rail-num::before { content: ""; position: absolute; left: 9px; top: 6px; width: 11px; height: 1px; background: var(--ink); }
+  .rail-num:hover, .rail-num.on { color: var(--ink); }
   .rail-num:focus-visible { outline: 1px solid var(--hazard); outline-offset: 1px; }
-  .rail-num.on {
-    opacity: 1; color: #140406; font-weight: 700;
-    background: repeating-linear-gradient(45deg, var(--hazard) 0 5px, #d8ae0b 5px 10px);
-    clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 5px, 100% 100%, 5px 100%, 0 calc(100% - 5px));
+  /* The ONE striped hazard plate on the rail - "you are here" (2026-09-07) - and the rail's
+     handle: drag it and the pane scrolls with it (zeldfep, 2026-11-08: "can we make the rail
+     arrow on ladder scrollable? I love the arrow design"). The element is a 13x17 grab box so
+     it is easy to catch; the arrow is the same 9px triangle drawn inside it, centred on the
+     middle of its tick's pixel (4px above the line, 4px below). It hides from a screen reader:
+     the numbers and the step tabs already do everything it does, from the keyboard. */
+  .rail-pointer {
+    position: absolute; left: 0; width: 13px; height: 17px; margin-top: -8px;
+    cursor: grab; touch-action: none; transition: top 120ms var(--ease-out), filter 120ms ease;
+  }
+  /* The arrow: the darker yellow underneath, the hazard stripes over it from the pixel stripes
+     (--px-hazard), both clipped to the same triangle - 2px across per row, so its edges step
+     evenly too. */
+  .rail-pointer::before, .rail-pointer::after {
+    content: ""; position: absolute; left: 0; top: 4px; width: 9px; height: 9px;
+    clip-path: polygon(0 0, 100% 50%, 0 100%);
+  }
+  .rail-pointer::before { background: #d8ae0b; }
+  .rail-pointer::after { background: var(--hazard); mask: var(--px-hazard) 0 0 / 6px 6px repeat; }
+  /* Brighter, not bigger, under the cursor: moving it would take the tip off the spine. */
+  @media (hover: hover) and (pointer: fine) { .rail-pointer:hover { filter: brightness(1.2); } }
+  /* While dragging it follows the cursor with no lag, and the cursor holds while off the arrow. */
+  .rail-track.dragging, .rail-track.dragging .rail-pointer { cursor: grabbing; }
+  .rail-track.dragging .rail-pointer { transition: none; filter: brightness(1.2); }
+  /* Animations off: nothing on the rail glides. This has to come AFTER the rail's own rules - the
+     same block higher up the file was outranked by them and never applied. */
+  @media (prefers-reduced-motion: reduce) {
+    .rail-num, .rail-pointer, .section-rail button.rail-step,
+    .section-rail::before, .section-rail::after { transition: none; }
   }
 
   /* Horizontal, tabular and zero-padded. The readout this replaced was set in
@@ -750,41 +1142,25 @@
     padding: .9rem 1.25rem; border-top: 1px solid var(--line);
   }
 
+  /* A pane has no frame of its own: its groups are the frames (the module bays below), so a
+     frame is never drawn inside a frame. */
   .panel {
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: 0;
-    padding: 1rem 1.1rem;
-    display: flex; flex-direction: column; gap: .9rem;
+    display: flex; flex-direction: column; gap: 1.1rem;
     position: relative;
   }
-  /* Bracket corners, after the reference kit's target frames. */
-  .panel::before, .panel::after { content: ""; position: absolute; width: 12px; height: 12px; pointer-events: none; }
-  .panel::before { top: -1px; left: -1px; border-top: 2px solid var(--accent); border-left: 2px solid var(--accent); }
-  .panel::after { bottom: -1px; right: -1px; border-bottom: 2px solid var(--accent); border-right: 2px solid var(--accent); }
   .panel h3 {
     margin: 0; font-family: var(--mono); font-size: var(--fs-small); font-weight: 700;
     letter-spacing: .14em; text-transform: uppercase; color: var(--ink);
     padding-bottom: .5rem;
     /* The motif, minimized: a slant-cut block accent over a hairline rule. */
     background:
-      linear-gradient(120deg, var(--accent) 0, #26060a calc(100% - 5px), transparent calc(100% - 5px)) left 0 bottom 0 / 34px 3px no-repeat,
+      linear-gradient(135deg, var(--accent) 0, var(--accent-4) calc(100% - 5px), transparent calc(100% - 5px)) left 0 bottom 0 / 34px 3px no-repeat,
       linear-gradient(var(--line), var(--line)) left 0 bottom 1px / 100% 1px no-repeat;
   }
   .panel h3::before { content: "/// "; color: var(--accent); }
-  .panel.danger { border-color: #4a2b2b; }
   .panel.danger h3 { color: var(--bad); }
-  .panel-warn { margin: -.4rem 0 0; font-size: var(--fs-small); color: var(--ink-dim); }
 
-  .field { display: flex; flex-direction: column; gap: .4rem; }
-  .field-label { font-size: var(--fs-body); font-weight: 600; }
   .field-hint { font-size: var(--fs-small); color: var(--ink-dim); }
-  .pathbox {
-    font-family: var(--mono); font-size: var(--fs-small);
-    background: #0c0e12; border: 1px solid var(--line); border-radius: 0;
-    padding: .5rem .6rem; word-break: break-all; color: var(--ink);
-  }
-  .field-actions { display: flex; gap: .5rem; }
 
   /* Green ticks and red crosses, so state is readable without parsing sentences. */
   .checks { display: flex; flex-direction: column; gap: .15rem; }
@@ -812,30 +1188,174 @@
   .field-narrow { flex: 0 0 auto; width: 72px; }
   .field-block  { flex: none; width: 100%; margin-top: .4rem; padding: .35rem .5rem; font-size: var(--fs-small); }
 
-  /* Section headings inside a pane. zeldfep, 2026-09-07: "too much scrolling I think it
-     should be 4 total inside tools tabs" - the rail was indexing every individual setting
-     row, so Tools read 01/13 and stepping through it was thirteen presses. These are what
-     the rail counts now, and they use the same label treatment as .admin-title so a new
-     kind of heading did not have to be invented for them. */
-  .rail-group {
-    font-family: var(--mono); font-size: var(--fs-label); font-weight: 700;
-    letter-spacing: .14em; text-transform: uppercase; color: var(--ink-dim);
-    margin: .35rem 0 -.35rem; padding-bottom: .35rem;
-    border-bottom: 1px solid var(--line);
-  }
-  .modal-body > section.panel > .rail-group:first-of-type { margin-top: 0; }
+  /* THE MODULE BAYS (zeldfep, 2026-11-08, "C's bays full"). Each group of settings is a
+     device bay: a notched frame on a hairline, a lit label tab carrying its number, a hatch
+     block on the step, a spec line and a four-dot greeble. The ornament sits on the edges, so
+     the rows inside stay calm. The frame is two clipped layers - a hairline under a fill -
+     because a border on a clip-path loses its diagonals.
 
-  .tool { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+     The label tabs are still the section headings the rail counts. zeldfep, 2026-09-07: "too
+     much scrolling I think it should be 4 total inside tools tabs" - one per bay, not one per
+     row. The rail measures the bay (railTop), because the tab sits pinned inside it. */
+  /* The notched frame every bay is cut to, in Settings and on the main window. */
+  .grp, .card.bay {
+    --bay: polygon(0 0, var(--step) 0, calc(var(--step) + 10px) 10px, calc(100% - 18px) 10px, 100% 28px,
+                   100% calc(100% - 10px), calc(100% - 10px) 100%, 14px 100%, 0 calc(100% - 14px));
+  }
+  .grp {
+    position: relative; isolation: isolate;
+    display: flex; flex-direction: column; gap: .9rem;
+    margin-top: .4rem; padding: 2.15rem 1rem 1.15rem;
+  }
+  .grp::before, .grp::after { content: ""; position: absolute; z-index: -1; clip-path: var(--bay); }
+  .grp::before { inset: 0; background: var(--accent-2); }
+  .grp::after { inset: 1px; background: var(--surface); }
+  .rail-group {
+    position: absolute; left: 0; top: 0; margin: 0; height: 20px; padding: 0 1.3rem 0 .6rem;
+    display: flex; align-items: center; background: var(--accent); color: #140406;
+    font-family: var(--mono); font-size: var(--fs-label); font-weight: 700;
+    letter-spacing: .14em; text-transform: uppercase;
+    clip-path: polygon(0 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
+  }
+  /* Flex trims the space after the number, so it is a margin instead. */
+  .rail-group > span { margin-right: .55em; }
+  .bay-spec {
+    position: absolute; top: 14px; right: 1.4rem;
+    font-family: var(--mono); font-size: var(--fs-micro); font-weight: 500;
+    letter-spacing: .14em; text-transform: uppercase; color: var(--ink-dim);
+  }
+  /* Six whole stripes, the plate hatch's steep 2:1 (--px-hatch-bay). */
+  .bay-hatch {
+    position: absolute; top: 2px; left: calc(var(--step) + 16px); width: 34px; height: 6px;
+    background: var(--accent-2); mask: var(--px-hatch-bay) 0 0 / 34px 6px no-repeat;
+  }
+  .bay-pips {
+    position: absolute; right: 18px; bottom: 5px; width: 21px; height: 3px; opacity: .6;
+    background: repeating-linear-gradient(90deg, var(--ink-dim) 0 3px, transparent 3px 6px);
+  }
+  /* Rows are split by a dotted tick run, not a border. */
+  .grp > .tool + .tool, .grp > .folder + .folder {
+    padding-top: .9rem;
+    background: repeating-linear-gradient(90deg, var(--steel) 0 2px, transparent 2px 6px) top left / 100% 1px no-repeat;
+  }
+
+  /* A row: what it is on the left, its action in one column on the right. */
+  .tool { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .45rem 1rem; align-items: start; }
+  .tool .txt { min-width: 0; }
   .tool-name { font-size: var(--fs-body); font-weight: 600; }
   .tool-desc { font-size: var(--fs-small); color: var(--ink-dim); line-height: 1.45; margin-top: .15rem; }
+  .act { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+  .act.side { flex-direction: row; flex-wrap: wrap; align-items: center; gap: .75rem; }
   .ghost { background: #22262e; color: var(--ink); white-space: nowrap; }
+
+  /* Folders: the path is a readout with a label plate, not a box inside a box. */
+  .folder { display: flex; flex-direction: column; gap: .45rem; min-width: 0; }
+  .readout { display: flex; align-items: stretch; min-width: 0; background: var(--ground); border: 1px solid var(--line); }
+  .readout .tag {
+    flex: none; display: flex; align-items: center; padding: 0 .55rem; background: var(--steel); color: var(--ink);
+    font-family: var(--mono); font-size: var(--fs-micro); font-weight: 700; letter-spacing: .14em;
+  }
+  .readout .path { min-width: 0; padding: .45rem .6rem; font-family: var(--mono); font-size: var(--fs-small); color: var(--ink); word-break: break-all; }
+
+  /* Nexus signed in: who you are, and Change key - not the setup steps. */
+  .signed {
+    display: flex; align-items: center; gap: .5rem; margin-top: .45rem;
+    font-family: var(--mono); font-size: var(--fs-label); font-weight: 700; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--ok);
+  }
+  .keyentry { display: flex; flex-direction: column; gap: .45rem; margin-top: .55rem; font-size: var(--fs-small); color: var(--ink-dim); line-height: 1.45; }
+  .keyentry b { color: var(--ink); }
+  .keyentry .field-block { margin-top: 0; }
+  #settingsModal [hidden] { display: none !important; }
+
+  /* A flat hazard plate. Flat yellow is a warning; striped yellow is the rail's "you are here". */
+  .flat-warn {
+    margin: 0; align-self: flex-start; padding: 4px 1.1rem 4px .7rem; line-height: 12px; background: var(--hazard); color: #140406;
+    font-family: var(--mono); font-size: var(--fs-label); font-weight: 700; letter-spacing: .14em; text-transform: uppercase;
+    clip-path: polygon(0 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
+  }
+
+  /* THE BRACKET BUTTON (S2), Settings' one button: zeldfep, 2026-11-08, "S2 and C's bays".
+     8rem by 26px, its label on the micro step: the type doc (_internal-docs/type-scale.html) draws
+     Settings' row buttons there in its own Settings mock, beside the mod buttons and .hud-mini. It
+     was on the label step, the doc's step for tabs and headings (zeldfep, 2026-11-08: "please see
+     type scale for the buttons"). No plate - the label sits inside four registration corners.
+     It keeps the kit's three moments: hover or Tab closes the corners in, turns them red and
+     fills the dots under the label; pressing flashes a steel fill; the click glitch fires once.
+     Nothing is clipped, so the focus ring always shows. Write its text with setHudButton. */
+  .sb {
+    position: relative; display: inline-grid; place-items: center; flex: none;
+    width: 8rem; height: 26px; padding: 0; border: 0; background: none; cursor: pointer;
+    color: var(--ink); font-family: var(--mono); font-size: var(--fs-micro); font-weight: 700;
+    letter-spacing: .1em; text-transform: uppercase;
+    --glitch-h: 26px; --sb-mark: var(--ink-dim);
+  }
+  .sb:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .sb:disabled { cursor: not-allowed; }
+  .sb:disabled .label { color: var(--ink-dim); }
+  .sb[data-state="checking"] { cursor: progress; }
+  .sb .label { position: relative; z-index: 2; margin-top: -3px; white-space: nowrap; }
+  .sb[data-state="ok"] .label { color: var(--ok); }
+  .sb .fill { position: absolute; inset: 0; background: var(--steel); opacity: 0; transition: opacity 120ms ease; }
+  .sb .c i { position: absolute; width: 7px; height: 7px; border: 0 solid var(--sb-mark); transition: transform 140ms var(--ease-out), border-color 120ms ease; }
+  .sb .c i:nth-child(1) { top: 0; left: 0; border-top-width: 1px; border-left-width: 1px; }
+  .sb .c i:nth-child(2) { top: 0; right: 0; border-top-width: 1px; border-right-width: 1px; }
+  .sb .c i:nth-child(3) { bottom: 0; left: 0; border-bottom-width: 1px; border-left-width: 1px; }
+  .sb .c i:nth-child(4) { bottom: 0; right: 0; border-bottom-width: 1px; border-right-width: 1px; }
+  .sb .pips { position: absolute; z-index: 3; bottom: 3px; left: 50%; transform: translateX(-50%); display: flex; gap: 2px; }
+  .sb .pips i { --i: 0; width: 2px; height: 2px; background: currentColor; opacity: .3; transition: opacity 120ms ease; }
+  .sb .pips i:nth-child(2) { --i: 1; }
+  .sb .pips i:nth-child(3) { --i: 2; }
+  .sb .pips i:nth-child(4) { --i: 3; }
+  .sb:focus-visible .c i, .sb.listening .c i { border-color: var(--accent); }
+  .sb:focus-visible .c i:nth-child(1) { transform: translate(2px, 2px); }
+  .sb:focus-visible .c i:nth-child(2) { transform: translate(-2px, 2px); }
+  .sb:focus-visible .c i:nth-child(3) { transform: translate(2px, -2px); }
+  .sb:focus-visible .c i:nth-child(4) { transform: translate(-2px, -2px); }
+  .sb:focus-visible .pips i { opacity: 1; transition-delay: calc(var(--i) * 50ms); }
+  @media (hover: hover) and (pointer: fine) {
+    .sb:hover:not(:disabled) .c i { border-color: var(--accent); }
+    .sb:hover:not(:disabled) .c i:nth-child(1) { transform: translate(2px, 2px); }
+    .sb:hover:not(:disabled) .c i:nth-child(2) { transform: translate(-2px, 2px); }
+    .sb:hover:not(:disabled) .c i:nth-child(3) { transform: translate(2px, -2px); }
+    .sb:hover:not(:disabled) .c i:nth-child(4) { transform: translate(-2px, -2px); }
+    .sb:hover:not(:disabled) .pips i { opacity: 1; transition-delay: calc(var(--i) * 50ms); }
+  }
+  .sb:active:not(:disabled) .fill, .sb[data-state="checking"] .fill { opacity: 1; transition-duration: 50ms; }
+  .sb:active:not(:disabled) .pips i { opacity: 1; transition-delay: 0ms; }
+  .sb[data-state="checking"] .pips i { animation: pip-chase 800ms linear infinite; animation-delay: calc(var(--i) * 120ms); }
+  /* Waiting for a key, or a microphone test running: it is listening, so it says so. */
+  .sb.listening .label { color: var(--accent); }
+  /* Anything that deletes: a red label in red corners. */
+  .sb.danger { --sb-mark: var(--accent-2); }
+  .sb.danger .label { color: var(--accent); }
+  /* The test-build list's disclosure toggle: the same button, square. */
+  .sb.sb-square { width: 26px; }
+
+  /* Done closes the window, so it stays the loud one: the kit's red plate. */
+  .plate.set-done {
+    width: 11rem; height: 40px; font-family: 'NCO Display', var(--mono); font-size: var(--fs-body); letter-spacing: .16em;
+    --lug: 6px; --pip: 3px; --plate-fill: var(--accent); --plate-base: var(--accent-2); --plate-text: #140406;
+    --glitch-2: var(--ink); --glitch-h: 40px;
+  }
+  /* JACK IN's hatch in proportion - about half the body's height, three whole stripes. */
+  .plate.set-done .hatch { left: 12px; width: 22px; top: calc(var(--lug) + 8px); height: 18px; mask-image: var(--px-hatch-done); }
+  .plate.set-done .chev { right: 12px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .sb *, .sb *::before, .sb *::after { animation: none !important; transition-property: opacity, color, background-color, border-color !important; }
+    .sb .c i { transform: none !important; }
+    /* Here, after .modal's own rule. The older block near the top of the file says the same
+       thing but comes first, so .modal's animation won and the window flickered open anyway. */
+    .modal, .modal-backdrop { animation: none; }
+  }
 
   /* Shown in full and selectable on purpose: the whole point is to copy it out into
      another tool. Wraps rather than scrolls, so nothing is silently cut off. */
   .devkey {
     margin-top: .5rem;
     padding: .45rem .6rem;
-    background: #0c0e13;
+    background: var(--ground);
     border: 1px solid var(--line);
     border-radius: 0;
     font-family: "Cascadia Mono", Consolas, monospace;
@@ -847,20 +1367,14 @@
     line-height: 1.5;
   }
 
-  /* The footer answers the header: the same motif, mirrored - block anchored right,
-     echo dash, thin rule running back to the left edge. */
-  footer { position: relative; }
-  footer::before {
-    content: ""; position: absolute; left: 0; right: 0; top: -8px; height: 8px;
-    background:
-      linear-gradient(60deg, transparent 6px, #26060a 6px, #7c1015 45%, var(--accent) 100%) right 0 top 0 / 220px 100% no-repeat,
-      linear-gradient(60deg, transparent 4px, #26060a 4px, #5a0c11 calc(100% - 4px), transparent calc(100% - 4px)) right 232px top 0 / 16px 100% no-repeat,
-      linear-gradient(90deg, transparent, #5a0c11) left 0 center / calc(100% - 270px) 2px no-repeat;
-    opacity: .8; pointer-events: none;
-  }
+  /* The footer answers the header: the same traces, turned round, coming in from the left. */
   footer {
+    position: relative;
+    /* Whole pixels: its padding around two lines of text came to 62.4, which put everything keyed
+       to it on a fraction. Keeps its 1px of border for the same height. */
+    height: 63px;
     padding: .75rem 1.5rem;
-    border-top: 1px solid var(--line);
+    border-top: 1px solid transparent;
     font-size: var(--fs-label);
     color: var(--ink-dim);
     text-align: center;
@@ -927,6 +1441,7 @@
     <div class="accounts">
 
     <div class="account" id="account">
+      <span class="avatar-ring" aria-hidden="true"></span>
       <img id="avatar" alt="">
       <div class="who">
         <div class="name" id="username"></div>
@@ -941,6 +1456,7 @@
          opening Settings and reading a paragraph. Same shape as the block above so it
          reads as the second half of one identity row, not a new feature. -->
     <div class="account" id="nexusAccount">
+      <span class="avatar-ring" aria-hidden="true"></span>
       <div class="nexus-mark" id="nexusMark" aria-hidden="true"><img src="data:image/webp;base64,UklGRnYTAABXRUJQVlA4IGoTAADwTQCdASq0ALQAPjEWiUKiISEWyXW8IAMEsQBpkPV/bPyM706w/bv7j+y/tNWN+mffH+x/uDzu1U+eN5R+jf6z++/3n9ofmr/j/UV+pv7x+f/0AfxH+g/6b+09Zj9vvUH+vv66+7x/cv2n9y/95/wXsAf0n+6f/DsHvQI/of+l/+3rm/tp8Iv9U/3n7Z+0l//OsA6g/q7/ae1//KecPVn9a+Vk8v9rfzf5h/IP7ivAn1aeoF+L/zH+//mN/YuFtAB9Tf9D6YHyvmj4gH6t/6zji6AH88/t3/d9RL/g/zv5Y+3T6a/735sfQZ/Lv6x/uPzp/vXzlevz9v/ZJ/ZVIkuvCrpXL/biraIJdLmMdzKyntQN/nK4pb9pq9Wn/ZRtLFWTsk3T+Zfb6JIIJsMdLCWH1D4BBrphmoHbT1MlopeAbZ2cg/S/rgbrbdC4ZZoZTZ0rVX1cikqCdse9eV8OrXU+wC1+y/9NH9EYLHeBq9nrOAVhbfcqL16LPw2yPBxiPojL3Gw01eeVskbE1JM4vdqVr7Um5etKuKTNneCWhFTw7gg2jSrYCirlWxTXuSsL9oxCswkrvUSXqNnVhcVw3gwnQhEAtXbxZRIb9zogwR+l1wP2oqpVhWYUulOL/x2kQi5VDTgg3QvzexEP6k1qPewf3fAEEEqhUEfeLG+MtKd2O+b8eITp+o9WTe1LFs7aVUnSaCL7EwLZZSFrpz7C10TxPeyf8XhVUDk5uZ8M9oUkCHuUqIqnyQuZUHeLWTt/mp6Fa752DaMnRwVaIaHQ0/ZqwOZxIFe6fbZjl40HTSbZuJxS/jPhJwnDsvLR0Tkf0sdz5mWYbPQ4AAD+/dPhbPEqDa44vbcSKYAA9Pz1A/WlKUgGMDqvAhJokqzas3FBYuyrNTsTMnar9yDKN/WZa8m1Cryxxd/wkJAWtrGqGARbezHam4pRanRjDLrpqLtQVLPprHD8KZ+NIyewMZs7KbSyKMKdjSCUW2ZTByuVry7A7IYabKA15l2QzR9MimOPWQHK8qAs8TkLAI0SdLUJ18++jS2xc/XExNv5oLQM9TSOYzOHp8z6wHAC0vTkL0sR9m3QHXestOMWBvEHOcino7xjMyASzoqpA7LFcONSO+K3L/6RRAzH6SyVqwAAAc672T6fgi4bxtz7/73W6GKSc7skiAAKomJ8ish8IDzUju0gr9gMIYTRuonfaPPkxczGzwV7XIaDk+nFiEBpS7vEsh50EluE1SEyJHEHAGHYStY3CIQPptsrjXY6YUe4nH4yWKxj0CjfoTm7kFSF260ywxdTaFfgZTjV8Y8dUFNhZDwMPHAgUiyuXQGIVMiLxy+MTMoILw+A0MySJDsiK7Dqs9sS0U5Wpflbd9w35maz0Gz1CWjinuyJRvT6SX8TSS8OFqD0JgcpSgHgpL6BSKVaMeHg+l+xFLItO941cGsCtXEZPxOXDVuaMmUTaUJ8ZJib5XNqwWv8hJdCikbunh4TbwT22Sr5KFekCeEHBedai9ejgC3lCMr4G8DZhxn1KF/pW3p6bMla7SMF2WIbKGLqVhE/aYR2M19OBIizFftJ7pR2BQP1yIVpmKjLkLEmf4gm+O8f2/x/I0MrJk+dOukPobeGG66B8k6Mp/UbEmMVQOKLn3TmwSh/gjVTvxiwZ1I06GcL634aE+JS/7bzE/laqMvjJh0+D+9kUohay1yMQ3FD/+OMMcW3qqeUKPlglHC+HDU7LjJv751eWK3tW7tiMXUI/Q/xMAwYXfO2BD3KkZftcen/vUwZD/2rCogdU5x7GtHF6qnDZ+yB7yI+ANZdel32BWIPuQEmYENKoeD+O52WVDGzdwdfQPxSFrG8+17FZv13clUaVxvK8V/303SbXkC6Ni8YEg7AAlPaBi0EZ6WzzmlpbZ9qZeRhgN1MC3WlhyorgPTEWeudC+CokO+l7pYq/R7W//5z4vEKHDX9kYGvNbCyDXEWbjCBpBr2xaDHHX8zo8xFjZXDa0YI4nlHtltY/WRadcb6AkUMinm6hzqfRG7enWBQyrO/4H3BZXUhqPSDKq0QgZbf0PmsSq6yracwvXlMh0yOS5xuEhA80YG4Yf8L+6Z0P6ReBdXWN9OZgs5JtE1zTKCKZwkJ2MMe+7H95b29u6dtRFm8jh13A+E+sTXesbWUuhnPdCY7/s2WuJOkTzGvnpSjh6jEwqdPI0Gz8XaV3l1n5EO6pWR8+bZ3cjwS/LMSlAgtBNvDmojSvSL3M4fLmE+dBhEoCoiA1NgmkB+dXrL6++196u8echQ7suTWZXpVoHX/U2VKVdnGaQNOSugNx/hJ5Zd28V8gdlFJL1Mn1cS9IGBPqvnN5+VhZSj0gl93TtMcSKOWr8hRxGDU/VBuBjrIYhtm+83uQVUsvt7DGzMOHNe5QPgX5i3O+zU1Oc4G98/uflDgWCr/kYcC9eFJkvGnhOQJ6Bw4x9Wr4r4uq1R0Jr4ZKjs2zdQbDVNZDA3DyBcQgVxgXTXC9xVkXqOOmkZMA2hIaEuVyaOIb8bIU2LlSXTmJdCQ4IWDMFZzl6BlQ1bjlnIYbU9OHeRth8DDQJFrdKEMVQ8hGfaUWISU/FemekySH5A9rMEwo7cMZJ2c+yNd8cYBHEU1yGM6zvEgdg9EO0jv1S53q4lrlS3rNqsVNYBw0e8oxrrZ34JYcmmWivRTVFDzpF1MKOgL8/+ypQ1Pq7bxiI74mGa1smG68sbJPIluyMAE2+UYtOMQbCR6u0Qrot0Kas+H8K/2d9rXE1AQCUr71G6TtUS57xBiMpHk0Vbr100cRQzCZ3mmHO2UIW8P4BfL6XSs9kG9c6ckdqqF6IO76N5LJwoOuKqUvHprCMpNZgYLidgatgYVmE6HGyZkHS00HyECZniOIcYL82d3h2W3//lQZV10ZtGUWXINPx1He+eAn4NQtE+11422KmMjMvo23RYj7FZTt9e//63fHD50s+hlb3KzuUVp1bnwkgaFn/+Rxs58RWt7gnj9KhhLazKCqGZ7lXzQe97PE5jfIcJQUJY3Hf7xKciOcyWGoj8kyoaBfxGY7SKyydkVgnUoMInmM6IO6qOtWCW1wsKOIdXfvD/9OwYeeMxnD6IPDLcFh/cSc2UkkxuFCoVB0WfTMmnmeirMoycFgS6zDYX/RqJg+iEWUJqeFC+GIegZgmNDETCWrnJrMgqnlIBpcRBvyDLq8/S8nu6zLzmXpPxIycjIeJmZVgh9KsNu2zCDAIRJjZ/6CMwpd3uN5oeFaVqAznGYhMBh94iezQ08czu8486RvPN9lZSdIe+jSuIcH61bnIUhzFJI6XLK+9DsO54acT9MSFoChOF4YeCLmYvySUpxus6zlFnldxxZksl+QQwG7PVcUxDeUgLO9G4cPkyV3bR76qyPenwcyNKLHb+deP2AEfwhu6rB+R+VHzrId1Gg/uvuNWny9S9+Er4crbqbXejwY68qZ8WQPjtLoJQKSQamy/zzrIqcIoGopJrgsZpm63AS18bUJpe/c7LcAa15OtqhII8zGLadPNZTABpUP62cPReLlhJGRU4oMycD7YmXU5enAHIDB1nTI8PkvaJNoxsFnhaRuBYc203L4DpxFFY1gq1RJIIOmxh1LvDPseXHnj9Q+KdwJkJgnGYuIhATpcbCVr5P5tRUcVhuiTx95/1hk3WAIHo1MKjy8zhkyxz2mT7c5B3A+xwGkusmWbGn3ykfOfjJPGrt0Rj3QvoJ7UAVwj8bdCKPiyts8FSczw9E7DF44B63TtgpiFnEXXD6vk6rC9paGNCNFO/g8v8sB1Zypy4bTMTXKmGMtpNpXktXzH/sWmH8kbSwWdofvywOZrSzBXmOOt5r001Gp39d4mQyGzffGW7igMvq+C1nGSlY07XlkVzjHfFgQScvySz3W8pkv6JdEXEWX00Xs6iZEC/KWNFgYUYJaqoPCg8IBTgl+o3KsPxITGzxGXtz0moeWkvhot8OP/HXaA+XN6llsOxprakowkJrR+HBFYIwIoIjijTvG369HoRVCOZstnR+rdHNrsd14+7pugD5GW4cEv9KZLTFe71aGtUQClRCb0E6PL7E89TYztp+ieKf7dtYFilvf4IF82bNlN4s5rbvzmSXCQ1WZMkTXM0SKX9/Qevvp42nXGTLiNjAA6jDWNuH8sw6fnZBM26rkiPmRJftui5/ZgOjp2cyMShmEf4dfYStr+o9wTSPCKdla7NSYowDjIREVK3+EZYSFGjhjL7X7Xt2+hf495Xh7eepCzfEsrjwmVvl2mZs7z0jqya3C8udPvUGqP4Odv4XWJE0oXb2ZcuupFTf+XEz7/3ZgXRPdrpATBRqqjLYu8ErzYzbomAIjuWAJjB7yIL+ru4CATE55RgGd8BBLvLwRf48WHe+CGn+2/ihdz3vBPN1EuSKt/nQSW0Dup7yPK0XonRFu3zALYw7l0K06qP1H8m2Gw6akwAIVFte+glSpw/DnLTUGJ3uzHy9P76H4uWc9/VPMvgP1zf9oh/5RFL2XZtzFafLVGtuKQ7VMBtKYnqxH3vauv5lT0GP59Qvi30gmX4oN5fGpsmj1Uv6yXjxEFY/w6LnswjFGelVfuB5EXszGk/sbeBECkng8BMPkxE+/p0AsOTWO5vVbCJmUzoT9yS4pqgU1ZMDBWXsST1v9HicIffJ7WOkB57L+ZgbS1Q2uK+idFgunFPCW5gBSF3HYjdxw3C+qtAK1GUo8Lrl4QGpw0ZxwhEVH777mr6Dcet39udTgweCdrj+PIc0dzp//x3M/CM4w4dSfqLzgZ0nUctTXU5OQoprNeTpWWUUoxsC0Vv+2DMTSH0Xoj70A46pUrMLGpy8QfL8TbJItjhFHxA8Py+/z5WWjnW8Ntee7Pn8fK/OZvot+0a8cXDG0krKwN+vhYZUyelAF+LBmAlk+57XdJdHb/vPHasKKpMhzq5Xf+825gsnXlVjEUGsiVTw2oXlETXCWL1o/ee58iBJOPEojWaX7wmm13LTeoQOO4Fi/lS4riyja+jpPLsSXeVJ7e4vrU65oKGEj803+T7OgvzVyZ+zzUvLE4XZoRsq/cxkjVjHMbbL/XdluB/8MnRawBzjg4zNl6vPT0OQ1tUyMETOAZ5cG+CsRmraNnUnAz7xWFimkTQPkeaAwCdEqoeTkhq/3CI7iCdolOBRFGNNVgAMfCRfEyBdDo8Jf1FcDF+lO0Z4lWFX5OHtUv8mYVSk10ZXoVhe12ZPwzeRyJIKZoK2dLGFaZNNOXwYBQ+hqXyfj8VwzsQs/aZbefHFaI0ixnjkDRN1fn9EfQO6n/zNXOUGXM3MoJ6S5SL+TaNDFkWTvXlP81E291VpYQwCqFzqbSkWJmaEZypXyx3Mhl71cxMMlZcbeXVaxhgZl4RYLw3PRRT+xXjPnAL7FWNI8FJDZLOHAdqifeOulOF0lcl32Tf8JUDfgFSdPMhv/eianJQg8K6Yj8kzA63XNawp3UwhpKU1jdp2bSLHg4UMBgKYmTfonoK7MZ0khL9x55Vx0xCwnL14Rps9aqIOosnl9opD30SbJP16uDDTtpGrdvFlRJmUXUBFeQXF4NSu1mS4UA67Z5De5noCntF/so2PQrrQVKJzyt7opwb4tbNpVi1XmWTZn0miT3gQ3BhQJkCiFVk1qWNNXm5f7MBs9f7R9oJ2DtzvNUPtj4/PT1O+6Gm3gi98kd9MmTLYX1iWZSbYmro9sK/4NUMASprlkFS5Lsuc2O+ajn0EEcqnbP6TaPKFjZi1Ad+sOEtfTpAOzmfe4iygYxO48xGkpa9p4qvhExKTyvtT18c/bb4S9yHkzoib3Px4bnQjHC/G9tuPBSv8zvxkBCnBH/V+6tRdowzNFWq8vpemyHGiihi8uovg4wnsuvP/h51/04PXgfjMwHQwHs1NCSUCFGr6u070XBFkr+ynIWa3CZ4XN6pDuEfikbu02Vc4VnXPg88UmdqlsXPDwGwIAhwl88STtr6cpzamgLT+fFQc3EzHu/dC04AzL7Vpr54CANn5X/W3+FqONLie47oBLRTwpe4kC361+e/B7zLGfrx93YLK9NMUtjHgbqX0C9XKNxcQ/DSacD/DfCRQWieNG1mEZAp9lm0Ib067++ZfS32QD8AZj99B6/P3uOg5pX7sG/J1Q1ENLvqCg7kbhz4zg2E5SPHZyeOsyJbBxB4Ft0uNpk32l4+XNc0ezqpGrafvQ1fyhpuHpQptCADX6XOEg/keTOeBBp+oU/gMyZsmxtFLHqXJrzwsLDwaCeb421RwqVJ7F9mkKkIPWgZeqyCoj6BCBC5+WOPFsAqJd5RzmZ/mqIUxmxJUhO7CyW+0bFI+AmmMch7wa7AhgP6DkrYBUufS28bzc7oXxOYkr3cLjgVzY5kFI5+Qexk46T3mMJHsf63SsAoioy/3WB57bcffiRX7OawQilsg0HEvedRxJho2NeevxGB9nOm677IhbXPuHIDbrrBbfDi9AWHsWwG83ebJbFtxgNj96ann9+A2FCeC7m2BPXtVmGlSlkFGTFA7zdueDeFuZE1rHdk9BNtrZkIj++Nlg40rhZ/hGqsXThd/r05QtUkE+fBlHGO8r/CcWWc41svPsRN4U0ZmHvSqsd48dZmxDrAu3Ks9kgAAAC5w8Ae3gAAAAA==" alt=""></div>
       <div class="who">
         <div class="name" id="nexusAccountName">Nexus</div>
@@ -951,21 +1467,25 @@
 
     </div>
 
-    <button class="gear" id="openSettings" title="Settings" aria-label="Settings">&#9881;</button>
+    <button class="gear glitches" id="openSettings" type="button" title="Settings" aria-label="Settings"><span class="hx hx-line"></span><span class="hx hx-fill"><span class="scan"></span></span><svg class="cog" viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M10.06 3.93L10.45 1.11L13.55 1.11L13.94 3.93L16.34 4.92L18.60 3.20L20.80 5.40L19.08 7.66L20.07 10.06L22.89 10.45L22.89 13.55L20.07 13.94L19.08 16.34L20.80 18.60L18.60 20.80L16.34 19.08L13.94 20.07L13.55 22.89L10.45 22.89L10.06 20.07L7.66 19.08L5.40 20.80L3.20 18.60L4.92 16.34L3.93 13.94L1.11 13.55L1.11 10.45L3.93 10.06L4.92 7.66L3.20 5.40L5.40 3.20L7.66 4.92ZM15.4 12A3.4 3.4 0 1 0 8.6 12A3.4 3.4 0 1 0 15.4 12Z"/></svg><span class="bolt-ticks" aria-hidden="true"><i></i><i></i><i></i></span></button>
+    <svg class="ln-bar" width="360" height="10" viewBox="0 0 360 10" aria-hidden="true"><defs><linearGradient id="ln-b" gradientUnits="userSpaceOnUse" x1="0" x2="320" y1="0" y2="0"><stop offset="0" class="ln-a"/><stop offset="0.55" class="ln-a"/><stop offset="1" class="ln-a2"/></linearGradient><linearGradient id="ln-e" gradientUnits="userSpaceOnUse" x1="331" x2="360" y1="0" y2="0"><stop offset="0" class="ln-a2"/><stop offset="1" class="ln-a3"/></linearGradient></defs><polygon points="0,0 320,0 310,10 0,10" fill="url(#ln-b)"/><polygon points="341,0 360,0 350,10 331,10" fill="url(#ln-e)"/></svg>
+    <svg class="ln-trace" width="900" height="22" viewBox="0 0 900 22" aria-hidden="true"><defs><linearGradient id="ln-h" gradientUnits="userSpaceOnUse" x1="900" x2="260" y1="0" y2="0"><stop offset="0" class="ln-a"/><stop offset="0.8" class="ln-a"/><stop offset="1" class="ln-a2"/></linearGradient><linearGradient id="ln-ht" gradientUnits="userSpaceOnUse" x1="260" x2="40" y1="0" y2="0"><stop offset="0" class="ln-a"/><stop offset="0.35" class="ln-a2"/><stop offset="1" class="ln-out"/></linearGradient></defs><rect x="40" y="14" width="220" height="2" fill="url(#ln-ht)"/><polygon points="900,2 444,2 436,10 376,10 376,2 364,2 364,14 438,14 446,6 900,6" fill="url(#ln-h)"/><polygon points="900,9 447,9 439,17 272,17 272,9 260,9 260,21 441,21 449,13 900,13" fill="url(#ln-h)"/><rect class="ln-pad" x="364" y="2" width="12" height="12"/><rect class="ln-pad" x="260" y="9" width="12" height="12"/></svg>
   </header>
 
   <!-- Settings. Everything that is occasional, diagnostic or destructive lives in
        here rather than cluttering the main screen. -->
   <div class="modal-backdrop" id="settingsModal" style="display:none">
-    <div class="modal">
+    <!-- A dialog in fact as well as in look: openSettings moves focus in and makes everything
+         behind it inert, Tab stays inside, and closeSettings hands focus back to the gear. -->
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
       <div class="section-rail" id="sectionRail" hidden>
-        <button class="rail-step" id="railUp" aria-label="Previous section">&#9650;</button>
+        <button class="rail-step" id="railUp" type="button" aria-label="Previous section"></button>
         <div class="rail-track" id="railTrack"></div>
-        <button class="rail-step" id="railDown" aria-label="Next section">&#9660;</button>
+        <button class="rail-step" id="railDown" type="button" aria-label="Next section"></button>
         <span class="rail-pos" id="railPos"><b>01</b>/01</span>
       </div>
       <div class="modal-head">
-        <h2>Settings</h2>
+        <h2 id="settingsTitle">Settings</h2>
         <button class="modal-close" id="closeSettings" aria-label="Close">&times;</button>
       </div>
 
@@ -981,31 +1501,32 @@
       <div class="modal-body">
 
         <!-- VOICE
-             Phase 1 of the voice system: find the devices and let someone pick.
-             Nothing captures or transmits yet - this is the part that has to be right
-             first, because every voice problem after it starts with "which microphone".
-
-             Enumerated through the browser engine rather than native WASAPI. Chromium
-             already asks Windows for its audio endpoints and hands back the real device
-             names, which is the same list a native implementation would build - and it
-             works today rather than after a native audio layer lands. -->
+             The devices, keys and levels the game is handed at JACK IN. Devices are
+             enumerated through the browser engine rather than native WASAPI: Chromium already
+             asks Windows for its audio endpoints and hands back the real device names, which
+             is the same list a native implementation would build. -->
         <section class="panel" data-pane="voice">
           <h3>Voice</h3>
 
-          <h4 class="rail-group">Devices</h4>
+          <div class="grp">
+            <h4 class="rail-group bay-tag" data-name="Devices"><span aria-hidden="true">01 ·</span>Devices</h4>
+            <span class="bay-spec" aria-hidden="true">3 controls · audio</span><span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Audio devices</div>
               <div class="tool-desc" id="voiceHint">
                 Windows has to allow microphone access before it will tell us device names.
                 Press Find devices - if Windows asks, allow it.
               </div>
             </div>
-            <button class="action ghost" id="voiceScan">Find devices</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="voiceScan" type="button" aria-label="Find devices">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Find devices">Find devices</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Microphone</div>
               <div class="tool-desc">What other players hear you through.</div>
               <select id="voiceInput" class="voice-select" disabled>
@@ -1019,11 +1540,14 @@
                 <div class="tool-desc" id="voiceMeterText">Say something.</div>
               </div>
             </div>
-            <button class="action ghost" id="voiceTest">Test</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="voiceTest" type="button" aria-label="Test">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Test">Test</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Voice output</div>
               <div class="tool-desc">
                 Where you hear other players. Separate from game audio, so voice can go to a
@@ -1034,31 +1558,40 @@
               </select>
             </div>
           </div>
+          </div>
 
-          <h4 class="rail-group">Keys and mode</h4>
+          <div class="grp">
+            <h4 class="rail-group bay-tag" data-name="Keys and mode"><span aria-hidden="true">02 ·</span>Keys and mode</h4>
+            <span class="bay-spec" aria-hidden="true">3 controls · input</span><span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Push-to-talk key</div>
               <div class="tool-desc">
                 Held to talk. Any key, or a mouse button - side buttons work.
               </div>
             </div>
-            <button class="action ghost" id="voiceBindKey">V</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="voiceBindKey" type="button" aria-label="Y">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Y">Y</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Voice range key</div>
               <div class="tool-desc">
                 Cycles whisper &rarr; local &rarr; yell. Separate from talking: pressing it
                 changes how far you carry, it does not put you on air.
               </div>
             </div>
-            <button class="action ghost" id="voiceBindRangeKey">B</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="voiceBindRangeKey" type="button" aria-label="F12">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="F12">F12</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Voice mode</div>
               <div class="tool-desc">
                 Hold to talk is the default on purpose - voice activation sends whatever
@@ -1071,61 +1604,74 @@
               </select>
             </div>
           </div>
+          </div>
 
-          <h4 class="rail-group">Levels</h4>
+          <div class="grp">
+            <h4 class="rail-group bay-tag" data-name="Levels"><span aria-hidden="true">03 ·</span>Levels</h4>
+            <span class="bay-spec" aria-hidden="true">2 levels · 0-200%</span><span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Microphone volume</div>
               <div class="tool-desc">How loud you are to everyone else.</div>
               <input type="range" id="voiceMicVolume" class="voice-range" min="0" max="200" value="100">
               <div class="tool-desc"><span id="voiceMicVolumeValue">100%</span></div>
             </div>
           </div>
-
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Voice chat volume</div>
               <div class="tool-desc">How loud everyone else is to you.</div>
               <input type="range" id="voiceChatVolume" class="voice-range" min="0" max="200" value="100">
               <div class="tool-desc"><span id="voiceChatVolumeValue">100%</span></div>
             </div>
           </div>
-
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name" id="voiceStatusTitle">Saved on this PC</div>
               <div class="tool-desc" id="voiceStatus">
                 These are passed to the game when you press JACK IN, so change them before
-                launching. Voice capture itself is still being built - nothing transmits yet.
+                launching.
               </div>
             </div>
           </div>
+          </div>
         </section>
 
-        <!-- FOLDERS -->
+        <!-- FOLDERS. One frame per folder, not three: the path is a readout with a label plate. -->
         <section class="panel pane-active" data-pane="folders">
           <h3>Folders</h3>
 
-          <div class="field">
-            <div class="field-label">Cyberpunk 2077</div>
-            <div class="field-hint">Folder containing bin\x64\Cyberpunk2077.exe</div>
-            <div class="pathbox" id="gamePathBox">not detected</div>
+          <div class="grp">
+            <h4 class="rail-group bay-tag" data-name="Paths"><span aria-hidden="true">01 ·</span>Paths</h4>
+            <span class="bay-spec" aria-hidden="true">2 paths · local disk</span><span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
+          <div class="folder">
+            <div class="tool-name">Cyberpunk 2077</div>
+            <div class="tool-desc">Folder containing bin\x64\Cyberpunk2077.exe</div>
+            <div class="readout"><span class="tag">PATH</span><span class="path" id="gamePathBox">not detected</span></div>
             <div class="checks" id="gameChecks"></div>
-            <div class="field-actions">
-              <button class="action ghost" id="viewGameDir">View</button>
-              <button class="action ghost" id="browseGameDir">Browse</button>
+            <div class="act side">
+              <button class="sb sb-bracket glitches" id="viewGameDir" type="button" aria-label="View">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="View">View</span>
+              </button>
+              <button class="sb sb-bracket glitches" id="browseGameDir" type="button" aria-label="Browse">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Browse">Browse</span>
+              </button>
             </div>
           </div>
-
-          <div class="field">
-            <div class="field-label">Mod folder</div>
-            <div class="field-hint">Where the multiplayer mod is installed.</div>
-            <div class="pathbox" id="modPathBox">not installed</div>
+          <div class="folder">
+            <div class="tool-name">Mod folder</div>
+            <div class="tool-desc">Where the multiplayer mod is installed.</div>
+            <div class="readout"><span class="tag">PATH</span><span class="path" id="modPathBox">not installed</span></div>
             <div class="checks" id="modChecks"></div>
-            <div class="field-actions">
-              <button class="action ghost" id="viewModDir">View</button>
-              <button class="action ghost" id="browseModDir">Browse</button>
+            <div class="act side">
+              <button class="sb sb-bracket glitches" id="viewModDir" type="button" aria-label="View">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="View">View</span>
+              </button>
+              <button class="sb sb-bracket glitches" id="browseModDir" type="button" aria-label="Browse">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Browse">Browse</span>
+              </button>
             </div>
+          </div>
           </div>
         </section>
 
@@ -1133,9 +1679,11 @@
         <section class="panel" data-pane="tools">
           <h3>Tools</h3>
 
-          <h4 class="rail-group">Connection</h4>
+          <div class="grp">
+            <h4 class="rail-group bay-tag" data-name="Connection"><span aria-hidden="true">01 ·</span>Connection</h4>
+            <span class="bay-spec" aria-hidden="true">3 tools · network</span><span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
           <div class="tool">
-            <div>
+            <div class="txt">
               <div class="tool-name">Join the server's network</div>
               <div class="tool-desc">
                 Opens the network invite. You need this once, before the game server can
@@ -1143,11 +1691,14 @@
                 network it joined.
               </div>
             </div>
-            <button class="action ghost" id="openTailscaleInvite">Open invite</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="openTailscaleInvite" type="button" aria-label="Open invite">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Open invite">Open invite</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Checkup</div>
               <div class="tool-desc">
                 Runs the whole checklist at once - launcher, game, mod, frameworks,
@@ -1156,11 +1707,14 @@
               </div>
               <div id="checkupResults" style="margin-top:8px"></div>
             </div>
-            <button class="action ghost" id="runCheckup">Run checkup</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="runCheckup" type="button" aria-label="Run checkup">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Run checkup">Run checkup</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Test server connection</div>
               <div class="tool-desc">
                 Checks every link between this PC and the game server - internet,
@@ -1169,58 +1723,85 @@
               </div>
               <div id="connTestResults" style="margin-top:8px"></div>
             </div>
-            <button class="action ghost" id="runConnTest">Run test</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="runConnTest" type="button" aria-label="Run test">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Run test">Run test</span>
+              </button>
+            </div>
           </div>
-          <h4 class="rail-group">Install</h4>
+          </div>
 
+          <div class="grp">
+            <h4 class="rail-group bay-tag" data-name="Install"><span aria-hidden="true">02 ·</span>Install</h4>
+            <span class="bay-spec" aria-hidden="true">2 tools · nexus</span><span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
           <div class="tool">
-            <div>
+            <div class="txt">
               <div class="tool-name">Install everything</div>
               <div class="tool-desc">
                 Downloads and installs the mod and all six required mods. Use this on a
                 fresh setup.
               </div>
             </div>
-            <button class="action ghost" id="installAll">Install</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="installAll" type="button" aria-label="Install">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Install">Install</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div>
+            <div class="txt">
               <div class="tool-name">Nexus Mods account</div>
-              <div class="tool-desc">
-                Needed to download the server's mod list.
-                <div style="margin-top:.35rem">
-                  <b>1.</b> Press <b>Get my key</b> — it opens your Nexus API page.<br>
+              <div class="tool-desc">Needed to download the server's mod list.</div>
+              <!-- Signed in, this is all the row says. The steps and the key box come back
+                   when signed out, or when Change key is pressed (refreshNexus). -->
+              <div class="signed" id="nexusSigned" hidden><span class="dot on"></span><span id="nexusState">Not signed in</span></div>
+              <div class="keyentry" id="nexusKeyEntry">
+                <div>
+                  <b>1.</b> Press <b>Get my key</b> - it opens your Nexus API page.<br>
                   <b>2.</b> Scroll to <b>Personal API Key</b> and copy it.<br>
-                  <b>3.</b> Paste it below and press Save.
+                  <b>3.</b> Paste it below and press <b>Save key</b>.
                 </div>
-                <div style="margin-top:.4rem"><span id="nexusState">Not signed in</span></div>
-
                 <input id="nexusKey" type="password" placeholder="Paste your Nexus API key here"
                        class="field field-block">
-                <button class="mod-btn" id="nexusSave" style="margin-top:.35rem">Save key</button>
+                <div class="act side">
+                  <button class="sb sb-bracket glitches" id="nexusGetKey" type="button" aria-label="Get my key">
+                    <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Get my key">Get my key</span>
+                  </button>
+                  <button class="sb sb-bracket glitches" id="nexusSave" type="button" aria-label="Save key">
+                    <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Save key">Save key</span>
+                  </button>
+                </div>
 
                 <!-- Nexus SSO - the one-click browser approval - only works for
                      applications Nexus has approved, and rejects everything else with an
                      unhelpful "problem authenticating your request". Kept because it
                      starts working the moment they whitelist us, but not offered as the
                      way in, because today it fails. -->
-                <details style="margin-top:.5rem">
+                <details>
                   <summary style="cursor:pointer;font-size: var(--fs-label)">One-click sign-in (needs Nexus approval)</summary>
-                  <div style="margin-top:.3rem;font-size: var(--fs-label)">
+                  <div style="margin:.3rem 0 .45rem;font-size: var(--fs-label)">
                     Nexus only allows this for approved mod managers. It will fail until
                     they whitelist Night City Online.
                   </div>
-                  <button class="mod-btn" id="nexusLogin" style="margin-top:.35rem">Try it anyway</button>
+                  <button class="sb sb-bracket glitches" id="nexusLogin" type="button" aria-label="Try it anyway">
+                    <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Try it anyway">Try it anyway</span>
+                  </button>
                 </details>
               </div>
             </div>
-            <button class="action ghost" id="nexusGetKey">Get my key</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="nexusChangeKey" type="button" aria-label="Change key" hidden>
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Change key">Change key</span>
+              </button>
+            </div>
           </div>
-          <h4 class="rail-group">This PC</h4>
+          </div>
 
+          <div class="grp">
+            <h4 class="rail-group bay-tag" data-name="This PC"><span aria-hidden="true">03 ·</span>This PC</h4>
+            <span class="bay-spec" aria-hidden="true">2 tools · windows</span><span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
           <div class="tool">
-            <div>
+            <div class="txt">
               <div class="tool-name">Desktop shortcut</div>
               <div class="tool-desc">
                 Puts Night City Online Launcher on your Desktop and in the Start Menu.
@@ -1228,46 +1809,62 @@
                 shortcut and choose "Pin to taskbar" for that.
               </div>
             </div>
-            <button class="action ghost" id="makeShortcut">Create</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="makeShortcut" type="button" aria-label="Create">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Create">Create</span>
+              </button>
+            </div>
           </div>
-
           <!-- Hidden entirely unless the signed-in account is a dev/admin. Shown as a
                row like the others rather than tucked away, because a toggle you cannot
                find is a toggle you leave in the wrong state. -->
           <div class="tool" id="debugTool" style="display:none">
-            <div>
+            <div class="txt">
               <div class="tool-name">Developer overlay</div>
               <div class="tool-desc" id="debugDesc">
                 Shows the in-game debug menu bar. Devs and admins only.
               </div>
             </div>
-            <button class="action ghost" id="toggleDebug">Off</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="toggleDebug" type="button" aria-label="Off">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Off">Off</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div>
+            <div class="txt">
               <div class="tool-name">Launcher folder</div>
               <div class="tool-desc">
                 Opens where the launcher is installed. The uninstaller lives here too.
               </div>
             </div>
-            <button class="action ghost" id="openInstallDir">Open</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="openInstallDir" type="button" aria-label="Open">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Open">Open</span>
+              </button>
+            </div>
           </div>
-          <h4 class="rail-group">Repair and remove</h4>
+          </div>
 
+          <div class="grp">
+            <h4 class="rail-group bay-tag" data-name="Repair"><span aria-hidden="true">04 ·</span>Repair</h4>
+            <span class="bay-spec" aria-hidden="true">4 tools · mod files</span><span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
           <div class="tool">
-            <div>
+            <div class="txt">
               <div class="tool-name">Verify game files</div>
               <div class="tool-desc">
                 Checks the mod files are present and current. Reports everything wrong at
                 once rather than one problem at a time.
               </div>
             </div>
-            <button class="action ghost" id="verifyFiles">Verify</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="verifyFiles" type="button" aria-label="Verify">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Verify">Verify</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div>
+            <div class="txt">
               <div class="tool-name">Direct install from Nexus</div>
               <div class="tool-desc">
                 Installs every mod on the server's list that is missing here, straight
@@ -1276,22 +1873,28 @@
                 and it lands here automatically either way.
               </div>
             </div>
-            <button class="action ghost" id="nexusDirectInstall">Install missing</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="nexusDirectInstall" type="button" aria-label="Install missing">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Install missing">Install missing</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div>
+            <div class="txt">
               <div class="tool-name">Reinstall mod files</div>
               <div class="tool-desc">
                 Re-downloads the current build over the top. Fixes a corrupted or partial
                 install. Your other mods are not touched.
               </div>
             </div>
-            <button class="action ghost" id="reinstallMod">Reinstall</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="reinstallMod" type="button" aria-label="Reinstall">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Reinstall">Reinstall</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div>
+            <div class="txt">
               <div class="tool-name">Deep clean</div>
               <div class="tool-desc">
                 Hunts leftovers from old installs - stale data folders, dead Windows
@@ -1300,19 +1903,12 @@
                 same sweep, so uninstalling leaves nothing behind.
               </div>
             </div>
-            <button class="action ghost" id="deepClean">Scan</button>
-          </div>
-
-          <div class="tool">
-            <div>
-              <div class="tool-name">Uninstall launcher</div>
-              <div class="tool-desc">
-                Removes the launcher and everything it saved on this PC - your sign-in,
-                settings, keys. Your game and the mod are left alone - use "Remove mod"
-                above first if you want that gone as well.
-              </div>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="deepClean" type="button" aria-label="Scan">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Scan">Scan</span>
+              </button>
             </div>
-            <button class="action ghost" id="uninstallLauncher">Uninstall</button>
+          </div>
           </div>
         </section>
 
@@ -1323,8 +1919,11 @@
         <section class="panel role-hidden" id="devPanel" data-pane="dev">
           <h3>Dev</h3>
 
+          <div class="grp">
+            <h4 class="rail-group bay-tag" data-name="Dev tools"><span aria-hidden="true">01 ·</span>Dev tools</h4>
+            <span class="bay-spec" aria-hidden="true">5 tools · devs only</span><span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Dev key</div>
               <div class="tool-desc">
                 Paste this into your Claude so it can read and post updates alongside the
@@ -1332,11 +1931,14 @@
               </div>
               <div class="devkey" id="devKeyValue" style="display:none"></div>
             </div>
-            <button class="action ghost" id="revealDevKey">Reveal</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="revealDevKey" type="button" aria-label="Reveal">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Reveal">Reveal</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Server</div>
               <div class="tool-desc" id="devServerHint">
                 Which server Launch connects to. Leave blank to follow the published
@@ -1351,28 +1953,34 @@
                        class="field field-narrow">
               </div>
             </div>
-            <div class="btn-col">
-              <button class="action ghost" id="devServerApply">Apply</button>
-              <button class="action ghost" id="devServerClear">Default</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="devServerApply" type="button" aria-label="Apply">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Apply">Apply</span>
+              </button>
+              <button class="sb sb-bracket glitches" id="devServerClear" type="button" aria-label="Default">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Default">Default</span>
+              </button>
             </div>
           </div>
-
           <!-- The test deployment is its own tailnet node, so it needs its own device
                share - a share is bound to one device id and cannot cover both servers.
                Accepting the main one does not get you onto this. -->
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Join the test server's network</div>
               <div class="tool-desc">
                 Separate from the main invite - accepting that one does not get you here.
                 You need this once before the test server can reach you.
               </div>
             </div>
-            <button class="action ghost" id="openTailscaleTestInvite">Open invite</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="openTailscaleTestInvite" type="button" aria-label="Open invite">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Open invite">Open invite</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div style="min-width:0;flex:1">
+            <div class="txt">
               <div class="tool-name">Test builds</div>
               <div class="tool-desc">
                 Pre-releases from GitHub. Players never see these - their launchers only
@@ -1381,66 +1989,108 @@
               </div>
               <div id="prereleaseList" style="margin-top:8px"></div>
             </div>
-            <div class="btn-col">
-              <button class="action ghost" id="prereleaseRefresh">Refresh</button>
-              <button class="action ghost" id="prereleaseRestore">Restore</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="prereleaseRefresh" type="button" aria-label="Refresh">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Refresh">Refresh</span>
+              </button>
+              <button class="sb sb-bracket glitches" id="prereleaseRestore" type="button" aria-label="Restore">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Restore">Restore</span>
+              </button>
             </div>
           </div>
-
           <!-- The address is typed in, not shipped: this file goes out to every player,
                and the box's name is placeholdered everywhere else for that reason. -->
           <div class="tool">
-            <div style="min-width:0;flex:1">
+            <div class="txt">
               <div class="tool-name">The Atlas</div>
               <div class="tool-desc">
                 The mind map across every project - what is open, blocked, parked or just
                 thought of, on the same board both assistants write to. The address fills
                 itself in from your dev role; the box is there for overriding it.
               </div>
-              <input type="text" id="atlasUrl" style="margin-top:8px"
+              <input type="text" id="atlasUrl" class="field field-block"
                      placeholder="http://host:11782" spellcheck="false" autocomplete="off">
             </div>
-            <div class="btn-col">
-              <button class="action ghost" id="atlasOpen">Open</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="atlasOpen" type="button" aria-label="Open">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Open">Open</span>
+              </button>
             </div>
+          </div>
           </div>
         </section>
 
-        <!-- REMOVE -->
+        <!-- REMOVE. Everything that deletes, in one place - Uninstall launcher used to sit in
+             Tools and point at a "Remove mod above" that was really on this tab. -->
         <section class="panel danger" data-pane="remove">
           <h3>Remove data</h3>
-          <p class="panel-warn">Permanent. Cannot be undone.</p>
+          <p class="flat-warn">/// Permanent · cannot be undone</p>
 
+          <div class="grp">
+            <h4 class="rail-group bay-tag" data-name="Mod and launcher"><span aria-hidden="true">01 ·</span>Mod and launcher</h4>
+            <span class="bay-spec" aria-hidden="true">3 actions · cannot be undone</span><span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
           <div class="tool">
-            <div>
+            <div class="txt">
               <div class="tool-name">Remove the mod</div>
               <div class="tool-desc" id="removeModPath">
                 Deletes the multiplayer mod folder. Your game, saves and other mods are
                 left alone.
               </div>
             </div>
-            <button class="action stop" id="removeMod">Remove</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches danger" id="removeMod" type="button" aria-label="Remove">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Remove">Remove</span>
+              </button>
+            </div>
           </div>
-
           <div class="tool">
-            <div>
+            <div class="txt">
               <div class="tool-name">Remove launcher files</div>
               <div class="tool-desc" id="removeDataPath">
                 Deletes your saved sign-in and settings. You will sign in again next time.
               </div>
             </div>
-            <button class="action stop" id="removeData">Remove</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches danger" id="removeData" type="button" aria-label="Remove">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Remove">Remove</span>
+              </button>
+            </div>
+          </div>
+          <div class="tool">
+            <div class="txt">
+              <div class="tool-name">Uninstall launcher</div>
+              <div class="tool-desc">
+                Removes the launcher and everything it saved on this PC - your sign-in,
+                settings, keys. Your game is left alone. Remove the mod first, above, if you
+                want that gone too.
+              </div>
+            </div>
+            <div class="act">
+              <button class="sb sb-bracket glitches danger" id="uninstallLauncher" type="button" aria-label="Uninstall">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Uninstall">Uninstall</span>
+              </button>
+            </div>
+          </div>
           </div>
         </section>
 
         <!-- ABOUT -->
         <section class="panel" data-pane="about">
+          <h3>About</h3>
+
+          <div class="grp">
+            <h4 class="rail-group bay-tag" data-name="This launcher"><span aria-hidden="true">01 ·</span>This launcher</h4>
+            <span class="bay-spec" aria-hidden="true">version · source</span><span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
           <div class="tool">
-            <div>
+            <div class="txt">
               <div class="tool-name" id="launcherVersion">Launcher</div>
               <div class="tool-desc">Mod updates are checked every time the launcher opens.</div>
             </div>
-            <button class="action ghost" id="checkFromSettings">Check</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" id="checkFromSettings" type="button" aria-label="Check">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Check">Check</span>
+              </button>
+            </div>
           </div>
 
           <!-- Attribution, in the launcher rather than only in the README.
@@ -1450,7 +2100,7 @@
                is still theirs. The link goes through the data-link allowlist rather than
                a raw anchor, so it cannot become "open any URL". -->
           <div class="tool">
-            <div style="min-width:0">
+            <div class="txt">
               <div class="tool-name">Built on CyberpunkMP</div>
               <div class="tool-desc">
                 Night City Online is a fork of CyberpunkMP, the multiplayer mod created by
@@ -1458,7 +2108,12 @@
                 with the source.
               </div>
             </div>
-            <button class="action ghost" data-link="upstream">Source</button>
+            <div class="act">
+              <button class="sb sb-bracket glitches" type="button" aria-label="Source" data-link="upstream">
+                <span class="fill"></span><span class="scan"></span><span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Source">Source</span>
+              </button>
+            </div>
+          </div>
           </div>
         </section>
 
@@ -1466,7 +2121,10 @@
 
       <div class="modal-foot">
         <div class="status" id="settingsStatus"></div>
-        <button class="action play" id="closeSettingsDone">Done</button>
+        <button class="hud plate set-done glitches" id="closeSettingsDone" type="button" aria-label="Done">
+          <span class="back"></span>
+          <span class="face"><span class="scan"></span><span class="pips"><i></i><i></i><i></i><i></i></span><span class="hatch"></span><span class="label" data-text="Done">Done</span><span class="chev" aria-hidden="true"></span></span>
+        </button>
       </div>
     </div>
   </div>
@@ -1477,24 +2135,26 @@
          release, the same source the Discord bot announces from - so the launcher
          and #server-update can never disagree about what shipped. -->
     <div class="col-left">
-      <div class="card changelog" id="changelog" style="display:none">
+      <div class="card changelog bay" id="changelog" style="display:none">
         <div class="admin-head">
-          <span class="admin-title">Patch notes</span>
+          <span class="admin-title" data-n="01">Patch notes</span>
           <span class="serverstate" id="changelogVersion"></span>
         </div>
         <div class="notes" id="changelogBody"></div>
+        <span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
       </div>
 
       <!-- What is being worked on RIGHT NOW, as opposed to what shipped.
            Posted through the coordination API and published with the release, so
            anyone running the launcher can see progress between builds instead of
            only when a version goes out. Hidden entirely when there is nothing. -->
-      <div class="card changelog" id="devUpdates" style="display:none">
+      <div class="card changelog bay" id="devUpdates" style="display:none">
         <div class="admin-head">
           <span class="admin-title">In development</span>
           <span class="serverstate" id="devUpdatesCount"></span>
         </div>
         <div class="notes" id="devUpdatesBody"></div>
+        <span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
       </div>
     </div>
 
@@ -1505,7 +2165,12 @@
       Verify your Discord account to continue. We only read your username and avatar.
     </p>
 
-    <div class="card">
+    <div class="card bay" id="launchBay">
+      <div class="admin-head">
+        <span class="admin-title" data-n="02">Launch</span>
+        <span class="serverstate" id="launchLamps"></span>
+      </div>
+
       <button class="action discord" id="login">Log in with Discord</button>
 
       <div class="gate">
@@ -1549,17 +2214,36 @@
            and people were only ever told about the first. -->
       <button class="action join" id="joinTailnet" style="display:none">Join the server's network</button>
 
-      <div class="btn-row">
-        <button class="action verify" id="verify">Verify files</button>
-        <button class="action update" id="update" style="display:none">Update</button>
+      <!-- The button kit: see THE BUTTON KIT in the styles. The text is in .label, so write it
+           with setHudButton - textContent on one of these wipes out the layers inside it. -->
+      <div class="hud-stack">
+        <!-- Update, when it blocks JACK IN: above it, wired into its tab, with the step it is on
+             printed on the wire (THE UPDATE PLATE). A newer test build blocks nothing, so
+             placeUpdate moves this same button down into the row beside Verify. -->
+        <button class="hud plate hud-update glitches in-path" id="update" aria-label="Update" style="display:none">
+          <span class="back"></span>
+          <span class="face"><span class="tread"></span><span class="scan"></span><span class="pips"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Update">Update</span></span>
+        </button>
+        <div class="update-wire" id="updateWire" aria-hidden="true" style="display:none"><svg viewBox="0 0 60 22"><path d="M30 0V4L40 14V19"></path><circle cx="40" cy="19.5" r="2.5"></circle></svg><span class="pulse"></span></div>
+        <div class="update-readout" id="updateReadout" aria-live="polite"></div>
+
+        <button class="hud plate hud-play glitches" id="play" aria-label="JACK IN" disabled>
+          <span class="back"></span>
+          <span class="face"><span class="tread"></span><span class="scan"></span><span class="pips"><i></i><i></i><i></i><i></i></span><span class="hatch"></span><span class="label" data-text="JACK IN">JACK IN</span><span class="chev" aria-hidden="true"></span></span>
+        </button>
+
+        <!-- Why the button is dead. A greyed-out Launch with no explanation is the most
+             frustrating thing a launcher can do - people conclude it is broken and leave,
+             when the answer is usually one sentence. -->
+        <div class="field-hint" id="playReason" style="text-align:center"></div>
+
+        <div class="btn-row hud-row">
+          <button class="hud plate hud-wide glitches" id="verify" aria-label="Verify files">
+            <span class="back"></span>
+            <span class="face"><span class="scan"></span><span class="pips"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Verify files">Verify files</span></span>
+          </button>
+        </div>
       </div>
-
-      <button class="action play" id="play" disabled>JACK IN</button>
-
-      <!-- Why the button is dead. A greyed-out Launch with no explanation is the most
-           frustrating thing a launcher can do - people conclude it is broken and leave,
-           when the answer is usually one sentence. -->
-      <div class="field-hint" id="playReason" style="text-align:center;margin-top:.35rem"></div>
 
       <div class="footlinks">
         <button class="linkbtn" id="pickGameDir">Game not found? Locate it</button>
@@ -1568,12 +2252,13 @@
         <span class="sep">·</span>
         <button class="linkbtn" id="resetLauncher">Sign out &amp; reset</button>
       </div>
+      <span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
     </div>
 
     <div class="status" id="status"></div>
 
     <!-- Server controls. Hidden unless the signed-in Discord id is an admin. -->
-    <div class="card admin" id="adminPanel" style="display:none">
+    <div class="card admin bay" id="adminPanel" style="display:none">
       <div class="admin-head">
         <span class="admin-title">Server</span>
         <span class="serverstate" id="serverState">
@@ -1619,6 +2304,7 @@
           <button class="action stop" id="stopCoord">Stop</button>
         </div>
       </div>
+      <span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
     </div>
 
     </div><!-- /col-right -->
@@ -1628,15 +2314,17 @@
          hosting anything. Install opens the mod page; the download comes back through
          the nxm:// handler when you press "Mod Manager Download" there. -->
     <div class="col-mods">
-      <div class="card changelog" style="flex:1; min-height:0">
+      <div class="card changelog bay" style="flex:1; min-height:0">
         <div class="admin-head">
-          <span class="admin-title">Mods</span>
+          <span class="admin-title" data-n="03">Mods</span>
           <span class="serverstate" id="modCount"></span>
         </div>
 
-        <div class="btn-row" style="margin:.5rem 0">
-          <button class="action verify" id="verifyAllMods">Verify all</button>
-        </div>
+        <button class="hud wired hud-wide glitches" id="verifyAllMods" aria-label="Verify all">
+          <svg class="wire" viewBox="0 0 32 38" aria-hidden="true"><circle cx="5" cy="29" r="3.5"></circle><path d="M8.5 29H15L24 20H32"></path></svg>
+          <span class="pulse"></span>
+          <span class="face"><span class="scan"></span><span class="pips"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Verify all">Verify all</span></span>
+        </button>
 
         <div class="modlist" id="modList"></div>
 
@@ -1665,19 +2353,25 @@
         <!-- Install anything from Nexus without a second mod manager: paste the mod's
              page link (or just its number) and it lands here, recorded file by file
              like everything else, listed under YOUR MODS above. -->
-        <div class="btn-row" style="margin-top:.5rem">
-          <input type="text" id="addModInput" placeholder="Nexus mod link or number..."
-                 class="field"
+        <div class="add-row">
+          <input type="text" id="addModInput" placeholder="Nexus mod link or number"
+                 class="input" aria-label="Nexus mod link or number"
                  spellcheck="false">
-          <button class="action ghost" id="addModBtn" style="flex:0 0 auto">Add mod</button>
+          <button class="hud wired hud-add glitches" id="addModBtn" aria-label="Add mod">
+            <svg class="wire" viewBox="0 0 22 36" aria-hidden="true"><circle cx="3" cy="22" r="2.5"></circle><path d="M5.5 22H8L16 14H22"></path></svg>
+            <span class="pulse"></span>
+            <span class="face"><span class="scan"></span><span class="pips"><i></i><i></i><i></i><i></i></span><span class="label" data-text="Add mod">Add mod</span></span>
+          </button>
         </div>
 
         <div class="field-hint" id="modHint" style="margin-top:.5rem"></div>
+        <span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
       </div>
     </div>
   </main>
 
   <footer>
+    <svg class="ln-trace" width="900" height="22" viewBox="0 0 900 22" aria-hidden="true"><defs><linearGradient id="ln-f" gradientUnits="userSpaceOnUse" x1="0" x2="640" y1="0" y2="0"><stop offset="0" class="ln-a"/><stop offset="0.8" class="ln-a"/><stop offset="1" class="ln-a2"/></linearGradient><linearGradient id="ln-ft" gradientUnits="userSpaceOnUse" x1="640" x2="860" y1="0" y2="0"><stop offset="0" class="ln-a"/><stop offset="0.35" class="ln-a2"/><stop offset="1" class="ln-out"/></linearGradient></defs><rect x="640" y="6" width="220" height="2" fill="url(#ln-ft)"/><polygon points="0,20 456,20 464,12 524,12 524,20 536,20 536,8 462,8 454,16 0,16" fill="url(#ln-f)"/><polygon points="0,13 453,13 461,5 628,5 628,13 640,13 640,1 459,1 451,9 0,9" fill="url(#ln-f)"/><rect class="ln-pad" x="524" y="8" width="12" height="12"/><rect class="ln-pad" x="628" y="1" width="12" height="12"/></svg>
     <div class="links">
       <button class="linkbtn" data-link="release">Download the mod</button>
       <span class="sep">·</span>
@@ -1699,6 +2393,51 @@
 
 <script>
   const $ = (id) => document.getElementById(id)
+
+  // The button kit keeps its text on an inner span, and the glitch reads its own copy from
+  // data-text. Going through here keeps the two, and the accessible name, in step.
+  function setHudButton (btn, text, state) {
+    const label = btn.querySelector('.label')
+    label.textContent = text
+    label.dataset.text = text
+    btn.setAttribute('aria-label', text)
+    if (state) btn.dataset.state = state
+    else delete btn.dataset.state
+  }
+
+  // A one-shot animation class: removed and re-added so it replays, then cleared.
+  function playOnce (el, cls, ms) {
+    el.classList.remove(cls)
+    void el.offsetWidth
+    el.classList.add(cls)
+    setTimeout(() => el.classList.remove(cls), ms)
+  }
+
+  // Once, when the button comes alive. Not on every re-render.
+  function armHudButton (btn) {
+    playOnce(btn, 'armed', 700)
+  }
+
+  // A result worth a moment on the button itself, only ever after the check really passed.
+  function flashHudButton (btn, text, restingText) {
+    btn.disabled = true
+    setHudButton(btn, text, 'ok')
+    setTimeout(() => {
+      setHudButton(btn, restingText)
+      btn.disabled = false
+    }, 1100)
+  }
+
+  // The click glitch. Capture phase, so it starts before the button's own handler disables
+  // it, and it never holds up what the click does.
+  document.addEventListener('click', (event) => {
+    const btn = event.target.closest('.glitches')
+    if (!btn) return
+    btn.classList.remove('hit')
+    void btn.offsetWidth
+    btn.classList.add('hit')
+    setTimeout(() => btn.classList.remove('hit'), 340)
+  }, true)
 
   const loginBtn = $('login')
   const playBtn = $('play')
@@ -1730,6 +2469,13 @@
   // The newest published test build, while a DIFFERENT test build is installed - what the
   // main Update button installs on a test build (see renderUpdateState). Null otherwise.
   let newerTestBuild = null
+
+  // True while the Nexus row is showing the key box for a signed-in account (Change key).
+  let nexusChangingKey = false
+
+  // True while the main Update button's applyUpdate runs, so its steps go on the wire. Settings'
+  // own installs report through the same channel and stay in Settings.
+  let updateRunning = false
 
   // Set from the main process as the launcher updates itself, not from any check we
   // run here - the updater owns that state and reports on it.
@@ -1817,7 +2563,7 @@
     const toolBtn = $('openTailscaleInvite')
     if (toolBtn) {
       toolBtn.disabled = !verified
-      toolBtn.textContent = verified ? 'Open invite' : 'Members only'
+      setHudButton(toolBtn, verified ? 'Open invite' : 'Members only')
       toolBtn.title = verified ? '' : 'Sign in and join the Night City Online Discord first.'
     }
   }
@@ -1888,20 +2634,19 @@
     // one player teleporting between two places. So the button locks and SAYS what it is
     // waiting for, because a dead button with no explanation reads as the launcher having
     // broken during the least reassuring possible moment.
+    const wasLocked = playBtn.disabled
     playBtn.disabled = !verified || !filesReady || !serverReady ||
                        gameState.launching || gameState.running
 
     if (gameState.launching) {
-      playBtn.textContent = 'JACKING IN...'
-    playBtn.classList.add('busy')
-      playBtn.classList.add('busy')
+      setHudButton(playBtn, 'JACKING IN...', 'busy')
     } else if (gameState.running) {
-      playBtn.classList.remove('busy')
-      playBtn.textContent = 'Game running'
+      setHudButton(playBtn, 'Game running', 'running')
     } else {
-      playBtn.classList.remove('busy')
-      playBtn.textContent = 'JACK IN'
+      setHudButton(playBtn, 'JACK IN')
     }
+
+    if (wasLocked && !playBtn.disabled) armHudButton(playBtn)
 
     // Say WHY, in the order someone has to fix them. Signing in first, then files, then
     // the server - listing a server outage to someone who has not signed in yet sends
@@ -1919,7 +2664,9 @@
     } else if (!updateState.installed) {
       blockers.push('The mod is not installed — open Settings and press Install')
     } else if (!(updateState.upToDate || updateState.offline)) {
-      blockers.push('Your mod is out of date — press Update')
+      blockers.push(updateState.payloadCurrent
+        ? 'The frameworks the mod runs on need updating — press Update'
+        : 'Your mod is out of date — press Update')
     }
 
     if (!serverState) {
@@ -1940,7 +2687,13 @@
       } else if (tailscaleState && !tailscaleState.connected) {
         blockers.push('Tailscale is installed but not signed in — open it from the system tray')
       } else if (tailscaleState && tailscaleState.connected) {
-        blockers.push("You are not on the server's network yet — press “Join the server's network” above and accept the invite")
+        // The button this names is only ever shown to a verified member (renderTailnetInvite),
+        // and the main process refuses the invite to anyone else. Someone signed out or not in
+        // the Discord yet is told what comes first, not sent looking for a control that is not
+        // on their screen.
+        blockers.push(verified
+          ? "You are not on the server's network yet — press “Join the server's network” above and accept the invite"
+          : "The server's network opens to you once you have joined the Discord")
       } else {
         blockers.push('Cannot reach the server — press Verify files for a step-by-step check')
       }
@@ -1958,6 +2711,11 @@
     refreshNexus()
 
     showAdminPanel(signedIn && user.isAdmin)
+
+    // Above the signed-out return, not after it. A verified member who logs out while the
+    // server is unreachable kept the members-only invite on screen otherwise, and the main
+    // process refuses it, so the press could only fail.
+    renderTailnetInvite()
 
     if (!signedIn) {
       $('gateText').textContent = 'Not verified'
@@ -1988,8 +2746,6 @@
         'Your Discord account is verified, but you are not in Night City Online. ' +
         'Join, then sign in again.'
     }
-
-    renderTailnetInvite()
   }
 
   // If the preload failed to load, window.launcher does not exist and every button
@@ -2197,11 +2953,13 @@
     // inside that gap - which is precisely the double launch this exists to prevent.
     if (playBtn.disabled) return
     playBtn.disabled = true
-    playBtn.textContent = 'JACKING IN...'
+    setHudButton(playBtn, 'JACKING IN...', 'busy')
 
     setStatus('Starting game...')
     const result = await window.launcher.launchGame()
     setStatus(result.ok ? 'Game started.' : result.error, result.ok ? 'ok' : 'error')
+    // A refused launch must not leave the working stripes running until the next poll.
+    if (!result.ok) render(signedInUser)
   })
 
   // Launching / running / closed, pushed from the main process.
@@ -2240,22 +2998,53 @@
 
   // --- updates ---------------------------------------------------------------
 
+  // Update has two homes (THE UPDATE PLATE). 'path': above JACK IN and wired into it, because the
+  // update is what stands between the player and the game. 'row': beside Verify, for a newer test
+  // build, which blocks nothing. null: hidden. It only moves when its home changes, so a re-render
+  // never replays the arrival or drops keyboard focus.
+  function placeUpdate (where, title) {
+    const btn = $('update')
+    const wire = $('updateWire')
+    const was = btn.style.display === 'none' ? null : (btn.classList.contains('in-path') ? 'path' : 'row')
+    btn.title = title || ''
+    // A re-render while it is working (Verify reports the version too) must not re-arm it.
+    if (where && btn.dataset.state !== 'busy') btn.disabled = false
+    if (where === was) return
+
+    if (where === 'path') wire.before(btn)
+    else if (where === 'row') $('verify').after(btn)
+    btn.classList.toggle('in-path', where === 'path')
+    btn.classList.toggle('optional', where === 'row')
+    btn.style.display = where ? '' : 'none'
+    wire.style.display = where === 'path' ? '' : 'none'
+
+    if (where) {
+      playOnce(btn, 'arrive', 500)
+      if (where === 'path') playOnce(wire, 'arrive', 500)
+    } else {
+      // Hidden mid-exit after an update landed, so it comes back clean next time.
+      btn.classList.remove('leaving')
+      wire.classList.remove('leaving')
+      setHudButton(btn, 'Update')
+      $('updateReadout').textContent = ''
+    }
+  }
+
   function renderUpdateState () {
     const dot = $('updateDot')
     const text = $('updateText')
-    const updateBtn = $('update')
 
     if (!updateState) {
       dot.className = 'dot'
       text.textContent = 'Checking for updates...'
-      updateBtn.style.display = 'none'
+      placeUpdate(null)
       return
     }
 
     if (!updateState.installed) {
       dot.className = 'dot'
       text.textContent = 'Mod not installed'
-      updateBtn.style.display = 'none'
+      placeUpdate(null)
       return
     }
 
@@ -2264,7 +3053,7 @@
       // has the files - an outage should not stop a game that would work fine.
       dot.className = 'dot on'
       text.textContent = 'Update check unavailable - playing offline'
-      updateBtn.style.display = 'none'
+      placeUpdate(null)
       return
     }
 
@@ -2289,22 +3078,22 @@
         text.textContent = 'Test build - ' + updateState.testBuildTag +
           (newerTestBuild ? ' · ' + short(newerTestBuild) + ' available' : '') +
           (manifestSummary ? ' · ' + manifestSummary : '')
-        updateBtn.style.display = newerTestBuild ? 'inline-block' : 'none'
-        updateBtn.disabled = false
-        updateBtn.title = newerTestBuild ? 'Installs test build ' + newerTestBuild + ' - not the public release' : ''
+        placeUpdate(newerTestBuild ? 'row' : null,
+          newerTestBuild ? 'Installs test build ' + newerTestBuild + ' - not the public release' : '')
       } else {
         text.textContent = 'Mod up to date' + (updateState.version ? ' - ' + updateState.version : '') +
           (manifestSummary ? ' · ' + manifestSummary : '')
         // Nothing to do, so the button is not shown at all. A permanently disabled
         // "Update" button invites people to keep pressing it wondering what is broken.
-        updateBtn.style.display = 'none'
+        placeUpdate(null)
       }
     } else {
       dot.className = 'dot'
-      text.textContent = 'Mod update required' + (updateState.version ? ' - ' + updateState.version : '')
-      updateBtn.style.display = 'inline-block'
-      updateBtn.disabled = false
-      updateBtn.title = ''
+      text.textContent = (updateState.payloadCurrent ? 'Framework update required' : 'Mod update required') +
+        (updateState.version ? ' - ' + updateState.version : '')
+      placeUpdate('path', updateState.payloadCurrent
+        ? 'Brings ' + (updateState.prerequisitesStale || []).join(', ') + ' to the versions this release uses'
+        : '')
     }
   }
 
@@ -2382,36 +3171,90 @@
 
     let list = null
 
-    for (const rawLine of markdown.split(/\r?\n/)) {
-      const line = rawLine.trim()
-
-      // Skip the markdown table rows and images the release body uses for layout.
-      if (!line || line.startsWith('|') || line.startsWith('<')) continue
-
-      if (line.startsWith('#')) {
+    for (const block of parseNotes(markdown)) {
+      if (block.kind === 'heading') {
         list = null
         const h = document.createElement('h4')
-        h.textContent = line.replace(/^#+\s*/, '')
+        h.textContent = block.text
         body.appendChild(h)
         continue
       }
 
-      if (line.startsWith('- ') || line.startsWith('* ')) {
+      if (block.kind === 'item') {
         if (!list) {
           list = document.createElement('ul')
           body.appendChild(list)
         }
         const li = document.createElement('li')
-        li.textContent = stripMarkdown(line.slice(2))
+        li.textContent = stripMarkdown(block.text)
         list.appendChild(li)
         continue
       }
 
       list = null
       const p = document.createElement('p')
-      p.textContent = stripMarkdown(line)
+      p.textContent = stripMarkdown(block.text)
       body.appendChild(p)
     }
+  }
+
+  // Turns the release body into whole blocks, before any element exists.
+  //
+  // The notes are hard-wrapped at about 90 columns, so one source line is not one thought: a
+  // paragraph arrives as three or four lines, and a list item as its first line plus indented
+  // continuations. Treating each line as a block broke paragraphs into fragments and dropped
+  // the end of every list item out of its list. This folds them back together first, which
+  // also lets bold or a link that crosses a line break lose its markers in stripMarkdown.
+  //
+  // A line continues whatever block is open, and only a blank line, a heading, a new list item
+  // or a layout row closes one. That is the rule markdown itself uses, so the notes read here
+  // the way they read on the GitHub release. Numbered steps and quotes are written one per
+  // line, so each starts its own block, and a code fence keeps its lines apart.
+  function parseNotes (markdown) {
+    const blocks = []
+    let open = null
+    let inFence = false
+
+    for (const rawLine of markdown.split(/\r?\n/)) {
+      const line = rawLine.trim()
+
+      // Skip the markdown table rows and images the release body uses for layout.
+      if (!line || line.startsWith('|') || line.startsWith('<')) {
+        open = null
+        continue
+      }
+
+      if (line.startsWith('#')) {
+        open = null
+        blocks.push({ kind: 'heading', text: line.replace(/^#+\s*/, '') })
+        continue
+      }
+
+      if (line.startsWith('- ') || line.startsWith('* ')) {
+        open = { kind: 'item', text: line.slice(2) }
+        blocks.push(open)
+        continue
+      }
+
+      const isFence = line.startsWith('```')
+      if (isFence) inFence = !inFence
+
+      if (isFence || inFence) {
+        open = null
+        blocks.push({ kind: 'paragraph', text: line })
+        continue
+      }
+
+      if (open && !/^(\d+[.)]\s|>)/.test(line)) {
+        open.text += ' ' + line
+        continue
+      }
+
+      open = { kind: 'paragraph', text: line }
+      blocks.push(open)
+    }
+
+    return blocks
   }
 
   // Strips the emphasis markers so notes read as prose rather than raw markdown.
@@ -2568,13 +3411,13 @@
   $('verify').addEventListener('click', async () => {
     const btn = $('verify')
     btn.disabled = true
-    btn.textContent = 'Checking...'
+    setHudButton(btn, 'Checking...', 'checking')
     setStatus('Checking your files...')
 
     const result = await window.launcher.verifyInstall()
 
     btn.disabled = false
-    btn.textContent = 'Verify files'
+    setHudButton(btn, 'Verify files')
 
     if (!result.ok && result.error) {
       setStatus(result.error, 'error')
@@ -2597,6 +3440,7 @@
 
     if (result.ok) {
       setStatus(`Everything checks out - ${result.redscriptCount} script files, ${result.version || 'current'}`, 'ok')
+      flashHudButton(btn, 'Files OK', 'Verify files')
       return
     }
 
@@ -2653,6 +3497,20 @@
 
   // --- settings modal --------------------------------------------------------
 
+  // A bracket button for rows the script builds (the test-build list): the same layers as the
+  // ones in the page, so it reads, moves and glitches the same. Text goes in with setHudButton.
+  const SB_LAYERS = '<span class="fill"></span><span class="scan"></span>' +
+    '<span class="c" aria-hidden="true"><i></i><i></i><i></i><i></i></span>' +
+    '<span class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="label"></span>'
+  function makeSettingsButton (text, { danger = false, square = false } = {}) {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'sb sb-bracket glitches' + (danger ? ' danger' : '') + (square ? ' sb-square' : '')
+    btn.innerHTML = SB_LAYERS
+    setHudButton(btn, text)
+    return btn
+  }
+
   function setSettingsStatus (msg, kind) {
     const el = $('settingsStatus')
     el.textContent = msg || ''
@@ -2684,7 +3542,7 @@
     if (!box || !btn) return
 
     btn.disabled = true
-    btn.textContent = 'Checking...'
+    setHudButton(btn, 'Checking...', 'checking')
 
     try {
       const result = await window.launcher.checkup()
@@ -2703,7 +3561,7 @@
       box.innerHTML = check(false, 'The checkup itself failed - try again.')
     } finally {
       btn.disabled = false
-      btn.textContent = 'Run checkup'
+      setHudButton(btn, 'Run checkup')
     }
   }
 
@@ -2730,7 +3588,7 @@
 
     // Install is only meaningful when it is not already there; Reinstall covers the
     // rest. Showing both as equally available invites people to pick the wrong one.
-    $('installAll').textContent = paths.modDir ? 'Reinstall all' : 'Install'
+    setHudButton($('installAll'), paths.modDir ? 'Reinstall all' : 'Install')
 
 
     // The dev section rides on the same answer that decides the server controls, so a
@@ -2743,7 +3601,7 @@
     // a key in the next screenshot.
     $('devKeyValue').style.display = 'none'
     $('devKeyValue').textContent = ''
-    $('revealDevKey').textContent = 'Reveal'
+    setHudButton($('revealDevKey'), 'Reveal')
     $('revealDevKey').disabled = false
 
     if (debug && debug.admin) {
@@ -2759,13 +3617,13 @@
     const button = $('revealDevKey')
 
     button.disabled = true
-    button.textContent = 'Fetching...'
+    setHudButton(button, 'Fetching...', 'checking')
 
     const result = await window.launcher.devKey()
 
     if (!result.ok) {
       button.disabled = false
-      button.textContent = 'Reveal'
+      setHudButton(button, 'Reveal')
       setSettingsStatus(result.error, 'bad')
       return
     }
@@ -2781,7 +3639,7 @@
       `Auth:  Authorization: Bearer <key>`
 
     box.style.display = 'block'
-    button.textContent = 'Copy'
+    setHudButton(button, 'Copy')
     button.disabled = false
 
     button.onclick = async () => {
@@ -2801,13 +3659,13 @@
     const btn = $('runConnTest')
 
     btn.disabled = true
-    btn.textContent = 'Testing...'
+    setHudButton(btn, 'Testing...', 'checking')
     box.innerHTML = ''
 
     const result = await window.launcher.connectivityTest()
 
     btn.disabled = false
-    btn.textContent = 'Run test'
+    setHudButton(btn, 'Run test')
     if (!result.ok) { setSettingsStatus('The test itself failed - try again.', 'error'); return }
 
     box.innerHTML = result.steps.map(s => check(s.ok, `${s.name} - ${s.detail}`)).join('')
@@ -2923,14 +3781,10 @@
         'padding:10px 12px;border-left:2px solid var(--line,#2a1418);font-family:inherit;' +
         'font-size:12.5px;line-height:1.5;opacity:.85'
 
-      const twisty = document.createElement('button')
-      twisty.className = 'action ghost'
-      // Centred by the box, not by the glyph's own metrics: the collapsed and expanded
-      // characters are different shapes with different bearings, so padding plus
-      // line-height put them in two different places. A fixed square that centres its
-      // content lands both identically.
-      twisty.style.cssText = 'flex:none;display:flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;line-height:1'
-      twisty.textContent = release.notes ? '›' : ' '
+      // A fixed square that centres its glyph, so the collapsed and expanded characters -
+      // different shapes with different bearings - land in the same place.
+      const twisty = makeSettingsButton(release.notes ? '›' : '\u00a0', { square: true })
+      twisty.setAttribute('aria-label', 'What is this build for?')
       twisty.disabled = !release.notes
       twisty.setAttribute('aria-expanded', 'false')
       if (release.notes) twisty.title = 'What is this build for?'
@@ -2938,7 +3792,8 @@
       twisty.addEventListener('click', () => {
         const open = body.hidden
         body.hidden = !open
-        twisty.textContent = open ? '⌄' : '›'
+        setHudButton(twisty, open ? '⌄' : '›')
+        twisty.setAttribute('aria-label', open ? 'Hide the notes' : 'What is this build for?')
         twisty.setAttribute('aria-expanded', String(open))
       })
 
@@ -2957,9 +3812,7 @@
 
       // The installed build's button becomes Uninstall - testing builds one at a time
       // means getting OUT of one cleanly matters as much as getting in.
-      const button = document.createElement('button')
-      button.className = release.active ? 'action stop' : 'action ghost'
-      button.textContent = release.active ? 'Uninstall' : 'Install'
+      const button = makeSettingsButton(release.active ? 'Uninstall' : 'Install', { danger: release.active })
       // Installable means "has something install can use" - a payload OR a bare DLL.
       //
       // This asked for a DLL specifically, from when a test build was one. Install prefers
@@ -2976,11 +3829,11 @@
         button.disabled = true
 
         if (release.active) {
-          button.textContent = 'Removing...'
+          setHudButton(button, 'Removing...', 'checking')
           const restored = await window.launcher.prereleaseRestore()
           if (!restored.ok) {
             button.disabled = false
-            button.textContent = 'Uninstall'
+            setHudButton(button, 'Uninstall')
             setSettingsStatus(restored.error, 'bad')
             return
           }
@@ -2989,13 +3842,13 @@
           return
         }
 
-        button.textContent = 'Installing...'
+        setHudButton(button, 'Installing...', 'checking')
         setSettingsStatus(`Downloading ${release.tag}...`)
 
         const installed = await window.launcher.prereleaseInstall(release.tag)
         if (!installed.ok) {
           button.disabled = false
-          button.textContent = 'Install'
+          setHudButton(button, 'Install')
           setSettingsStatus(installed.error, 'bad')
           return
         }
@@ -3015,9 +3868,8 @@
 
       // The body is capped at 4000 characters in main, so the full page stays one click
       // away. Passes the TAG, not a URL - links:open is an allow-list and this respects it.
-      const more = document.createElement('button')
-      more.className = 'action ghost'
-      more.textContent = 'Open the full notes on GitHub'
+      const more = makeSettingsButton('Full notes')
+      more.title = 'Open the full notes on GitHub'
       more.style.cssText = 'margin:0 0 10px 22px'
       more.hidden = true
       more.addEventListener('click', () => window.launcher.prereleaseOpenNotes(release.tag))
@@ -3041,7 +3893,15 @@
     refreshPrereleases()
   })
 
+  // Settings is a dialog: while it is open nothing behind it can be reached, by Tab or by a
+  // screen reader, and closing it hands focus back to the gear. Tab past Done used to land
+  // on JACK IN behind the window, where Enter launched the game with Settings still open.
+  function settingsBehind () {
+    return [...document.body.children].filter((el) => el !== $('settingsModal') && el.tagName !== 'SCRIPT')
+  }
+
   function openSettings () {
+    settingsBehind().forEach((el) => { el.inert = true })
     $('settingsModal').style.display = 'flex'
     selectSettingsTab(currentSettingsTab)
     setSettingsStatus('')
@@ -3051,10 +3911,15 @@
     // open. Showing defaults over somebody's saved binding would look like the launcher
     // had forgotten it.
     loadVoicePrefs()
+
+    const tab = document.querySelector('#settingsTabs .active')
+    if (tab) tab.focus()
   }
 
   function closeSettings () {
     $('settingsModal').style.display = 'none'
+    settingsBehind().forEach((el) => { el.inert = false })
+    $('openSettings').focus()
 
     // Never leave the microphone open behind a closed dialog. Windows shows a recording
     // indicator, and a launcher that appears to be listening after you have walked away
@@ -3115,47 +3980,99 @@
   // lights and pressing it looks like it does nothing at all - zeldfep, 2026-09-09, on the
   // Tools tab: "this on tools has a 4 that leads to nothing". The rail was advertising a
   // position the pane could not physically reach.
+  // Where a section starts inside the scrolling body. A heading is measured on its bay: it is
+  // the bay's label tab, pinned inside it, so its own offsetTop is always 0.
+  function railTop (body, sec) {
+    const el = sec.classList.contains('rail-group') ? (sec.closest('.grp') || sec) : sec
+    return el.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop
+  }
+
   function railCurrent (body, sections) {
     if (sections.length === 0) return 0
     if (body.scrollTop + body.clientHeight >= body.scrollHeight - 4) return sections.length - 1
 
     let current = 0
     for (let i = 0; i < sections.length; i++) {
-      if (sections[i].offsetTop <= body.scrollTop + 12) current = i
+      if (railTop(body, sections[i]) <= body.scrollTop + 12) current = i
     }
     return current
   }
 
   const railPad = (n) => String(n).padStart(2, '0')
 
-  // Which section numbers the rail can actually show, given its height.
+  // THE LADDER'S SUMS: where each section's number sits on the rail, in whole pixels.
   //
-  // Returns indices in order, with null wherever a run was skipped. Always keeps the first,
-  // the last and the current one, then widens outwards from current until it runs out of
-  // room - so the numbers nearest where you are stay visible, which is what makes it TRACK
-  // rather than merely fit.
-  function railPlan (count, current, track) {
-    const probe = track.querySelector('.rail-num')
-    const tickH = probe ? Math.max(12, probe.getBoundingClientRect().height + 1) : 18
-    const avail = track.clientHeight || (track.parentElement ? track.parentElement.clientHeight : 0)
-    const max = Math.max(3, Math.floor(avail / tickH))
-    if (count <= max) return Array.from({ length: count }, (_, i) => i)
+  // A section's reach is where railGo takes you for it - its top less 8px, clamped to how far
+  // the pane scrolls. Numbers are spread by reach from the top rung (01, reach 0) to the bottom
+  // rung (the last section, which is current from its reach to the end of the scroll), snapped
+  // to the rung grid, with two rungs between neighbours so labels never touch; a number pushed
+  // to make room keeps its order. The pitch is 7px unless that cannot give every number a rung
+  // of its own (dozens of sections - Tools had thirteen stops before its groups existed), and
+  // then it tightens rather than letting numbers pile up.
+  const RAIL_RUNG = 7
+  const RAIL_INSET = 6
+  function railLadder (body, sections, height) {
+    const n = sections.length
+    const max = Math.max(1, body.scrollHeight - body.clientHeight)
+    const span = Math.max(1, height - RAIL_INSET * 2)
+    const pitch = Math.max(2, Math.min(RAIL_RUNG, Math.floor(span / Math.max(1, n - 1))))
+    const rungs = Math.floor(span / pitch)
+    const gap = Math.max(1, Math.min(2, Math.floor(rungs / Math.max(1, n - 1))))
+    const reach = sections.map((sec, i) => (i === 0 ? 0 : Math.max(0, Math.min(railTop(body, sec) - 8, max))))
+    const last = Math.max(1, reach[n - 1])
+    const at = reach.map((r) => Math.round(r / last * rungs))
+    for (let i = 1; i < n; i++) at[i] = Math.max(at[i], at[i - 1] + gap)
+    at[n - 1] = Math.min(at[n - 1], rungs)
+    for (let i = n - 2; i >= 0; i--) at[i] = Math.min(at[i], at[i + 1] - gap)
+    return { reach, pitch, y: at.map((u) => RAIL_INSET + Math.max(0, u) * pitch) }
+  }
 
-    const keep = new Set([0, count - 1, current])
-    for (let radius = 1; keep.size + 2 < max; radius += 1) {
-      const before = keep.size
-      if (current - radius > 0) keep.add(current - radius)
-      if (current + radius < count - 1) keep.add(current + radius)
-      if (keep.size === before) break
+  // The pointer: how far through the pane you are, drawn between the numbers' own reaches, so
+  // it is ON a number exactly when you are at that number's section, however far the number
+  // was snapped or pushed - and it rests on the last one from its reach to the end.
+  function railPointerY (scroll, reach, y) {
+    let i = 0
+    for (let k = 0; k < reach.length; k++) if (reach[k] <= scroll) i = k
+    if (i === reach.length - 1) return y[i]
+    const t = (scroll - reach[i]) / Math.max(1, reach[i + 1] - reach[i])
+    return Math.round(y[i] + t * (y[i + 1] - y[i]))
+  }
+
+  // Onto a whole device pixel, BY LAYOUT. Auto margins leave the rail on half a pixel whenever the
+  // leftover height is odd, and the modal can sit on a fraction too. The 1px rungs get snapped to
+  // pixels when painted, but the arrow is a clipped shape and does not: at 800x600 it sat half a
+  // pixel off its tick. A transform cannot fix it - the rungs are snapped BEFORE a transform is
+  // applied, so a 0.5px translate smeared every rung across two rows. So measure where the TRACK
+  // lands (the .4rem gaps above it are 6.4px, so it carries its own fraction) and pin the rail's
+  // top margin that fraction away. updateRail calls this when the rail's fit changes; the modal's
+  // entrance animation moves it, so the animation's end calls it too.
+  function railSnap () {
+    const rail = $('sectionRail')
+    const track = $('railTrack')
+    if (!rail || !track || rail.hidden) return
+    rail.style.marginTop = ''
+    const dpr = window.devicePixelRatio || 1
+    const frac = ((track.getBoundingClientRect().top * dpr) % 1 + 1) % 1
+    if (frac < 0.001 || frac > 0.999) return
+    const nudge = (frac < 0.5 ? -frac : 1 - frac) / dpr
+    const parent = rail.offsetParent
+    const from = parent ? parent.getBoundingClientRect().top + parent.clientTop : 0
+    rail.style.marginTop = (rail.getBoundingClientRect().top - from + nudge) + 'px'
+  }
+
+  // The same sums backwards, for dragging: a point on the ladder -> the scroll that puts the
+  // pointer there. So the arrow stays under the cursor, and dropping it on a number lands at that
+  // number's section exactly. The last number is the end of the scroll.
+  function railScrollFor (y, reach, ys, max) {
+    if (y <= ys[0]) return 0
+    if (y >= ys[ys.length - 1]) return max
+    for (let i = 0; i < ys.length - 1; i++) {
+      if (y <= ys[i + 1]) {
+        const span = ys[i + 1] - ys[i]
+        return reach[i] + (span > 0 ? (y - ys[i]) / span : 1) * (reach[i + 1] - reach[i])
+      }
     }
-
-    const idx = [...keep].sort((a, b) => a - b)
-    const out = []
-    idx.forEach((v, i) => {
-      if (i > 0 && v !== idx[i - 1] + 1) out.push(null)
-      out.push(v)
-    })
-    return out
+    return max
   }
 
   function updateRail () {
@@ -3167,43 +4084,39 @@
     const overflows = body.scrollHeight > body.clientHeight + 8
     if (sections.length < 2 || !overflows) { rail.hidden = true; return }
     rail.hidden = false
+    const parent = rail.offsetParent
+    const fit = `${innerWidth}x${innerHeight}:${rail.offsetHeight}:${parent ? parent.clientHeight : 0}`
+    if (rail.dataset.fit !== fit) { rail.dataset.fit = fit; railSnap() }
 
     const current = railCurrent(body, sections)
 
-    // The rail tracks however many sections exist, instead of assuming they all fit.
-    //
-    // One tick per section works while there are four; it silently overflows the rail once
-    // there are a dozen, and Tools had thirteen stops before the groups existed. So measure
-    // what fits and, when there are more, keep the ends, keep a window around where you are,
-    // and mark the gaps - the position readout underneath still names the true index, so
-    // nothing is lost by not drawing every number.
-    const plan = railPlan(sections.length, current, track)
+    const ladder = railLadder(body, sections, track.clientHeight || 230)
 
-    // Rebuild ONLY when the visible set actually changes. This runs on every scroll event;
-    // replacing the DOM under the pointer would kill :hover mid-aim and throw away focus if
-    // someone is tabbing through. The signature covers the window shifting, not just the
-    // count changing.
-    const sig = plan.join(',')
+    // Rebuild ONLY when the ladder actually changes - its positions depend on the content, not
+    // on the scroll. This runs on every scroll event; replacing the DOM under the pointer would
+    // kill :hover mid-aim and throw away focus if someone is tabbing through.
+    const sig = ladder.pitch + ':' + ladder.y.join(',')
     if (track.dataset.railSig !== sig) {
       track.dataset.railSig = sig
       track.textContent = ''
-      plan.forEach((i) => {
-        if (i === null) {
-          const gap = document.createElement('span')
-          gap.className = 'rail-num rail-gap'
-          gap.textContent = '·'
-          gap.setAttribute('aria-hidden', 'true')
-          track.appendChild(gap)
-          return
-        }
-        const sec = sections[i]
+      const rungs = document.createElement('span')
+      rungs.className = 'rail-ladder'
+      rungs.setAttribute('aria-hidden', 'true')
+      rungs.style.top = ladder.y[0] + 'px'
+      rungs.style.height = (ladder.y[ladder.y.length - 1] - ladder.y[0] + 1) + 'px'
+      rungs.style.setProperty('--rung', ladder.pitch + 'px')
+      track.appendChild(rungs)
+      sections.forEach((sec, i) => {
         const mark = document.createElement('button')
         mark.type = 'button'
         mark.className = 'rail-num'
         mark.dataset.index = String(i)
-        mark.textContent = railPad(i + 1)
+        mark.style.top = ladder.y[i] + 'px'
+        const digits = document.createElement('span')
+        digits.textContent = railPad(i + 1)
+        mark.appendChild(digits)
         const name = sec.classList.contains('rail-group') ? sec : sec.querySelector('.tool-name')
-        const label = name ? name.textContent.trim() : 'Section ' + (i + 1)
+        const label = sec.dataset.name || (name ? name.textContent.trim() : 'Section ' + (i + 1))
         // The number is the visible label, so the section name has to arrive some other
         // way - title for the mouse, aria-label for a screen reader.
         mark.title = label
@@ -3211,12 +4124,19 @@
         mark.addEventListener('click', () => railGo(i))
         track.appendChild(mark)
       })
+      const pointer = document.createElement('span')
+      pointer.className = 'rail-pointer'
+      pointer.setAttribute('aria-hidden', 'true')
+      track.appendChild(pointer)
     }
 
     for (const mark of track.children) {
       if (mark.dataset.index === undefined) continue
       mark.classList.toggle('on', Number(mark.dataset.index) === current)
     }
+    // While it is being dragged, the drag places the pointer - under the cursor, to the pixel.
+    const pointer = track.querySelector('.rail-pointer')
+    if (pointer && !track.classList.contains('dragging')) pointer.style.top = railPointerY(body.scrollTop, ladder.reach, ladder.y) + 'px'
 
     // Only rewrite the readout when it actually changed - it is otherwise a DOM write on
     // every scroll frame for text that did not move.
@@ -3243,7 +4163,9 @@
     const { sections } = railSections()
     if (!body || sections.length === 0) return
     const i = Math.max(0, Math.min(sections.length - 1, index))
-    body.scrollTo({ top: i === 0 ? 0 : sections[i].offsetTop - 8, behavior: 'smooth' })
+    // With animations turned off the pane jumps, like everything else that would travel.
+    const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    body.scrollTo({ top: i === 0 ? 0 : railTop(body, sections[i]) - 8, behavior: calm ? 'auto' : 'smooth' })
   }
 
   function railStep (dir) {
@@ -3256,6 +4178,115 @@
   $('railUp').addEventListener('click', () => railStep(-1))
   $('railDown').addEventListener('click', () => railStep(1))
   document.querySelector('#settingsModal .modal-body').addEventListener('scroll', updateRail, { passive: true })
+  // The ladder's positions come from the layout, so a resize that reflows the pane moves them.
+  window.addEventListener('resize', updateRail)
+
+  // THE MAIN WINDOW'S BAYS. The launch bay's spec line counts its own lit lamps, and each bay lands
+  // on whole pixels: the middle ones sit under text of fractional height and hold rows of fractional
+  // height, and a clip-path edge is not snapped the way a border is, so a bay on a fraction blurs
+  // its 1px frame (railSnap, for a box). Lamps and text change from a dozen places, so this watches
+  // the window rather than asking each of them to report. It stops watching while it writes, or its
+  // own writes would wake it again.
+  function lampLine (lit, total) {
+    return lit === total ? `${lit} systems · all green` : `${lit} of ${total} systems green`
+  }
+  function countLamps () {
+    const gates = [...$('launchBay').querySelectorAll('.gate')].filter((g) => g.style.display !== 'none')
+    const lit = gates.filter((g) => g.querySelector('.dot').classList.contains('on')).length
+    $('launchLamps').textContent = lampLine(lit, gates.length)
+  }
+  const bayWatch = new MutationObserver(settleBays)
+  function watchBays () {
+    bayWatch.observe(document.querySelector('main'), { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['class', 'style'] })
+  }
+  function snapBays () {
+    bayWatch.disconnect()
+    const dpr = window.devicePixelRatio || 1
+    const bays = [...document.querySelectorAll('main .bay')]
+    bays.forEach((b) => { b.style.marginTop = ''; b.style.minHeight = '' })
+    for (const b of bays) {
+      if (b.offsetParent === null) continue
+      const top = b.getBoundingClientRect().top
+      const nudge = Math.ceil(top * dpr) / dpr - top
+      if (nudge > 0.001) b.style.marginTop = nudge + 'px'
+      const height = b.getBoundingClientRect().height
+      const whole = Math.ceil(height * dpr) / dpr
+      if (whole - height > 0.001) b.style.minHeight = whole + 'px'
+    }
+    watchBays()
+  }
+  let baysQueued = false
+  function settleBays () {
+    if (baysQueued) return
+    baysQueued = true
+    requestAnimationFrame(() => { baysQueued = false; countLamps(); snapBays() })
+  }
+  window.addEventListener('resize', settleBays)
+  document.fonts.ready.then(settleBays)
+  watchBays()
+  settleBays()
+  // The modal slides in, so a rail measured while it moved is snapped to the wrong pixel.
+  document.querySelector('#settingsModal .modal').addEventListener('animationend', railSnap)
+
+  // Dragging the arrow scrolls the pane. Pressing the ladder anywhere that is not a number jumps
+  // the arrow there and carries on as a drag, like the track of a scrollbar. Grabbed on the arrow
+  // itself, it keeps where you caught it, so it does not jump to centre on the cursor. The pane
+  // moves instantly and the rail is redrawn by hand, not left to the scroll event, so the numbers
+  // light under the arrow as it passes them.
+  {
+    const track = $('railTrack')
+    let drag = null
+    const move = (e) => {
+      if (!drag || e.pointerId !== drag.id) return
+      const ys = drag.ladder.y
+      const y = Math.round(Math.max(ys[0], Math.min(ys[ys.length - 1], e.clientY - drag.top + drag.offset)))
+      drag.body.scrollTop = railScrollFor(y, drag.ladder.reach, ys, drag.max)
+      updateRail()
+      const pointer = track.querySelector('.rail-pointer')
+      if (pointer) pointer.style.top = y + 'px'
+    }
+    const end = (e) => {
+      if (!drag || e.pointerId !== drag.id) return
+      drag = null
+      track.classList.remove('dragging')
+      updateRail()
+    }
+    track.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return
+      const onArrow = e.target.closest('.rail-pointer')
+      if (!onArrow && e.target !== track) return // a number is a button of its own
+      const body = document.querySelector('#settingsModal .modal-body')
+      const { sections } = railSections()
+      if (!body || sections.length < 2) return
+      const ladder = railLadder(body, sections, track.clientHeight || 230)
+      const top = track.getBoundingClientRect().top
+      const at = onArrow ? parseFloat(onArrow.style.top) : NaN
+      drag = {
+        body, ladder, top, id: e.pointerId,
+        max: Math.max(0, body.scrollHeight - body.clientHeight),
+        // The arrow's middle is the middle of its tick's pixel, half a pixel below its top.
+        offset: Number.isFinite(at) ? at - (e.clientY - top) : -0.5
+      }
+      track.setPointerCapture(e.pointerId)
+      track.classList.add('dragging')
+      e.preventDefault()
+      move(e)
+    })
+    track.addEventListener('pointermove', move)
+    track.addEventListener('pointerup', end)
+    track.addEventListener('pointercancel', end)
+    track.addEventListener('lostpointercapture', end)
+  }
+
+  // The wheel over the rail scrolls the pane, as it would over a scrollbar. The rail sits outside
+  // the scrolling body, so without this the wheel did nothing there.
+  $('sectionRail').addEventListener('wheel', (e) => {
+    const body = document.querySelector('#settingsModal .modal-body')
+    if (!body) return
+    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? body.clientHeight : 1
+    body.scrollBy({ top: e.deltaY * unit, behavior: 'auto' })
+    e.preventDefault()
+  }, { passive: false })
   // Content inside the panes changes after async loads (the checkup, mod lists) - keep
   // the rail honest without wiring every producer: observe and debounce.
   {
@@ -3271,11 +4302,24 @@
     if (e.key === 'Escape' && $('settingsModal').style.display !== 'none') closeSettings()
   })
 
+  // Tab and Shift+Tab wrap inside the window instead of leaving it.
+  $('settingsModal').addEventListener('keydown', (e) => {
+    if (e.key !== 'Tab') return
+    const stops = [...$('settingsModal').querySelectorAll('button, input, select, summary')]
+      .filter((el) => !el.disabled && el.getClientRects().length)
+    if (!stops.length) return
+    const first = stops[0]
+    const last = stops[stops.length - 1]
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+  })
+
   async function refreshNexus () {
     const status = await window.launcher.nexusStatus()
-    $('nexusState').textContent = status.signedIn
-      ? '✓ Signed in as ' + (status.name || 'Nexus user')
-      : 'Not signed in'
+    const signedIn = Boolean(status.signedIn)
+    if (!signedIn) nexusChangingKey = false
+    $('nexusState').textContent = signedIn ? 'Signed in · ' + (status.name || 'Nexus user') : 'Not signed in'
+    renderNexusRow(signedIn)
 
     // The header says the same thing, because that is where people look.
     //
@@ -3284,6 +4328,21 @@
     // so "Install does nothing" was the first anyone heard of it.
     renderNexusHeader(status)
   }
+
+  // Signed in, the row says who you are and offers Change key. The steps and the key box are
+  // for signing in, so they show only when signed out, or while the key is being changed.
+  function renderNexusRow (signedIn) {
+    $('nexusSigned').hidden = !signedIn
+    $('nexusChangeKey').hidden = !signedIn
+    $('nexusKeyEntry').hidden = signedIn && !nexusChangingKey
+    setHudButton($('nexusChangeKey'), nexusChangingKey ? 'Cancel' : 'Change key')
+  }
+
+  $('nexusChangeKey').addEventListener('click', () => {
+    nexusChangingKey = !nexusChangingKey
+    renderNexusRow(true)
+    if (nexusChangingKey) $('nexusKey').focus()
+  })
 
   // Shown next to the Discord account, in the same shape, because they are two halves of
   // one question: who are you here, and who are you on Nexus.
@@ -3424,7 +4483,7 @@
   async function scanVoiceDevices () {
     const btn = $('voiceScan')
     btn.disabled = true
-    btn.textContent = 'Searching...'
+    setHudButton(btn, 'Searching...', 'checking')
 
     try {
       // Permission FIRST. enumerateDevices returns entries either way, but the labels are
@@ -3466,7 +4525,7 @@
       $('voiceHint').textContent = 'Could not read the audio devices: ' + err.message
     } finally {
       btn.disabled = false
-      btn.textContent = 'Find devices'
+      setHudButton(btn, 'Find devices')
     }
   }
 
@@ -3489,11 +4548,11 @@
 
     const key = saved.pushToTalkKey || 'IK_Y'
     $('voiceBindKey').dataset.key = key
-    $('voiceBindKey').textContent = prettyKey(key)
+    setHudButton($('voiceBindKey'), prettyKey(key))
 
     const rangeKey = saved.cycleRangeKey || 'IK_F12'
     $('voiceBindRangeKey').dataset.key = rangeKey
-    $('voiceBindRangeKey').textContent = prettyKey(rangeKey)
+    setHudButton($('voiceBindRangeKey'), prettyKey(rangeKey))
 
     $('voiceMode').value = saved.mode || 'ptt'
 
@@ -3607,7 +4666,7 @@
 
       micTest = { stream, ctx, frame: 0 }
       $('voiceMeterRow').style.display = ''
-      btn.textContent = 'Stop'
+      setHudButton(btn, 'Stop')
       btn.classList.add('listening')
 
       tick()
@@ -3635,7 +4694,7 @@
     micTest = null
 
     $('voiceMeterRow').style.display = 'none'
-    $('voiceTest').textContent = 'Test'
+    setHudButton($('voiceTest'), 'Test')
     $('voiceTest').classList.remove('listening')
   }
 
@@ -3731,8 +4790,8 @@
 
     const btn = $(buttonId)
     const other = $(buttonId === 'voiceBindKey' ? 'voiceBindRangeKey' : 'voiceBindKey')
-    const previous = btn.textContent
-    btn.textContent = 'Press a key...'
+    const previous = btn.querySelector('.label').textContent
+    setHudButton(btn, 'Press a key...')
     btn.classList.add('listening')
 
     const finish = async (gameKey) => {
@@ -3742,7 +4801,7 @@
       btn.classList.remove('listening')
 
       if (!gameKey) {
-        btn.textContent = previous
+        setHudButton(btn, previous)
         return
       }
 
@@ -3750,7 +4809,7 @@
       // likely to be pressed together, and one key doing both means every range change
       // also puts you on air.
       if (other.dataset.key === gameKey) {
-        btn.textContent = previous
+        setHudButton(btn, previous)
         setSettingsStatus(prettyKey(gameKey) + ' is already your other voice key - '
           + 'talking and changing range need different keys.', 'error')
         return
@@ -3759,7 +4818,7 @@
       // The game's id is what gets saved and passed at launch; the button only ever shows
       // the readable form, so both have to be carried.
       btn.dataset.key = gameKey
-      btn.textContent = prettyKey(gameKey)
+      setHudButton(btn, prettyKey(gameKey))
 
       await saveVoicePrefs()
 
@@ -3874,7 +4933,7 @@
       $('voiceStatus').textContent = looksLikeLoopback(chosen)
         ? 'That device carries your computer\'s own audio. Other players would hear your game, '
           + 'music and Discord instead of you. Pick a microphone unless you know you want this.'
-        : 'Saved. Voice capture is not built yet - this only chooses the devices it will use.'
+        : 'Saved. Applies next time you launch.'
     })
   }
 
@@ -3886,12 +4945,13 @@
   $('nexusLogin').addEventListener('click', async () => {
     const btn = $('nexusLogin')
     btn.disabled = true
-    btn.textContent = 'Waiting for Nexus...'
+    setHudButton(btn, 'Waiting...', 'checking')
     setSettingsStatus('Nexus opened in your browser - press Authorise there.')
 
     const result = await window.launcher.nexusSsoLogin()
 
     btn.disabled = false
+    setHudButton(btn, 'Try it anyway')
 
     if (result.ok) {
       setSettingsStatus(
@@ -3912,6 +4972,7 @@
       // Cleared immediately. There is no reason for a live credential to sit in a
       // text box for the rest of the session.
       $('nexusKey').value = ''
+      nexusChangingKey = false
       setSettingsStatus(
         'Signed in as ' + result.name + (result.premium ? ' (Premium)' : ' (free account - installs open Nexus)'),
         'ok')
@@ -3939,8 +5000,8 @@
       return
     }
 
-    $('debugTool').style.display = 'flex'
-    $('toggleDebug').textContent = state.enabled ? 'On' : 'Off'
+    $('debugTool').style.display = ''
+    setHudButton($('toggleDebug'), state.enabled ? 'On' : 'Off')
     $('debugDesc').textContent = state.enabled
       ? 'The in-game debug menu bar will be shown next time you launch.'
       : 'Shows the in-game debug menu bar. Devs and admins only.'
@@ -3967,6 +5028,42 @@
   let personalState = []
   let modsSignedIn = null
 
+  // The mods panel's small wired button. The text and the mod's name go through
+  // textContent and setAttribute, never into this markup: mod names come off the network.
+  const WIRED_MINI = '<svg class="wire" viewBox="0 0 14 24" aria-hidden="true"><path d="M0 15H5L9 11H14"></path></svg>' +
+    '<span class="pulse"></span>' +
+    '<span class="face"><span class="pips"><i></i><i></i><i></i><i></i></span><span class="label"></span></span>'
+
+  function makeWiredMini (text, accessibleName) {
+    const btn = document.createElement('button')
+    btn.className = 'hud wired hud-mini'
+    btn.innerHTML = WIRED_MINI
+    setHudButton(btn, text)
+    btn.setAttribute('aria-label', accessibleName)
+    return btn
+  }
+
+  const BIN_ICON = '<svg viewBox="0 0 12 12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="square">' +
+    '<path d="M1.5 3h9M4.5 3V1.5h3V3M2.75 3l.6 7.5h5.3l.6-7.5M5 5v3.5M7 5v3.5"></path></svg>'
+
+  function makeRemoveButton (mod) {
+    const remove = document.createElement('button')
+    remove.className = 'bin'
+    remove.innerHTML = BIN_ICON
+    remove.title = 'Remove this mod'
+    remove.setAttribute('aria-label', 'Remove ' + mod.name)
+    remove.addEventListener('click', async () => {
+      const result = await window.launcher.deleteMod(mod.id)
+      if (result.ok) {
+        setStatus('Removed ' + mod.name + '.', 'ok')
+        await refreshMods()
+      } else if (result.error) {
+        setStatus(result.error, 'error')
+      }
+    })
+    return remove
+  }
+
   function renderMods () {
     const list = $('modList')
     const count = $('modCount')
@@ -3979,6 +5076,10 @@
       hint.textContent = modsSignedIn === false
         ? 'Sign in to Nexus in Settings to see the mod list.'
         : 'The server has no recommended mods yet. When it adds some, they appear here.'
+
+      // An empty recommended list says nothing about what the player installed themselves.
+      // The main process still reports those, and this panel is where they get removed.
+      renderPersonalMods(list)
       return
     }
 
@@ -4003,9 +5104,9 @@
       const badge = document.createElement('span')
       if (mod.state === 'installed') {
         badge.className = 'mod-badge ok'
-        badge.textContent = '✓ INSTALLED'
+        badge.textContent = 'INSTALLED'
       } else if (mod.state === 'downloading') {
-        badge.className = 'mod-badge'
+        badge.className = 'mod-badge missing'
         badge.textContent = 'DOWNLOADING'
       } else if (mod.state === 'failed') {
         badge.className = 'mod-badge bad'
@@ -4030,10 +5131,15 @@
 
       // The install button is REMOVED once installed rather than disabled. A greyed
       // button still reads as something you are supposed to press.
+      if (mod.state === 'downloading') {
+        const working = makeWiredMini('Working', mod.name + ' is downloading')
+        working.disabled = true
+        working.dataset.state = 'checking'
+        row.appendChild(working)
+      }
+
       if (!blocked && mod.state !== 'installed' && mod.state !== 'downloading') {
-        const install = document.createElement('button')
-        install.className = 'mod-btn'
-        install.textContent = 'Install'
+        const install = makeWiredMini('Install', 'Install ' + mod.name)
         install.addEventListener('click', async () => {
           const result = await window.launcher.openMod(mod.id)
           if (!result.ok) setStatus(result.error, 'error')
@@ -4052,29 +5158,20 @@
           row.appendChild(makeUpdateButton(mod))
         }
 
-        const remove = document.createElement('button')
-        remove.className = 'mod-btn danger'
-        remove.textContent = '🗑'
-        remove.title = 'Remove this mod'
-        remove.addEventListener('click', async () => {
-          const result = await window.launcher.deleteMod(mod.id)
-          if (result.ok) {
-            setStatus('Removed ' + mod.name + '.', 'ok')
-            await refreshMods()
-          } else if (result.error) {
-            setStatus(result.error, 'error')
-          }
-        })
-        row.appendChild(remove)
+        row.appendChild(makeRemoveButton(mod))
       }
 
       list.appendChild(row)
     }
 
-    // The player's own installs - anything added by link, number, or a Nexus "Mod
-    // Manager Download" click that was never on the server's list. Same records, same
-    // verify/repair/removal; this section is what makes the launcher a mod manager
-    // rather than a checklist, so nobody needs a second one.
+    renderPersonalMods(list)
+  }
+
+  // The player's own installs - anything added by link, number, or a Nexus "Mod
+  // Manager Download" click that was never on the server's list. Same records, same
+  // verify/repair/removal; this section is what makes the launcher a mod manager
+  // rather than a checklist, so nobody needs a second one.
+  function renderPersonalMods (list) {
     if (personalState.length > 0) {
       const head = document.createElement('div')
       head.className = 'modqueue-head'
@@ -4095,7 +5192,7 @@
         const badge = document.createElement('span')
         if (mod.pulled) {
           // The server pulled this id from its list; the record only sits in this
-          // bucket because the pull delisted it. Say so - "✓ INSTALLED" here is how
+          // bucket because the pull delisted it. Say so - "INSTALLED" here is how
           // a pull stays invisible to the one player it affects.
           badge.className = 'mod-badge bad'
           badge.textContent = 'PULLED FROM SERVER LIST'
@@ -4109,22 +5206,13 @@
           badge.title = mod.reason || ''
         } else {
           badge.className = 'mod-badge ok'
-          badge.textContent = '✓ INSTALLED'
+          badge.textContent = 'INSTALLED'
         }
         row.appendChild(badge)
 
         if (mod.updateAvailable && mod.state === 'installed') row.appendChild(makeUpdateButton(mod))
 
-        const remove = document.createElement('button')
-        remove.className = 'mod-btn danger'
-        remove.textContent = '🗑'
-        remove.title = 'Remove this mod'
-        remove.addEventListener('click', async () => {
-          const result = await window.launcher.deleteMod(mod.id)
-          if (result.ok) { setStatus('Removed ' + mod.name + '.', 'ok'); await refreshMods() }
-          else if (result.error) setStatus(result.error, 'error')
-        })
-        row.appendChild(remove)
+        row.appendChild(makeRemoveButton(mod))
 
         list.appendChild(row)
       }
@@ -4132,9 +5220,7 @@
   }
 
   function makeUpdateButton (mod) {
-    const update = document.createElement('button')
-    update.className = 'mod-btn'
-    update.textContent = 'Update'
+    const update = makeWiredMini('Update', 'Update ' + mod.name)
     update.title = mod.reason || 'Install the expected version'
     update.addEventListener('click', async () => {
       update.disabled = true
@@ -4163,10 +5249,12 @@
   $('verifyAllMods').addEventListener('click', async () => {
     const btn = $('verifyAllMods')
     btn.disabled = true
+    setHudButton(btn, 'Checking...', 'checking')
     $('modHint').textContent = 'Checking every file...'
 
     const result = await window.launcher.verifyMods()
     btn.disabled = false
+    setHudButton(btn, 'Verify all')
 
     if (!result.ok) {
       $('modHint').textContent = result.error
@@ -4184,6 +5272,7 @@
       $('modHint').textContent = 'Nothing installed through the launcher yet.' + manifestNote
     } else if (result.problems.length === 0 && (result.retired || []).length === 0) {
       $('modHint').textContent = '✓ All ' + result.intact + ' installed mod(s) verified.' + manifestNote
+      flashHudButton(btn, 'All verified', 'Verify all')
     } else {
       // Names the broken ones. "3 problems found" leaves someone to work out which.
       const parts = []
@@ -4341,12 +5430,18 @@
     if (!input.value.trim()) { setStatus('Paste a Nexus mod link or its number first.', 'error'); return }
 
     btn.disabled = true
+    setHudButton(btn, 'Adding...', 'checking')
     const result = await window.launcher.addModFromNexus(input.value)
     btn.disabled = false
+    setHudButton(btn, 'Add mod')
 
     if (result.ok) {
       setStatus(result.message, result.needsWebsite ? 'error' : 'ok')
-      if (!result.needsWebsite) { input.value = ''; await refreshMods() }
+      if (!result.needsWebsite) {
+        input.value = ''
+        flashHudButton(btn, 'Added', 'Add mod')
+        await refreshMods()
+      }
     } else {
       setStatus(result.error, 'error')
     }
@@ -4408,7 +5503,10 @@
     await checkUpdates()
   })
 
-  window.launcher.onInstallProgress((step) => setSettingsStatus(step))
+  window.launcher.onInstallProgress((step) => {
+    setSettingsStatus(step)
+    if (updateRunning && $('update').classList.contains('in-path')) $('updateReadout').textContent = step
+  })
 
   $('verifyFiles').addEventListener('click', () => $('verify').click())
   $('reinstallMod').addEventListener('click', () => $('installAll').click())
@@ -4441,7 +5539,12 @@
   })
 
   $('update').addEventListener('click', async () => {
-    $('update').disabled = true
+    const btn = $('update')
+    const readout = $('updateReadout')
+    btn.disabled = true
+    setHudButton(btn, 'Updating...', 'busy')
+    readout.textContent = ''
+    readout.classList.remove('error')
 
     // On a test build the button only shows when a newer one exists, and installs THAT -
     // the same path and the same loud DevInstall-symlink warning as Tools > Test builds.
@@ -4450,7 +5553,8 @@
       const installed = await window.launcher.prereleaseInstall(newerTestBuild)
       if (!installed.ok) {
         setStatus(installed.error, 'error')
-        $('update').disabled = false
+        setHudButton(btn, 'Update')
+        btn.disabled = false
         return
       }
       if (installed.warning) {
@@ -4458,21 +5562,37 @@
       } else {
         setStatus('Updated to test build ' + installed.tag, 'ok')
       }
+      setHudButton(btn, 'Update')
       await checkUpdates()
       return
     }
 
-    setStatus('Downloading update...')
-
+    // The steps arrive from main as they happen and go on the wire (onInstallProgress).
+    setStatus('')
+    updateRunning = true
     const result = await window.launcher.applyUpdate()
+    updateRunning = false
 
-    if (result.ok) {
-      setStatus('Updated to ' + result.version, 'ok')
-      await checkUpdates()
-    } else {
+    if (!result.ok) {
       setStatus(result.error, 'error')
-      $('update').disabled = false
+      // The plate sits well above the status line, so the failure is said where the click was too.
+      readout.textContent = 'Stopped - the reason is below'
+      readout.classList.add('error')
+      setHudButton(btn, 'Update')
+      btn.disabled = false
+      return
     }
+
+    setStatus('Updated to ' + result.version, 'ok')
+    readout.textContent = ''
+    setHudButton(btn, 'Updated', 'ok')
+    // A beat to read it, then it lifts away. checkUpdates hides it (placeUpdate tidies it up for
+    // next time), and render() wakes JACK IN once the check says the files are current.
+    await new Promise((resolve) => setTimeout(resolve, 700))
+    btn.classList.add('leaving')
+    $('updateWire').classList.add('leaving')
+    await new Promise((resolve) => setTimeout(resolve, 180))
+    await checkUpdates()
   })
 
   // --- startup ---------------------------------------------------------------

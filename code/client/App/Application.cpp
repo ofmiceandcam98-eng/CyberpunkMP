@@ -18,7 +18,7 @@ namespace App
 {
 UniquePtr<Application> GApplication;
 
-Application::Application(RED4ext::PluginHandle aPlugin, const RED4ext::Sdk* aSdk)
+Application::Application(RED4ext::v1::PluginHandle aPlugin, const RED4ext::v1::Sdk* aSdk)
     : Core::Application(aPlugin, aSdk)
 {
     Register<Core::LocaleProvider>();

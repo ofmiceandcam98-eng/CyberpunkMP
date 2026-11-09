@@ -71,11 +71,15 @@ public:
     // the player by itself.
     //
     // Called immediately before Connect(). The timing is the whole point - see the banner
-    // over the implementation.
-    void CaptureSpawnIntent();
+    // over the implementation. aFromMenu: the main menu asked, so the spawn is held whatever
+    // world happens to be loaded behind it.
+    void CaptureSpawnIntent(bool aFromMenu = false);
 
     // "The player has now asked to be in the world." Said by EnterWorld(), which is PLAY.
     void AuthorizeSpawn();
+
+    // "The player has left the world but is still connected." Said by LeaveWorld().
+    void HoldSpawnUntilEntry();
 
     // Is a spawn still owed? True between authenticating at the menu and entering the
     // world.

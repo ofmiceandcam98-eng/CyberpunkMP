@@ -20,7 +20,16 @@ struct TypeProxyMapping : public std::false_type {};
 namespace Detail
 {
 template<typename T>
-concept IsTypeNameConst = std::is_same_v<std::remove_cvref_t<T>, const char*> || std::is_convertible_v<T, std::string_view>;
+struct StdCharArray : public std::false_type {};
+
+template<size_t N>
+struct StdCharArray<std::array<char, N>> : public std::true_type {};
+
+template<typename T>
+concept IsCharArray = StdCharArray<std::decay_t<T>>::value;
+
+template<typename T>
+concept IsTypeNameConst = IsCharArray<T> || std::is_same_v<std::remove_cvref_t<T>, const char*> || std::is_convertible_v<T, std::string_view>;
 
 template<typename T>
 concept HasGeneratedTypeName = requires(T*)
@@ -104,20 +113,37 @@ consteval auto RemoveMemberPrefix(std::string_view aName)
     return aName;
 }
 
-constexpr auto ScopedEnumPrefix = "enum RED4ext::";
-constexpr auto ScopedEnumPrefixLength = std::char_traits<char>::length(ScopedEnumPrefix);
+#if defined(__clang__)
+constexpr auto SdkStructPrefix = "RED4ext::";
+constexpr auto SdkClassPrefix = "RED4ext::";
+constexpr auto SdkEnumPrefix = "RED4ext::";
+#else
+constexpr auto SdkStructPrefix = "struct RED4ext::";
+constexpr auto SdkClassPrefix = "class RED4ext::";
+constexpr auto SdkEnumPrefix = "enum RED4ext::";
+#endif
+constexpr auto SdkStructPrefixLength = std::char_traits<char>::length(SdkStructPrefix);
+constexpr auto SdkClassPrefixLength = std::char_traits<char>::length(SdkClassPrefix);
+constexpr auto SdkEnumPrefixLength = std::char_traits<char>::length(SdkEnumPrefix);
 
-consteval bool IsScopedEnumName(const std::string_view& aName)
+template<typename T>
+consteval bool IsScopedClassName(const std::string_view& aName, auto aPrefix)
 {
-    return aName.starts_with(ScopedEnumPrefix);
+    return std::is_class_v<T> && aName.starts_with(aPrefix);
 }
 
-template<size_t N>
-consteval auto ExtractScopedEnumName(const char* aName)
+template<typename T>
+consteval bool IsScopedEnumName(const std::string_view& aName, auto aPrefix)
 {
-    std::array<char, N - ScopedEnumPrefixLength + 1> result{};
+    return std::is_enum_v<T> && aName.starts_with(aPrefix);
+}
 
-    for (auto i = ScopedEnumPrefixLength, j = 0ull; i < N; ++i)
+template<size_t N, size_t P>
+consteval auto ExtractScopedName(const char* aName)
+{
+    std::array<char, N - P + 1> result{};
+
+    for (size_t i = P, j = 0; i < N; ++i)
     {
         if (aName[i] != ':')
         {
@@ -127,6 +153,33 @@ consteval auto ExtractScopedEnumName(const char* aName)
     }
 
     return result;
+}
+
+template<typename T>
+consteval auto ResolveBaseTypeNameStr()
+{
+    using U = std::remove_cvref_t<T>;
+
+    constexpr auto fullName = nameof::nameof_full_type<U>();
+
+    if constexpr (Detail::IsScopedClassName<U>(fullName, Detail::SdkStructPrefix))
+    {
+        return Detail::ExtractScopedName<fullName.size(), Detail::SdkStructPrefixLength>(fullName.data());
+    }
+    else if constexpr (Detail::IsScopedClassName<U>(fullName, Detail::SdkClassPrefix))
+    {
+        return Detail::ExtractScopedName<fullName.size(), Detail::SdkClassPrefixLength>(fullName.data());
+    }
+    else if constexpr (Detail::IsScopedEnumName<U>(fullName, Detail::SdkEnumPrefix))
+    {
+        return Detail::ExtractScopedName<fullName.size(), Detail::SdkEnumPrefixLength>(fullName.data());
+    }
+    else
+    {
+        constexpr auto name = nameof::nameof_short_type<U>();
+
+        return Detail::MakeConstStr<name.size()>(name.data());
+    }
 }
 }
 
@@ -156,7 +209,11 @@ consteval auto GetTypeNameStr()
     {
         constexpr auto name = Detail::ResolveTypeNameBuilder<U>();
 
-        if constexpr (std::is_same_v<std::remove_cvref_t<decltype(name)>, const char*>)
+        if constexpr (Detail::IsCharArray<std::remove_cvref_t<decltype(name)>>)
+        {
+            return name;
+        }
+        else if constexpr (std::is_same_v<std::remove_cvref_t<decltype(name)>, const char*>)
         {
             constexpr auto length = std::char_traits<char>::length(name);
 
@@ -167,16 +224,16 @@ consteval auto GetTypeNameStr()
             return Detail::MakeConstStr<name.size()>(name.data());
         }
     }
-    else if constexpr (Detail::HasTypeNameMapping<U>)
+    else if constexpr (Detail::HasGeneratedTypeName<U>)
     {
-        constexpr auto name = TypeNameMapping<U>::name;
+        constexpr auto name = U::NAME;
         constexpr auto length = std::char_traits<char>::length(name);
 
         return Detail::MakeConstStr<length>(name);
     }
-    else if constexpr (Detail::HasGeneratedTypeName<U>)
+    else if constexpr (Detail::HasTypeNameMapping<U>)
     {
-        constexpr auto name = U::NAME;
+        constexpr auto name = TypeNameMapping<U>::name;
         constexpr auto length = std::char_traits<char>::length(name);
 
         return Detail::MakeConstStr<length>(name);
@@ -195,19 +252,7 @@ consteval auto GetTypeNameStr()
     }
     else
     {
-        constexpr auto fullName = nameof::nameof_full_type<U>();
-        constexpr auto isScopedEnum = Detail::IsScopedEnumName(fullName);
-
-        if constexpr (isScopedEnum)
-        {
-            return Detail::ExtractScopedEnumName<fullName.size()>(fullName.data());
-        }
-        else
-        {
-            constexpr auto name = nameof::detail::pretty_name(fullName);
-
-            return Detail::MakeConstStr<name.size()>(name.data());
-        }
+        return Detail::ResolveBaseTypeNameStr<T>();
     }
 }
 
@@ -215,6 +260,12 @@ template<typename T>
 consteval CName GetTypeName()
 {
     return GetTypeNameStr<T>().data();
+}
+
+template<typename T>
+consteval uint64_t GetTypeHash()
+{
+    return FNV1a64(GetTypeNameStr<T>().data());
 }
 
 template<CName AType>
@@ -236,11 +287,11 @@ public:
         if (!s_resolved)
         {
             Resolve();
-        }
 
-        if (!s_type || s_type->GetType() != ERTTIType::Class)
-        {
-            return nullptr;
+            if (s_type && s_type->GetType() != ERTTIType::Class)
+            {
+                s_type = nullptr;
+            }
         }
 
         return reinterpret_cast<CClass*>(s_type);
@@ -251,11 +302,11 @@ public:
         if (!s_resolved)
         {
             Resolve();
-        }
 
-        if (!s_type || s_type->GetType() != ERTTIType::Handle)
-        {
-            return nullptr;
+            if (s_type && s_type->GetType() != ERTTIType::Handle)
+            {
+                s_type = nullptr;
+            }
         }
 
         return reinterpret_cast<CRTTIHandleType*>(s_type);
@@ -266,11 +317,11 @@ public:
         if (!s_resolved)
         {
             Resolve();
-        }
 
-        if (!s_type || s_type->GetType() != ERTTIType::WeakHandle)
-        {
-            return nullptr;
+            if (s_type && s_type->GetType() != ERTTIType::WeakHandle)
+            {
+                s_type = nullptr;
+            }
         }
 
         return reinterpret_cast<CRTTIWeakHandleType*>(s_type);
@@ -281,11 +332,11 @@ public:
         if (!s_resolved)
         {
             Resolve();
-        }
 
-        if (!s_type || s_type->GetType() != ERTTIType::Array)
-        {
-            return nullptr;
+            if (s_type && s_type->GetType() != ERTTIType::Array)
+            {
+                s_type = nullptr;
+            }
         }
 
         return reinterpret_cast<CRTTIArrayType*>(s_type);
@@ -296,11 +347,11 @@ public:
         if (!s_resolved)
         {
             Resolve();
-        }
 
-        if (!s_type || s_type->GetType() != ERTTIType::Enum)
-        {
-            return nullptr;
+            if (s_type && s_type->GetType() != ERTTIType::Enum)
+            {
+                s_type = nullptr;
+            }
         }
 
         return reinterpret_cast<CEnum*>(s_type);
@@ -405,9 +456,6 @@ inline CClass* GetClass() noexcept
 
 inline CClass* GetClass(CName aTypeName)
 {
-    if (aTypeName.IsNone())
-        return nullptr;
-
     auto type = CRTTISystem::Get()->GetType(aTypeName);
 
     if (!type || type->GetType() != ERTTIType::Class)
@@ -416,6 +464,18 @@ inline CClass* GetClass(CName aTypeName)
     }
 
     return reinterpret_cast<CClass*>(type);
+}
+
+inline CClass* GetScriptClass(CName aTypeName)
+{
+    auto type = GetClass(aTypeName);
+    return type ? type : CRTTISystem::Get()->GetClassByScriptName(aTypeName);
+}
+
+inline CName GetScriptAlias(CName aTypeName)
+{
+    auto alias = CRTTISystem::Get()->nativeToScript.Get(aTypeName);
+    return alias ? *alias : CName{};
 }
 
 template<CName AType>
@@ -489,10 +549,10 @@ inline const Handle<T>& Cast(const Handle<U>& aObject)
 }
 
 template<typename T, typename U = ISerializable>
-inline const WeakHandle<T>& Cast(const WeakHandle<U>& aObject)
+inline const WeakHandle<T>& CastWeak(const WeakHandle<U>& aObject)
 {
-    static const Handle<T> s_null;
-    return (aObject && aObject->GetType()->IsA(Red::GetClass<T>()))
+    static const WeakHandle<T> s_null;
+    return (aObject && aObject.instance->GetType()->IsA(Red::GetClass<T>()))
                ? *reinterpret_cast<const WeakHandle<T>*>(&aObject)
                : s_null;
 }
@@ -503,37 +563,39 @@ inline bool IsInstanceOf(CClass* aType)
     return aType->IsA(Red::GetClass<T>());
 }
 
+inline bool IsInstanceOf(CClass* aType, CName aClassName)
+{
+    return aType->IsA(Red::GetClass(aClassName));
+}
+
 template<typename T>
 inline bool IsInstanceOf(ISerializable* aObject)
 {
     return aObject->GetType()->IsA(Red::GetClass<T>());
 }
 
-inline bool IsCompatible(CBaseRTTIType* aLhsType, CBaseRTTIType* aRhsType)
+inline bool IsInstanceOf(ISerializable* aObject, CName aClassName)
 {
-    if (aLhsType != aRhsType)
-    {
-        auto metaType = aLhsType->GetType();
-
-        if (metaType == aRhsType->GetType() && (metaType == ERTTIType::Handle || metaType == ERTTIType::WeakHandle))
-        {
-            auto lhsSubType = reinterpret_cast<CClass*>(reinterpret_cast<CRTTIHandleType*>(aLhsType)->innerType);
-            auto rhsSubType = reinterpret_cast<CClass*>(reinterpret_cast<CRTTIHandleType*>(aRhsType)->innerType);
-
-            return rhsSubType->IsA(lhsSubType);
-        }
-    }
-
-    return true;
+    return aObject->GetType()->IsA(Red::GetClass(aClassName));
 }
 
-inline bool IsCompatible(CBaseRTTIType* aLhsType, CBaseRTTIType* aRhsType, void* aRhsValue)
+template<typename T>
+inline bool IsInstanceOf(const WeakHandle<ISerializable>& aObject)
 {
+    return aObject && aObject.instance->GetType()->IsA(Red::GetClass<T>());
+}
+
+inline bool IsCompatible(CBaseRTTIType* aLhsType, CBaseRTTIType* aRhsType, void* aRhsValue = nullptr)
+{
+    if (!aLhsType || !aRhsType)
+        return false;
+
     if (aLhsType != aRhsType)
     {
-        auto metaType = aLhsType->GetType();
+        auto lhsMetaType = aLhsType->GetType();
 
-        if (metaType == aRhsType->GetType() && (metaType == ERTTIType::Handle || metaType == ERTTIType::WeakHandle))
+        if ((lhsMetaType == ERTTIType::Handle || lhsMetaType == ERTTIType::WeakHandle)
+            && lhsMetaType == aRhsType->GetType())
         {
             auto lhsSubType = reinterpret_cast<CClass*>(reinterpret_cast<CRTTIHandleType*>(aLhsType)->innerType);
             auto rhsInstance = aRhsValue ? reinterpret_cast<Handle<ISerializable>*>(aRhsValue)->instance : nullptr;
@@ -543,6 +605,8 @@ inline bool IsCompatible(CBaseRTTIType* aLhsType, CBaseRTTIType* aRhsType, void*
 
             return rhsSubType->IsA(lhsSubType);
         }
+
+        return false;
     }
 
     return true;

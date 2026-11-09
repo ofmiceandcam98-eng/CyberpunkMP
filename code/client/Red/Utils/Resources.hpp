@@ -1,5 +1,7 @@
 #pragma once
 
+#include "JobQueues.hpp"
+
 namespace Red
 {
 namespace Detail
@@ -8,25 +10,25 @@ template<typename R>
 struct ResourceTraits;
 
 template<typename T>
-struct ResourceTraits<RED4ext::SharedPtr<ResourceToken<T>>>
+struct ResourceTraits<SharedPtr<ResourceToken<T>>>
 {
-    inline static bool IsFinished(const RED4ext::SharedPtr<ResourceToken<T>>& aToken)
+    inline static bool IsFinished(const SharedPtr<ResourceToken<T>>& aToken)
     {
         return aToken->IsLoaded() || aToken->IsFailed();
     }
 
     template<template<typename, typename...> typename V, typename... A>
-    inline static bool AllFinished(const V<RED4ext::SharedPtr<ResourceToken<T>>, A...>& aTokens)
+    inline static bool AllFinished(const V<SharedPtr<ResourceToken<T>>, A...>& aTokens)
     {
         return std::ranges::all_of(aTokens, &IsFinished);
     }
 
-    inline static JobHandle& GetJobHandle(const RED4ext::SharedPtr<ResourceToken<T>>& aToken)
+    inline static JobHandle& GetJobHandle(const SharedPtr<ResourceToken<T>>& aToken)
     {
         return aToken->job;
     }
 
-    inline static ResourcePath GetPath(const RED4ext::SharedPtr<ResourceToken<T>>& aToken)
+    inline static ResourcePath GetPath(const SharedPtr<ResourceToken<T>>& aToken)
     {
         return aToken->path;
     }
@@ -65,26 +67,7 @@ inline void WaitForResource(const R& aResource, const W& aTimeout)
 
     if (!Trait::IsFinished(aResource))
     {
-        std::mutex mutex;
-        std::unique_lock lock(mutex);
-        std::condition_variable cv;
-
-        JobQueue queue;
-        queue.Wait(Trait::GetJobHandle(aResource));
-        queue.Dispatch([&lock, &cv]() {
-            lock.release();
-            cv.notify_all();
-        });
-
-        if (lock.owns_lock())
-        {
-            cv.wait_for(lock, aTimeout);
-        }
-
-        if (!lock || !lock.owns_lock())
-        {
-            mutex.unlock();
-        }
+        WaitForJob(Trait::GetJobHandle(aResource), aTimeout);
     }
 }
 
@@ -95,29 +78,19 @@ inline void WaitForResources(const V<R, A...>& aResources, const W& aTimeout)
 
     if (!Trait::AllFinished(aResources))
     {
-        std::mutex mutex;
-        std::unique_lock lock(mutex);
-        std::condition_variable cv;
-
         JobQueue queue;
         for (const auto& resource : aResources)
         {
             queue.Wait(Trait::GetJobHandle(resource));
         }
-        queue.Dispatch([&lock, &cv]() {
-            lock.release();
-            cv.notify_all();
-        });
-
-        if (lock.owns_lock())
-        {
-            cv.wait_for(lock, aTimeout);
-        }
-
-        if (!lock || !lock.owns_lock())
-        {
-            mutex.unlock();
-        }
+        WaitForQueue(queue, aTimeout);
     }
+}
+
+template<std::derived_from<CResource> T, std::derived_from<CResource> U>
+requires std::is_base_of_v<U, T>
+inline const SharedPtr<ResourceToken<T>>& Cast(const SharedPtr<ResourceToken<U>>& aToken)
+{
+    return *reinterpret_cast<const SharedPtr<ResourceToken<T>>*>(&aToken);
 }
 }

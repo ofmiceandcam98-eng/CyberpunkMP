@@ -1,10 +1,65 @@
-Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) for **Cyberpunk 2077 patch 2.31**, plus the fixes needed to make it run on that patch. Upstream targets 2.2 and will not start on current game versions.
+Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) for **Cyberpunk 2077 patch 2.5**, plus the fixes needed to make it run on that patch. Upstream targets 2.2 and will not start on current game versions.
 
 **⬇ Download:** [NightCityOnline-Setup.exe](https://github.com/ofmiceandcam98-eng/CyberpunkMP/releases/latest/download/NightCityOnline-Setup.exe) — one click, always the newest; the launcher handles the rest.
 
 **Discord — Night City Online:** https://discord.gg/M9NSWsndC7
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
+
+## What changed — v0.3.127
+
+**Night City Online runs on Cyberpunk 2.5.** This is the first release built for the new
+patch: connect, pick your character, spawn, drive. It does NOT run on 2.31 any more - the
+launcher will tell you if your game is on the wrong version.
+
+- **CONNECT works again on 2.5.** On the 2.5 main menu the game now has a world loaded
+  behind it, which made the mod think you were already in the city: it spawned you, then
+  the character screen opened on top and released you again, leaving you standing on an
+  empty map with nothing to click. CONNECT now always shows your characters first, and
+  you enter the city when you press PLAY.
+- **Quitting the game while connected no longer crashes it.** This one was older than 2.5 -
+  closing the game without disconnecting first ended in a crash on the way out.
+- **The server you connect to is up to date again.** The public server had been left on
+  older code since September, so recent launcher builds could not talk to it.
+- **Your progress is saved on 2.5.** Inventory, money, attributes and perks come back when
+  you rejoin.
+- **Trading: the eddies offer moves by 1 per press** instead of 500.
+- **Update now brings the frameworks with it.** RED4ext and the other five frameworks the
+  mod runs on used to change only with a full Install everything, so an old copy could
+  survive every Update and crash the game before the mod loaded. Update now checks them
+  against this release and replaces any that differ. If yours already match, it leaves
+  them alone.
+
+**Still broken on 2.5 - known, and being worked on:**
+
+- **Two parts of saving are not fully proven.** Nobody has tested a respec or level-up yet.
+  If your money looks wrong after you rejoin, tell us on Discord.
+- **You look like the default character to yourself.** Your saved look is applied but does
+  not show on your own body yet. Your look is SAFE on the server - an early 2.5 test build
+  was saving the default body over characters, and this release is built so that cannot
+  happen. Until this is fixed, changing your look at a mirror or ripperdoc, and the look of
+  a brand-new character, are not saved on 2.5.
+- **Voice chat has not been proven on 2.5 yet.** It starts up, and the Talk / Emote /
+  Disconnect hints show in the city, but nobody has tested two players talking to each
+  other on this patch. Text chat works.
+- **Two new start-up screens** (the CD PROJEKT RED account prompt and one more) now appear
+  before the menu. Skip them; we will make the launcher skip them again.
+
+**The launcher, redrawn** - same buttons, same places:
+
+- **New buttons.** JACK IN, Verify and the mods panel lift when you point at them, sink when
+  you press and flicker once on a click; Tab shows a clear ring.
+- **Update stands in your path**, right above JACK IN, and shows each step while it works.
+- **Settings, reorganised.** Tools are grouped into numbered sections, the tabs stay put, the
+  keyboard stays inside until Escape or Done, and Uninstall the launcher is on the Remove tab.
+- **The rail is a gauge.** Drag its striped arrow to scroll, click a number to jump, or use
+  the wheel over it.
+- **A new Settings gear**, and stripes and slanted edges drawn pixel by pixel, not ragged.
+- **The main window, recut.** The three panels are numbered and cut like Settings' sections, the
+  lines along the top and bottom are thicker and cleaner, and the red is now the game's own.
+- **Smaller fixes:** patch notes keep their paragraphs whole; logging out clears the network
+  invite; JACK IN's reason stops pointing at a button you cannot see; your own mods stay
+  listed when there are no recommended ones.
 
 ## What changed — v0.3.126
 
@@ -24,9 +79,20 @@ testing now.
 
 ## What changed — v0.3.125
 
-A launcher-reliability release for the Cyberpunk 2.5 transition. **No gameplay change** —
-the mod itself is untouched and still targets game patch 2.31.
+A launcher-reliability release for the Cyberpunk 2.5 transition, now carrying the
+refreshed mod payload for that transition too.
 
+- **The dependency stack is now 2.5-ready.** (Added in the mod refresh of this release.)
+  The payload moves to RED4ext 1.31.0, redscript 0.5.32, Codeware 1.21.2, ArchiveXL
+  1.28.6, TweakXL 1.12.0 and Input Loader 0.2.6 — the versions built for Cyberpunk 2.5.
+  On a 2.5 game the old stack crashed at launch; the new one boots cleanly. The mod's own
+  multiplayer code still targets 2.31 while the port is finished, so on 2.5 you will see
+  the ordinary menu without CONNECT — the launcher's dialog explains exactly that. This
+  update is what makes the rest of the 2.5 port deliverable.
+- **The trade overlay takes keyboard input.** Arrow keys move the selection and step the
+  eddies offer, Enter activates (confirm always asks for a second press), Backspace
+  closes. The typed /tr* commands still work as before. Trading data itself is still in
+  development — the overlay shows sample content until that ships.
 - **The launcher now tells you when the game updated past the mod.** Cyberpunk 2.5 landed
   on October 22 and every Steam install moved to it automatically — on 2.5 the mod cannot
   load yet, and the game boots to the ordinary Cyberpunk menu with no CONNECT entry. That

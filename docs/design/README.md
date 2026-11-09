@@ -9,8 +9,9 @@ They live on the server, not in this repository:
 /mnt/vol/projects/_internal-docs/
 ```
 
-Open them in a browser from there. They need no server of their own and load nothing but a
-webfont.
+Post a design there and it is readable in the Atlas visualiser's **MOCKUPS** pane
+(internal, dev-role only) with no further step. The full mechanics — the pane split, the
+categories file — live in one place: `docs/MAP.md`, the audit decree.
 
 ## Why they are not in git
 

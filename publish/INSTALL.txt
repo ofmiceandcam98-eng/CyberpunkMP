@@ -1,21 +1,33 @@
 ================================================================================
-  CyberpunkMP  -  Night City Online build
-  Built 2026-08-11  for Cyberpunk 2077 patch 2.31
+  Night City Online  -  a multiplayer build of CyberpunkMP
+  For Cyberpunk 2077 patch 2.5
 ================================================================================
 
   Discord:  https://discord.gg/M9NSWsndC7
 
-  This is a work-in-progress multiplayer mod. It is not finished. There is a
-  known crash when a second player spawns - see KNOWN ISSUES at the bottom.
-  If you hit it, your log is genuinely useful to us. Instructions for that are
-  in section 5.
+  This is a work-in-progress multiplayer mod, and it is not finished. What is
+  known to be broken in this release is listed in its notes:
+      https://github.com/ofmiceandcam98-eng/CyberpunkMP/releases/latest
+
+
+--------------------------------------------------------------------------------
+  EASIEST: USE THE LAUNCHER, AND SKIP THE REST OF THIS FILE
+--------------------------------------------------------------------------------
+
+  Download and run the launcher:
+      https://github.com/ofmiceandcam98-eng/CyberpunkMP/releases/latest/download/NightCityOnline-Setup.exe
+
+  Sign in with Discord and press Install. It puts everything below in place,
+  keeps it up to date, and starts the game with the right settings.
+
+  The rest of this file is for installing by hand from this zip.
 
 
 --------------------------------------------------------------------------------
   0. BEFORE YOU START
 --------------------------------------------------------------------------------
 
-  * You need Cyberpunk 2077 on PC, patch 2.31. Steam, GOG and Epic all work.
+  * You need Cyberpunk 2077 on PC, patch 2.5. Steam, GOG and Epic all work.
     Check your version at the bottom-left of the main menu.
 
   * BACK UP YOUR GAME FOLDER, or at least these subfolders:
@@ -26,8 +38,9 @@
     Nothing here touches your saves, but a clean way back is worth two minutes.
 
   * ONLY IF YOU HAVE CYBER ENGINE TWEAKS: disable it.
-    CET running alongside this mod has caused a full GPU hard-lock that needed
-    a power cycle to recover from. To disable without uninstalling, rename:
+    CET running alongside this mod once caused a full GPU hard-lock that needed
+    a power cycle to recover from. That has not been re-tested since. To disable
+    it without uninstalling, rename:
         bin\x64\version.dll   ->   bin\x64\version.dll.off
 
     IF THAT FILE DOES NOT EXIST, YOU DO NOT HAVE CET. Skip this step.
@@ -59,9 +72,8 @@
   Your game folder is wherever Cyberpunk2077.exe lives, for example:
       C:\Program Files (x86)\Steam\steamapps\common\Cyberpunk 2077
 
-  These versions are the September 2025 wave and are the ones verified working
-  together on 2.31. Mixing in older or newer builds is the most common cause of
-  "it just won't start".
+  These are the exact versions this release is built against. Mixing in older
+  or newer builds is the most common cause of "it just won't start".
 
 
 --------------------------------------------------------------------------------
@@ -87,27 +99,7 @@
 
 
 --------------------------------------------------------------------------------
-  3. EASIEST: USE THE LAUNCHER, AND SKIP THE NEXT SECTION
---------------------------------------------------------------------------------
-
-  Ask in the Discord for "Play Night City Online.bat". It is a single file, it
-  can sit anywhere (Desktop is fine), and it needs nothing else next to it.
-
-  Open it in Notepad once and put the server address between the quotes on the
-  SERVER= line. Then just double-click it whenever you want to play.
-
-  Every time you run it, it:
-    - updates the mod to the current build automatically
-    - starts the game with the correct flags already applied
-
-  That means you never set launch options, and you can never be running an old
-  build without knowing. If you use it, SKIP SECTION 4 entirely.
-
-  Section 4 is for setting it up by hand instead.
-
-
---------------------------------------------------------------------------------
-  4. SET YOUR LAUNCH OPTIONS (only if you are NOT using the launcher)
+  3. SET YOUR LAUNCH OPTIONS
 --------------------------------------------------------------------------------
 
   The mod stays completely dormant unless you launch with --online. Without it
@@ -187,35 +179,9 @@
   Not a screenshot, and not just the last few lines - the ordering across the
   whole log is what we read.
 
-  If you want it handed to you automatically, run tools\CrashWatch.ps1 from the
-  project repo before you start the game. It detects the crash, saves the log to
-  your Documents folder, tells you which internal checkpoint was reached last,
-  and opens it.
-
 
 --------------------------------------------------------------------------------
-  6. KNOWN ISSUES
---------------------------------------------------------------------------------
-
-  * CRASH ON REMOTE PLAYER SPAWN.  When a second player's character appears,
-    one client can die with no error dialog. This is the bug we are actively
-    hunting and it is why your logs matter. Narrowed to about ten lines of code
-    as of this build.
-
-  * Remote players have no clothes or weapons. Item names come back empty on
-    patch 2.31, so gear does not transfer. Purely cosmetic. Known, understood,
-    queued behind the crash.
-
-  * Remote player movement speed is reported as nonsense, which makes their
-    animations look wrong. Suspected structure offset change in 2.31.
-
-  * The "/" key does not open chat. The mod ships an interface file from patch
-    2.2 which is what registers that key. There is a debug menu bar as a
-    workaround while online.
-
-
---------------------------------------------------------------------------------
-  7. UNINSTALLING
+  6. UNINSTALLING
 --------------------------------------------------------------------------------
 
   Delete the zzzCyberpunkMP folder from red4ext\plugins, and remove --online
@@ -227,14 +193,14 @@
 
 
 --------------------------------------------------------------------------------
-  8. CREDITS AND LICENSES
+  7. CREDITS AND LICENSES
 --------------------------------------------------------------------------------
 
   CyberpunkMP itself is the work of Tilted Phoques and contributors:
       https://github.com/tiltedphoques/CyberpunkMP
 
-  This package is an unofficial build for game patch 2.31, plus fixes needed to
-  make it run on that patch. It is not released by Tilted Phoques.
+  This package is an unofficial build for game patch 2.5, plus the fixes needed
+  to make it run on that patch. It is not released by Tilted Phoques.
 
   The "prerequisites" folder redistributes six independent mods, unmodified.
   Every one is MIT licensed, and the full license text for each is included in

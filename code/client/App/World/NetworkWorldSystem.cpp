@@ -78,7 +78,7 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
     Red::ScriptGameInstance game;
 
     spdlog::info("[Spawn] remote id {} - ccstate {} bytes, {} equipment item(s)", aServerId, aCcstate.size(),
-                 aEquipment.size);
+                 aEquipment.Size());
 
     if (!m_pCreatePuppet)
     {
@@ -104,7 +104,7 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
         ? acRecord
         : std::string((isBodyGenderMale ? Settings::Get().puppetRecordMale : Settings::Get().puppetRecordFemale).c_str());
 
-    if (!Red::Detail::CallFunctionWithArgs(m_pCreatePuppet, handle, id, aPosition, aRotation, isBodyGenderMale,
+    if (!Red::CallFunction(handle, m_pCreatePuppet, id, aPosition, aRotation, isBodyGenderMale,
                                            Red::CString(record.c_str())))
     {
         spdlog::error("[Spawn] CreatePuppet call failed for remote id {}", aServerId);
@@ -128,8 +128,19 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
     // Player-record puppets never enter the NPC idle-controller pipeline the legacy
     // path hooks - they are driven by the mod-owned PuppetDriver instead. The flag
     // routes EVERYTHING through the driver for A/B testing the old path's retirement.
+    //
+    // Off 2.31, EVERY puppet takes the driver path. The legacy path plugs MultiMovementController -
+    // a C++ mimic of a 2.31 engine movement controller - into the engine through AttachController,
+    // and on 2.5 the engine called into it and crashed the observing client 2.2s after the attach
+    // (0xC0000005 writing into Cyberpunk2077.exe's image, 2026-11-01 23:39). Driver puppets are
+    // never handed to the engine's controller pipeline; the idle hook skips them.
+    //
+    // Unless this machine opted back into the original controller (mod-original-movement.on):
+    // every interface it touches was measured identical on 2.5 on 2026-11-03, so the crash above
+    // is being re-tested one machine at a time rather than assumed.
     const bool usesDriver = Settings::Get().puppetDriverAll ||
-                            record.rfind("Character.Player_Puppet", 0) == 0;
+                            record.rfind("Character.Player_Puppet", 0) == 0 ||
+                            (!IsGame231Layout() && !Settings::Get().originalMovement);
 
     // Register BEFORE the entity finishes assembling. The animation-thread hook
     // identifies our puppets through this registry instead of reading the entity's
@@ -150,7 +161,12 @@ bool NetworkWorldSystem::Spawn(uint64_t aServerId, const Red::Vector4& aPosition
 
     auto spawned = make_alive(aServerId);
 
-    spawned.emplace<SpawningComponent>(id, nullptr, usesDriver);
+    // All four fields, in order. SpawningComponent is {Id, Controller, AuthorityEpoch, UsesDriver},
+    // and this call used to pass three - so usesDriver landed in AuthorityEpoch and UsesDriver
+    // stayed false for every puppet ever spawned. That is the real reason test.78/79 logged
+    // "promoted - driver no" for a driver puppet; 162aca8c's archetype-move theory was a misread,
+    // and only FindDriver's registry fallback kept the driver path running at all.
+    spawned.emplace<SpawningComponent>(id, nullptr, 0u, usesDriver);
 
     // Give the puppet somewhere to put movement immediately.
     //
@@ -174,8 +190,15 @@ void NetworkWorldSystem::DeSpawn(uint64_t aServerId) const
 
     const auto entity = GetEntityByServerId(aServerId);
 
+    // Said out loud. A remote player who left and rejoined showed up as a "ghost" - their old
+    // body still standing beside the new one (2026-11-01 23:40, his first puppet spawned five
+    // seconds before that connection ended) - and this function was silent whether it ran,
+    // found nothing, or failed, so the log could not say which.
     if (!entity)
+    {
+        spdlog::warn("[Spawn] unload for server id {} - nothing registered under it, nothing removed", aServerId);
         return;
+    }
 
     if (auto* pEntity = entity.get<EntityComponent>())
     {
@@ -183,7 +206,9 @@ void NetworkWorldSystem::DeSpawn(uint64_t aServerId) const
         App::PuppetRegistry::RemoveDriver(pEntity->Id.hash);
         App::ServerIdRegistry::Remove(pEntity->Id.hash);
         const auto handle = Red::GetGameSystem<NetworkWorldSystem>();
-        Red::Detail::CallFunctionWithArgs(m_pDeletePuppet, handle, pEntity->Id);
+        const bool deleted = Red::CallFunction(handle, m_pDeletePuppet, pEntity->Id);
+        spdlog::info("[Spawn] unload for server id {} - puppet {:x} delete {}", aServerId, pEntity->Id.hash,
+                     deleted ? "called" : "FAILED");
     }
     else if (auto* pEntity = entity.get<SpawningComponent>())
     {
@@ -191,7 +216,9 @@ void NetworkWorldSystem::DeSpawn(uint64_t aServerId) const
         App::PuppetRegistry::RemoveDriver(pEntity->Id.hash);
         App::ServerIdRegistry::Remove(pEntity->Id.hash);
         const auto handle = Red::GetGameSystem<NetworkWorldSystem>();
-        Red::Detail::CallFunctionWithArgs(m_pDeletePuppet, handle, pEntity->Id);
+        const bool deleted = Red::CallFunction(handle, m_pDeletePuppet, pEntity->Id);
+        spdlog::info("[Spawn] unload for server id {} - still-spawning puppet {:x} delete {}", aServerId,
+                     pEntity->Id.hash, deleted ? "called" : "FAILED");
     }
 
     entity.destruct();
@@ -484,6 +511,18 @@ void NetworkWorldSystem::OnWorldAttached(RED4ext::world::RuntimeScene* aScene)
     m_interpolationSystem->OnWorldAttached(aScene);
     m_vehicleSystem->OnWorldAttached(aScene);
 
+    // A world that loads UNDER a live connection gets its interpolator back.
+    //
+    // The interpolator is created on connect and destroyed by every detach's stand-down.
+    // While the connect happened inside the world, that order was fine. Since CONNECT moved to
+    // the main menu (c4085596), the connection comes FIRST and loading the world detaches the
+    // menu scene afterwards - so the stand-down destroyed the interpolator seconds after it was
+    // made, nothing ever recreated it, and no remote player moved for the whole session. Every
+    // two-player run on 2026-11-01 was a room of statues for this reason, under four builds
+    // aimed at 2.5 offsets that the frame never reached.
+    if (const auto& service = Core::Container::Get<NetworkService>(); service && service->IsConnected())
+        m_interpolationSystem->OnConnected();
+
     m_ready = true;
 
     // Replay every spawn that arrived while the world was still loading. Swapped out
@@ -673,6 +712,21 @@ void NetworkWorldSystem::MarkNewCharacter()
 
     spdlog::info("[Character] NEW CHARACTER chosen - this appearance will replace the stored one");
     m_newCharacterPending = true;
+}
+
+void NetworkWorldSystem::ClearNewCharacter()
+{
+    // The disarm MarkNewCharacter never had. Entering with an EXISTING character must not
+    // carry "new character" over from an earlier click: test.86, the login roster carried only
+    // the (empty) active slot, the selector drew every slot empty, zeldfep clicked Pajeet's
+    // slot - which read as "create here" and armed this - then picked Pajeet once the real
+    // roster arrived. The spawn still sent '/character new confirm' and tried to save the body
+    // as a NEW character, repointing the account at an empty slot every session (Atlas
+    // pajeet-vanishes-from-the-connect-selector-after-multiplayer).
+    if (m_newCharacterPending)
+        spdlog::info("[Character] entering with an existing character - NEW CHARACTER disarmed");
+
+    m_newCharacterPending = false;
 }
 
 uint32_t NetworkWorldSystem::GetRestoreCount() const
@@ -1047,7 +1101,7 @@ void NetworkWorldSystem::DumpCustomizationApi() const
             continue;
         }
 
-        spdlog::info("[CCApi] === {} : {} function(s) ===", name, pClass->funcs.size);
+        spdlog::info("[CCApi] === {} : {} function(s) ===", name, pClass->funcs.Size());
 
         for (auto* pFunc : pClass->funcs)
         {
@@ -1437,6 +1491,8 @@ void NetworkWorldSystem::ApplyStoredAppearance()
         spdlog::warn("[Character] discarding a stored appearance for id {} - we are now playing {}",
                      m_appearanceRestoreFor, *m_remotePlayerId);
         m_restoreAppearance.clear();
+        m_restoredLook.clear();
+        m_templateLook.clear();
         m_appearanceRestoreFor = 0;
         return;
     }
@@ -1484,6 +1540,7 @@ void NetworkWorldSystem::ApplyStoredAppearance()
     const auto bytes = m_restoreAppearance;
 
     m_appearanceRestore = AppearanceRestore::Applying;
+    m_liveStateIsCharacter = false;
 
     // Stage by stage, deliberately verbose.
     //
@@ -1571,6 +1628,14 @@ void NetworkWorldSystem::ApplyStoredAppearance()
         return;
     }
 
+    // Off 2.31 the write below does not change the body on screen, so the template the snapshot
+    // just read is still what the player sees. DressLocalBodyFromStoredLook needs both halves.
+    if (!IsGame231Layout())
+    {
+        m_restoredLook = bytes;
+        m_templateLook = snapshot.bytes;
+    }
+
     spdlog::info("[Character] Deserialize ccstate BEGIN");
 
     auto reader = CMPReader(bytes);
@@ -1580,16 +1645,21 @@ void NetworkWorldSystem::ApplyStoredAppearance()
                  stateHandle->instance->isBodyGenderMale ? "male" : "female");
 
     // Rebuild the body from what was just read in.
-    // Commit. Three candidates, because the engine refuses ReFinalizeState during gameplay
-    // and the RTTI dump lists siblings that have never been tried:
+    // Commit. Three candidates:
     //
     //   ReFinalizeState                    - what the body-morph menu calls
     //   FinalizeState                      - what the creator's summary menu calls
     //   InitializeOptionsFromFinalizedState
     //
-    // Whichever one the engine accepts is the one that rebuilds the body. Trying them in
-    // order costs nothing on the failing path, and each is logged so the next run says which
-    // was accepted rather than leaving it to be inferred.
+    // CORRECTED 2026-11-05: the first two were never refused by the engine - they never RAN.
+    // Both return Bool, CallCustomizationFunction passes no out-value, and the SDK's
+    // ExecuteFunction returns false without calling a function that has a return type and
+    // nowhere to put it (RED4ext.SDK Scripting/Utils-inl.hpp). So every run "accepts"
+    // InitializeOptionsFromFinalizedState, the void one, which updates the data and does not
+    // rebuild the body. Do NOT simply pass an out-value: the mirror calls InitOpts BEFORE
+    // ReFinalize (BodyMorphMenu.script), and ReFinalize on its own may blank the state. Atlas
+    // on-2-5-a-player-sees-themself-as-the-template-body-while-eve has both routes;
+    // DressLocalBodyFromStoredLook is the first.
     spdlog::info("[Character] commit BEGIN - trying ReFinalizeState, FinalizeState, "
                  "InitializeOptionsFromFinalizedState");
 
@@ -1603,7 +1673,7 @@ void NetworkWorldSystem::ApplyStoredAppearance()
             break;
         }
 
-        spdlog::info("[Character] commit: {} refused", candidate);
+        spdlog::info("[Character] commit: {} not run (returns Bool, called with no out-value)", candidate);
     }
 
     if (!committed)
@@ -1630,6 +1700,11 @@ void NetworkWorldSystem::ApplyStoredAppearance()
 
     m_appearanceRestore = AppearanceRestore::Applied;
 
+    // The live state now holds this character's stored look - which is what lets a 2.5 save
+    // read it back (and is how a 2.31-era look is re-saved in the 2.5 format).
+    m_liveStateIsCharacter = true;
+    m_liveStateIsMale = stateHandle->instance->isBodyGenderMale;
+
     // Deliberately NOT phrased as "the character now looks right".
     //
     // Every call above returning true proves the engine accepted the instructions, not that
@@ -1638,6 +1713,142 @@ void NetworkWorldSystem::ApplyStoredAppearance()
     spdlog::info("[Character] Local appearance restore COMPLETE - {} bytes applied ({}). This is "
                  "technical success only; the body on screen still has to be looked at.",
                  bytes.size(), stateHandle->instance->isBodyGenderMale ? "male" : "female");
+}
+
+/**
+ * EXPERIMENT - put the stored look on your OWN body the way everybody else's is put on theirs.
+ *
+ * On 2.5 each player sees the others as their real characters and themselves as the template
+ * body. The remote path works because it never touches a live state: it reads the stored look
+ * into a FRESH state, asks that state for its appearance keys, and hands them to the engine's
+ * appearance changer for the puppet. This does the same for the local player. The live state
+ * is left exactly as ApplyStoredAppearance left it, so the 90-second save stays
+ * possessions-only and the look the server holds cannot be written over from here.
+ *
+ * Two variants, because nobody knows yet what the changer does with the keys it is told to
+ * take off. Remote puppets pass none and come out right, so "new keys only" is the proven
+ * shape. If that leaves the template's parts showing through, "replace" also passes the
+ * template's keys, read from the snapshot ApplyStoredAppearance took before it wrote anything.
+ *
+ * Reached only from the admin overlay (DebugService), one press at a time, so nobody gets it
+ * by accident and a bad result costs one session. INFERRED odds: about 70% for a female
+ * character; about 35% for a male one such as Pajeet, whose keys go onto the single female
+ * template rig. What to look for, in the log and on screen, is on the Atlas branch
+ * on-2-5-a-player-sees-themself-as-the-template-body-while-eve.
+ */
+void NetworkWorldSystem::DressLocalBodyFromStoredLook(bool aReplaceTemplateKeys)
+{
+    const char* mode = aReplaceTemplateKeys ? "replacing the template's keys" : "new keys only";
+    spdlog::info("[Character] local dressing BEGIN ({})", mode);
+
+    if (IsGame231Layout())
+    {
+        spdlog::info("[Character] local dressing: nothing to test on 2.31, where the restore rebuilds the body itself");
+        return;
+    }
+
+    if (m_appearanceRestore != AppearanceRestore::Applied || m_restoredLook.empty() || m_templateLook.empty())
+    {
+        spdlog::warn("[Character] local dressing: no stored look was restored this session (stored {} bytes, "
+                     "template {} bytes) - enter the city as a saved character first",
+                     m_restoredLook.size(), m_templateLook.size());
+        return;
+    }
+
+    const auto system = Red::GetGameSystem<Game::PlayerSystem>();
+    Red::Handle<Red::GameObject> player;
+
+    if (system)
+        system->GetLocalPlayerControlledGameObject(player);
+
+    if (!player)
+    {
+        spdlog::warn("[Character] local dressing: no local player to dress");
+        return;
+    }
+
+    // The same read the remote path makes, including its refusal of a blob that does not
+    // consume to the byte: garbage keys reaching the changer is a crash, not a wrong face.
+    const auto load = [](const Vector<uint8_t>& aBytes, const char* acpWhat)
+    {
+        Red::Handle<Red::game::ui::CharacterCustomizationState> state;
+        CreateHandle_CharacterCustomizationState(&state);
+
+        if (!state.instance)
+        {
+            spdlog::error("[Character] local dressing: could not create a state for the {}", acpWhat);
+            return Red::Handle<Red::game::ui::CharacterCustomizationState>{};
+        }
+
+        auto reader = CMPReader(aBytes);
+        CharacterCustomizationState_Serialize(state.instance, &reader);
+
+        if (!reader.IsOK() || reader.GetOffset() != aBytes.size())
+        {
+            spdlog::error("[Character] local dressing: the {} did not read cleanly (consumed {}/{} bytes, ok={})",
+                          acpWhat, reader.GetOffset(), aBytes.size(), reader.IsOK());
+            return Red::Handle<Red::game::ui::CharacterCustomizationState>{};
+        }
+
+        return state;
+    };
+
+    auto stored = load(m_restoredLook, "stored look");
+    if (!stored)
+        return;
+
+    Red::Handle<Red::game::ui::CharacterCustomizationState> previous;
+    if (aReplaceTemplateKeys)
+    {
+        previous = load(m_templateLook, "template snapshot");
+        if (!previous)
+            return;
+    }
+
+    // Heap-held and captured by the completion below, for the reason the remote path gives:
+    // the changer may read the spans after this function has returned.
+    using Key = Red::world::EntityAppearanceChangeParameter::Key;
+    auto newKeys = std::make_shared<Red::DynArray<Key>>();
+    auto oldKeys = std::make_shared<Red::DynArray<Key>>();
+
+    CollectCustomizationKeys(stored.instance, *newKeys);
+    if (previous)
+        CollectCustomizationKeys(previous.instance, *oldKeys);
+
+    spdlog::info("[Character] local keys old {} new {} - stored body {}, template body {}",
+                 oldKeys->Size(), newKeys->Size(), stored.instance->isBodyGenderMale ? "male" : "female",
+                 previous ? (previous.instance->isBodyGenderMale ? "male" : "female") : "not read");
+
+    // Zero keys means the state resolved none of its options, and an empty change would leave
+    // the template exactly where it is while looking like it ran.
+    if (newKeys->Size() == 0)
+    {
+        spdlog::warn("[Character] local dressing: the stored look produced no keys - nothing scheduled");
+        return;
+    }
+
+    auto changer = Red::GetRuntimeSystem<Red::world::RuntimeSystemEntityAppearanceChanger>();
+    if (!changer)
+    {
+        spdlog::error("[Character] local dressing: no appearance changer");
+        return;
+    }
+
+    Red::WeakHandle<Red::game::Object> weakHandle = player;
+    Span<Key> old_keys = {.start = nullptr, .end = nullptr};
+    if (oldKeys->Size() > 0)
+        old_keys = {.start = oldKeys->Data(), .end = &oldKeys->Data()[oldKeys->Size()]};
+    Span<Key> new_keys = {.start = newKeys->Data(), .end = &newKeys->Data()[newKeys->Size()]};
+
+    const std::function<void(void)> callback = [stored, previous, newKeys, oldKeys, player](void)
+    {
+        spdlog::info("[Character] local dressing COMPLETE - the engine finished the change. This is technical "
+                     "success only: look at the body in third person.");
+    };
+
+    ScheduleSynchronizedAppearanceChanges(changer, weakHandle, &old_keys, &new_keys, callback, 0);
+
+    spdlog::info("[Character] local dressing scheduled ({}). Nothing was saved and the stored look is untouched.", mode);
 }
 
 /**
@@ -1656,12 +1867,74 @@ void NetworkWorldSystem::SaveCharacterAppearance(bool aAutomatic)
     }
 
     auto ccSystem = Red::GetGameSystem<Red::game::ui::CharacterCustomizationSystem>();
-    auto stateHandle = GetCustomizationState(ccSystem);
+
+    // WHICH state to read, and whether it may be read at all.
+    //
+    // 2.31: the creator's state at +0x78, empty outside the creator - unchanged.
+    //
+    // Anything else (2.5): +0x78 stays off - it is never empty in play and holds the template's
+    // default body, which once overwrote Pajeet (GetCustomizationState answers "none" there).
+    // The LIVE state comes from the engine's own accessor instead - the GetState the restore
+    // already writes through - and only while it provably IS this character:
+    //   - a stored look was restored this session, or a new character's creator body was
+    //     captured (m_liveStateIsCharacter), and the body type has not changed since; or
+    //   - a NEW character is being made (MarkNewCharacter; ClearNewCharacter disarms it when an
+    //     existing character is entered), so the body is the one just built in the creator.
+    // Anything else - a template body, a failed restore, a reload - is refused, as before. This
+    // is what had stopped EVERY 2.5 save, possessions included, since the port (Atlas
+    // on-2-5-no-inventory-money-perks-or-attributes-are-ever-saved).
+    Red::Handle<Red::game::ui::CharacterCustomizationState> liveState;
+    Red::Handle<Red::game::ui::CharacterCustomizationState>* stateHandle = nullptr;
+    const char* source = "+0x78";
+
+    // A NEW character's look exists in the live state at exactly one moment on 2.5: as the New
+    // Game world (the one the creator built the body in) is torn down. Measured on test.91,
+    // hezbollahcartel's log:
+    //   - mid-creator, the 90-second autosave read a 23-byte unpopulated state (refused by the
+    //     server's size floor) - too EARLY;
+    //   - the pre-teardown save read his creator look (10263 bytes, female, fnv 074ece6197c293a3)
+    //     and that is the save that created Pelayo - the RIGHT moment;
+    //   - once the multiplayer world loads, the live state is the template's body until a restore
+    //     writes a stored look into it (Pajeet's re-save carried the template woman's leftovers) -
+    //     too LATE. test.92 allowed only this one and so blocked the moment that works.
+    // So off 2.31 a new character is captured by the pre-detach save and nothing else.
+    const bool creating = m_newCharacterPending && m_savingBeforeDetach;
+
+    // A RESTORED character's look is not re-captured on 2.5: its possessions are saved and the
+    // server keeps the stored look (an existing character saved with no ccstate). The restore
+    // writes the stored look INTO a state that still holds the template's body, so re-saving
+    // that state stored Pajeet merged with the default woman's leftover options (female_base,
+    // breast, genitals - 6283 -> 6571 bytes, 2026-11-03). A clean 2.5 conversion of a stored
+    // look needs the state emptied first; until then the look the server holds is the good copy.
+    const bool possessionsOnly = !IsGame231Layout() && !creating && m_liveStateIsCharacter &&
+                                 m_appearanceRestore == AppearanceRestore::Applied;
+
+    if (IsGame231Layout())
+    {
+        stateHandle = GetCustomizationState(ccSystem);
+    }
+    else if (!possessionsOnly && (m_liveStateIsCharacter || creating))
+    {
+        liveState = GetLiveCustomizationState(ccSystem);
+        stateHandle = &liveState;
+        source = creating ? "the live state, new character" : "the live state, this character";
+
+        // Body type is fixed at creation, so a change means the state now holds somebody else.
+        if (m_liveStateIsCharacter && liveState && liveState.instance &&
+            liveState.instance->isBodyGenderMale != m_liveStateIsMale)
+        {
+            spdlog::error("[Character] NOT saving - the live state's body is {} but this character's is {}, so it "
+                          "is not this character any more",
+                          liveState.instance->isBodyGenderMale ? "male" : "female",
+                          m_liveStateIsMale ? "male" : "female");
+            return;
+        }
+    }
 
     // GetCustomizationState() returns a pointer that can never be null; the instance
     // behind it can be, and is during ordinary gameplay. Serialising a null instance
     // crashes the game, so the instance is what gets checked.
-    if (!stateHandle || !stateHandle->instance)
+    if (!possessionsOnly && (!stateHandle || !stateHandle->instance))
     {
         // AN AUTOMATIC SAVE FINDING NO STATE IS THE NORMAL CASE, NOT A FAILURE.
         //
@@ -1686,17 +1959,46 @@ void NetworkWorldSystem::SaveCharacterAppearance(bool aAutomatic)
     }
 
     auto writer = CMPWriter();
-    CharacterCustomizationState_Serialize(stateHandle->instance, &writer);
 
-    if (writer.bytes.empty())
+    if (!possessionsOnly)
+        CharacterCustomizationState_Serialize(stateHandle->instance, &writer);
+
+    if (!possessionsOnly && writer.bytes.empty())
     {
         spdlog::error("[Character] the customization state serialised to nothing - not saving");
         return;
     }
 
+    // A fingerprint of every 2.5 capture. A new character's body is read from the live state
+    // here for the first time on this game version; if one ever turns out to be the template's,
+    // this line - size, body type, hash - is what proves it, and comparing hashes across
+    // sessions shows whether a re-save changed anything.
+    if (!possessionsOnly && !IsGame231Layout())
+    {
+        uint64_t fnv = 0xcbf29ce484222325ull;
+        for (const auto byte : writer.bytes)
+        {
+            fnv ^= static_cast<uint8_t>(byte);
+            fnv *= 0x100000001b3ull;
+        }
+
+        spdlog::info("[Character] capture from {}: {} bytes, {} body, fnv {:016x}", source, writer.bytes.size(),
+                     stateHandle->instance->isBodyGenderMale ? "male" : "female", fnv);
+    }
+
     client::SaveCharacterRequest request;
-    request.set_ccstate(writer.bytes);
-    request.set_is_male(stateHandle->instance->isBodyGenderMale);
+
+    if (possessionsOnly)
+    {
+        // No ccstate means "keep the stored look". The body type still goes, so the server's
+        // body-flip guard checks this save exactly like any other.
+        request.set_is_male(m_liveStateIsMale);
+    }
+    else
+    {
+        request.set_ccstate(writer.bytes);
+        request.set_is_male(stateHandle->instance->isBodyGenderMale);
+    }
 
     // Ask the script side to read the inventory first.
     //
@@ -1747,7 +2049,19 @@ void NetworkWorldSystem::SaveCharacterAppearance(bool aAutomatic)
 
     service->Send(request);
 
-    spdlog::info("[Character] sent {} bytes of appearance to the server", writer.bytes.size());
+    // From here the live state IS this new character, so later saves in this session (the
+    // 90-second autosave, the disconnect save) may read it too - without this a new 2.5
+    // character's first session would store its look once and none of its possessions after.
+    if (creating)
+    {
+        m_liveStateIsCharacter = true;
+        m_liveStateIsMale = stateHandle->instance->isBodyGenderMale;
+    }
+
+    if (possessionsOnly)
+        spdlog::info("[Character] sent possessions to the server - the stored look is kept");
+    else
+        spdlog::info("[Character] sent {} bytes of appearance to the server", writer.bytes.size());
 }
 
 bool NetworkWorldSystem::IsConnected() const
@@ -2049,6 +2363,11 @@ void NetworkWorldSystem::LeaveWorld()
     client::LeaveWorldRequest request;
     service->Send(request);
 
+    // The server has just destroyed the body. So the next PLAY owes it a new spawn, and until
+    // that is answered nothing we send can be about an entity that still exists.
+    service->HoldSpawnUntilEntry();
+    m_leftWorld = true;
+
     spdlog::info("[Character] told the server we left the world (back at the selector)");
 }
 
@@ -2199,7 +2518,12 @@ void NetworkWorldSystem::OnBeforeWorldDetach(RED4ext::world::RuntimeScene* aScen
         if (service && service->IsConnected() && !m_restorePending && MaySaveCharacter())
         {
             spdlog::info("[Inventory] saving before the world is torn down");
+
+            // Marks the one moment a NEW character's creator look can be read on 2.5 - see
+            // SaveCharacterAppearance.
+            m_savingBeforeDetach = true;
             SaveCharacterAppearance(true);
+            m_savingBeforeDetach = false;
         }
     }
 
@@ -2214,6 +2538,9 @@ void NetworkWorldSystem::OnBeforeWorldDetach(RED4ext::world::RuntimeScene* aScen
     m_appearanceRestore = AppearanceRestore::NotStarted;
     m_appearanceRestoreFor = 0;
     m_restoreAppearance.clear();
+    m_restoredLook.clear();
+    m_templateLook.clear();
+    m_liveStateIsCharacter = false;
 
     spdlog::info("[Detach] stand-down: silencing the animation hook");
     App::PuppetRegistry::Clear();
@@ -2951,6 +3278,8 @@ void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::
     // that found the vehicle-mount crash. Cheap: this runs once per join.
     spdlog::info("[SpawnResponse] entered");
 
+    m_leftWorld = false;
+
     if (!aMessage.has_id())
     {
         spdlog::error("Failed to spawn our character on the server...");
@@ -3081,8 +3410,6 @@ void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::
     // join would overwrite their character with whatever save happened to load.
     if (m_newCharacterPending)
     {
-        m_newCharacterPending = false;
-
         // Retire the stored character FIRST, through the same command a player could
         // type. The save below reuses SaveCharacterRequest, and the server builds a save
         // by COPYING the stored record - so without the retire, the old character's name
@@ -3111,6 +3438,11 @@ void NetworkWorldSystem::HandleSpawnCharacterResponse(const PacketEvent<server::
 
         spdlog::info("[Character] new character - sending this appearance to replace the stored one");
         SaveCharacterAppearance();
+
+        // Cleared AFTER the save, not before it: on 2.5 the save reads the live state only
+        // while a new character is being made, so clearing first refused this very capture.
+        // Still cleared whatever the save did - see above.
+        m_newCharacterPending = false;
     }
 }
 
@@ -3159,7 +3491,7 @@ bool NetworkWorldSystem::AcquirePsmBlackboard(const Red::Handle<Red::GameObject>
         || !m_psmBlackboard)
         return false;
 
-    m_pPsmGetInt = Red::Detail::GetFunction(m_psmBlackboard->GetType(), "GetInt");
+    m_pPsmGetInt = Red::GetFunction(m_psmBlackboard->GetType(), "GetInt");
     m_psmOwner = acPlayer->id;
 
     if (m_pPsmGetInt)
@@ -3184,8 +3516,8 @@ void NetworkWorldSystem::ReadPlayerState(const Red::Handle<Red::GameObject>& acP
 
     int32_t locomotion = 0;
     int32_t upperBody = 0;
-    Red::Detail::CallFunctionWithArgs(m_pPsmGetInt, m_psmBlackboard, locomotion, m_psmLocomotionId);
-    Red::Detail::CallFunctionWithArgs(m_pPsmGetInt, m_psmBlackboard, upperBody, m_psmUpperBodyId);
+    Red::CallFunction(m_psmBlackboard, m_pPsmGetInt, locomotion, m_psmLocomotionId);
+    Red::CallFunction(m_psmBlackboard, m_pPsmGetInt, upperBody, m_psmUpperBodyId);
 
     aLocomotion = static_cast<uint32_t>(locomotion);
     aUpperBody = static_cast<uint32_t>(upperBody);
@@ -3197,19 +3529,38 @@ void NetworkWorldSystem::UpdatePlayerLocation() const
     Red::Handle<Red::GameObject> player;
     system->GetLocalPlayerControlledGameObject(player);
 
-    if (!player || !GetRemotePlayerId())
+    // m_leftWorld: test.68 sent ~770 moves in 20 seconds for a puppet the selector had already
+    // released, each one a server-side "Attempt to move invalid entity".
+    if (!player || !GetRemotePlayerId() || m_leftWorld)
         return;
 
     auto puppet = Red::Cast<Red::game::Puppet>(player);
 
-    if (auto vehicle_id = GetVehicleSystem()->GetVehicleGameId())
+    // Resolved BEFORE choosing a stream, so a vehicle that cannot be found falls back to the
+    // on-foot stream below instead of sending nothing. This used to `return`, and a wrong or
+    // stale vehicle id silenced the player completely: "vehicle" 1 - the player's own entity,
+    // from a body pickup that VehicleSystem.reds reported as a car entry - froze
+    // hezbollahcartel on zeldfep's screen for as long as he held it (test.86: his send rate
+    // fell to 12-17/s, 349 "Couldn't find vehicle: 1" lines, zeldfep's buffer ran dry).
+    // Red::Cast returns a reference into its argument, so the entity handle is a local.
+    Red::Handle<Red::vehicle::BaseObject> vehicle;
+    if (const auto vehicleId = GetVehicleSystem()->GetVehicleGameId())
     {
-        auto vehicle = Red::Cast<Red::vehicle::BaseObject>(GetEntity(*vehicle_id));
+        const auto vehicleEntity = GetEntity(*vehicleId);
+        vehicle = Red::Cast<Red::vehicle::BaseObject>(vehicleEntity);
         if (!vehicle)
         {
-            spdlog::info("Couldn't find vehicle: {}", (*vehicle_id).hash);
-            return;
+            // Once per id, not once per tick: the old line printed 30 times a second.
+            static uint64_t s_reportedMissing = 0;
+            if (std::exchange(s_reportedMissing, vehicleId->hash) != vehicleId->hash)
+                spdlog::warn("[Movement] VehicleSystem says we are in vehicle {:x}, but no such vehicle is in the "
+                             "world - streaming the on-foot position instead",
+                             vehicleId->hash);
         }
+    }
+
+    if (vehicle)
+    {
         if (auto remote_id = GetVehicleSystem()->GetVehicleRemoteId(); remote_id != std::nullopt)
         {
             auto transform = Red::WorldTransform();
@@ -3359,15 +3710,8 @@ void NetworkWorldSystem::UpdatePlayerLocation() const
     // }
 }
 
-void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
+void InstallCrashReporter()
 {
-    spdlog::info("[OnInitialize]");
-
-    IGameSystem::OnInitialize(aJob);
-
-    if (Settings::IsDisabled())
-        return;
-
     // Our own crash reporter, because the game's has stopped producing one.
     //
     // Every termination since the instrumented flecs build went in has written NO minidump,
@@ -3624,6 +3968,19 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
 
                        spdlog::info("[Crash] vectored handler + terminate/abort hooks installed");
                    });
+}
+
+void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
+{
+    spdlog::info("[OnInitialize]");
+
+    IGameSystem::OnInitialize(aJob);
+
+    if (Settings::IsDisabled())
+        return;
+
+    // Usually installed already, right after plugin load (Main.cpp); call_once makes this a no-op then.
+    InstallCrashReporter();
 
     // Let flecs speak. Nothing was listening, which is why the crashes are silent.
     //
@@ -3789,8 +4146,8 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
 
     m_remotePlayerId = std::nullopt;
 
-    m_pCreatePuppet = Red::Detail::GetFunction(GetType(), "CreatePuppet");
-    m_pDeletePuppet = Red::Detail::GetFunction(GetType(), "DeletePuppet");
+    m_pCreatePuppet = Red::GetFunction(GetType(), "CreatePuppet");
+    m_pDeletePuppet = Red::GetFunction(GetType(), "DeletePuppet");
 
     m_interpolationSystem = RED4ext::MakeHandle<InterpolationSystem>();
     m_interpolationSystem->OnInitialize(aJob);
@@ -3806,6 +4163,16 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
 }
 
 void NetworkWorldSystem::Connect()
+{
+    ConnectAs(false);
+}
+
+void NetworkWorldSystem::ConnectFromMenu()
+{
+    ConnectAs(true);
+}
+
+void NetworkWorldSystem::ConnectAs(const bool aFromMenu)
 {
     /**
      * NOT THROUGH THE LAUNCHER, NOT CONNECTING. Cam's rule, 2026-09-03.
@@ -3842,7 +4209,7 @@ void NetworkWorldSystem::Connect()
     // at the moment they asked to connect, which is what decides whether authentication is
     // allowed to spawn them - see CaptureSpawnIntent. Asked afterwards it becomes a race
     // against whatever else the press set in motion.
-    service->CaptureSpawnIntent();
+    service->CaptureSpawnIntent(aFromMenu);
 
     service->Connect(address);
 }
@@ -4020,10 +4387,19 @@ void NetworkWorldSystem::OnConnected()
 
             if (const auto pOwner = Red::Cast<Red::GameObject>(pEntity))
             {
-                if (pOwner->tags.Contains("CyberpunkMP.Vehicle"))
+                if (pOwner->tags.Contains(Red::CName("CyberpunkMP.Vehicle")))
                     return;
 
-                aEntity.emplace<EntityComponent>(aSpawning.Id, false, aSpawning.Controller);
+                // Copied BEFORE the first structural change. aSpawning is a reference into this
+                // entity's SpawningComponent column, and emplace/add below can move the entity to
+                // another archetype - after which reading aSpawning.UsesDriver reads wherever the
+                // column used to be. test.78, both clients: a puppet registered as a driver came
+                // out of here with no DriverComponent and never reached the driver path.
+                const auto spawnId = aSpawning.Id;
+                auto* const pController = aSpawning.Controller;
+                const bool usesDriver = aSpawning.UsesDriver;
+
+                aEntity.emplace<EntityComponent>(spawnId, false, pController);
 
                 // Added here rather than by an OnAdd observer - see InterpolationSystem.cpp
                 // for why that observer was removed. The interpolator matches
@@ -4039,16 +4415,32 @@ void NetworkWorldSystem::OnConnected()
                 // Driver puppets get their animation writer bound here, on the main
                 // thread, with no engine hook involved - the driver re-binds itself if
                 // a mount rebuilds the component later.
-                if (aSpawning.UsesDriver)
+                spdlog::info("[Spawn] puppet {:x} promoted - driver {}", spawnId.hash,
+                             usesDriver ? (IsGame231Layout() ? "yes" : "yes (transform only)") : "no (legacy controller)");
+
+                if (usesDriver)
                 {
-                    auto pDriver = std::make_shared<PuppetDriver>();
-                    pDriver->EnsureAttached(pEntity.GetPtr(), aEntity.raw_id());
-                    aEntity.set<DriverComponent>({std::move(pDriver)});
+                    // Off 2.31 the driver moves the puppet by transform ONLY, with no animation
+                    // writer. PuppetDriver's AnimationDriver hands a mimic of a 2.31 engine struct
+                    // to engine functions (Attach/SendParameters) - the same class of decode that
+                    // has crashed 2.5 twice tonight. A null Driver is the transform-only mode:
+                    // DriveEntity guards every use of it. The puppet glides without a walk cycle;
+                    // a gliding player beats a crashed game.
+                    if (IsGame231Layout())
+                    {
+                        auto pDriver = std::make_shared<PuppetDriver>();
+                        pDriver->EnsureAttached(pEntity.GetPtr(), aEntity.raw_id());
+                        aEntity.set<DriverComponent>({std::move(pDriver)});
+                    }
+                    else
+                    {
+                        aEntity.set<DriverComponent>({nullptr});
+                    }
                 }
 
                 aEntity.remove<SpawningComponent>();
 
-                pOwner->tags.Add("CyberpunkMP.Puppet");
+                pOwner->tags.Add(Red::CName("CyberpunkMP.Puppet"));
             }
         });
 
@@ -4057,6 +4449,8 @@ void NetworkWorldSystem::OnConnected()
 
 void NetworkWorldSystem::OnDisconnected(Client::EDisconnectReason aReason)
 {
+    m_leftWorld = false;
+
     // Release the microphone and the speakers before anything else. Leaving a capture
     // thread running after a disconnect would hold somebody's headset open for a session
     // that no longer exists - and on a reconnect, try to open it twice.
