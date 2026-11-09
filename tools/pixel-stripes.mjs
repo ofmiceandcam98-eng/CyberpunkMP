@@ -12,6 +12,7 @@
 // steep 2:1 (1px across every two rows).
 //
 //   node tools/pixel-stripes.mjs           prints the :root block to paste into code/launcher-lite/index.html
+//   node tools/pixel-stripes.mjs --lines   prints the main window's bar and traces, to paste into its markup
 //   import { STRIPES } from './pixel-stripes.mjs'   (tools/tests/launcher_buttons_test.mjs checks the
 //                                                    launcher still carries exactly these)
 
@@ -62,8 +63,51 @@ export const STRIPES = {
   '--px-tread': { ...tile(40, 20, 1, '\\'), what: 'the working tread: a 40px 45-degree tile leaning the other way' }
 }
 
+// THE MAIN WINDOW'S LINES - zeldfep, 2026-11-08: the header's old circuit trace redrawn thick ("look
+// at the original path and try to fix up the old style ... I like thick lines for those"), and the
+// top-left bar and echo dash kept, only updated ("I don't [want] the design changed just updated on
+// it I think it adds character"). Polygons on whole pixels with crispEdges, so they step the same on
+// every screen. The trace comes in from the edge, jogs down at 45 degrees and lands on a square pad;
+// a second trace runs through the same bend to its own pad further across. The diagonal's width is
+// t*sqrt(2), so the bend keeps the line's weight. The footer's is the same drawing turned round,
+// computed rather than transformed so it stays on whole pixels.
+const stop = (offset, cls) => `<stop offset="${offset}" class="${cls}"/>`
+const gradient = (id, x1, x2, stops) => `<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${x1}" x2="${x2}" y1="0" y2="0">${stops}</linearGradient>`
+
+function trace (flip, id) {
+  const W = 900; const t = 4; const d = t + 4; const s = Math.round(t * Math.SQRT2); const p = d + t; const y0 = 2
+  const y1 = y0 + t + 3; const X1 = 444; const X2 = X1 + s + Math.round(3 * Math.SQRT2) - (t + 3); const pad1 = 364; const pad2 = 260
+  const H = y1 + d + t + 1
+  const P = ([x, y]) => (flip ? [W - x, H - y] : [x, y])
+  const pts = (a) => a.map(P).map((c) => c.join(',')).join(' ')
+  const box = (x0, y, x1, h) => { const [a, b] = flip ? P([x1, y + h]) : P([x0, y]); return `x="${a}" y="${b}" width="${x1 - x0}" height="${h}"` }
+  const run = (y, X, xP) => [[W, y], [X, y], [X - d, y + d], [xP + p, y + d], [xP + p, y], [xP, y], [xP, y + d + t], [X + s - d - t, y + d + t], [X + s - t, y + t], [W, y + t]]
+  const ux = (x) => (flip ? W - x : x)
+  return `<svg class="ln-trace" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" aria-hidden="true"><defs>` +
+    gradient(id, ux(W), ux(pad2), stop(0, 'ln-a') + stop(0.8, 'ln-a') + stop(1, 'ln-a2')) +
+    gradient(id + 't', ux(pad2), ux(40), stop(0, 'ln-a') + stop(0.35, 'ln-a2') + stop(1, 'ln-out')) +
+    '</defs>' +
+    `<rect ${box(40, y1 + (d + t) / 2 - 1, pad2, 2)} fill="url(#${id}t)"/>` +
+    `<polygon points="${pts(run(y0, X1, pad1))}" fill="url(#${id})"/>` +
+    `<polygon points="${pts(run(y1, X2, pad2))}" fill="url(#${id})"/>` +
+    `<rect class="ln-pad" ${box(pad1, y0, pad1 + p, d + t)}/>` +
+    `<rect class="ln-pad" ${box(pad2, y1, pad2 + p, d + t)}/>` +
+    '</svg>'
+}
+
+export const LINES = {
+  bar: '<svg class="ln-bar" width="360" height="10" viewBox="0 0 360 10" aria-hidden="true"><defs>' +
+    gradient('ln-b', 0, 320, stop(0, 'ln-a') + stop(0.55, 'ln-a') + stop(1, 'ln-a2')) +
+    gradient('ln-e', 331, 360, stop(0, 'ln-a2') + stop(1, 'ln-a3')) +
+    '</defs><polygon points="0,0 320,0 310,10 0,10" fill="url(#ln-b)"/><polygon points="341,0 360,0 350,10 331,10" fill="url(#ln-e)"/></svg>',
+  header: trace(false, 'ln-h'),
+  footer: trace(true, 'ln-f')
+}
+
 export function rootBlock () {
   return Object.entries(STRIPES).map(([name, s]) => `    /* ${s.what} - ${s.w}x${s.h} */\n    ${name}: ${s.url};\n`).join('')
 }
 
-if (import.meta.url === `file:///${process.argv[1].replace(/\\/g, '/').replace(/^\//, '')}`) process.stdout.write(rootBlock())
+if (import.meta.url === `file:///${process.argv[1].replace(/\\/g, '/').replace(/^\//, '')}`) {
+  process.stdout.write(process.argv[2] === '--lines' ? Object.entries(LINES).map(([name, svg]) => `<!-- ${name} -->\n${svg}\n`).join('') : rootBlock())
+}

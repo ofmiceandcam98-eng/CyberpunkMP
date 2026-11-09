@@ -127,7 +127,7 @@ for (const m of styles.matchAll(/(?<!repeating-)linear-gradient\(\s*(-?\d+)deg/g
     fail(`a ${m[1]}deg gradient - its hard edge steps unevenly`, 'the styles in index.html', 'cut it at 45 or 135 degrees, which step 1px per row')
   }
 }
-const { STRIPES } = await import(pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'pixel-stripes.mjs')).href)
+const { STRIPES, LINES } = await import(pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'pixel-stripes.mjs')).href)
 for (const [name, s] of Object.entries(STRIPES)) {
   const at = styles.indexOf(`${name}: `)
   const value = at < 0 ? null : styles.slice(at + name.length + 2, styles.indexOf(';\n', at))
@@ -137,6 +137,29 @@ for (const [name, s] of Object.entries(STRIPES)) {
     fail(`${name} is drawn but never used`, 'the styles in index.html', 'use it, or drop it from tools/pixel-stripes.mjs')
   }
 }
+// The main window's bar and traces are the generator's drawings too: whole pixels, every edge
+// straight or at 45 degrees.
+for (const [name, svg] of Object.entries(LINES)) {
+  if (!markup.includes(svg)) {
+    fail(`the ${name} line does not match the generator`, 'the header and footer markup in index.html', 'run node tools/pixel-stripes.mjs --lines and paste that line into the markup')
+  }
+  for (const [, points] of svg.matchAll(/points="([^"]+)"/g)) {
+    const corners = points.split(' ').map((c) => c.split(',').map(Number))
+    corners.forEach(([x, y], i) => {
+      const [nx, ny] = corners[(i + 1) % corners.length]
+      if (![x, y].every(Number.isInteger)) fail(`the ${name} line has a corner off the grid at ${x},${y}`, 'LINES in tools/pixel-stripes.mjs', 'every corner lands on a whole pixel')
+      if (nx !== x && ny !== y && Math.abs(nx - x) !== Math.abs(ny - y)) fail(`the ${name} line has an edge that is not 45 degrees, ${x},${y} to ${nx},${ny}`, 'LINES in tools/pixel-stripes.mjs', 'make the diagonal run as far across as down, so it steps 1px per row')
+    })
+  }
+}
+// The bays' 1px frames are clip-paths, which are not snapped to the grid the way a border is.
+if (!/--cols:[^;]*round\(down/.test(styles)) {
+  fail('the main window\'s columns can land on a fraction', '--cols in index.html', 'keep the middle column rounded to an even number of pixels, or every bay\'s frame blurs')
+}
+if (!/function snapBays[\s\S]*?\.style\.marginTop\s*=/.test(script)) {
+  fail('snapBays no longer lands the bays on whole pixels', 'snapBays in the launcher script', 'keep it: the middle bays sit under text of fractional height, and their 1px frames blur on a fraction')
+}
+
 // Wires and traces: every bend at 45 degrees. (Icons such as the gear's cog are smoothed SVG and
 // are not held to this.)
 const wires = [

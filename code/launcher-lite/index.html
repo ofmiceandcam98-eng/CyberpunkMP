@@ -28,7 +28,11 @@
     --line:    #2a1418;
     --ink:     #e8e2e2;
     --ink-dim: #9a8b8d;
-    --accent:  #ff2a32;
+    /* The game's own red (zeldfep, 2026-11-09: "the red is good its just a bit vibrant check the
+       cyberpunk color pallet"). #ff2a32 had the game's hue with more saturation than any red in
+       base/gameplay/gui/common/main_colors.inkstyle; this is that file's NameplateBackground. The
+       ramp below and --tread-2 come from the same file. */
+    --accent:  #f73932;
     --hazard:  #f3c50f;
     --ok:      #3ddc64;
     --bad:     #f0a05a;
@@ -44,20 +48,28 @@
     /* THE ACCENT RAMP - the red fade on the Play button, the rail and the progress bar. It
        was pasted as hex into ten gradients (#7c1015 x4, #5a0c11 x5, #26060a x8), and the
        progress bar read an --accent-2 nobody had declared, falling back to a fourth red,
-       #7a1016, one step off #7c1015. Same values, one home: shades OF the accent, never new
-       hues - a new shade goes here or does not exist. */
-    --accent-2: #7c1015;
-    --accent-3: #5a0c11;
+       #7a1016, one step off #7c1015. One home: shades OF the accent, never new hues - a new
+       shade goes here or does not exist. */
+    --accent-2: #79221b;
+    --accent-3: #542226;
     --accent-4: #26060a;
     /* What the button kit needs and nothing else has. --glitch is the one hue outside this
        palette, and only the click glitch may use it. */
     --glitch: #3ce8ef;
     --plate-dead: #2a0d11;
-    --tread-2: #b81f26;
+    --tread-2: #ae3b36;
     --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    /* Where a bay's top edge steps down. */
+    --step: 46%;
+    /* The main window's three columns, shared by the header and the bays so the header's parts
+       sit over them. Equal sides keep the middle's centre on the window's centre, and the middle
+       is the widest column at every size. Whole pixels: a clip-path edge is not snapped the way
+       a border is, so a bay on a fraction blurs its 1px frame, and an even middle leaves both
+       sides whole. */
+    --cols: minmax(14rem, 1fr) round(down, max(18rem, calc((100% - 2.5rem) / 3.25 * 1.25)), 2px) minmax(14rem, 1fr);
     /* ONE corner radius. This file had 2, 3, 4, 6 and 8px in it, none of them chosen -
        and the modal, the panels and the notes card are all square already, so square is
-       what the kit actually is. Avatars stay round; they are pictures of people. */
+       what the kit actually is. Avatars are cut as the gear's hex. */
     --radius:  2px;
     /* ONE TYPE SCALE. This file had TWENTY-FOUR distinct font sizes in it - .54 .55 .58
        .6 .62 .64 .66 .68 .7 .72 .74 .75 .76 .78 .8 .82 .84 .85 1 1.02 1.1 1.15 1.3 - and
@@ -126,37 +138,31 @@
   }
 
   header {
-    display: flex;
+    display: grid;
+    grid-template-columns: var(--cols);
+    column-gap: 1.25rem;
     align-items: center;
-    justify-content: space-between;
     padding: 1rem 1.5rem;
-    border-bottom: 1px solid var(--line);
+    /* Keeps its 1px of height. The bus below is the header's rule now. */
+    border-bottom: 1px solid transparent;
     position: relative;
   }
-  /* THE MOTIF - solid lines with accents, one statement on the TOP edge, exactly
-     like the crop: a bold solid bar cut on the diagonal, one echo dash, then a thin
-     rule running out to the right edge. Nothing else competes with it; the header's
-     bottom border stays a plain hairline. */
-  header::before {
-    content: ""; position: absolute; top: 0; left: 0; right: 0; height: 10px;
-    background:
-      linear-gradient(135deg, var(--accent) 0, var(--accent-2) 55%, var(--accent-4) calc(100% - 7px), transparent calc(100% - 7px)) left 0 top 0 / 320px 100% no-repeat,
-      linear-gradient(135deg, transparent 5px, var(--accent-3) 5px, var(--accent-4) calc(100% - 5px), transparent calc(100% - 5px)) left 334px top 0 / 26px 100% no-repeat;
-    filter: drop-shadow(0 0 6px rgba(255, 42, 50, .4));
-    pointer-events: none;
+  /* THE LINES, drawn in whole pixels (tools/pixel-stripes.mjs --lines; the button test fails them
+     if they drift). Top left: a solid bar cut on the diagonal and one echo dash. Bottom right and,
+     turned round, across the footer: the thick bus, two traces through one 45-degree bend to their
+     own square pads, a thin line leaving the far one and fading out. */
+  .ln-bar, .ln-trace {
+    position: absolute; overflow: visible; shape-rendering: crispEdges; pointer-events: none;
+    filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 40%, transparent));
   }
-  /* The circuit trace answers from the OPPOSITE corner - bottom right - so neither
-     side gets busy: it enters from the right edge, jogs down through a 45-degree
-     bend, and terminates on a square node pad pointing into the page. */
-  header::after {
-    content: ""; position: absolute; bottom: -8px; right: 0; width: 46%; height: 16px;
-    background: linear-gradient(270deg, var(--accent) 0, var(--accent-2) 45%, var(--accent-4) 100%);
-    clip-path: polygon(
-      100% 2px, 80px 2px, 72px 10px, 12px 10px, 12px 2px, 0 2px,
-      0 14px, 12px 14px, 76px 14px, 84px 6px, 100% 6px);
-    filter: drop-shadow(0 0 6px rgba(255, 42, 50, .4));
-    pointer-events: none;
-  }
+  .ln-bar { left: 0; top: 0; }
+  header .ln-trace { right: 0; bottom: -15px; }
+  footer .ln-trace { left: 0; top: -14px; }
+  .ln-pad { fill: var(--accent); }
+  .ln-a { stop-color: var(--accent); }
+  .ln-a2 { stop-color: var(--accent-2); }
+  .ln-a3 { stop-color: var(--accent-3); }
+  .ln-out { stop-color: var(--accent-3); stop-opacity: 0; }
 
   .brand {
     font-family: 'NCO Display', var(--mono);
@@ -164,7 +170,9 @@
     letter-spacing: .16em;
     text-transform: uppercase;
     font-size: var(--fs-head);
+    white-space: nowrap;
   }
+  .gear { justify-self: end; }
   .brand::before { content: "/// "; font-family: var(--mono); font-weight: 700; color: var(--accent); }
   .brand span { color: var(--accent); }
 
@@ -213,16 +221,16 @@
       90deg, #e05555 0 6px, transparent 6px 9px); }
 
 
-  .accounts { display: flex; align-items: center; gap: 1.5rem; }
+  /* Two whole-pixel slots centred over the middle bay: an even total on an even column keeps the
+     avatars on the grid. */
+  .accounts { display: grid; grid-template-columns: repeat(2, 168px); gap: 16px; justify-self: center; width: 352px; }
 
   /* Nexus has no avatar to show - the API returns a name, not a picture - so the slot
      is filled with a mark of the same size, keeping both rows the same height whether
      or not anyone is signed in. */
   .nexus-mark {
-    width: 34px; height: 34px; border-radius: 50%;
     display: grid; place-items: center;
     background: var(--surface);
-    border: 1px solid var(--line);
     overflow: hidden;
   }
   /* The actual Nexus Mods mark (their favicon art, shipped alongside this file) - a
@@ -239,10 +247,28 @@
   }
   .nexus-mark.on img { filter: none; }
 
-  .account { display: none; align-items: center; gap: .75rem; }
+  .account { display: none; position: relative; height: 36px; padding-left: 2px; align-items: center; gap: 10px; min-width: 0; }
   .account.visible { display: flex; }
-  .account img { width: 34px; height: 34px; border-radius: 50%; background: var(--surface); }
-  .account .who { line-height: 1.25; }
+  /* Hex avatars with a ring, the gear's shape and its red, 2:1 sides. */
+  .avatar-ring {
+    position: absolute; left: 0; top: 0; width: 36px; height: 36px; background: var(--accent-2);
+    clip-path: polygon(9px 0, 27px 0, 36px 18px, 27px 36px, 9px 36px, 0 18px);
+  }
+  .account img, .account .nexus-mark {
+    position: relative; width: 32px; height: 32px; flex: none; background: var(--surface);
+    clip-path: polygon(8px 0, 24px 0, 32px 16px, 24px 32px, 8px 32px, 0 16px);
+  }
+  .account .nexus-mark img { width: 100%; height: 100%; clip-path: none; }
+  /* A long name cuts off instead of pushing the row. */
+  .account .who { flex: 1; min-width: 0; line-height: 1.25; }
+  .account .name, .account .id { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .account .linkbtn { flex: none; }
+  /* On narrow windows the name reaches into the middle column, so the tabs tighten up and sit
+     against that column's right edge, clear of it. */
+  @media (max-width: 1100px) {
+    .accounts { grid-template-columns: repeat(2, 160px); gap: 12px; justify-self: end; width: 332px; }
+    .account { gap: 8px; }
+  }
   .account .name { font-size: var(--fs-body); font-weight: 600; }
   .account .id {
     font-family: var(--mono);
@@ -264,11 +290,8 @@
     flex: 1;
     min-height: 0;              /* lets a flex child actually shrink and scroll */
     display: grid;
-    /* Three columns: patch notes, the play controls, the mod list.
-       Fixed outer columns and a flexible middle, so the play controls - the thing
-       everyone is actually here for - keep the centre and never get squeezed to a
-       sliver by a long mod name. Sized to fit 1180px without stretching the window. */
-    grid-template-columns: minmax(17rem, 22rem) 1fr minmax(17rem, 22rem);
+    /* Three columns: patch notes, the play controls, the mod list. See --cols. */
+    grid-template-columns: var(--cols);
     gap: 1.25rem;
     padding: 1.5rem;
     overflow: hidden;
@@ -297,7 +320,7 @@
     margin-top: .5rem;
     border: 1px solid var(--line);
     border-left: 3px solid var(--accent);
-    background: rgba(255, 42, 50, .04);
+    background: color-mix(in srgb, var(--accent) 4%, transparent);
     padding: .45rem .6rem .5rem;
   }
   .modqueue-head {
@@ -402,6 +425,7 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
+    gap: 1.25rem;
   }
 
   .col-right {
@@ -444,6 +468,31 @@
     width: 100%;
     max-width: 26rem;
   }
+
+  /* THE MAIN WINDOW'S BAYS (zeldfep, 2026-11-08: "keep color of the boxes i like the A bays").
+     Settings' module bays, in the boxes' own colours: the fill and hairline they always had, and
+     only the shape is new. A lit numbered tab, the step with its hatch, the spec line under it,
+     four pips. Like Settings', the frame is two clipped layers, because a border on a clip-path
+     loses its diagonals. */
+  .card.bay {
+    position: relative; isolation: isolate;
+    background: none; border: 0; border-radius: 0; padding-top: 2.35rem;
+    /* Never under the longest tab, "01 · Patch notes", which the narrowest side column would
+       otherwise run it into. */
+    --step: max(46%, 160px);
+  }
+  .card.bay::before, .card.bay::after { content: ""; position: absolute; z-index: -1; clip-path: var(--bay); pointer-events: none; }
+  .card.bay::before { inset: 0; background: var(--line); }
+  .card.bay::after { inset: 1px; background: var(--surface); }
+  .bay > .admin-head { display: block; position: absolute; left: 0; top: 0; right: 0; width: auto; height: 28px; }
+  .bay > .admin-head .admin-title {
+    position: absolute; left: 0; top: 0; height: 20px; display: flex; align-items: center;
+    padding: 0 1.3rem 0 .6rem; background: var(--accent); color: #140406;
+    clip-path: polygon(0 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
+  }
+  /* Flex trims the space after the number, so it is a margin (as in Settings' tabs). */
+  .bay > .admin-head .admin-title[data-n]::before { content: attr(data-n) " \00B7"; margin-right: .55em; }
+  .bay > .admin-head .serverstate { position: absolute; right: 1.4rem; top: 13px; }
 
   button.action {
     font-family: var(--mono);
@@ -1148,12 +1197,15 @@
      The label tabs are still the section headings the rail counts. zeldfep, 2026-09-07: "too
      much scrolling I think it should be 4 total inside tools tabs" - one per bay, not one per
      row. The rail measures the bay (railTop), because the tab sits pinned inside it. */
+  /* The notched frame every bay is cut to, in Settings and on the main window. */
+  .grp, .card.bay {
+    --bay: polygon(0 0, var(--step) 0, calc(var(--step) + 10px) 10px, calc(100% - 18px) 10px, 100% 28px,
+                   100% calc(100% - 10px), calc(100% - 10px) 100%, 14px 100%, 0 calc(100% - 14px));
+  }
   .grp {
     position: relative; isolation: isolate;
     display: flex; flex-direction: column; gap: .9rem;
     margin-top: .4rem; padding: 2.15rem 1rem 1.15rem;
-    --bay: polygon(0 0, 46% 0, calc(46% + 10px) 10px, calc(100% - 18px) 10px, 100% 28px,
-                   100% calc(100% - 10px), calc(100% - 10px) 100%, 14px 100%, 0 calc(100% - 14px));
   }
   .grp::before, .grp::after { content: ""; position: absolute; z-index: -1; clip-path: var(--bay); }
   .grp::before { inset: 0; background: var(--accent-2); }
@@ -1174,7 +1226,7 @@
   }
   /* Six whole stripes, the plate hatch's steep 2:1 (--px-hatch-bay). */
   .bay-hatch {
-    position: absolute; top: 2px; left: calc(46% + 16px); width: 34px; height: 6px;
+    position: absolute; top: 2px; left: calc(var(--step) + 16px); width: 34px; height: 6px;
     background: var(--accent-2); mask: var(--px-hatch-bay) 0 0 / 34px 6px no-repeat;
   }
   .bay-pips {
@@ -1315,20 +1367,14 @@
     line-height: 1.5;
   }
 
-  /* The footer answers the header: the same motif, mirrored - block anchored right,
-     echo dash, thin rule running back to the left edge. */
-  footer { position: relative; }
-  footer::before {
-    content: ""; position: absolute; left: 0; right: 0; top: -8px; height: 8px;
-    background:
-      linear-gradient(45deg, transparent 6px, var(--accent-4) 6px, var(--accent-2) 45%, var(--accent) 100%) right 0 top 0 / 220px 100% no-repeat,
-      linear-gradient(45deg, transparent 4px, var(--accent-4) 4px, var(--accent-3) calc(100% - 4px), transparent calc(100% - 4px)) right 232px top 0 / 16px 100% no-repeat,
-      linear-gradient(90deg, transparent, var(--accent-3)) left 0 center / calc(100% - 270px) 2px no-repeat;
-    opacity: .8; pointer-events: none;
-  }
+  /* The footer answers the header: the same traces, turned round, coming in from the left. */
   footer {
+    position: relative;
+    /* Whole pixels: its padding around two lines of text came to 62.4, which put everything keyed
+       to it on a fraction. Keeps its 1px of border for the same height. */
+    height: 63px;
     padding: .75rem 1.5rem;
-    border-top: 1px solid var(--line);
+    border-top: 1px solid transparent;
     font-size: var(--fs-label);
     color: var(--ink-dim);
     text-align: center;
@@ -1395,6 +1441,7 @@
     <div class="accounts">
 
     <div class="account" id="account">
+      <span class="avatar-ring" aria-hidden="true"></span>
       <img id="avatar" alt="">
       <div class="who">
         <div class="name" id="username"></div>
@@ -1409,6 +1456,7 @@
          opening Settings and reading a paragraph. Same shape as the block above so it
          reads as the second half of one identity row, not a new feature. -->
     <div class="account" id="nexusAccount">
+      <span class="avatar-ring" aria-hidden="true"></span>
       <div class="nexus-mark" id="nexusMark" aria-hidden="true"><img src="data:image/webp;base64,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" alt=""></div>
       <div class="who">
         <div class="name" id="nexusAccountName">Nexus</div>
@@ -1420,6 +1468,8 @@
     </div>
 
     <button class="gear glitches" id="openSettings" type="button" title="Settings" aria-label="Settings"><span class="hx hx-line"></span><span class="hx hx-fill"><span class="scan"></span></span><svg class="cog" viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M10.06 3.93L10.45 1.11L13.55 1.11L13.94 3.93L16.34 4.92L18.60 3.20L20.80 5.40L19.08 7.66L20.07 10.06L22.89 10.45L22.89 13.55L20.07 13.94L19.08 16.34L20.80 18.60L18.60 20.80L16.34 19.08L13.94 20.07L13.55 22.89L10.45 22.89L10.06 20.07L7.66 19.08L5.40 20.80L3.20 18.60L4.92 16.34L3.93 13.94L1.11 13.55L1.11 10.45L3.93 10.06L4.92 7.66L3.20 5.40L5.40 3.20L7.66 4.92ZM15.4 12A3.4 3.4 0 1 0 8.6 12A3.4 3.4 0 1 0 15.4 12Z"/></svg><span class="bolt-ticks" aria-hidden="true"><i></i><i></i><i></i></span></button>
+    <svg class="ln-bar" width="360" height="10" viewBox="0 0 360 10" aria-hidden="true"><defs><linearGradient id="ln-b" gradientUnits="userSpaceOnUse" x1="0" x2="320" y1="0" y2="0"><stop offset="0" class="ln-a"/><stop offset="0.55" class="ln-a"/><stop offset="1" class="ln-a2"/></linearGradient><linearGradient id="ln-e" gradientUnits="userSpaceOnUse" x1="331" x2="360" y1="0" y2="0"><stop offset="0" class="ln-a2"/><stop offset="1" class="ln-a3"/></linearGradient></defs><polygon points="0,0 320,0 310,10 0,10" fill="url(#ln-b)"/><polygon points="341,0 360,0 350,10 331,10" fill="url(#ln-e)"/></svg>
+    <svg class="ln-trace" width="900" height="22" viewBox="0 0 900 22" aria-hidden="true"><defs><linearGradient id="ln-h" gradientUnits="userSpaceOnUse" x1="900" x2="260" y1="0" y2="0"><stop offset="0" class="ln-a"/><stop offset="0.8" class="ln-a"/><stop offset="1" class="ln-a2"/></linearGradient><linearGradient id="ln-ht" gradientUnits="userSpaceOnUse" x1="260" x2="40" y1="0" y2="0"><stop offset="0" class="ln-a"/><stop offset="0.35" class="ln-a2"/><stop offset="1" class="ln-out"/></linearGradient></defs><rect x="40" y="14" width="220" height="2" fill="url(#ln-ht)"/><polygon points="900,2 444,2 436,10 376,10 376,2 364,2 364,14 438,14 446,6 900,6" fill="url(#ln-h)"/><polygon points="900,9 447,9 439,17 272,17 272,9 260,9 260,21 441,21 449,13 900,13" fill="url(#ln-h)"/><rect class="ln-pad" x="364" y="2" width="12" height="12"/><rect class="ln-pad" x="260" y="9" width="12" height="12"/></svg>
   </header>
 
   <!-- Settings. Everything that is occasional, diagnostic or destructive lives in
@@ -2085,24 +2135,26 @@
          release, the same source the Discord bot announces from - so the launcher
          and #server-update can never disagree about what shipped. -->
     <div class="col-left">
-      <div class="card changelog" id="changelog" style="display:none">
+      <div class="card changelog bay" id="changelog" style="display:none">
         <div class="admin-head">
-          <span class="admin-title">Patch notes</span>
+          <span class="admin-title" data-n="01">Patch notes</span>
           <span class="serverstate" id="changelogVersion"></span>
         </div>
         <div class="notes" id="changelogBody"></div>
+        <span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
       </div>
 
       <!-- What is being worked on RIGHT NOW, as opposed to what shipped.
            Posted through the coordination API and published with the release, so
            anyone running the launcher can see progress between builds instead of
            only when a version goes out. Hidden entirely when there is nothing. -->
-      <div class="card changelog" id="devUpdates" style="display:none">
+      <div class="card changelog bay" id="devUpdates" style="display:none">
         <div class="admin-head">
           <span class="admin-title">In development</span>
           <span class="serverstate" id="devUpdatesCount"></span>
         </div>
         <div class="notes" id="devUpdatesBody"></div>
+        <span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
       </div>
     </div>
 
@@ -2113,7 +2165,12 @@
       Verify your Discord account to continue. We only read your username and avatar.
     </p>
 
-    <div class="card">
+    <div class="card bay" id="launchBay">
+      <div class="admin-head">
+        <span class="admin-title" data-n="02">Launch</span>
+        <span class="serverstate" id="launchLamps"></span>
+      </div>
+
       <button class="action discord" id="login">Log in with Discord</button>
 
       <div class="gate">
@@ -2195,12 +2252,13 @@
         <span class="sep">·</span>
         <button class="linkbtn" id="resetLauncher">Sign out &amp; reset</button>
       </div>
+      <span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
     </div>
 
     <div class="status" id="status"></div>
 
     <!-- Server controls. Hidden unless the signed-in Discord id is an admin. -->
-    <div class="card admin" id="adminPanel" style="display:none">
+    <div class="card admin bay" id="adminPanel" style="display:none">
       <div class="admin-head">
         <span class="admin-title">Server</span>
         <span class="serverstate" id="serverState">
@@ -2246,6 +2304,7 @@
           <button class="action stop" id="stopCoord">Stop</button>
         </div>
       </div>
+      <span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
     </div>
 
     </div><!-- /col-right -->
@@ -2255,9 +2314,9 @@
          hosting anything. Install opens the mod page; the download comes back through
          the nxm:// handler when you press "Mod Manager Download" there. -->
     <div class="col-mods">
-      <div class="card changelog" style="flex:1; min-height:0">
+      <div class="card changelog bay" style="flex:1; min-height:0">
         <div class="admin-head">
-          <span class="admin-title">Mods</span>
+          <span class="admin-title" data-n="03">Mods</span>
           <span class="serverstate" id="modCount"></span>
         </div>
 
@@ -2306,11 +2365,13 @@
         </div>
 
         <div class="field-hint" id="modHint" style="margin-top:.5rem"></div>
+        <span class="bay-hatch" aria-hidden="true"></span><span class="bay-pips" aria-hidden="true"></span>
       </div>
     </div>
   </main>
 
   <footer>
+    <svg class="ln-trace" width="900" height="22" viewBox="0 0 900 22" aria-hidden="true"><defs><linearGradient id="ln-f" gradientUnits="userSpaceOnUse" x1="0" x2="640" y1="0" y2="0"><stop offset="0" class="ln-a"/><stop offset="0.8" class="ln-a"/><stop offset="1" class="ln-a2"/></linearGradient><linearGradient id="ln-ft" gradientUnits="userSpaceOnUse" x1="640" x2="860" y1="0" y2="0"><stop offset="0" class="ln-a"/><stop offset="0.35" class="ln-a2"/><stop offset="1" class="ln-out"/></linearGradient></defs><rect x="640" y="6" width="220" height="2" fill="url(#ln-ft)"/><polygon points="0,20 456,20 464,12 524,12 524,20 536,20 536,8 462,8 454,16 0,16" fill="url(#ln-f)"/><polygon points="0,13 453,13 461,5 628,5 628,13 640,13 640,1 459,1 451,9 0,9" fill="url(#ln-f)"/><rect class="ln-pad" x="524" y="8" width="12" height="12"/><rect class="ln-pad" x="628" y="1" width="12" height="12"/></svg>
     <div class="links">
       <button class="linkbtn" data-link="release">Download the mod</button>
       <span class="sep">·</span>
@@ -4119,6 +4180,51 @@
   document.querySelector('#settingsModal .modal-body').addEventListener('scroll', updateRail, { passive: true })
   // The ladder's positions come from the layout, so a resize that reflows the pane moves them.
   window.addEventListener('resize', updateRail)
+
+  // THE MAIN WINDOW'S BAYS. The launch bay's spec line counts its own lit lamps, and each bay lands
+  // on whole pixels: the middle ones sit under text of fractional height and hold rows of fractional
+  // height, and a clip-path edge is not snapped the way a border is, so a bay on a fraction blurs
+  // its 1px frame (railSnap, for a box). Lamps and text change from a dozen places, so this watches
+  // the window rather than asking each of them to report. It stops watching while it writes, or its
+  // own writes would wake it again.
+  function lampLine (lit, total) {
+    return lit === total ? `${lit} systems · all green` : `${lit} of ${total} systems green`
+  }
+  function countLamps () {
+    const gates = [...$('launchBay').querySelectorAll('.gate')].filter((g) => g.style.display !== 'none')
+    const lit = gates.filter((g) => g.querySelector('.dot').classList.contains('on')).length
+    $('launchLamps').textContent = lampLine(lit, gates.length)
+  }
+  const bayWatch = new MutationObserver(settleBays)
+  function watchBays () {
+    bayWatch.observe(document.querySelector('main'), { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['class', 'style'] })
+  }
+  function snapBays () {
+    bayWatch.disconnect()
+    const dpr = window.devicePixelRatio || 1
+    const bays = [...document.querySelectorAll('main .bay')]
+    bays.forEach((b) => { b.style.marginTop = ''; b.style.minHeight = '' })
+    for (const b of bays) {
+      if (b.offsetParent === null) continue
+      const top = b.getBoundingClientRect().top
+      const nudge = Math.ceil(top * dpr) / dpr - top
+      if (nudge > 0.001) b.style.marginTop = nudge + 'px'
+      const height = b.getBoundingClientRect().height
+      const whole = Math.ceil(height * dpr) / dpr
+      if (whole - height > 0.001) b.style.minHeight = whole + 'px'
+    }
+    watchBays()
+  }
+  let baysQueued = false
+  function settleBays () {
+    if (baysQueued) return
+    baysQueued = true
+    requestAnimationFrame(() => { baysQueued = false; countLamps(); snapBays() })
+  }
+  window.addEventListener('resize', settleBays)
+  document.fonts.ready.then(settleBays)
+  watchBays()
+  settleBays()
   // The modal slides in, so a rail measured while it moved is snapped to the wrong pixel.
   document.querySelector('#settingsModal .modal').addEventListener('animationend', railSnap)
 

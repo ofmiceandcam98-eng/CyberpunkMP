@@ -543,5 +543,11 @@ for (const [what, state] of [['up to date', { installed: true, upToDate: true, v
   check(`${what}: no Update and no wire`, [placed(l).shown, placed(l).wire], [false, false])
 }
 
+// The launch bay's spec line says how many of its lamps are lit.
+const lampLine = vm.runInNewContext(`(${grab('lampLine').trim()})`)
+check('every lamp lit', lampLine(4, 4), '4 systems · all green')
+check('one lamp dark', lampLine(3, 4), '3 of 4 systems green')
+check('nothing lit yet', lampLine(0, 5), '0 of 5 systems green')
+
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exitCode = failed === 0 ? 0 : 1

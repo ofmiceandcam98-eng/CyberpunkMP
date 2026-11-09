@@ -156,6 +156,8 @@ async function run () {
     const play = document.getElementById('play')
     return {
       kitButtons: document.querySelectorAll('.hud').length,
+      // The red these checks expect, read from the build under test, so a palette change is not a failure.
+      accent: (() => { const i = document.createElement('i'); i.style.color = 'var(--accent)'; document.body.append(i); const c = getComputedStyle(i).color; i.remove(); return c })(),
       playLayers: !!play.querySelector('.back') && !!play.querySelector('.face .label') && !!play.querySelector('.pips'),
       playLabel: play.querySelector('.label').textContent,
       playFont: getComputedStyle(play).fontFamily,
@@ -269,7 +271,7 @@ async function run () {
     const g = document.getElementById('openSettings')
     return { line: getComputedStyle(g.querySelector('.hx-line')).backgroundColor, ticks: [...g.querySelectorAll('.bolt-ticks i')].map((i) => getComputedStyle(i).opacity), cog: getComputedStyle(g.querySelector('.cog')).transform }
   })()`)
-  check(gearHover.line === 'rgb(255, 42, 50)' && gearHover.ticks.every((o) => o === '1'), 'hover on the gear lights its hairline and fills its ticks', `${JSON.stringify(gearHover)}; ${await under(gear, 'openSettings')}`)
+  check(gearHover.line === facts.accent && gearHover.ticks.every((o) => o === '1'), 'hover on the gear lights its hairline and fills its ticks', `${JSON.stringify(gearHover)}; ${await under(gear, 'openSettings')}`)
   if (!facts.reduced) check(gearHover.cog.startsWith('matrix(0.707'), 'hover turns the cog one tooth', `the cog reads ${gearHover.cog}`)
   await mouse('mousePressed', gear, { button: 'left', buttons: 1, clickCount: 1 })
   await mouse('mouseReleased', gear, { button: 'left', buttons: 0, clickCount: 1 })
@@ -299,7 +301,7 @@ async function run () {
   check(settings.open && settings.focusInside && settings.behindInert, 'Settings opens as a dialog: focus inside, the launcher behind it inert', JSON.stringify({ open: settings.open, focusInside: settings.focusInside, behindInert: settings.behindInert }))
   check(settings.tops.length === 1, 'the tab bar stays put on every tab', `tab bar tops: ${settings.tops.join(', ')}`)
   check(settings.bays >= 10 && settings.brackets >= 30 && settings.layered, `Settings has its bays and bracket buttons (${settings.bays} bays, ${settings.brackets} buttons)`, 'this exe was not built from the settings commit, or something wrote textContent on a bracket button')
-  check(settings.doneFace === 'rgb(255, 42, 50)', "Done is the kit's red plate", `its face reads ${settings.doneFace}`)
+  check(settings.doneFace === facts.accent, "Done is the kit's red plate", `its face reads ${settings.doneFace}`)
   await sleep(300)
   await shot('electron-settings')
 
@@ -317,7 +319,7 @@ async function run () {
     const b = document.getElementById('runCheckup')
     return { dots: [...b.querySelectorAll('.pips i')].map((i) => getComputedStyle(i).opacity), corner: getComputedStyle(b.querySelector('.c i')).transform, colour: getComputedStyle(b.querySelector('.c i')).borderTopColor }
   })()`)
-  check(bracket.dots.every((d) => d === '1') && bracket.colour === 'rgb(255, 42, 50)', 'hover on a bracket button turns its corners red and fills its dots', `${JSON.stringify(bracket)}; ${await under(checkup, 'runCheckup')}`)
+  check(bracket.dots.every((d) => d === '1') && bracket.colour === facts.accent, 'hover on a bracket button turns its corners red and fills its dots', `${JSON.stringify(bracket)}; ${await under(checkup, 'runCheckup')}`)
   if (!facts.reduced) check(bracket.corner.includes('2, 2'), 'hover closes the corners in', `the first corner reads ${bracket.corner}`)
 
   // The ladder: every number on a rung, the rungs ending on the first and last numbers, and a real
