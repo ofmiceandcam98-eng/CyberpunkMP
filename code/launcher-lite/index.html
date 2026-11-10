@@ -4281,13 +4281,20 @@
 
   // The wheel over the rail works like the drag: it moves the arrow along the ladder and the pane
   // follows at the ladder's scale. zeldfep, 2026-11-09: "it just tries to land it to the next
-  // number it should work like the drag feature". It used to move the pane a fixed 100px a notch,
-  // which is a quarter of the way to the next number in one jump, or all of it in a short section.
+  // number it should work like the drag feature". It used to move the pane by whatever the wheel
+  // reported, 100px a notch on most mice: a quarter of the way to the next number in one jump, or
+  // all of it in a short section.
   // A notch is now two rungs wherever you are. It eases over a few frames so the arrow and the pane
   // read as one motion; with animations turned off it goes straight there.
+  //
+  // It is two rungs on every mouse, too. What a notch reports is the machine's choice: zeldfep's
+  // reports 600 where the usual is 100 (measured on v0.3.128), so it went 84px down the ladder and
+  // hopped past the numbers while the same build worked for somebody else. One wheel event counts
+  // for at most one standard notch; a high-resolution wheel's small steps still add up.
   {
     const track = $('railTrack')
     const LADDER_PER_WHEEL = 14 / 100
+    const STANDARD_NOTCH = 100
     let at = 0
     let target = null
     let frame = 0
@@ -4316,7 +4323,9 @@
       const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? body.clientHeight : 1
       const max = Math.max(0, body.scrollHeight - body.clientHeight)
       if (target === null) { at = body.scrollTop; target = at }
-      target = Math.max(0, Math.min(max, target + e.deltaY * unit * LADDER_PER_WHEEL * panePerLadder))
+      const wheel = e.deltaY * unit
+      const notch = Math.sign(wheel) * Math.min(Math.abs(wheel), STANDARD_NOTCH)
+      target = Math.max(0, Math.min(max, target + notch * LADDER_PER_WHEEL * panePerLadder))
       if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
         body.scrollTop = target
         updateRail()
