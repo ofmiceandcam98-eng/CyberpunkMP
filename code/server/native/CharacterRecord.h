@@ -302,6 +302,15 @@ struct CharacterRecord
     std::vector<Perk> Perks;
 
     /**
+     * What this character was last wearing, as raw TweakDBIDs.
+     *
+     * Inventory is what they own and says nothing about what is on their body, so a world
+     * template other than the one that dressed them left them in their underwear with their
+     * clothes in the bag. Written from the live puppet on every save and handed back on spawn.
+     */
+    std::vector<uint64_t> Worn;
+
+    /**
      * Vehicles this character owns, by the game's own vehicle name.
      *
      * Names rather than TweakDBIDs, unusually - everything else here stores raw ids on the
@@ -467,7 +476,7 @@ struct CharacterRecord
                                                 NameChosen, SpawnedBefore, CharacterId,
                                                 Lifepath, StarterKitGranted,
                                                 Inventory, Money, Proficiencies,
-                                                Attributes, Perks, Vehicles,
+                                                Attributes, Perks, Worn, Vehicles,
                                                 PhoneNumber, Contacts, Blocked, AllowedQuests,
                                                 CreatedAt, UpdatedAt,
                                                 // Phase 5 stage 2, renamed stage 6. The

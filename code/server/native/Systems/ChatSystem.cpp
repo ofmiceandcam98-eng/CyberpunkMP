@@ -777,6 +777,17 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
         const bool firstCapture = !character.Initialised && !character.SpawnedBefore;
         constexpr int32_t kStartingLevel = 15;
 
+        // A SAVE NEVER LOWERS A SKILL. Nothing in the game takes levels away, and these are not
+        // restored to the client, so a lower number only ever means a world template with less
+        // on it: Pajeet on the level 18 male template rewrote a level 34 record, 2026-11-10.
+        std::map<uint32_t, int32_t> known;
+
+        if (!firstCapture)
+        {
+            for (const auto& existing : character.Proficiencies)
+                known[existing.Type] = existing.Level;
+        }
+
         character.Proficiencies.clear();
         character.Proficiencies.reserve(aMessage.get_proficiencies().size());
 
@@ -792,8 +803,18 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
                 ++clamped;
             }
 
+            if (const auto kept = known.find(prof.get_type()); kept != known.end())
+            {
+                level = std::max(level, kept->second);
+                known.erase(kept);
+            }
+
             character.Proficiencies.push_back({prof.get_type(), level});
         }
+
+        // On the record and not reported at all: the client only sends levels above zero.
+        for (const auto& [type, level] : known)
+            character.Proficiencies.push_back({type, level});
 
         spdlog::info("{} stored {} proficiency level(s){}", pPlayer->Username,
                      character.Proficiencies.size(),
@@ -994,6 +1015,16 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
         }
     }
 
+    // What they are wearing right now, from the same place other players are told it. Empty
+    // means nobody looked, not that they are naked, so it never clears what is on the record.
+    if (pPlayer->Puppet && pPlayer->Puppet.is_alive())
+    {
+        const auto* pWorn = pPlayer->Puppet.get<AppearanceComponent>();
+
+        if (pWorn && !pWorn->equipment.empty())
+            character.Worn.assign(pWorn->equipment.begin(), pWorn->equipment.end());
+    }
+
     store.SaveCharacter(pPlayer->DiscordId, pPlayer->Username, character);
 
     // Correct everyone who is already looking at this player.
@@ -1007,7 +1038,10 @@ void ChatSystem::HandleSaveCharacterRequest(const PacketEvent<client::SaveCharac
     //
     // The live puppet is updated from the same bytes that were just validated and stored,
     // so the thing on screen and the thing in the record cannot drift apart.
-    if (pPlayer->Puppet && pPlayer->Puppet.is_alive())
+    //
+    // Not on a possessions-only save, whose blob is empty. Copying that blanked the live
+    // puppet's look at the first autosave, so anyone arriving later was sent no look at all.
+    if (!keepStoredLook && pPlayer->Puppet && pPlayer->Puppet.is_alive())
     {
         if (auto* pAppearance = pPlayer->Puppet.get_mut<AppearanceComponent>())
         {
