@@ -79,6 +79,9 @@ public native class NetworkWorldSystem extends IGameSystem {
     public native func GetRestorePerkCount() -> Uint32;
     public native func GetRestorePerkType(index: Uint32) -> Uint32;
     public native func GetRestorePerkLevel(index: Uint32) -> Int32;
+    public native func GetRestoreWornCount() -> Uint32;
+    public native func GetRestoreWornId(index: Uint32) -> Uint64;
+    public native func MarkWornRestored() -> Void;
     public native func GetRestoreAttributeCount() -> Uint32;
     public native func GetRestoreAttributeType(index: Uint32) -> Uint32;
     public native func GetRestoreAttributeValue(index: Uint32) -> Int32;

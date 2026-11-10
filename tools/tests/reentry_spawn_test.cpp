@@ -140,6 +140,25 @@ int main()
               "the overlay writes no imgui.ini into the game folder");
     }
 
+    // ---------------------------------------------------------------- 6. SAVES KEEP THE CHARACTER
+    // A world template other than the one that built a character rewrote its perks and skills,
+    // and nothing recorded what it was wearing.
+    {
+        const auto save = ReadRepoFile("code/server/native/Systems/ChatSystem.cpp");
+        const auto record = ReadRepoFile("code/server/native/CharacterRecord.h");
+        const auto inventory = ReadRepoFile("code/assets/redscript/Inventory.reds");
+        Check(save.find("level = std::max(level, kept->second)") != std::string::npos,
+              "a save never lowers a skill");
+        Check(save.find("!keepStoredLook && pPlayer->Puppet") != std::string::npos,
+              "a possessions-only save does not blank the live look");
+        Check(record.find("Attributes, Perks, Worn, Vehicles") != std::string::npos,
+              "what a character wears survives a server restart");
+        Check(inventory.find("MpInventory.PerksFellShort(network, player, development)") != std::string::npos,
+              "a perk restore that fell short does not become the record");
+        Check(inventory.find("MpInventory.RestoreWorn(network, player, transaction)") != std::string::npos,
+              "the restore puts worn items back on");
+    }
+
     std::printf("\n%d checks, %d failed\n", s_checks, s_failures);
     return s_failures == 0 ? 0 : 1;
 }

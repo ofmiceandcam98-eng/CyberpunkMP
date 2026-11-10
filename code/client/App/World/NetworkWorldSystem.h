@@ -136,6 +136,11 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     uint32_t GetRestorePerkType(uint32_t aIndex) const;
     int32_t GetRestorePerkLevel(uint32_t aIndex) const;
 
+    // What the record says this character was last wearing - see MpInventory.RestoreWorn.
+    uint32_t GetRestoreWornCount() const;
+    uint64_t GetRestoreWornId(uint32_t aIndex) const;
+    void MarkWornRestored();
+
     uint32_t GetRestoreAttributeCount() const;
     uint32_t GetRestoreAttributeType(uint32_t aIndex) const;
     int32_t GetRestoreAttributeValue(uint32_t aIndex) const;
@@ -550,6 +555,12 @@ protected:
     Vector<server::Attribute> m_restoreAttributes;
     Vector<server::WorldFact> m_worldFacts;
     Vector<server::Perk> m_restorePerks;
+    Vector<uint64_t> m_restoreWorn;
+
+    // Equipment reports wait until the re-dress has landed, and the first one afterwards is
+    // sent rather than taken as the baseline. See MarkWornRestored.
+    std::chrono::steady_clock::time_point m_wornSettleUntil{};
+    bool m_sendFirstWornRead{false};
     Vector<String> m_capturedVehicles;
     Vector<String> m_restoreVehicles;
     int32_t m_targetMoney{0};
@@ -965,6 +976,9 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(GetRestorePerkCount);
     RTTI_METHOD(GetRestorePerkType);
     RTTI_METHOD(GetRestorePerkLevel);
+    RTTI_METHOD(GetRestoreWornCount);
+    RTTI_METHOD(GetRestoreWornId);
+    RTTI_METHOD(MarkWornRestored);
     RTTI_METHOD(GetRestoreAttributeCount);
     RTTI_METHOD(GetRestoreAttributeType);
     RTTI_METHOD(GetRestoreAttributeValue);

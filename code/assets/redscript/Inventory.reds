@@ -29,6 +29,10 @@ import CyberpunkMP.World.*
 @addField(PlayerPuppet)
 public let m_mpMoneyRestored: Bool;
 
+// 0 not decided yet, 1 the perk restore landed, 2 it fell short. Also one per body.
+@addField(PlayerPuppet)
+public let m_mpPerkGuard: Int32;
+
 public class MpInventory {
 
   /**
@@ -146,16 +150,29 @@ public class MpInventory {
       }
 
       // Perks. Stored now, handed back later - see Restore.
-      let perkType = 0;
+      //
+      // A RESTORE THAT FELL SHORT DOES NOT BECOME THE RECORD. Buying a build back costs perk
+      // points, and a world template at a lower level cannot afford it: 35 asked for on the
+      // level 18 male template, 19 landed, and the next save replaced the 35 with the 19.
+      if MpInventory.PerksFellShort(network, player, development) {
+        let stored: Uint32 = 0u;
 
-      while perkType < EnumInt(gamedataNewPerkType.Count) {
-        let level = development.IsNewPerkBought(IntEnum<gamedataNewPerkType>(perkType));
-
-        if level > 0 {
-          network.AddPerk(Cast<Uint32>(perkType), level);
+        while stored < network.GetRestorePerkCount() {
+          network.AddPerk(network.GetRestorePerkType(stored), network.GetRestorePerkLevel(stored));
+          stored += 1u;
         }
+      } else {
+        let perkType = 0;
 
-        perkType += 1;
+        while perkType < EnumInt(gamedataNewPerkType.Count) {
+          let level = development.IsNewPerkBought(IntEnum<gamedataNewPerkType>(perkType));
+
+          if level > 0 {
+            network.AddPerk(Cast<Uint32>(perkType), level);
+          }
+
+          perkType += 1;
+        }
       }
     }
 
@@ -738,6 +755,7 @@ public class MpInventory {
     MpInventory.RestorePerks(network, player);
     MpVehicles.Restore(network);
     MpInventory.EquipCyberware(network, player, transaction);
+    MpInventory.RestoreWorn(network, player, transaction);
 
     /*
      * WHAT IT ACTUALLY DID - measured after the fact, not what it set out to do.
@@ -974,6 +992,100 @@ public class MpInventory {
     }
 
     network.ScriptLog(s"restore: asked for \(asked) perk(s) back");
+  }
+
+  /**
+   * Did the perk restore leave this body with less than the record asked for?
+   *
+   * Decided once, at the first capture after the restore, and then held for the session. Asked
+   * at every capture it would treat a respec on a body that took the whole build as a failed
+   * restore and undo it. The cost when it does fall short is that perks bought this session
+   * are not saved, which is far better than losing the ones that were.
+   */
+  public static func PerksFellShort(network: ref<NetworkWorldSystem>, player: ref<PlayerPuppet>,
+                                    development: ref<PlayerDevelopmentData>) -> Bool {
+    if player.m_mpPerkGuard == 0 {
+      let count = network.GetRestorePerkCount();
+      let index: Uint32 = 0u;
+      let short = 0;
+
+      while index < count {
+        let perkType = IntEnum<gamedataNewPerkType>(Cast<Int32>(network.GetRestorePerkType(index)));
+
+        if development.IsNewPerkBought(perkType) < network.GetRestorePerkLevel(index) {
+          short += 1;
+        }
+
+        index += 1u;
+      }
+
+      player.m_mpPerkGuard = short > 0 ? 2 : 1;
+
+      if short > 0 {
+        network.ScriptLog(s"capture: \(short) of \(count) restored perk(s) did not land on this body - the stored build is kept and perks bought this session are not saved");
+      }
+    }
+
+    return player.m_mpPerkGuard == 2;
+  }
+
+  /** Is this item on the list of what the character was last wearing? */
+  public static func WornOnRecord(network: ref<NetworkWorldSystem>, wanted: Uint64) -> Bool {
+    let count = network.GetRestoreWornCount();
+    let index: Uint32 = 0u;
+
+    while index < count {
+      if Equals(network.GetRestoreWornId(index), wanted) {
+        return true;
+      }
+
+      index += 1u;
+    }
+
+    return false;
+  }
+
+  /**
+   * Puts back on what this character was last wearing.
+   *
+   * Not the thing the starter-kit gate above refuses for a returning player, which is equipping
+   * everything they own and overwriting what they chose. This is exactly what they chose, read
+   * off the record, once per item however many copies are in the bag.
+   */
+  public static func RestoreWorn(network: ref<NetworkWorldSystem>, player: ref<GameObject>,
+                                 transaction: ref<TransactionSystem>) -> Void {
+    let count = network.GetRestoreWornCount();
+    let equipment = EquipmentSystem.GetInstance(player);
+
+    if count == 0u {
+      network.ScriptLog("restore: nothing on record as worn");
+    } else if !IsDefined(equipment) {
+      network.ScriptLog("restore: no equipment system - worn items left in the inventory");
+    } else {
+      let carried: array<wref<gameItemData>>;
+      let done: array<Uint64>;
+
+      transaction.GetItemList(player, carried);
+
+      for candidate in carried {
+        if IsDefined(candidate) {
+          let candidateId = candidate.GetID();
+          let number = TDBID.ToNumber(ItemID.GetTDBID(candidateId));
+
+          if MpInventory.WornOnRecord(network, number) && !ArrayContains(done, number) {
+            let request = new EquipRequest();
+            request.itemID = candidateId;
+            request.owner = player;
+            equipment.QueueRequest(request);
+            ArrayPush(done, number);
+          }
+        }
+      }
+
+      network.ScriptLog(s"restore: queued \(ArraySize(done)) of \(count) worn item(s) to put back on");
+    }
+
+    network.MarkWornRestored();
   }
 
   /** How many of this TweakDBID the player already holds, from the snapshot above. */
