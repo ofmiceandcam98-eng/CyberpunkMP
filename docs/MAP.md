@@ -64,8 +64,10 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
     carried a built candidate fix ("Route A", be695136, two admin buttons on test.94) for
     FOUR DAYS while two sessions re-proved the symptom it was built to fix - the branch's
     own text said "Route A's admin buttons were not tried". Re-measuring a known symptom
-    with an untried fix on the board is the loop, and it is a bug by definition. *"lets make sure these
-  .md are getting audited when auditing atlas"*. Every audit also walks the docs on the server,
+    with an untried fix on the board is the loop, and it is a bug by definition.
+
+- **Auditing the Atlas includes the internal docs** (zeldfep, 2026-11-05: *"lets make sure these
+  .md are getting audited when auditing atlas"*). Every audit also walks the docs on the server,
   following the ledger at `/mnt/vol/projects/_internal-docs/DOC-AUDIT.md`. Anything still open and
   unbranched gets a branch; each doc is marked live, stale or history.
   - **The Atlas visualiser is where posted docs are READ**: its LIBRARY pane carries the
@@ -74,6 +76,21 @@ manifest/modlist sections below - those are as of 2026-08-26 still.
     the share decides the pane; a doc posted to the share appears with no further step. The
     panes are the reading surface — the share directory stays the storage and the audit
     ledger stays the audit's spine.
+
+- **The 2.5 release bar is TIERED** (zeldfep, 2026-11-10, deciding the Atlas branch
+  `nobody-has-said-what-2-5-must-pass-before-public`). Two tiers, and only the second is a gate:
+  - **Releases keep shipping freely**, server-first as practised, with the transparency rule
+    governing what each one says - what changed, and what is known-unproven, in the notes.
+    v0.3.127 shipped this way; that stays legitimate.
+  - **The PUBLIC LAUNCH is the gated thing** - inviting players at large, announcing beyond
+    the dev circle, or arming the live install check. It waits on ONE GROUP SESSION proving
+    all five, each as a verify stamp on its Atlas branch so the bar is readable off the board:
+    (1) both players see each other as their real characters; (2) combat lands damage both
+    ways; (3) a trade completes; (4) a down and revive works; (5) the session holds 30+
+    minutes with no involuntary drop.
+  - This supersedes the queue's "combat + trading remain the hard gate before any public
+    flag-day" line, which was written for 2.31: same substance, but it gates the LAUNCH,
+    not every release.
 - **This repo is the open multiplayer service; operator tooling is maintained separately**
   (zeldfep, 2026-09-11). Scope boundary for what belongs in this repository:
   - **The multiplayer service and portability → here.** The client, server, protocol and

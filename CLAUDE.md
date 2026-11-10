@@ -87,6 +87,12 @@ auto-load — read it deliberately. Cam's stream: it auto-loads; keep it current
   re-measuring the symptom: a candidate fix once sat untried on the board for four days
   while two sessions re-proved the bug it was built to fix.
 
+- **The 2.5 release bar is tiered** (zeldfep, 2026-11-10): releases ship freely with
+  transparent notes; the PUBLIC LAUNCH - inviting players at large, announcing beyond the
+  dev circle, or arming the live install check - waits on one group session proving the
+  five points written in the map's Standing Decrees (see each as an Atlas verify). The old
+  "combat + trading" hard-gate line gated every release; this gates the launch.
+
 - **The launcher is the one-click solution** (zeldfep, 2026-09-07): *"I should not have to
   run things on my end unless we're fixing some issue, the whole point of the launcher is
   one click solution."* Getting a build is Play. Handing a human a command is acceptable
