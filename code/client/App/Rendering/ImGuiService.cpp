@@ -190,6 +190,10 @@ void ImGuiService::OnRenderInit()
             // its cursor INTO the overlay, so it exists only while ImGui wants the mouse.
             ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
 
+            // No imgui.ini. By default ImGui writes one into the working directory, which here
+            // is the game's own bin folder, and the footprint rule says we leave nothing behind.
+            ImGui::GetIO().IniFilename = nullptr;
+
             // TODO - make this configurable eventually and overridable by mods for themselves easily
             // setup CET default style
             ImGui::StyleColorsDark(&m_styleReference);
@@ -205,6 +209,10 @@ void ImGuiService::OnRenderInit()
 
         ImGui::GetStyle() = m_styleReference;
         ImGui::GetStyle().ScaleAllSizes(scaleFromReference);
+
+        // Text at 18 authored units, the size of the selector's labels. Without this ImGui stays
+        // at its 13 real pixels on every display, which on 1440p is a bar easy to look straight past.
+        ImGui::GetStyle().FontScaleMain = (18.0f / 13.0f) * scaleFromReference;
 
         if (!ImGui_ImplWin32_Init(GetWindow()))
         {
@@ -341,6 +349,11 @@ bool ImGuiService::OnWindowProc(HWND ahWnd, UINT auMsg, WPARAM awParam, LPARAM a
 {
     if (m_initialized)
     {
+        // Whether a click reaches the overlay at all is the first question if a button will not press.
+        if (auMsg == WM_LBUTTONDOWN)
+            OVERLAY_LOG_ONCE("[ImGuiService] first left click reached the overlay at {}, {}",
+                             static_cast<short>(LOWORD(alParam)), static_cast<short>(HIWORD(alParam)));
+
         if (const auto res = ImGui_ImplWin32_WndProcHandler(ahWnd, auMsg, awParam, alParam))
             return res != 0;
     }

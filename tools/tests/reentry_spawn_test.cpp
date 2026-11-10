@@ -136,6 +136,8 @@ int main()
               "the overlay reads CmdLists.Size, the count ImGui still fills in");
         Check(overlay.find("cyber_engine_tweaks.asi") != std::string::npos,
               "the overlay will not start beside Cyber Engine Tweaks");
+        Check(overlay.find("IniFilename = nullptr") != std::string::npos,
+              "the overlay writes no imgui.ini into the game folder");
     }
 
     std::printf("\n%d checks, %d failed\n", s_checks, s_failures);

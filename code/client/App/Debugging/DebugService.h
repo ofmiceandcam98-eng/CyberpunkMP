@@ -24,5 +24,14 @@ private:
 
     // Ping and packet loss, right-aligned in the menu bar, coloured by severity.
     static void DrawConnectionStatus();
+
+    // The test actions, shared by the menu bar and the panel.
+    static void DrawTestButtons();
+
+    // aPerUnit is real pixels per authored unit, the number the character selector goes by.
+    void DrawPanel(float aPerUnit);
+    void DrawScreenCheck(float aPerUnit) const;
+
+    bool m_screenCheck{true};
 };
 } // namespace App
