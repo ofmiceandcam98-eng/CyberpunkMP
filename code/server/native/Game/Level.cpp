@@ -434,7 +434,7 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
 
     glm::vec3 pos = {aMessage.get_position().get_x(), aMessage.get_position().get_y(), aMessage.get_position().get_z()};
     glm::vec3 rot = {0.f, 0.f, aMessage.get_rotation()};
-    const Vector<uint64_t> equipment = aMessage.get_equipment();
+    Vector<uint64_t> equipment = aMessage.get_equipment();
     const Vector<uint8_t> ccstate = aMessage.get_ccstate();
 
     server::SpawnCharacterResponse response;
@@ -517,6 +517,11 @@ void Level::HandleSpawnCharacterRequest(PacketEvent<client::SpawnCharacterReques
     // The character's own flag answers it properly, and a replacement character defaults
     // to false so it is sent to the start point without anything having to reset it.
     const auto* pExistingCharacter = GServer->GetPlayerStore().FindCharacter(pComponent->DiscordId);
+
+    // Dressed as the record says. What the client sent is what the world template happens to
+    // be wearing, which is not this character's clothing unless nobody has saved any yet.
+    if (pExistingCharacter && !pExistingCharacter->Worn.empty())
+        equipment.assign(pExistingCharacter->Worn.begin(), pExistingCharacter->Worn.end());
 
     // The fire-once flag lives on the character record. TWO cases put a not-yet-placed
     // player here, and the difference is whether that record exists yet:

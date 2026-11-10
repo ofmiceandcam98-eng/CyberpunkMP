@@ -986,6 +986,30 @@ int32_t NetworkWorldSystem::GetRestorePerkLevel(uint32_t aIndex) const
     return aIndex < m_restorePerks.size() ? m_restorePerks[aIndex].get_level() : 0;
 }
 
+uint32_t NetworkWorldSystem::GetRestoreWornCount() const
+{
+    return static_cast<uint32_t>(m_restoreWorn.size());
+}
+
+uint64_t NetworkWorldSystem::GetRestoreWornId(const uint32_t aIndex) const
+{
+    return aIndex < m_restoreWorn.size() ? m_restoreWorn[aIndex] : 0;
+}
+
+/*
+ * The re-dress is queued, and a report taken before it lands would tell the server this
+ * character wears whatever is left over from the strip. So reports hold for a few seconds,
+ * and the first one afterwards always goes out: the first-read baseline in
+ * PollEquipmentChanges assumes the spawn already told everyone, which is not true of a body
+ * that has just been changed.
+ */
+void NetworkWorldSystem::MarkWornRestored()
+{
+    m_wornSettleUntil = std::chrono::steady_clock::now() + std::chrono::seconds(6);
+    m_lastSentEquipment.clear();
+    m_sendFirstWornRead = true;
+}
+
 uint32_t NetworkWorldSystem::GetRestoreAttributeCount() const
 {
     return static_cast<uint32_t>(m_restoreAttributes.size());
@@ -1157,7 +1181,7 @@ void NetworkWorldSystem::PollEquipmentChanges()
     // A capture during restore reads the pre-restore loadout, and reporting THAT as a
     // change would tell everyone the player got dressed in whatever the world template was
     // wearing - the same race the possessions autosave already refuses to run into.
-    if (m_restorePending)
+    if (m_restorePending || std::chrono::steady_clock::now() < m_wornSettleUntil)
         return;
 
     const auto system = Red::GetGameSystem<Game::PlayerSystem>();
@@ -1195,8 +1219,9 @@ void NetworkWorldSystem::PollEquipmentChanges()
     // First read of the session establishes the baseline without sending. What they are
     // wearing on arrival already went out with their spawn, so announcing it again would
     // be a redundant 9KB for every player who simply logged in.
-    const bool firstRead = m_lastSentEquipment.empty();
+    const bool firstRead = m_lastSentEquipment.empty() && !m_sendFirstWornRead;
     m_lastSentEquipment = items;
+    m_sendFirstWornRead = false;
 
     if (firstRead)
         return;
@@ -2101,6 +2126,7 @@ void NetworkWorldSystem::AdoptRoster(const Vector<server::CharacterSummary>& acC
         entry.Slot = summary.get_slot();
         entry.SpawnedBefore = summary.get_spawned_before();
         entry.Active = summary.get_is_active();
+        entry.IsMale = summary.get_is_male();
         entry.Lifepath = summary.get_lifepath().c_str();
 
         for (const auto& attribute : summary.get_attributes())
@@ -2177,6 +2203,11 @@ bool NetworkWorldSystem::IsRosterActive(uint32_t aIndex) const
 bool NetworkWorldSystem::HasRosterSpawnedBefore(uint32_t aIndex) const
 {
     return aIndex < m_roster.size() && m_roster[aIndex].SpawnedBefore;
+}
+
+bool NetworkWorldSystem::IsRosterMale(uint32_t aIndex) const
+{
+    return aIndex < m_roster.size() && m_roster[aIndex].IsMale;
 }
 
 /**
@@ -2941,6 +2972,9 @@ void NetworkWorldSystem::HandleAppearanceUpdate(const PacketEvent<server::Notify
 
         if (blob.empty())
             return; // clothing-only update about ourselves; nothing to rebuild
+
+        // What this character was last wearing, for the restore to put back on.
+        m_restoreWorn = aMessage.get_equipment();
 
         // A duplicate must not queue a second rebuild of a body that is already correct.
         // Applying is one-shot per character - see ApplyStoredAppearance.

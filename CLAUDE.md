@@ -78,6 +78,15 @@ auto-load — read it deliberately. Cam's stream: it auto-loads; keep it current
   `docs/MAP.md`, and say what you found before proposing a change. A `status=open` search
   once hid the active and archived movement history and reported nothing on the board.
 
+- **Log the fix the MOMENT you have it - and run the logged fix before re-testing the
+  symptom** (zeldfep, 2026-11-09: *"lets try to log fixes as we are going through them so we
+  stop this loop of constant re-test ... lost tokens, time and patience"*). A found cause,
+  committed fix or built candidate goes into the branch text the moment it exists -
+  mechanism, commit, how to confirm - not at landing; landing only adds the proof. And a
+  test session reads the branch's latest layer and executes the logged next step BEFORE
+  re-measuring the symptom: a candidate fix once sat untried on the board for four days
+  while two sessions re-proved the bug it was built to fix.
+
 - **The launcher is the one-click solution** (zeldfep, 2026-09-07): *"I should not have to
   run things on my end unless we're fixing some issue, the whole point of the launcher is
   one click solution."* Getting a build is Play. Handing a human a command is acceptable

@@ -136,6 +136,11 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     uint32_t GetRestorePerkType(uint32_t aIndex) const;
     int32_t GetRestorePerkLevel(uint32_t aIndex) const;
 
+    // What the record says this character was last wearing - see MpInventory.RestoreWorn.
+    uint32_t GetRestoreWornCount() const;
+    uint64_t GetRestoreWornId(uint32_t aIndex) const;
+    void MarkWornRestored();
+
     uint32_t GetRestoreAttributeCount() const;
     uint32_t GetRestoreAttributeType(uint32_t aIndex) const;
     int32_t GetRestoreAttributeValue(uint32_t aIndex) const;
@@ -221,6 +226,7 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     int32_t GetRosterSlot(uint32_t aIndex) const;
     bool IsRosterActive(uint32_t aIndex) const;
     bool HasRosterSpawnedBefore(uint32_t aIndex) const;
+    bool IsRosterMale(uint32_t aIndex) const;
 
     // How many characters this ACCOUNT may hold, as the SERVER decided it. Never computed
     // here - an allowance the client works out is an allowance the client can raise.
@@ -550,6 +556,12 @@ protected:
     Vector<server::Attribute> m_restoreAttributes;
     Vector<server::WorldFact> m_worldFacts;
     Vector<server::Perk> m_restorePerks;
+    Vector<uint64_t> m_restoreWorn;
+
+    // Equipment reports wait until the re-dress has landed, and the first one afterwards is
+    // sent rather than taken as the baseline. See MarkWornRestored.
+    std::chrono::steady_clock::time_point m_wornSettleUntil{};
+    bool m_sendFirstWornRead{false};
     Vector<String> m_capturedVehicles;
     Vector<String> m_restoreVehicles;
     int32_t m_targetMoney{0};
@@ -579,6 +591,7 @@ protected:
         int32_t Slot{0};
         bool SpawnedBefore{false};
         bool Active{false};
+        bool IsMale{false};
 
         // Held as the server's own string and never parsed. See the note on
         // CharacterSummary.lifepath - the client's job is to print it, not to know it.
@@ -965,6 +978,9 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(GetRestorePerkCount);
     RTTI_METHOD(GetRestorePerkType);
     RTTI_METHOD(GetRestorePerkLevel);
+    RTTI_METHOD(GetRestoreWornCount);
+    RTTI_METHOD(GetRestoreWornId);
+    RTTI_METHOD(MarkWornRestored);
     RTTI_METHOD(GetRestoreAttributeCount);
     RTTI_METHOD(GetRestoreAttributeType);
     RTTI_METHOD(GetRestoreAttributeValue);
@@ -996,6 +1012,7 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(GetRosterSlot);
     RTTI_METHOD(IsRosterActive);
     RTTI_METHOD(HasRosterSpawnedBefore);
+    RTTI_METHOD(IsRosterMale);
     RTTI_METHOD(GetCharacterSlots);
     RTTI_METHOD(SelectCharacterSlot);
     RTTI_METHOD(DeleteCharacterSlot);

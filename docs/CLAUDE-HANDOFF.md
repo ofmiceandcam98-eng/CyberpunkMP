@@ -23,14 +23,9 @@ things) → the coordination feed (what the other stream just did).
 - **Two Claude streams work this repo** — zeldfep's (this one) and Cam's, from separate
   machines. Cam's runs inside the repo so `CLAUDE.md` auto-loads for it. A rule that
   lives only in one machine's memory binds nobody: promote it to `CLAUDE.md`.
-- **The working branch is `wip/world-state`, not `feat/world-state`** (since 2026-09-05).
-  Identical commits; the separate branch exists so Cam can work from a phone / cloud
-  session without a push to `feat/world-state` triggering the production deploy (see §4,
-  Deploy). Work on `wip/world-state` from every machine until the weekend migration is
-  done, then `git checkout feat/world-state && git merge --ff-only wip/world-state &&
-  git push fork feat/world-state` and resume pushing that. A cloud session started from
-  claude.ai/code should clone `ofmiceandcam98-eng/CyberpunkMP` and check out
-  `wip/world-state`.
+- **The working branch is `port/2.5-engine-headers`.** The live server deploys from `main` and
+  the test server from `deploy/test-authority` (both read off the server's checkouts, 2026-11-09).
+  Several sessions can share a checkout, so never switch branches in one: use a worktree.
 
 ## 2. Machines and addresses
 
@@ -168,7 +163,7 @@ auth through it instead (set repo-locally, so nothing else on the machine change
 git config --local --add credential.https://github.com.helper '!gh auth git-credential'
 ```
 Already applied to this checkout. For a one-off without changing config:
-`git -c credential.helper='!gh auth git-credential' push origin feat/world-state`.
+`git -c credential.helper='!gh auth git-credential' push origin <branch>`.
 **`x-access-token`** in those prompts is not a thing to go find: it is the literal username
 GitHub expects when the password is a token, so GCM shows it as the account name.
 
@@ -197,7 +192,7 @@ game installed, the redscript compile gate runs for real and you are done. Witho
 §2a has the stub-and-hand-assembled-`Rpc` route, and the build must be compile-checked by
 Cam's stream before anyone installs it.
 
-**Deploy** = push to `feat/world-state`. The NAS cron (10 min) pulls, rebuilds only when
+**Deploy** = land on `main` through a PR. The server's cron (10 min) pulls, rebuilds only when
 server-relevant paths changed, **defers while players are online**, auto-shelves untracked
 collisions, and announces `docs/MAP.md` changes on the feed. Force it when empty:
 `cd <deploy> && git pull --ff-only && docker compose up -d --build`.

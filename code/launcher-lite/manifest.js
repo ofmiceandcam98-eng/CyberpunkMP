@@ -154,16 +154,20 @@ function describeError (err) {
   return (err && err.message) ? err.message : String(err)
 }
 
-// The cache the caller persists on a 'valid' verdict is { manifestVersion,
-// bytes } (doc §2.1: "version + bytes"), but a caller that keeps the parsed
-// object around may hand that in instead - both are accepted, because this
-// function should not dictate main.js's storage format.
+// main.js persists the verified manifest itself on a 'valid' verdict. The doc's
+// { manifestVersion, bytes } (§2.1: "version + bytes") and a { manifestVersion,
+// manifest } wrapper are accepted too, because this function should not dictate
+// main.js's storage format.
 function readCachedManifest (cached) {
   if (!cached) return null
   if (cached.manifest && typeof cached.manifest === 'object') return cached.manifest
   if (cached.bytes != null) {
     try { return JSON.parse(Buffer.isBuffer(cached.bytes) ? cached.bytes.toString('utf8') : String(cached.bytes)) } catch { return null }
   }
+  // The bare manifest, which is what main.js writes. Missing this made the offline
+  // fallback unreachable in production: every failed fetch reported that no manifest
+  // had ever been verified, and the game launched with nothing to attest.
+  if (typeof cached.manifestVersion === 'string' && cached.manifestVersion !== '') return cached
   return null
 }
 
@@ -177,7 +181,8 @@ function readCachedManifest (cached) {
  *                     on the asset, not a network failure)
  *   fetchedSigText    contents of server-manifest.json.sig, or null when absent
  *   fetchError        set when the channel could not be reached at all
- *   cached            the last-accepted manifest: { manifestVersion, bytes } or
+ *   cached            the last-accepted manifest: the manifest itself (what
+ *                     main.js persists), { manifestVersion, bytes } or
  *                     { manifestVersion, manifest }
  *   pinnedPubkeyLines the launcher's pinned `ed25519-public:...` lines
  *
@@ -907,12 +912,12 @@ export function sessionCrashLog (logs, launchedAtMs, slackMs = 10000) {
  * server broke. On 2026-11-08 it was GitHub timing out for unauthenticated callers, which is
  * every call this launcher makes.
  */
-export function releaseChannelError (err) {
+export function releaseChannelError (err, consequence = 'the list could not be read') {
   const status = err?.response?.status
   const timedOut = err?.code === 'ECONNABORTED' || /timeout/i.test(err?.message || '')
 
   if ((status >= 500 && status < 600) || timedOut) {
-    return 'GitHub is not answering right now, so the list could not be read. ' +
+    return `GitHub is not answering right now, so ${consequence}. ` +
       'Nothing is wrong with your install - try again in a minute.'
   }
 
@@ -921,6 +926,86 @@ export function releaseChannelError (err) {
   }
 
   return err?.message || 'Could not reach GitHub.'
+}
+
+/**
+ * How long to wait before asking GitHub again, or null to give up now.
+ *
+ * GitHub's release downloads fail in bursts: on 2026-11-09 one 504 ended Install everything
+ * while the very next request answered in 0.2 seconds. Only GETs to GitHub's own hosts, and
+ * only the failures that mean "try again" - a 404, a rate limit or a machine with no internet
+ * already has its answer. A timeout gets one more go, and not on a long download, which would
+ * only take that long again.
+ */
+export function releaseRetryDelay ({ url, method, status, code, timeout }, attempt) {
+  if (String(method || 'get').toLowerCase() !== 'get') return null
+
+  let host
+  try { host = new URL(url).hostname } catch { return null }
+  if (!/(^|\.)(github\.com|githubusercontent\.com)$/i.test(host)) return null
+
+  if (status === 502 || status === 503 || status === 504) return [1000, 3000][attempt] ?? null
+
+  if (!status && ['ECONNABORTED', 'ETIMEDOUT', 'ECONNRESET'].includes(code)) {
+    if (timeout > 30000) return null
+    return attempt === 0 ? 1000 : null
+  }
+
+  return null
+}
+
+/**
+ * Teach an axios client to ask GitHub again, in one place, so no download path can forget.
+ * A retry repeats the whole request; a failure after the body has started is not retried.
+ */
+export function installReleaseRetry (client, { log = () => {}, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {}) {
+  client.interceptors.response.use(undefined, async (error) => {
+    const config = error?.config
+    if (!config) throw error
+
+    const attempt = config.releaseRetryAttempt || 0
+    const status = error.response?.status
+    const wait = releaseRetryDelay({ url: config.url, method: config.method, status, code: error.code, timeout: config.timeout }, attempt)
+    if (wait === null) throw error
+
+    config.releaseRetryAttempt = attempt + 1
+    log(`GitHub answered ${status || error.code} for ${new URL(config.url).pathname} - asking again in ${wait / 1000}s (retry ${attempt + 1})`)
+    await sleep(wait)
+    return client(config)
+  })
+}
+
+/**
+ * How long a manifest verdict is remembered. A fetch that failed is asked again within a
+ * minute, because keeping it for the full ten meant JACK IN reused the failure long after
+ * GitHub had recovered.
+ */
+export function manifestStateTtlMs (state, goodTtlMs) {
+  return state === 'cached' || state === 'unverified-offline' ? Math.min(60 * 1000, goodTtlMs) : goodTtlMs
+}
+
+/**
+ * A dev whose launcher is pointed at a server other than the public one, with no test build
+ * installed, would join it on the public release. Every later symptom of that reads as a bug
+ * in the build under test, so JACK IN says so first. Staff only: a player, or somebody
+ * running their own server, has no test builds to install.
+ */
+// Which save folder each body's world lives in. MpTemplateSaveName and MpTemplateSaveNameMale
+// in OwnSave.reds hold the same two names, and the selftest holds them together.
+export function templateFolder (body) {
+  return body === 'male' ? 'MultiplayerStartMale' : 'MultiplayerStart'
+}
+
+// Is this folder already the right body's world? No stamp means nobody can say, so it is
+// replaced. A folder stamped for the other body is what a hand-set bodyType left behind.
+export function templateIsCurrent ({ installed, stamp }, body) {
+  return Boolean(installed) && stamp === body
+}
+
+export function testBuildMissing ({ isStaff, serverSource, serverHost, publishedHost, testBuildTag }) {
+  if (!isStaff || testBuildTag) return false
+  if (serverSource !== 'settings') return false
+  return serverHost !== publishedHost
 }
 
 export function newerTestBuild (prereleases, installedTag) {

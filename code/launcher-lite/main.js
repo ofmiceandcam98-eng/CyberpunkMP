@@ -611,7 +611,9 @@ function launcherFootprint () {
     ],
     // Crash-log copies handleGameCrash puts on the Desktop for handing over.
     desktopDir: desktop,
-    desktopLogPattern: /^NightCityOnline-CRASH-.*\.log$/i
+    desktopLogPattern: /^NightCityOnline-CRASH-.*\.log$/i,
+    // The two world saves. Uninstall only: Deep clean must not take away what Play needs.
+    templateDirs: [templateDir('female'), templateDir('male')]
   }
 }
 
@@ -780,6 +782,11 @@ function collectResidue (aIncludeLive) {
     // NEVER the folder this process runs from - deleting it out from under a live
     // exe fails halfway and manufactures exactly the residue this hunts.
     if (existsSync(d) && !samePath(d, ownDir)) dirs.push(d)
+  }
+  if (aIncludeLive) {
+    for (const d of fp.templateDirs) {
+      if (existsSync(d)) dirs.push(d)
+    }
   }
 
   const files = []
@@ -950,6 +957,9 @@ const GITHUB_REPO = 'ofmiceandcam98-eng/CyberpunkMP'
 // matching code change in a shipped binary - a launcher already in someone's hands could
 // never see a release published after it. Releases are now versioned (v0.1.4, v0.1.5...)
 // and this always resolves to the current one.
+// Every request to GitHub in this file goes through this, so no download path can forget.
+ManifestKit.installReleaseRetry(axios, { log: (line) => launcherLog(line) })
+
 const RELEASE_API = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`
 
 // ---------------------------------------------------------------------------
@@ -1047,7 +1057,7 @@ let manifestStateAt = 0
 const MANIFEST_TTL_MS = 10 * 60 * 1000
 
 async function refreshManifestState (force = false) {
-  if (!force && manifestState && Date.now() - manifestStateAt < MANIFEST_TTL_MS) return manifestState
+  if (!force && manifestState && Date.now() - manifestStateAt < ManifestKit.manifestStateTtlMs(manifestState.state, MANIFEST_TTL_MS)) return manifestState
 
   let fetchedBytes = null
   let fetchedSigText = null
@@ -3159,7 +3169,6 @@ async function hydrateUserFromToken () {
 // achieves in twenty lines.
 // ---------------------------------------------------------------------------
 
-const TEMPLATE_SAVE_NAME = 'MultiplayerStart'
 
 // Two templates, because body type cannot be changed in game.
 //
@@ -3175,12 +3184,6 @@ const TEMPLATE_URLS = {
   male: `https://github.com/${GITHUB_REPO}/releases/latest/download/character-template-male.zip`
 }
 
-// Which body the player asked for. Female is the default only because it is the template
-// that exists today, not as a statement about anything.
-function chosenBodyType () {
-  return loadSettings().bodyType === 'male' ? 'male' : 'female'
-}
-
 function savesDir () {
   // Not Documents. Cyberpunk uses the Saved Games known folder, under a CD Projekt Red
   // subdirectory - which is not where the obvious guess puts it, and getting this wrong
@@ -3188,13 +3191,29 @@ function savesDir () {
   return path.join(app.getPath('home'), 'Saved Games', 'CD Projekt Red', 'Cyberpunk 2077')
 }
 
-function templateDir () {
-  return path.join(savesDir(), TEMPLATE_SAVE_NAME)
+function templateDir (body = 'female') {
+  return path.join(savesDir(), ManifestKit.templateFolder(body))
 }
 
+// Both worlds, always, because who is about to be played is decided on a screen inside the
+// game. The script picks one by name when the character is chosen, so the launcher's only job
+// is that both are there. What this returns is the female world's answer, which is what the
+// launch path has always asked about; a missing male world is logged and the script falls back.
 async function ensureTemplateSave () {
-  const target = templateDir()
-  const wanted = chosenBodyType()
+  const result = await installTemplate('female')
+
+  try {
+    const male = await installTemplate('male')
+    if (!male.installed) launcherLog(`template: the male world is not available - ${male.reason || 'unknown'}`)
+  } catch (err) {
+    launcherLog(`template: the male world could not be installed - ${err.message}`)
+  }
+
+  return result
+}
+
+async function installTemplate (wanted) {
+  const target = templateDir(wanted)
 
   // Re-installed when the player changes body type, because the installed save IS the
   // body. Checking only for existence would silently leave somebody who picked male
@@ -3205,7 +3224,9 @@ async function ensureTemplateSave () {
     ? readFileSync(stampPath, 'utf8').trim()
     : null
 
-  if (installed && current === wanted) return { installed: true, fresh: false, bodyType: wanted }
+  if (ManifestKit.templateIsCurrent({ installed, stamp: current }, wanted)) {
+    return { installed: true, fresh: false, bodyType: wanted }
+  }
 
   const saves = savesDir()
   if (!existsSync(saves)) {
@@ -3317,7 +3338,7 @@ async function hasOwnWorldSince (installedAt) {
   const saves = savesDir()
   if (!existsSync(saves)) return false
 
-  const template = templateDir()
+  const templates = [templateDir('female'), templateDir('male')]
 
   let entries
   try {
@@ -3331,7 +3352,7 @@ async function hasOwnWorldSince (installedAt) {
     if (!entry.isDirectory()) continue
 
     const full = path.join(saves, entry.name)
-    if (full === template) continue
+    if (templates.includes(full)) continue
 
     // A folder is only a save if the game wrote one there.
     if (!existsSync(path.join(full, 'sav.dat'))) continue
@@ -3373,11 +3394,8 @@ async function hasOwnWorldSince (installedAt) {
  * replaced on every launch that needs it, and nothing anywhere reads its timestamp except
  * the save list's ordering.
  */
-async function unstampTemplate () {
-  const target = templateDir()
+async function setTemplateTime (target, when) {
   if (!existsSync(target)) return false
-
-  const when = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000)
 
   try {
     for (const entry of await fsp.readdir(target)) {
@@ -3386,29 +3404,27 @@ async function unstampTemplate () {
     await fsp.utimes(target, when, when)
     return true
   } catch (err) {
-    console.warn('[template] could not un-stamp:', err.message)
+    console.warn('[template] could not set the time on', target, err.message)
     return false
   }
 }
 
-async function stampTemplateNewest () {
-  const target = templateDir()
-  if (!existsSync(target)) return false
+async function unstampTemplate () {
+  const when = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000)
 
+  await setTemplateTime(templateDir('male'), when)
+  return setTemplateTime(templateDir('female'), when)
+}
+
+async function stampTemplateNewest () {
   // A minute ahead, not now. Some of these writes take a moment and an autosave landing in
   // the same second would otherwise be a coin toss.
-  const when = new Date(Date.now() + 60_000)
+  const when = Date.now() + 60_000
 
-  try {
-    for (const entry of await fsp.readdir(target)) {
-      await fsp.utimes(path.join(target, entry), when, when)
-    }
-    await fsp.utimes(target, when, when)
-    return true
-  } catch (err) {
-    console.warn('[template] could not stamp:', err.message)
-    return false
-  }
+  // The male world a second behind, so the newest save is still the female world for
+  // OwnSave's LoadLastCheckpoint fallback and for any script older than this launcher.
+  await setTemplateTime(templateDir('male'), new Date(when - 1000))
+  return setTemplateTime(templateDir('female'), new Date(when))
 }
 
 // Is a game running, or on its way up?
@@ -3851,6 +3867,34 @@ async function launchGame () {
     launcherLog('game version: user chose to launch anyway')
   } else if (version.have) {
     launcherLog(`game version: ${version.have} - supported`)
+  }
+
+  // A dev joining the test server on the public release: anything odd after this reads as a
+  // bug in the build under test, so say it before the game starts. Cancel is the default;
+  // launching anyway stays possible because a release client against test is sometimes the
+  // thing being tested.
+  if (ManifestKit.testBuildMissing({
+    isStaff: isAdmin(),
+    serverSource: server.source,
+    serverHost: server.host,
+    publishedHost: publishedServer?.host,
+    testBuildTag: loadSettings().testBuildTag
+  })) {
+    launcherLog(`test build: none installed, and ${server.host} is not the public server`)
+    const answer = dialog.showMessageBoxSync(mainWindow, {
+      type: 'warning',
+      buttons: ['Launch anyway', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      title: 'Test build not installed',
+      message: 'Test build not installed.',
+      detail: `This launcher is pointed at ${server.host}, which is not the public server, but it has ` +
+              'the public release installed. Install a test build from Settings > Dev > Test builds, ' +
+              'or launch anyway if the public release is what you mean to test.'
+    })
+
+    if (answer === 1) throw new Error('Test build not installed. Install one from Settings > Dev > Test builds.')
+    launcherLog('test build: user chose to launch anyway')
   }
 
   // Boot policy self-heal, deliberately not awaited: an installed Fast Launch is a
@@ -5686,6 +5730,7 @@ ipcMain.handle('launcher:uninstall', async () => {
       '- registry entries: the Apps rows and the nxm:// download handler\n' +
       (modDir ? `- the multiplayer mod:  ${modDir}\n` : '') +
       '- every Nexus mod this launcher installed (the frameworks stay)\n' +
+      '- the two multiplayer world saves it put in your saves folder\n' +
       '\nCyberpunk 2077 itself, your saves, and the framework mods (RED4ext, ' +
       'redscript, Codeware...) are not touched. A fresh build installs cleanly ' +
       'afterwards.',
@@ -5930,7 +5975,7 @@ ipcMain.handle('install:everything', async () => {
     return { ok: true, ...result }
   } catch (err) {
     launcherLog(`install everything: FAILED - ${err.message}`)
-    return { ok: false, error: err.message }
+    return { ok: false, error: ManifestKit.releaseChannelError(err, 'the download could not finish') }
   }
 })
 
@@ -5973,7 +6018,8 @@ ipcMain.handle('update:apply', async () => {
     lastUpdateCheck = await checkForUpdates()
     return { ok: true, ...result }
   } catch (err) {
-    return { ok: false, error: err.message }
+    launcherLog(`update: FAILED - ${err.message}`)
+    return { ok: false, error: ManifestKit.releaseChannelError(err, 'the update could not finish') }
   }
 })
 
@@ -6608,7 +6654,7 @@ ipcMain.handle('prerelease:install', async (_event, tag) => {
 
     return { ok: true, tag, payload: Boolean(payload), warning: dllWarning || undefined }
   } catch (err) {
-    return { ok: false, error: err.message }
+    return { ok: false, error: ManifestKit.releaseChannelError(err, 'the test build could not be downloaded') }
   }
 })
 
@@ -6679,7 +6725,7 @@ ipcMain.handle('prerelease:restore', async () => {
 
     return { ok: true, source: 'local backup (offline) - Reinstall mod files if the game will not start' }
   } catch (err) {
-    return { ok: false, error: err.message }
+    return { ok: false, error: ManifestKit.releaseChannelError(err, 'the public release could not be downloaded') }
   }
 })
 

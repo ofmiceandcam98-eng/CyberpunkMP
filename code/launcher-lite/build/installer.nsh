@@ -26,6 +26,8 @@
     RMDir /r "$LOCALAPPDATA\Night City Online-updater"
     RMDir /r "$LOCALAPPDATA\Night City Online Launcher-updater"
     RMDir /r "$LOCALAPPDATA\nightcity-launcher-updater"
+    RMDir /r "$PROFILE\Saved Games\CD Projekt Red\Cyberpunk 2077\MultiplayerStart"
+    RMDir /r "$PROFILE\Saved Games\CD Projekt Red\Cyberpunk 2077\MultiplayerStartMale"
     Delete "$DESKTOP\Night City Online Launcher.lnk"
     Delete "$APPDATA\Microsoft\Windows\Start Menu\Programs\Night City Online Launcher.lnk"
 

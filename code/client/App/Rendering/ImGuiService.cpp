@@ -6,6 +6,20 @@
 #include "App/Debugging/DebugService.h"
 #include "App/Settings.h"
 
+// Once per session and call site. A healthy overlay says how far it got in a few lines, and a
+// broken one stops saying so at the step that failed. These go to the client log on purpose:
+// LogError lands in red4ext's own file, which never reaches the server.
+#define OVERLAY_LOG_ONCE(...)         \
+    do                                \
+    {                                 \
+        static bool s_said = false;   \
+        if (!s_said)                  \
+        {                             \
+            s_said = true;            \
+            spdlog::info(__VA_ARGS__); \
+        }                             \
+    } while (false)
+
 namespace App
 {
 
@@ -40,14 +54,37 @@ void ImGuiService::OnRenderInit()
         return;
     }
 
+    spdlog::info("[ImGuiService] developer overlay requested - starting");
+
+    // The hard-lock above was seen with both overlays drawing, so they do not run together.
+    // A developer's machine is not the place to find out whether 2.5 changed that.
+    if (GetModuleHandleW(L"cyber_engine_tweaks.asi"))
+    {
+        spdlog::warn("[ImGuiService] Cyber Engine Tweaks is loaded, so the developer overlay was NOT started: "
+                     "the two drawing together have hard-locked a GPU. Disable CET to use the overlay.");
+        return;
+    }
+
+    spdlog::info("[ImGuiService] Cyber Engine Tweaks is not loaded");
+
+    const auto fail = [this](const char* acpWhat)
+    {
+        spdlog::error("[ImGuiService] the overlay did not start: {}", acpWhat);
+        LogError(acpWhat);
+    };
+
     Microsoft::WRL::ComPtr<ID3D12Device> pDevice;
     if (FAILED(GetSwapChain()->GetDevice(IID_PPV_ARGS(&pDevice))))
     {
+        fail("RenderingProvider::Initialize() - could not get the device from the swap chain!");
         return;
     }
 
     DXGI_SWAP_CHAIN_DESC sdesc;
     GetSwapChain()->GetDesc(&sdesc);
+
+    spdlog::info("[ImGuiService] swap chain: {} buffer(s), format {}, {}x{}, flags {:#x}", sdesc.BufferCount,
+                 static_cast<int>(sdesc.BufferDesc.Format), sdesc.BufferDesc.Width, sdesc.BufferDesc.Height, sdesc.Flags);
 
     const auto buffersCounts = std::min(sdesc.BufferCount, 3u);
     m_frameContexts.resize(buffersCounts);
@@ -59,7 +96,7 @@ void ImGuiService::OnRenderInit()
 
     if (FAILED(pDevice->CreateDescriptorHeap(&srvdesc, IID_PPV_ARGS(&m_pSrvDescHeap))))
     {
-        LogError("RenderingProvider::Initialize() - failed to create SRV descriptor heap!");
+        fail("RenderingProvider::Initialize() - failed to create SRV descriptor heap!");
         OnReset();
         return;
     }
@@ -72,7 +109,7 @@ void ImGuiService::OnRenderInit()
 
     if (FAILED(pDevice->CreateDescriptorHeap(&rtvdesc, IID_PPV_ARGS(&m_pRtvDescHeap))))
     {
-        LogError("RenderingProvider::Initialize() - failed to create RTV descriptor heap!");
+        fail("RenderingProvider::Initialize() - failed to create RTV descriptor heap!");
         OnReset();
         return;
     }
@@ -91,7 +128,7 @@ void ImGuiService::OnRenderInit()
     for (auto& context : m_frameContexts)
         if (FAILED(pDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&context.CommandAllocator))))
         {
-            LogError("RenderingProvider::Initialize() - failed to create command allocator!");
+            fail("RenderingProvider::Initialize() - failed to create command allocator!");
             OnReset();
             return;
         }
@@ -99,7 +136,7 @@ void ImGuiService::OnRenderInit()
     if (FAILED(pDevice->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_frameContexts[0].CommandAllocator.Get(), nullptr, IID_PPV_ARGS(&m_pCommandList))) ||
         FAILED(m_pCommandList->Close()))
     {
-        LogError("RenderingProvider::Initialize() - failed to create command list!");
+        fail("RenderingProvider::Initialize() - failed to create command list!");
         OnReset();
         return;
     }
@@ -153,6 +190,10 @@ void ImGuiService::OnRenderInit()
             // its cursor INTO the overlay, so it exists only while ImGui wants the mouse.
             ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
 
+            // No imgui.ini. By default ImGui writes one into the working directory, which here
+            // is the game's own bin folder, and the footprint rule says we leave nothing behind.
+            ImGui::GetIO().IniFilename = nullptr;
+
             // TODO - make this configurable eventually and overridable by mods for themselves easily
             // setup CET default style
             ImGui::StyleColorsDark(&m_styleReference);
@@ -169,17 +210,21 @@ void ImGuiService::OnRenderInit()
         ImGui::GetStyle() = m_styleReference;
         ImGui::GetStyle().ScaleAllSizes(scaleFromReference);
 
+        // Text at 18 authored units, the size of the selector's labels. Without this ImGui stays
+        // at its 13 real pixels on every display, which on 1440p is a bar easy to look straight past.
+        ImGui::GetStyle().FontScaleMain = (18.0f / 13.0f) * scaleFromReference;
+
         if (!ImGui_ImplWin32_Init(GetWindow()))
         {
-            LogError("RenderingProvider::Initialize() - ImGui_ImplWin32_Init call failed!");
+            fail("RenderingProvider::Initialize() - ImGui_ImplWin32_Init call failed!");
             return;
         }
 
         if (!ImGui_ImplDX12_Init(
-                pDevice.Get(), static_cast<int>(buffersCounts), DXGI_FORMAT_R8G8B8A8_UNORM, m_pSrvDescHeap.Get(), m_pSrvDescHeap->GetCPUDescriptorHandleForHeapStart(),
+                pDevice.Get(), static_cast<int>(buffersCounts), sdesc.BufferDesc.Format, m_pSrvDescHeap.Get(), m_pSrvDescHeap->GetCPUDescriptorHandleForHeapStart(),
                 m_pSrvDescHeap->GetGPUDescriptorHandleForHeapStart()))
         {
-            LogError("RenderingProvider::Initialize() - ImGui_ImplDX12_Init call failed!");
+            fail("RenderingProvider::Initialize() - ImGui_ImplDX12_Init call failed!");
             ImGui_ImplWin32_Shutdown();
             return;
         }
@@ -188,7 +233,7 @@ void ImGuiService::OnRenderInit()
 
         if (!ImGui_ImplDX12_CreateDeviceObjects())
         {
-            LogError("RenderingProvider::Initialize() - ImGui_ImplDX12_CreateDeviceObjects call failed!");
+            fail("RenderingProvider::Initialize() - ImGui_ImplDX12_CreateDeviceObjects call failed!");
             ImGui_ImplDX12_Shutdown();
             ImGui_ImplWin32_Shutdown();
             return;
@@ -196,6 +241,7 @@ void ImGuiService::OnRenderInit()
     }
 
     m_initialized = true;
+    spdlog::info("[ImGuiService] overlay started with {} frame context(s)", buffersCounts);
 }
 
 void ImGuiService::OnPresent()
@@ -220,10 +266,25 @@ void ImGuiService::OnPresent()
         }
     }
 
+    OVERLAY_LOG_ONCE("[ImGuiService] first present reached the overlay");
+
     if (!m_imguiDrawDataBuffers[0].Valid)
         return;
 
+    OVERLAY_LOG_ONCE("[ImGuiService] first frame with something to draw: {} draw list(s), {} vertices, display {}x{}",
+                     m_imguiDrawDataBuffers[0].CmdLists.Size, m_imguiDrawDataBuffers[0].TotalVtxCount,
+                     m_imguiDrawDataBuffers[0].DisplaySize.x, m_imguiDrawDataBuffers[0].DisplaySize.y);
+
     const auto bufferIndex = GetSwapChain()->GetCurrentBackBufferIndex();
+
+    // Only three contexts are made however many buffers the swap chain has.
+    if (bufferIndex >= m_frameContexts.size())
+    {
+        OVERLAY_LOG_ONCE("[ImGuiService] back buffer {} has no frame context ({} made) - that frame is not drawn",
+                         bufferIndex, m_frameContexts.size());
+        return;
+    }
+
     auto& frameContext = m_frameContexts[bufferIndex];
     frameContext.CommandAllocator->Reset();
 
@@ -251,6 +312,8 @@ void ImGuiService::OnPresent()
 
     ID3D12CommandList* commandLists[] = {m_pCommandList.Get()};
     GetCommandQueue()->ExecuteCommandLists(1, commandLists);
+
+    OVERLAY_LOG_ONCE("[ImGuiService] first overlay frame submitted, on back buffer {}", bufferIndex);
 }
 
 void ImGuiService::OnReset(bool aCompleteReset)
@@ -261,7 +324,7 @@ void ImGuiService::OnReset(bool aCompleteReset)
 
         for (auto& drawData : m_imguiDrawDataBuffers)
         {
-            for (auto i = 0; i < drawData.CmdListsCount; ++i)
+            for (auto i = 0; i < drawData.CmdLists.Size; ++i)
                 IM_DELETE(drawData.CmdLists[i]);
             drawData.Clear();
         }
@@ -286,6 +349,11 @@ bool ImGuiService::OnWindowProc(HWND ahWnd, UINT auMsg, WPARAM awParam, LPARAM a
 {
     if (m_initialized)
     {
+        // Whether a click reaches the overlay at all is the first question if a button will not press.
+        if (auMsg == WM_LBUTTONDOWN)
+            OVERLAY_LOG_ONCE("[ImGuiService] first left click reached the overlay at {}, {}",
+                             static_cast<short>(LOWORD(alParam)), static_cast<short>(HIWORD(alParam)));
+
         if (const auto res = ImGui_ImplWin32_WndProcHandler(ahWnd, auMsg, awParam, alParam))
             return res != 0;
     }
@@ -345,14 +413,14 @@ void ImGuiService::PrepareUpdate()
 
     auto& drawData = m_imguiDrawDataBuffers[2];
 
-    for (auto i = 0; i < drawData.CmdListsCount; ++i)
+    for (auto i = 0; i < drawData.CmdLists.Size; ++i)
         IM_DELETE(drawData.CmdLists[i]);
     drawData.Clear();
 
     drawData = *ImGui::GetDrawData();
 
     ImVector<ImDrawList*> copiedDrawLists;
-    for (auto i = 0; i < drawData.CmdListsCount; ++i)
+    for (auto i = 0; i < drawData.CmdLists.Size; ++i)
         copiedDrawLists.push_back(drawData.CmdLists[i]->CloneOutput());
     drawData.CmdLists = copiedDrawLists;
 

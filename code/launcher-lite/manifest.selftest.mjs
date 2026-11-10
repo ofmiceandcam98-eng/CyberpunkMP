@@ -13,7 +13,7 @@
  */
 
 import crypto from 'node:crypto'
-import { writeFileSync, unlinkSync, mkdtempSync, rmSync, mkdirSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync, unlinkSync, mkdtempSync, rmSync, mkdirSync, existsSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import nacl from 'tweetnacl'
@@ -43,6 +43,12 @@ import {
   dllLoadWarning,
   sessionCrashLog,
   releaseChannelError,
+  releaseRetryDelay,
+  installReleaseRetry,
+  manifestStateTtlMs,
+  testBuildMissing,
+  templateFolder,
+  templateIsCurrent,
   newerTestBuild,
   resolveArchiveStrip
 } from './manifest.js'
@@ -261,6 +267,26 @@ check('state: unreachable with no cache -> unverified-offline',
     return [r.state, r.manifest]
   })(),
   ['unverified-offline', null])
+
+// The shape main.js really persists: JSON.stringify(evaluated.manifest), the bare manifest with
+// no { bytes } or { manifest } wrapper. cachedEntry above is not what production writes, which
+// is how a launcher that had verified a manifest 25 minutes earlier said none had ever been
+// verified, the first time GitHub answered 504 at JACK IN on an armed server (2026-11-09).
+const persistedByMain = { schema: 1, manifestVersion: '2026.08.21.02' }
+
+check('state: unreachable with the cache main.js writes -> cached',
+  (() => {
+    const r = evaluateManifestState({ fetchError: new Error('Request failed with status code 504'), cached: persistedByMain, pinnedPubkeyLines: pinned })
+    return [r.state, r.manifest?.manifestVersion]
+  })(),
+  ['cached', '2026.08.21.02'])
+
+check('state: rollback against the cache main.js writes keeps that manifest',
+  (() => {
+    const r = evaluateManifestState({ fetchedBytes: older.bytes, fetchedSigText: older.sig, cached: persistedByMain, pinnedPubkeyLines: pinned })
+    return [r.state, r.manifest?.manifestVersion]
+  })(),
+  ['rollback', '2026.08.21.02'])
 
 // absent: migration fallback, caller uses the legacy path
 check('state: absent',
@@ -884,6 +910,105 @@ function placeFile (dir, rel, content) {
   } finally {
     rmSync(d, { recursive: true, force: true })
   }
+}
+
+// ---------------------------------------------------------------------------
+// GitHub failing in bursts. On 2026-11-09 one 504 ended Install everything while the next
+// request answered in 0.2 seconds, and the launcher printed the raw status line.
+// ---------------------------------------------------------------------------
+{
+  const gh = 'https://github.com/o/r/releases/latest/download/server-manifest.json'
+  const retry = (over, attempt = 0) => releaseRetryDelay({ url: gh, method: 'get', ...over }, attempt)
+
+  check('retry: a 504 from GitHub is asked again', retry({ status: 504 }) !== null, true)
+  check('retry: 502 and 503 too', [retry({ status: 502 }) !== null, retry({ status: 503 }) !== null], [true, true])
+  check('retry: three tries in all, then it gives up', [retry({ status: 504 }, 1) !== null, retry({ status: 504 }, 2)], [true, null])
+  check('retry: a 404 gets its answer at once', retry({ status: 404 }), null)
+  check('retry: a rate limit is not hammered', [retry({ status: 403 }), retry({ status: 429 })], [null, null])
+  check('retry: only GETs', retry({ status: 504, method: 'post' }), null)
+  check('retry: never our own server',
+    releaseRetryDelay({ url: 'http://10.0.0.1:11778/api/v1/status/', method: 'get', status: 504 }, 0), null)
+  check('retry: the host GitHub redirects downloads to counts',
+    releaseRetryDelay({ url: 'https://release-assets.githubusercontent.com/x', method: 'get', status: 503 }, 0) !== null, true)
+  check('retry: a lookalike host does not',
+    releaseRetryDelay({ url: 'https://notgithub.com/x', method: 'get', status: 504 }, 0), null)
+  check('retry: a timeout is asked again once',
+    [retry({ code: 'ECONNABORTED', timeout: 15000 }) !== null, retry({ code: 'ECONNABORTED', timeout: 15000 }, 1)], [true, null])
+  check('retry: a long download that timed out would only take that long again',
+    retry({ code: 'ECONNABORTED', timeout: 180000 }), null)
+  check('retry: a machine with no internet answers at once', retry({ code: 'ENOTFOUND' }), null)
+
+  check('releaseChannelError: the caller says what could not happen',
+    /GitHub is not answering right now, so the download could not finish/.test(
+      releaseChannelError({ response: { status: 504 } }, 'the download could not finish')), true)
+  check('releaseChannelError: the raw status line is gone',
+    /status code/.test(releaseChannelError({ response: { status: 504 }, message: 'Request failed with status code 504' }, 'x')), false)
+
+  check('manifest memo: a good answer lasts the full ten minutes',
+    [manifestStateTtlMs('valid', 600000), manifestStateTtlMs('rollback', 600000)], [600000, 600000])
+  check('manifest memo: a failed fetch is asked again soon',
+    [manifestStateTtlMs('cached', 600000), manifestStateTtlMs('unverified-offline', 600000)], [60000, 60000])
+
+  // The real library, because a fake cannot say whether axios keeps the attempt count on the
+  // config it is handed back. If it dropped it, this would retry forever.
+  let axiosLib = null
+  try { axiosLib = (await import('axios')).default } catch { console.log('SKIP retry against real axios: axios is not installed here') }
+
+  if (axiosLib) {
+    const failing = (failures) => {
+      let calls = 0
+      return {
+        calls: () => calls,
+        adapter: async (config) => {
+          calls++
+          if (calls <= failures) {
+            throw new axiosLib.AxiosError('Request failed with status code 504', 'ERR_BAD_RESPONSE', config, null,
+              { status: 504, statusText: 'Gateway Timeout', data: '', headers: {}, config })
+          }
+          return { status: 200, statusText: 'OK', data: 'manifest', headers: {}, config }
+        }
+      }
+    }
+
+    const client = axiosLib.create()
+    const logged = []
+    const waits = []
+    installReleaseRetry(client, { log: (line) => logged.push(line), sleep: async (ms) => { waits.push(ms) } })
+
+    const recovers = failing(2)
+    const answer = await client.get(gh, { adapter: recovers.adapter })
+    check('retry: real axios recovers from two 504s', [answer.data, recovers.calls(), logged.length, waits.length], ['manifest', 3, 2, 2])
+
+    const stuck = failing(99)
+    const lastStatus = await client.get(gh, { adapter: stuck.adapter }).then(() => 'resolved', (err) => err.response?.status)
+    check('retry: real axios stops at three and reports the failure', [lastStatus, stuck.calls()], [504, 3])
+  }
+}
+
+// A dev pointed at the test server with the public release installed.
+{
+  const base = { isStaff: true, serverSource: 'settings', serverHost: '100.106.1.67', publishedHost: '100.109.52.23', testBuildTag: null }
+  check('testBuildMissing: dev, test server, no test build', testBuildMissing(base), true)
+  check('testBuildMissing: a test build is installed', testBuildMissing({ ...base, testBuildTag: 'v0.3.126-worldstate-test.96' }), false)
+  check('testBuildMissing: never for a player', testBuildMissing({ ...base, isStaff: false }), false)
+  check('testBuildMissing: not on the published server', testBuildMissing({ ...base, serverSource: 'published' }), false)
+  check('testBuildMissing: a saved address that IS the public server', testBuildMissing({ ...base, serverHost: '100.109.52.23' }), false)
+  check('testBuildMissing: GitHub down, public address unknown, still says so', testBuildMissing({ ...base, publishedHost: undefined }), true)
+}
+
+// One world per body, chosen by the script from names the launcher installed.
+{
+  check('templateFolder: the female world stays where it always was', templateFolder('female'), 'MultiplayerStart')
+  check('templateFolder: the male world has its own folder', templateFolder('male'), 'MultiplayerStartMale')
+  check('templateIsCurrent: the right body', templateIsCurrent({ installed: true, stamp: 'male' }, 'male'), true)
+  check('templateIsCurrent: a folder a hand-set bodyType made male is not the female world', templateIsCurrent({ installed: true, stamp: 'male' }, 'female'), false)
+  check('templateIsCurrent: no stamp is replaced', templateIsCurrent({ installed: true, stamp: null }, 'female'), false)
+  check('templateIsCurrent: nothing installed', templateIsCurrent({ installed: false, stamp: 'female' }, 'female'), false)
+
+  const ownSave = readFileSync(new URL('../assets/redscript/OwnSave.reds', import.meta.url), 'utf8')
+  check('OwnSave names the female folder the launcher installs', ownSave.includes(`MpTemplateSaveName() -> String = "${templateFolder('female')}"`), true)
+  check('OwnSave names the male folder the launcher installs', ownSave.includes(`MpTemplateSaveNameMale() -> String = "${templateFolder('male')}"`), true)
+  check('OwnSave matches exactly, because one name contains the other', ownSave.includes('StrContains(saves[i]'), false)
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)
