@@ -267,6 +267,10 @@ public class MpStatusEffectPoll extends DelayCallback {
                 MpApplyServerHealth(player, network);
                 MpApplyDownedState(player, network);
                 MpApplyIncomingUploads(network);
+
+                // What is in our hand, so other people can see it. From here because this is
+                // the chain that lives in the city; MpWeaponPoll below does not.
+                MpPollWeapon(network, true);
             }
         }
 
@@ -499,11 +503,12 @@ public func MpApplyIncomingUploads(network: ref<NetworkWorldSystem>) -> Void {
 @addField(PlayerPuppet)
 public let m_mpWeaponPollTicked: Bool;
 
-// STILL ARMED ONLY FROM OnConnected, ON PURPOSE. It very likely has the same problem the status
-// poll had, and reviving it before the reload refusal is fixed would make the server refuse
-// every shot after the first magazine (on-2-5-the-server-refuses-hezbollahcartel-s-weapon-
-// reloads-r). The line below measures whether it runs; fix that branch, then bind this the same
-// way.
+// STILL ARMED ONLY FROM OnConnected, ON PURPOSE. Measured 2026-11-10: this chain dies with the
+// menu world, so a session that connects from the menu never runs it in the city. Reviving it
+// before the reload refusal is fixed would make the server refuse every shot after the first
+// magazine (on-2-5-the-server-refuses-hezbollahcartel-s-weapon-reloads-r). So what is in the
+// hand goes out from the status poll, which does live in the city (MpPollWeapon with handOnly
+// set), and only the ammunition half waits here. Fix that branch, then bind this the same way.
 public class MpWeaponPoll extends DelayCallback {
     public func Call() -> Void {
         let network = GameInstance.GetNetworkWorldSystem();
@@ -515,7 +520,7 @@ public class MpWeaponPoll extends DelayCallback {
                 network.ScriptLog("combat: the weapon poll is running in this world");
             }
 
-            MpPollWeapon(network);
+            MpPollWeapon(network, false);
         }
 
         // Rearmed unconditionally, so the poll survives a reconnect.
@@ -534,7 +539,7 @@ public let m_mpLastAmmo: Uint32;
 @addField(PlayerPuppet)
 public let m_mpWeaponSeen: Bool;
 
-public func MpPollWeapon(network: ref<NetworkWorldSystem>) -> Void {
+public func MpPollWeapon(network: ref<NetworkWorldSystem>, handOnly: Bool) -> Void {
     let player = GetPlayer(GetGameInstance()) as PlayerPuppet;
     if !IsDefined(player) {
         return;
@@ -569,6 +574,11 @@ public func MpPollWeapon(network: ref<NetworkWorldSystem>) -> Void {
         player.m_mpWeaponSeen = true;
         player.m_mpLastWeapon = id;
         player.m_mpLastAmmo = ammo;
+        return;
+    }
+
+    // Draw and holster only: shots and reloads wait for the reload fix, see MpWeaponPoll.
+    if handOnly {
         return;
     }
 
