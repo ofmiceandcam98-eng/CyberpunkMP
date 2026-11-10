@@ -46,7 +46,8 @@ function restoreHandler (before) {
 
 const handlerBefore = readHandler()
 const dataDir = mkdtempSync(join(tmpdir(), 'nco-electron-check-'))
-const app = spawn(exe, [`--user-data-dir=${dataDir}`, `--remote-debugging-port=${PORT}`], { stdio: 'ignore' })
+// A window Windows reports as covered stops drawing frames, and every check that needs one then fails for that reason alone.
+const app = spawn(exe, [`--user-data-dir=${dataDir}`, `--remote-debugging-port=${PORT}`, '--disable-features=CalculateNativeWinOcclusion', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'], { stdio: 'ignore' })
 let startFailed = null
 app.on('error', (error) => { startFailed = error })
 
