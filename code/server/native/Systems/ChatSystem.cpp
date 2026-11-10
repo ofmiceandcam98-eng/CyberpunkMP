@@ -132,6 +132,7 @@ Vector<server::CharacterSummary> ChatSystem::RosterOf(const PlayerRecord& acReco
         summary.set_level(character.Level);
         summary.set_spawned_before(character.SpawnedBefore);
         summary.set_lifepath(character.Lifepath.c_str());
+        summary.set_is_male(character.IsMale);
 
         // The five attributes, sent as stored. See server.proto - this is the flag day
         // that lets the selector show who somebody is rather than only what they are

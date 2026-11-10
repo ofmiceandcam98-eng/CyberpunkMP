@@ -79,6 +79,13 @@ message CharacterSummary {
     // single untagged list lets a perk id be read back as an attribute the first time
     // anybody reorders one.
     repeated Attribute attributes = 8;
+
+    // Which world this character has to be loaded into, known before anything is loaded.
+    //
+    // A FLAG DAY, deliberately. A save IS a body: a male look put on the female template
+    // does nothing visible, and the character is picked on a screen that runs before the
+    // world exists, so the look blob arriving at spawn is too late to answer it.
+    bool is_male = 9;
 }
 
 message AuthenticationResponse {
