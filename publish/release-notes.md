@@ -6,6 +6,25 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.129
+
+**Launcher only.** The game and the server did not change, and your mod does not need updating.
+
+- **Restart to update now actually restarts.** It used to close the launcher and open an
+  installer that sat waiting for someone to click through it. Now it installs quietly and the
+  launcher reopens by itself. This update is the last one that arrives the old way, so you may
+  see that installer one more time.
+- **An old launcher tells you, and you have to update before you can jack in.** It shows your
+  version and the new one, and JACK IN stays locked until you press Restart to update. It never
+  closes anything you are in the middle of, and if GitHub cannot be reached nobody is locked out.
+- **Closing the launcher no longer installs an update in the background.** Reopening it straight
+  away could look like a crash.
+- **A failed update no longer pretends you are up to date.** If a newer launcher is out and the
+  update cannot run, you get the download instead of silence.
+- **The mouse wheel on the Settings rail moves the same on every mouse.** On some mice one notch
+  jumped straight past the numbers.
+- **The blue buttons now use the game's own blue.**
+
 ## What changed — v0.3.128
 
 **You have to update for this one.** The game and the server changed together, so older
