@@ -173,6 +173,30 @@ int main()
               "a late joiner is told what is already in someone's hand");
     }
 
+    // ---------------------------------------------------------------- 8. THE RESUME
+    // An involuntary disconnect (deploy flip, dropped link) redials by itself instead of
+    // ending the session. The guards below are the difference between that and a client
+    // that redials a server which kicked it, or undoes the player's own choice to leave.
+    {
+        const auto service = ReadRepoFile("code/client/App/Network/NetworkService.cpp");
+        const auto world = ReadRepoFile("code/client/App/World/NetworkWorldSystem.cpp");
+        Check(service.find("GetLastRefusalCode() == 0 && pWorldSystem->GetDenialCode() == 0") != std::string::npos,
+              "a refusal or denial never arms the resume");
+        Check(service.find("aReason == kLocalProblem || aReason == kKicked") != std::string::npos,
+              "only the involuntary disconnect reasons arm it");
+        Check(service.find("TickResume();") != std::string::npos,
+              "the redial actually runs from the update loop");
+        Check(service.find("CancelResume(\"the server answered with a refusal\")") != std::string::npos,
+              "a refusal mid-window stops the redialing");
+        // Two finds rather than one spanning the newline: the repo is CRLF and a \n in
+        // the needle silently never matches.
+        const auto dial = service.find("[Resume] redialing");
+        Check(dial != std::string::npos && service.find("CaptureSpawnIntent(false);", dial) != std::string::npos,
+              "each redial re-captures the spawn intent so the character is re-announced");
+        Check(world.find("CancelResume(\"the player chose to disconnect\")") != std::string::npos,
+              "the player's own disconnect ends the resume");
+    }
+
     std::printf("\n%d checks, %d failed\n", s_checks, s_failures);
     return s_failures == 0 ? 0 : 1;
 }

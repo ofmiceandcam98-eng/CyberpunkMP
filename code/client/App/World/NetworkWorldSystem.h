@@ -457,6 +457,10 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     uint32_t GetDenialCode() const { return m_denialCode; }
     Red::CString GetRequiredManifest() const { return Red::CString(m_requiredManifest.c_str()); }
 
+    // True while the client is redialing an involuntarily lost session by itself. Script
+    // reads it in OnDisconnected to say "rejoining" instead of treating the drop as final.
+    bool IsResuming() const;
+
     // Called from redscript when the local player is downed - see Death.reds.
     void RequestRespawn();
 
@@ -1073,6 +1077,7 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(GetDenialMessage);
     RTTI_METHOD(GetDenialCode);
     RTTI_METHOD(GetRequiredManifest);
+    RTTI_METHOD(IsResuming);
     RTTI_METHOD(RequestRespawn);
     RTTI_METHOD(SaveCharacterAppearance);
     RTTI_METHOD(IsConnected);

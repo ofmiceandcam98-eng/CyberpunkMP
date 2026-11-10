@@ -4335,7 +4335,17 @@ void NetworkWorldSystem::Disconnect()
                      CharacterStateName(m_characterState));
     }
 
+    // The player's own hand ends a resume too: without this, leaving the server during
+    // the redial window would be undone three seconds later by the next dial.
+    Core::Container::Get<NetworkService>()->CancelResume("the player chose to disconnect");
+
     Core::Container::Get<NetworkService>()->Close();
+}
+
+bool NetworkWorldSystem::IsResuming() const
+{
+    const auto& service = Core::Container::Get<NetworkService>();
+    return service && service->IsResuming();
 }
 
 void NetworkWorldSystem::OnConnected()

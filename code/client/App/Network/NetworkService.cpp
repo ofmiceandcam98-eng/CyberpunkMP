@@ -98,6 +98,19 @@ void NetworkService::OnDisconnected(EDisconnectReason aReason)
         pWorldSystem->SetConnectionDenial(refusal, message, {});
     }
 
+    // An authenticated session that ended with nobody choosing it and nobody refusing
+    // anything can come back by itself. kLocalProblem is the transport losing the server
+    // (hard deploy flip, dropped link); kKicked is ClosedByPeer, which is ALSO what a
+    // clean server stop looks like - a real kick carries a refusal code or a denial, and
+    // either of those stops the resume before the first redial. Armed BEFORE the script
+    // side hears about the disconnect, so it can say "rejoining" instead of "gone".
+    // Atlas: reconnect-pass-so-deploy-flips-stop-bouncing-players-nightco.
+    if (m_authenticated && (aReason == kLocalProblem || aReason == kKicked) &&
+        GetLastRefusalCode() == 0 && pWorldSystem->GetDenialCode() == 0)
+    {
+        ArmResume();
+    }
+
     pWorldSystem->OnDisconnected(aReason);
 
     m_authenticated = false;
@@ -115,7 +128,72 @@ void NetworkService::OnUpdate()
 
     ReportConnectionHealth();
 
+    TickResume();
+
     Red::GetGameSystem<NetworkWorldSystem>()->Update(GetClock().GetCurrentTick());
+}
+
+void NetworkService::ArmResume()
+{
+    if (m_resumeArmed)
+        return;
+
+    m_resumeArmed = true;
+    m_resumeDeadline = std::chrono::steady_clock::now() + kResumeWindow;
+    // The first dial waits one gap rather than firing here: this runs inside the
+    // disconnect callback, and the teardown it interrupts has not finished yet.
+    m_nextResumeDial = std::chrono::steady_clock::now() + kResumeDialGap;
+
+    spdlog::info("[Resume] session lost involuntarily - redialing every {}s for the next {}s",
+                 kResumeDialGap.count(), kResumeWindow.count());
+}
+
+void NetworkService::CancelResume(const char* acpWhy)
+{
+    if (!m_resumeArmed)
+        return;
+
+    m_resumeArmed = false;
+    spdlog::info("[Resume] stopped - {}", acpWhy);
+}
+
+void NetworkService::TickResume()
+{
+    if (!m_resumeArmed || IsConnected())
+        return;
+
+    const auto now = std::chrono::steady_clock::now();
+
+    if (now >= m_resumeDeadline)
+    {
+        CancelResume("the window closed with no answer; reconnect by hand when the server is back");
+        return;
+    }
+
+    // A refusal or denial recorded by an earlier dial means the server is answering and
+    // saying no. More dials would spam a decided question - and the denial popup the
+    // script shows describes exactly this attempt.
+    if (GetLastRefusalCode() != 0 || Red::GetGameSystem<NetworkWorldSystem>()->GetDenialCode() != 0)
+    {
+        CancelResume("the server answered with a refusal");
+        return;
+    }
+
+    if (now < m_nextResumeDial)
+        return;
+
+    m_nextResumeDial = now + kResumeDialGap;
+
+    const auto address = fmt::format("{}:{}", Settings::Get().ip, Settings::Get().port);
+    const auto left = std::chrono::duration_cast<std::chrono::seconds>(m_resumeDeadline - now).count();
+
+    spdlog::info("[Resume] redialing {} ({}s left in the window)", address, left);
+
+    // The same two steps ConnectAs() performs, in the same order. The player is standing
+    // in the world, so the intent capture authorizes the spawn - authentication coming
+    // back then re-announces the character through the existing path, no new machinery.
+    CaptureSpawnIntent(false);
+    Connect(address);
 }
 
 void NetworkService::ReportConnectionHealth()
@@ -311,6 +389,11 @@ void NetworkService::HandleAuthentication(const PacketEvent<server::Authenticati
     }
 
     pWorldSystem->OnConnected();
+
+    // Authenticated again: the resume, if one was running, has done its job. After the
+    // script's OnConnected above, so the script could still see the session as resuming
+    // and word its message accordingly.
+    CancelResume("the session is re-authenticated");
 
     SendSpawnCharacterRequest();
 }

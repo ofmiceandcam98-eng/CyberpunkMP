@@ -220,6 +220,12 @@ public native class NetworkWorldSystem extends IGameSystem {
     public native func GetDenialCode() -> Uint32;
     public native func GetRequiredManifest() -> String;
 
+    // True while the client is redialing an involuntarily lost session by itself (deploy
+    // flip, dropped link). OnDisconnected words its message from this; still true during
+    // the OnConnected that ends the resume, so that side can say "back" rather than
+    // greeting a fresh join.
+    public native func IsResuming() -> Bool;
+
     // ---------------------------------------------------------------------------
     // Voice devices and capture, from Windows' own audio endpoints.
     //
@@ -461,10 +467,22 @@ public native class NetworkWorldSystem extends IGameSystem {
         // let evt: ref<ConnectedToServer>;
         // evt.m_connected = true;
         // GameInstance.GetUISystem(GetGameInstance()).QueueEvent(evt);
-        
+
         let blackboardSystem: ref<BlackboardSystem> = GameInstance.GetBlackboardSystem(GetGameInstance());
         let blackboard: ref<IBlackboard> = blackboardSystem.Get(GetAllBlackboardDefs().UIGameData);
         blackboard.SetBool(GetAllBlackboardDefs().UIGameData.UIMultiplayerConnectedToServer, true, true);
+
+        // The resume flag is still up during this call (native lowers it just after), so
+        // this is a session coming back, not a fresh join - say so, once.
+        if this.IsResuming() {
+            let back: SimpleScreenMessage;
+            back.isShown = true;
+            back.duration = 5.0;
+            back.message = "Back on the server.";
+            blackboardSystem.Get(GetAllBlackboardDefs().UI_Notifications)
+                .SetVariant(GetAllBlackboardDefs().UI_Notifications.WarningMessage, ToVariant(back), true);
+            this.ScriptLog("resume: back on the server");
+        }
 
         // Start visiting what the network thread queued for us: quickhacks, health, being put
         // down. A no-op on a menu connect, where no player exists yet and the player's own
@@ -515,6 +533,21 @@ public native class NetworkWorldSystem extends IGameSystem {
         // Give death back. Someone who leaves the server and carries on playing their own
         // save should be able to die in it.
         MpClearImmortality(GetPlayer(GetGameInstance()) as PlayerPuppet);
+
+        // A resume in flight: tell the player the drop is being handled, instead of the
+        // silence that used to mean "figure out the reconnect yourself". Gated on the
+        // ARMING reasons (1 = lost contact, 2 = closed by the server) so the redial
+        // window's own failed attempts (0 = timeout, 4 = aborted dial) do not repeat it
+        // every few seconds. Native EDisconnectReason in common/Network/Client.h.
+        if this.IsResuming() && (reason == 1u || reason == 2u) {
+            let rejoining: SimpleScreenMessage;
+            rejoining.isShown = true;
+            rejoining.duration = 8.0;
+            rejoining.message = "Connection to the server lost - rejoining...";
+            blackboardSystem.Get(GetAllBlackboardDefs().UI_Notifications)
+                .SetVariant(GetAllBlackboardDefs().UI_Notifications.WarningMessage, ToVariant(rejoining), true);
+            this.ScriptLog("resume: lost the server involuntarily, redialing");
+        }
     }
 
     // record comes from native, which reads it from the launch flags - see Settings.h.

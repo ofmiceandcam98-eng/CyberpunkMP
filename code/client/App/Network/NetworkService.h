@@ -85,6 +85,28 @@ public:
     // world.
     bool IsSpawnDeferred() const { return m_spawnDeferred; }
 
+    // ---------------------------------------------------------------------------
+    // The resume: an involuntary disconnect mid-session (deploy flip, dropped link)
+    // redials by itself for a short window instead of ending the session. No token and
+    // no protocol change: identity is the Discord token that rides every connect, and
+    // the server restores the character from its stores. The NightCoop hub needs a
+    // signed pass because it keeps sessions only in memory; our server does not.
+    // Atlas: reconnect-pass-so-deploy-flips-stop-bouncing-players-nightco.
+    // ---------------------------------------------------------------------------
+
+    // Said by OnDisconnected when the end of the session was nobody's choice and nobody
+    // refused anything.
+    void ArmResume();
+
+    // Said by the player's own Disconnect(), and by the window closing or a refusal
+    // arriving. aWhy goes in the log - a resume that stops silently reads as a hang.
+    void CancelResume(const char* acpWhy);
+
+    // True from the involuntary disconnect until the session is re-authenticated or
+    // given up. Script reads it (via NetworkWorldSystem) to say "rejoining" instead of
+    // treating the disconnect as final.
+    bool IsResuming() const { return m_resumeArmed; }
+
 private:
 
     static ScratchAllocator& GetScratch();
@@ -93,6 +115,21 @@ private:
 
     // Logs ping / link quality on a slow heartbeat, and immediately when the link degrades.
     void ReportConnectionHealth();
+
+    // Redials while a resume is armed. Runs from OnUpdate, which ticks whether or not a
+    // connection exists.
+    void TickResume();
+
+    // The resume window. 30 seconds covers a deploy flip (the container is back in a few)
+    // and spans the transport's own dead-peer detection, so a lingering server-side
+    // session for this account ages out before the window closes. 3 seconds between
+    // dials: an unreachable server answers nothing, so there is no refusal to wait for.
+    static constexpr std::chrono::seconds kResumeWindow{30};
+    static constexpr std::chrono::seconds kResumeDialGap{3};
+
+    bool m_resumeArmed = false;
+    std::chrono::time_point<std::chrono::steady_clock> m_resumeDeadline{};
+    std::chrono::time_point<std::chrono::steady_clock> m_nextResumeDial{};
 
     std::chrono::time_point<std::chrono::steady_clock> m_lastUpdate;
     std::chrono::time_point<std::chrono::steady_clock> m_lastHealthReport;
