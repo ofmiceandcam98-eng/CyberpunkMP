@@ -159,6 +159,20 @@ int main()
               "the restore puts worn items back on");
     }
 
+    // ---------------------------------------------------------------- 7. OTHER PLAYERS' WEAPONS
+    // The server relayed these for months with nothing on the client reading them.
+    {
+        const auto client = ReadRepoFile("code/client/App/World/NetworkWorldSystem.cpp");
+        const auto script = ReadRepoFile("code/assets/redscript/World/AppearanceSystem.reds");
+        const auto server = ReadRepoFile("code/server/native/Game/Level.cpp");
+        Check(client.find("RegisterHandler<&NetworkWorldSystem::HandleWeaponEvent>") != std::string::npos,
+              "the client listens for other players' weapons");
+        Check(client.find("\"SetRemoteWeapon\"") != std::string::npos && script.find("func SetRemoteWeapon") != std::string::npos,
+              "the weapon event reaches the script that puts it in the hand");
+        Check(server.find("SendHeldWeapon(pPlayerComponent->Connection, aEntity)") != std::string::npos,
+              "a late joiner is told what is already in someone's hand");
+    }
+
     std::printf("\n%d checks, %d failed\n", s_checks, s_failures);
     return s_failures == 0 ? 0 : 1;
 }

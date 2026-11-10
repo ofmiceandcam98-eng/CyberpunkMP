@@ -2712,6 +2712,41 @@ void NetworkWorldSystem::HandleDamageResult(const PacketEvent<server::NotifyDama
                  aMessage.get_knocked_down() ? " (DOWNED)" : "");
 }
 
+void NetworkWorldSystem::HandleWeaponEvent(const PacketEvent<server::NotifyWeaponEvent>& aMessage)
+{
+    // Equip, unequip and switch complete are the ones that change what is in the hand.
+    // Fire, reload and the rest are for effects nobody draws yet.
+    enum : uint32_t
+    {
+        kEquip = 0,
+        kUnequip = 1,
+        kSwitchComplete = 6
+    };
+
+    const auto kind = aMessage.get_kind();
+
+    if (kind != kEquip && kind != kUnequip && kind != kSwitchComplete)
+        return;
+
+    // The echo of our own. We are already holding it.
+    if (m_remotePlayerId && aMessage.get_id() == *m_remotePlayerId)
+        return;
+
+    // Finds a body still being spawned as well as a finished one: this can land first.
+    const auto entityId = GetEntityIdByServerId(aMessage.get_id());
+    const auto apprSystem = GetAppearanceSystem();
+
+    if (!entityId || !apprSystem)
+        return;
+
+    const auto weapon = kind == kUnequip ? Red::TweakDBID() : Red::TweakDBID(aMessage.get_weapon_id());
+
+    spdlog::info("[Weapon] {} {} for puppet {}", kind == kUnequip ? "holstered" : "drawn", aMessage.get_weapon_id(),
+                 aMessage.get_id());
+
+    Red::CallVirtual(apprSystem, "SetRemoteWeapon", entityId, weapon);
+}
+
 void NetworkWorldSystem::HandleCombatState(const PacketEvent<server::NotifyCombatState>& aMessage)
 {
     const auto self = GetRemotePlayerId();
@@ -4174,6 +4209,7 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleStatusEffect>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleDamageResult>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleCombatState>(this);
+    pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleWeaponEvent>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleQuickhackUpload>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleVehicleControlAssigned>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleCharacterList>(this);

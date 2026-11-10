@@ -52,6 +52,10 @@ public native class AppearanceSystem extends IScriptable {
     public native func GetNetworkPlayerName(entityID: EntityID) -> String;
 
     private let m_callbackSystem: wref<CallbackSystem>;
+
+    // What each remote player has in their hand, by puppet, while they have anything.
+    private let m_heldOwners: array<EntityID>;
+    private let m_heldWeapons: array<TweakDBID>;
     public let m_entities: array<wref<GameObject>>;
     public let m_controller: wref<MultiplayerGameController>;
     public let m_deliveryEntries: array<ref<JobEntry>>;
@@ -225,6 +229,81 @@ public native class AppearanceSystem extends IScriptable {
         }
     }
 
+    /**
+     * Called from native when another player draws or holsters. An invalid id means empty hands.
+     *
+     * Remembered by puppet as well as applied, because the news can land before the body has
+     * finished being built, and a body that attaches later reads it from here.
+     */
+    public func SetRemoteWeapon(entityId: EntityID, weapon: TweakDBID) -> Void {
+        let found = -1;
+        let i = 0;
+
+        while i < ArraySize(this.m_heldOwners) {
+            if Equals(this.m_heldOwners[i], entityId) {
+                found = i;
+            }
+
+            i += 1;
+        }
+
+        if TDBID.IsValid(weapon) {
+            if found >= 0 {
+                this.m_heldWeapons[found] = weapon;
+            } else {
+                ArrayPush(this.m_heldOwners, entityId);
+                ArrayPush(this.m_heldWeapons, weapon);
+            }
+        } else if found >= 0 {
+            ArrayErase(this.m_heldOwners, found);
+            ArrayErase(this.m_heldWeapons, found);
+        }
+
+        let entity = GameInstance.FindEntityByID(GetGameInstance(), entityId) as GameObject;
+
+        if IsDefined(entity) {
+            this.PutInHand(entity, weapon);
+        }
+    }
+
+    private func PutInHand(entity: ref<GameObject>, weapon: TweakDBID) -> Void {
+        let transaction = GameInstance.GetTransactionSystem(entity.GetGame());
+        let slot = t"AttachmentSlots.WeaponRight";
+        let held = transaction.GetItemInSlot(entity, slot);
+
+        if IsDefined(held) {
+            if TDBID.IsValid(weapon) && ItemID.GetTDBID(held.GetItemID()) == weapon {
+                return;
+            }
+
+            transaction.RemoveItemFromSlot(entity, slot);
+        }
+
+        if TDBID.IsValid(weapon) {
+            let item = ItemID.FromTDBID(weapon);
+
+            if !transaction.HasItem(entity, item) {
+                transaction.GiveItem(entity, item, 1);
+            }
+
+            transaction.AddItemToSlot(entity, slot, item);
+        }
+    }
+
+    private func ApplyHeldWeapon(entity: ref<GameObject>) -> Void {
+        let id = entity.GetEntityID();
+        let i = 0;
+
+        while i < ArraySize(this.m_heldOwners) {
+            if Equals(this.m_heldOwners[i], id) {
+                this.PutInHand(entity, this.m_heldWeapons[i]);
+                return;
+            }
+
+            i += 1;
+        }
+    }
+
     private cb func OnEntityAttached(event: ref<EntityLifecycleEvent>) {
         let entity = event.GetEntity() as GameObject;
 
@@ -233,6 +312,8 @@ public native class AppearanceSystem extends IScriptable {
             if this.ApplyAppearance(entity) {
                 ArrayPush(this.m_entities, entity);
             }
+
+            this.ApplyHeldWeapon(entity);
 
             let mappinData: MappinData;
             let mappinSystem: ref<MappinSystem> = GameInstance.GetMappinSystem(GetGameInstance());

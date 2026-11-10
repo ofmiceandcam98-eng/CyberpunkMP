@@ -515,6 +515,10 @@ protected:
     // Health and life state changing without a hit - a spawn, a revive, a correction.
     void HandleCombatState(const PacketEvent<server::NotifyCombatState>& aMessage);
 
+    // What another player has drawn. The server has relayed these since the weapon events
+    // were added, and until this nothing on the client read them.
+    void HandleWeaponEvent(const PacketEvent<server::NotifyWeaponEvent>& aMessage);
+
     // Somebody is being quickhacked. Rendered with the game's own BeingHacked state.
     void HandleQuickhackUpload(const PacketEvent<server::NotifyQuickhackUpload>& aMessage);
 
