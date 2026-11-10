@@ -13,7 +13,7 @@
  */
 
 import crypto from 'node:crypto'
-import { writeFileSync, unlinkSync, mkdtempSync, rmSync, mkdirSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync, unlinkSync, mkdtempSync, rmSync, mkdirSync, existsSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import nacl from 'tweetnacl'
@@ -47,6 +47,8 @@ import {
   installReleaseRetry,
   manifestStateTtlMs,
   testBuildMissing,
+  templateFolder,
+  templateIsCurrent,
   newerTestBuild,
   resolveArchiveStrip
 } from './manifest.js'
@@ -992,6 +994,21 @@ function placeFile (dir, rel, content) {
   check('testBuildMissing: not on the published server', testBuildMissing({ ...base, serverSource: 'published' }), false)
   check('testBuildMissing: a saved address that IS the public server', testBuildMissing({ ...base, serverHost: '100.109.52.23' }), false)
   check('testBuildMissing: GitHub down, public address unknown, still says so', testBuildMissing({ ...base, publishedHost: undefined }), true)
+}
+
+// One world per body, chosen by the script from names the launcher installed.
+{
+  check('templateFolder: the female world stays where it always was', templateFolder('female'), 'MultiplayerStart')
+  check('templateFolder: the male world has its own folder', templateFolder('male'), 'MultiplayerStartMale')
+  check('templateIsCurrent: the right body', templateIsCurrent({ installed: true, stamp: 'male' }, 'male'), true)
+  check('templateIsCurrent: a folder a hand-set bodyType made male is not the female world', templateIsCurrent({ installed: true, stamp: 'male' }, 'female'), false)
+  check('templateIsCurrent: no stamp is replaced', templateIsCurrent({ installed: true, stamp: null }, 'female'), false)
+  check('templateIsCurrent: nothing installed', templateIsCurrent({ installed: false, stamp: 'female' }, 'female'), false)
+
+  const ownSave = readFileSync(new URL('../assets/redscript/OwnSave.reds', import.meta.url), 'utf8')
+  check('OwnSave names the female folder the launcher installs', ownSave.includes(`MpTemplateSaveName() -> String = "${templateFolder('female')}"`), true)
+  check('OwnSave names the male folder the launcher installs', ownSave.includes(`MpTemplateSaveNameMale() -> String = "${templateFolder('male')}"`), true)
+  check('OwnSave matches exactly, because one name contains the other', ownSave.includes('StrContains(saves[i]'), false)
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

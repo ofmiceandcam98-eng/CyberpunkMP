@@ -2126,6 +2126,7 @@ void NetworkWorldSystem::AdoptRoster(const Vector<server::CharacterSummary>& acC
         entry.Slot = summary.get_slot();
         entry.SpawnedBefore = summary.get_spawned_before();
         entry.Active = summary.get_is_active();
+        entry.IsMale = summary.get_is_male();
         entry.Lifepath = summary.get_lifepath().c_str();
 
         for (const auto& attribute : summary.get_attributes())
@@ -2202,6 +2203,11 @@ bool NetworkWorldSystem::IsRosterActive(uint32_t aIndex) const
 bool NetworkWorldSystem::HasRosterSpawnedBefore(uint32_t aIndex) const
 {
     return aIndex < m_roster.size() && m_roster[aIndex].SpawnedBefore;
+}
+
+bool NetworkWorldSystem::IsRosterMale(uint32_t aIndex) const
+{
+    return aIndex < m_roster.size() && m_roster[aIndex].IsMale;
 }
 
 /**

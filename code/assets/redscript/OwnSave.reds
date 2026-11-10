@@ -55,6 +55,31 @@ import CyberpunkMP.World.*
 // Matched by name because that is what the save list gives us.
 public func MpTemplateSaveName() -> String = "MultiplayerStart"
 
+// A save IS a body, and the world has to be loaded before the server can dress anybody. A male
+// look on the female template changes nothing on screen (zeldfep, 2026-11-10: "if the male
+// template hasn't been tried and we keep loading a male isnt that the loop we are in?"), so
+// each body has its own world. templateFolder in launcher-lite/manifest.js holds the same names.
+public func MpTemplateSaveNameMale() -> String = "MultiplayerStartMale"
+
+/*
+ * Is the character about to be played male? The caret when it is on a character, otherwise
+ * whoever the account has active, and female when there is nobody to ask.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpTemplateIsMale(network: ref<NetworkWorldSystem>) -> Bool {
+    if !IsDefined(network) {
+        return false;
+    }
+
+    let index = this.MpCsRosterIndex(this.m_csCursor);
+
+    if index < 0 {
+        index = this.MpCsRosterIndex(this.MpCsActiveSlot());
+    }
+
+    return index >= 0 && network.IsRosterMale(Cast<Uint32>(index));
+}
+
 // Field name predates the rename below and is left alone on purpose: it is only ever set
 // and read in this file, and a rename is a compile risk that buys nothing.
 @addField(SingleplayerMenuGameController)
@@ -102,8 +127,9 @@ protected cb func MpOnSavesReady(saves: array<String>) -> Bool {
 
     this.m_mpOwnSaveArmed = false;
 
-    let template = MpTemplateSaveName();
+    let wanted = this.MpTemplateIsMale(network) ? MpTemplateSaveNameMale() : MpTemplateSaveName();
     let chosen = -1;
+    let usual = -1;
     let i = 0;
 
     // Newest first, so the FIRST template entry is the current one. Matching by name rather
@@ -113,11 +139,25 @@ protected cb func MpOnSavesReady(saves: array<String>) -> Bool {
             network.ScriptLog(s"[OwnSave]   save[\(i)] = '\(saves[i])'");
         }
 
-        if chosen < 0 && StrContains(saves[i], template) {
+        // Equals, not StrContains: one of these names contains the other.
+        if chosen < 0 && Equals(saves[i], wanted) {
             chosen = i;
         }
 
+        if usual < 0 && Equals(saves[i], MpTemplateSaveName()) {
+            usual = i;
+        }
+
         i += 1;
+    }
+
+    // A launcher older than this script installs one template. The wrong body beats no world.
+    if chosen < 0 && usual >= 0 {
+        if IsDefined(network) {
+            network.ScriptLog(s"[OwnSave] '\(wanted)' is not installed - using '\(MpTemplateSaveName())', so this character may show the wrong body");
+        }
+
+        chosen = usual;
     }
 
     if chosen < 0 {

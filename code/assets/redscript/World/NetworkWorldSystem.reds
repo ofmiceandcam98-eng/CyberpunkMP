@@ -157,6 +157,7 @@ public native class NetworkWorldSystem extends IGameSystem {
     public native func GetRosterSlot(index: Uint32) -> Int32;
     public native func IsRosterActive(index: Uint32) -> Bool;
     public native func HasRosterSpawnedBefore(index: Uint32) -> Bool;
+    public native func IsRosterMale(index: Uint32) -> Bool;
 
     // How many characters this ACCOUNT may hold, as the SERVER decided. Never computed here.
     public native func GetCharacterSlots() -> Int32;

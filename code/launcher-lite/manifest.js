@@ -990,6 +990,18 @@ export function manifestStateTtlMs (state, goodTtlMs) {
  * in the build under test, so JACK IN says so first. Staff only: a player, or somebody
  * running their own server, has no test builds to install.
  */
+// Which save folder each body's world lives in. MpTemplateSaveName and MpTemplateSaveNameMale
+// in OwnSave.reds hold the same two names, and the selftest holds them together.
+export function templateFolder (body) {
+  return body === 'male' ? 'MultiplayerStartMale' : 'MultiplayerStart'
+}
+
+// Is this folder already the right body's world? No stamp means nobody can say, so it is
+// replaced. A folder stamped for the other body is what a hand-set bodyType left behind.
+export function templateIsCurrent ({ installed, stamp }, body) {
+  return Boolean(installed) && stamp === body
+}
+
 export function testBuildMissing ({ isStaff, serverSource, serverHost, publishedHost, testBuildTag }) {
   if (!isStaff || testBuildTag) return false
   if (serverSource !== 'settings') return false

@@ -226,6 +226,7 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     int32_t GetRosterSlot(uint32_t aIndex) const;
     bool IsRosterActive(uint32_t aIndex) const;
     bool HasRosterSpawnedBefore(uint32_t aIndex) const;
+    bool IsRosterMale(uint32_t aIndex) const;
 
     // How many characters this ACCOUNT may hold, as the SERVER decided it. Never computed
     // here - an allowance the client works out is an allowance the client can raise.
@@ -590,6 +591,7 @@ protected:
         int32_t Slot{0};
         bool SpawnedBefore{false};
         bool Active{false};
+        bool IsMale{false};
 
         // Held as the server's own string and never parsed. See the note on
         // CharacterSummary.lifepath - the client's job is to print it, not to know it.
@@ -1010,6 +1012,7 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(GetRosterSlot);
     RTTI_METHOD(IsRosterActive);
     RTTI_METHOD(HasRosterSpawnedBefore);
+    RTTI_METHOD(IsRosterMale);
     RTTI_METHOD(GetCharacterSlots);
     RTTI_METHOD(SelectCharacterSlot);
     RTTI_METHOD(DeleteCharacterSlot);
