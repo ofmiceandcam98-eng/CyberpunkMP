@@ -1623,7 +1623,10 @@ function describeLauncherUpdate (release) {
 
   const available = marker.name.replace(/^launcher-version-/, '').replace(/\.txt$/, '')
 
-  return { current, available, upToDate: available === current }
+  // Behind the release, not merely different from it: a build ahead of the release is not old.
+  const upToDate = ManifestKit.checkMinLauncher({ client: { minLauncher: available } }, current).ok
+
+  return { current, available, upToDate }
 }
 
 async function checkForUpdates () {
@@ -6821,15 +6824,17 @@ ipcMain.handle('game:launch', async () => {
 // installer to a temp folder while the launcher runs, then hand over to it after the
 // launcher has exited. The swap happens in the gap between the two.
 //
-// Everything here is deliberately quiet. The download is automatic and silent, and the
-// only thing the player is ever asked is whether to restart now or later - because the
-// alternative is a launcher that interrupts you to demand permission to do the thing
-// you already wanted.
+// The download is automatic and silent. The one thing the player is asked is to press
+// Restart to update, whenever suits them. The launcher never closes itself for it, but JACK IN
+// stays locked until they have, because an old launcher against a newer world reads as the
+// game being broken (zeldfep, 2026-11-10: "make you update").
 // ---------------------------------------------------------------------------
 
 const { autoUpdater } = electronUpdater
 
 let updateReady = false
+let readyVersion = null
+let restarting = false
 
 function initAutoUpdater () {
   // The launcher may be launched from source during development, but the GitHub-based
@@ -6850,15 +6855,21 @@ function initAutoUpdater () {
 
   autoUpdater.autoDownload = true
 
-  // Install on quit rather than forcing a restart. Someone mid-session should not have
-  // their launcher yanked away because a release happened to land.
-  autoUpdater.autoInstallOnAppQuit = true
+  // Never install on quit. That is a silent install with no relaunch: the launcher closes,
+  // nothing shows while it runs, and reopening the old copy in that gap gets it killed by the
+  // installer, which reads as a crash (zeldfep, 2026-11-10, v0.3.127 to v0.3.128). Restart to
+  // update applies it instead, still at the player's own press, so nobody's launcher is yanked
+  // away because a release happened to land. An update left waiting comes back from the
+  // download cache on the next launch.
+  autoUpdater.autoInstallOnAppQuit = false
 
   const send = (channel, payload) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload)
   }
 
   autoUpdater.on('update-available', (info) => {
+    // The re-checks below find the same update again. Restart to update stays on offer.
+    if (info.version === readyVersion) return
     send('launcher-update', { state: 'downloading', version: info.version })
   })
 
@@ -6868,19 +6879,32 @@ function initAutoUpdater () {
 
   autoUpdater.on('update-downloaded', (info) => {
     updateReady = true
-    send('launcher-update', { state: 'ready', version: info.version })
+    readyVersion = info.version
+    send('launcher-update', { state: 'ready', version: info.version, current: app.getVersion() })
   })
 
   autoUpdater.on('update-not-available', () => {
     send('launcher-update', { state: 'current' })
   })
 
-  // Never let an update failure become a visible error. Being unable to reach GitHub is
-  // not a reason to alarm someone who just wants to play - the launcher still works, it
-  // is simply not newer.
+  // Being unable to reach GitHub is not a reason to alarm someone who just wants to play, so
+  // a failure stays off the screen. It is not "up to date" though: saying so hid an update
+  // that was waiting and told a stale launcher it was current. 'failed' hands back to the
+  // version marker, which speaks up only when the launcher really is behind, with the download
+  // as the way out. The one failure that is shown is a press that could not start the
+  // install, because a press needs an answer.
   autoUpdater.on('error', (err) => {
-    console.error('[updater]', err?.message || err)
-    send('launcher-update', { state: 'current' })
+    const message = err?.message || String(err)
+    console.error('[updater]', message)
+    launcherLog(`updater error: ${message}`)
+    if (restarting) {
+      restarting = false
+      send('launcher-update', { state: 'failed', error: 'The update could not start. Try Download the new launcher, or reopen the launcher and try again.' })
+    } else if (readyVersion) {
+      send('launcher-update', { state: 'ready', version: readyVersion, current: app.getVersion() })
+    } else {
+      send('launcher-update', { state: 'failed' })
+    }
   })
 
   autoUpdater.checkForUpdatesAndNotify().catch(() => {})
@@ -6904,11 +6928,16 @@ function initAutoUpdater () {
   })
 }
 
-// Restart into the new version on demand. quitAndInstall closes the app and runs the
-// downloaded installer; there is nothing after it.
+// Restart into the new version on demand. Silent is what makes it a restart: our installer is
+// the assisted kind (nsis.oneClick false), and that kind only reopens the app when it runs
+// silently. Run visibly it closed the launcher and opened a wizard stopped on its first page,
+// asking who to install for, so the button read as broken (zeldfep, 2026-11-10). The
+// short wait lets the page say what is about to happen before the window goes.
 ipcMain.handle('launcher:restartToUpdate', async () => {
   if (!updateReady) return { ok: false, error: 'No update has finished downloading yet.' }
-  setImmediate(() => autoUpdater.quitAndInstall(false, true))
+  if (restarting) return { ok: true }
+  restarting = true
+  setTimeout(() => autoUpdater.quitAndInstall(true, true), 1500)
   return { ok: true }
 })
 

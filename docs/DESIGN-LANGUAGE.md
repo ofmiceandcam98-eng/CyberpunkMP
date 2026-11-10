@@ -45,6 +45,7 @@ happened here twice, and both cleanups cost an evening.
 | `--plate-dead` | `#2a0d11` | a kit button that cannot be pressed yet |
 | `--tread-2` | `#ae3b36` | the second band of the working stripe |
 | `--glitch` | `#3ce8ef` | **the click glitch and nothing else.** The one hue outside this palette |
+| `--blue` | `#4f88d5` | the game's `MainColors.QuickhackAccent`: a step that connects you (sign in, join, get the launcher or Tailscale) |
 
 **The red is the game's own** (zeldfep, 2026-11-09: *"the red is good its just a bit vibrant check
 the cyberpunk color pallet"*). The old `#ff2a32` had the game's hue with more saturation than any
@@ -64,10 +65,9 @@ section rail, by zeldfep's call on 2026-09-07. The two are kept apart **by form,
 So a new warning state is flat. Always. A striped one now reads as "you are here", and the
 signal quietly stops working for everyone.
 
-**Two literals are allowed on purpose.** Discord blurple `#5865f2` on the sign-in and join
-buttons — it is a brand colour, not ours, and tokenising it would imply we get to change it.
-`#140406` as ink on top of accent or hazard fills, because near-black on those two is a fixed
-pairing, not a palette entry.
+**One literal is allowed on purpose.** `#140406` as ink on top of accent, hazard or blue fills,
+because near-black on those is a fixed pairing, not a palette entry. Discord blurple is gone
+(zeldfep, 2026-11-10: *"can we match the blue on the launcher to the color pallet of the game?"*).
 
 **A `var(--x, fallback)` whose token is declared NOWHERE is a bug wearing a default.** This
 file had two: `--bg` (six inputs silently rendering `#111` instead of a surface colour) and

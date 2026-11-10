@@ -306,13 +306,14 @@ const INVITE_BUTTON = "Join the server's network"
 // reach the server: the state where the invite is the answer.
 function launcher (over = {}) {
   return page({
-    functions: ['render', 'renderTailnetInvite', 'setHudButton', 'armHudButton', 'playOnce'],
+    functions: ['render', 'renderTailnetInvite', 'setHudButton', 'armHudButton', 'playOnce', 'launcherIsOld'],
     state: {
       signedInUser: null,
       gameState: { launching: false, running: false },
       updateState: { installed: true, upToDate: true },
       serverState: { online: false },
       tailscaleState: { installed: true, connected: true, ip: '100.64.0.1' },
+      launcherUpdate: null,
       ...over
     },
     globals: (document) => ({
@@ -548,6 +549,57 @@ const lampLine = vm.runInNewContext(`(${grab('lampLine').trim()})`)
 check('every lamp lit', lampLine(4, 4), '4 systems · all green')
 check('one lamp dark', lampLine(3, 4), '3 of 4 systems green')
 check('nothing lit yet', lampLine(0, 5), '0 of 5 systems green')
+
+// The launcher's own update. Each row is one thing the page can know when it decides on JACK IN.
+const launcherOld = (launcherUpdate, updateState) =>
+  vm.runInNewContext(`${grab('launcherIsOld')}; launcherIsOld()`, { launcherUpdate, updateState })
+const behind = { launcher: { upToDate: false } }
+const level = { launcher: { upToDate: true } }
+check('an update downloading locks JACK IN', launcherOld({ state: 'downloading' }, level), true)
+check('an update waiting to be applied locks JACK IN', launcherOld({ state: 'ready' }, level), true)
+check('a failed updater still knows the release is newer', launcherOld({ state: 'failed' }, behind), true)
+check('a launcher with no updater that is behind locks JACK IN', launcherOld(null, behind), true)
+check('the updater saying current is the last word', launcherOld({ state: 'current' }, behind), false)
+check('a launcher level with the release is not old', launcherOld(null, level), false)
+check('a failed updater with GitHub unreachable blocks nobody', launcherOld({ state: 'failed' }, { offline: true }), false)
+check('no answer from anywhere yet blocks nobody', launcherOld(null, null), false)
+
+// And JACK IN really obeys it, for an admin too, with everything else ready and the reason first.
+const readyToPlay = { serverState: { online: true }, signedInUser: ADMIN }
+const jackIn = (over) => {
+  const l = rendered(ADMIN, { ...readyToPlay, ...over })
+  return { locked: l.$('play').disabled, reason: reason(l).split('  ·  ')[0] }
+}
+check('nothing wrong: JACK IN is open', jackIn({}).locked, false)
+check('update ready: JACK IN is locked and says press Restart to update',
+  jackIn({ launcherUpdate: { state: 'ready' } }), { locked: true, reason: 'Your launcher is out of date — press Restart to update' })
+check('update downloading: JACK IN is locked and says so',
+  jackIn({ launcherUpdate: { state: 'downloading' } }), { locked: true, reason: 'Your launcher is out of date — its update is downloading' })
+check('updater failed but the release is newer: locked, with the download named',
+  jackIn({ launcherUpdate: { state: 'failed' }, updateState: { installed: true, upToDate: true, launcher: { upToDate: false } } }),
+  { locked: true, reason: 'Your launcher is out of date — press Download the new launcher' })
+
+// "Old" is behind the release, not different from it.
+const mainJs = text('./main.js')
+function grabMain (name) {
+  const start = mainJs.search(new RegExp(`^function ${name} `, 'm'))
+  if (start < 0) throw new Error(`main.js has no function ${name} - update this selftest`)
+  return mainJs.slice(start, mainJs.indexOf('\n}\n', start) + 2)
+}
+const ManifestKit = await import('./manifest.js')
+const describeLauncherUpdate = vm.runInNewContext(`(${grabMain('describeLauncherUpdate')})`, { app: { getVersion: () => '0.3.128' }, ManifestKit })
+const released = (version) => describeLauncherUpdate({ assets: [{ name: `launcher-version-${version}.txt` }] }).upToDate
+check('behind the release is out of date', released('0.3.129'), false)
+check('level with the release is up to date', released('0.3.128'), true)
+check('ahead of the release is not out of date', released('0.3.127'), true)
+check('versions compare as numbers, not as text', released('0.3.99'), true)
+
+// The trap behind "Restart to update is broken": the assisted installer only reopens the app
+// when it runs silently, so a visible install closes the launcher and waits on a wizard.
+const packageJson = JSON.parse(text('./package.json'))
+check('the installer is still the assisted kind these two checks are about', packageJson.build.nsis.oneClick, false)
+check('Restart to update installs silently and reopens the app', /quitAndInstall\(true, true\)/.test(mainJs), true)
+check('closing the launcher does not start a silent install with no relaunch', /autoInstallOnAppQuit = false/.test(mainJs), true)
 
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exitCode = failed === 0 ? 0 : 1

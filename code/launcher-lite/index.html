@@ -56,6 +56,7 @@
     /* What the button kit needs and nothing else has. --glitch is the one hue outside this
        palette, and only the click glitch may use it. */
     --glitch: #3ce8ef;
+    --blue:   #4f88d5;
     --plate-dead: #2a0d11;
     --tread-2: #ae3b36;
     --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
@@ -513,8 +514,8 @@
   button.action:active:not(:disabled) { transform: translateY(1px); }
   button.action:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-  .discord { background: #5865f2; color: #fff; }
-  .join { background: #5865f2; color: #fff; }
+  .discord { background: var(--blue); color: #140406; }
+  .join { background: var(--blue); color: #140406; }
 
   /* Destructive and secondary actions, kept small and away from the main flow. */
   .footlinks {
@@ -2636,7 +2637,8 @@
     // waiting for, because a dead button with no explanation reads as the launcher having
     // broken during the least reassuring possible moment.
     const wasLocked = playBtn.disabled
-    playBtn.disabled = !verified || !filesReady || !serverReady ||
+    const launcherOld = launcherIsOld()
+    playBtn.disabled = !verified || !filesReady || !serverReady || launcherOld ||
                        gameState.launching || gameState.running
 
     if (gameState.launching) {
@@ -2653,6 +2655,14 @@
     // the server - listing a server outage to someone who has not signed in yet sends
     // them chasing the wrong thing.
     const blockers = []
+
+    if (launcherOld) {
+      blockers.push(launcherUpdate && launcherUpdate.state === 'downloading'
+        ? 'Your launcher is out of date — its update is downloading'
+        : launcherUpdate && launcherUpdate.state === 'ready'
+          ? 'Your launcher is out of date — press Restart to update'
+          : 'Your launcher is out of date — press Download the new launcher')
+    }
 
     if (!signedIn) {
       blockers.push('Sign in with Discord')
@@ -2736,8 +2746,8 @@
 
     if (verified) {
       $('gateText').textContent = 'Verified member'
-      $('heading').textContent = 'Ready to play'
-      $('blurb').textContent = 'You are verified. Launch when you are ready.'
+      $('heading').textContent = launcherOld ? 'Update your launcher' : 'Ready to play'
+      $('blurb').textContent = launcherOld ? 'This launcher is out of date. Update it to jack in.' : 'You are verified. Launch when you are ready.'
     } else {
       // Signed in, but not in the server. Say exactly what is wrong and give
       // them the one button that fixes it - do not just grey things out.
@@ -3114,10 +3124,12 @@
       btn.style.display = 'none'
     }
 
-    // The live updater wins over the version marker whenever it has said anything.
-    // The marker check is kept underneath purely so a launcher too old to contain the
-    // updater can still be told it is behind - after that it is dead weight.
-    if (launcherUpdate) {
+    btn.disabled = false
+
+    // The live updater wins over the version marker whenever it has an answer. The marker
+    // underneath is for a launcher too old to contain the updater, and for an updater that
+    // failed: a failure does not mean up to date, and the marker still knows.
+    if (launcherUpdate && launcherUpdate.state !== 'failed') {
       if (launcherUpdate.state === 'current') return hide()
 
       gate.style.display = 'flex'
@@ -3127,16 +3139,16 @@
         // No button while downloading. Nothing to press, and offering one invites
         // someone to press it and wonder why nothing happened.
         text.textContent = launcherUpdate.percent
-          ? 'Downloading launcher update... ' + launcherUpdate.percent + '%'
-          : 'Downloading launcher update...'
+          ? 'Old launcher - downloading the update... ' + launcherUpdate.percent + '%'
+          : 'Old launcher - downloading the update...'
         btn.style.display = 'none'
         return
       }
 
       if (launcherUpdate.state === 'ready') {
-        dot.className = 'dot on'
-        text.textContent = 'Launcher update ready' +
-          (launcherUpdate.version ? ' - ' + launcherUpdate.version : '')
+        text.textContent = 'Old launcher' +
+          (launcherUpdate.current ? ' (' + launcherUpdate.current + ')' : '') + ' - ' +
+          (launcherUpdate.version ? launcherUpdate.version + ' is' : 'the update is') + ' ready to install'
         btn.textContent = 'Restart to update'
         btn.style.display = 'inline-block'
         return
@@ -3148,9 +3160,20 @@
 
     gate.style.display = 'flex'
     dot.className = 'dot'
-    text.textContent = 'New launcher available - ' + info.available + ' (you have ' + info.current + ')'
+    text.textContent = 'Old launcher (' + info.current + ') - ' + info.available + ' is out'
     btn.textContent = 'Download the new launcher'
     btn.style.display = 'inline-block'
+  }
+
+  // Whether this launcher is known to be behind the release. Only known counts: GitHub being
+  // unreachable says nothing either way, and an outage must not stop anyone playing a game they
+  // already have. render() locks JACK IN on this (zeldfep, 2026-11-10: "it should tell you if
+  // you are running an old build and make you update"). It never closes a launcher or a game.
+  function launcherIsOld () {
+    if (launcherUpdate && launcherUpdate.state === 'current') return false
+    if (launcherUpdate && (launcherUpdate.state === 'downloading' || launcherUpdate.state === 'ready')) return true
+    const info = updateState && updateState.launcher
+    return Boolean(info && !info.upToDate)
   }
 
   // Renders the release body.
@@ -3391,10 +3414,12 @@
     // launcher old enough to have no updater in it, where a manual download is all there
     // is - see renderLauncherState.
     if (launcherUpdate && launcherUpdate.state === 'ready') {
+      $('getLauncher').disabled = true
       const result = await window.launcher.restartToUpdate()
       if (result.ok) {
-        setStatus('Restarting to install the update...', 'ok')
+        setStatus('Closing to install the update. The launcher reopens by itself when it is done - no need to open it.', 'ok')
       } else {
+        $('getLauncher').disabled = false
         setStatus(result.error, 'error')
       }
       return
@@ -3405,8 +3430,12 @@
   })
 
   window.launcher.onLauncherUpdate((info) => {
+    // Download progress arrives many times a second; JACK IN only cares when the state moves.
+    const moved = !launcherUpdate || launcherUpdate.state !== info.state
     launcherUpdate = info
     renderLauncherState()
+    if (moved) render(signedInUser)
+    if (info.error) setStatus(info.error, 'error')
   })
 
   $('verify').addEventListener('click', async () => {
@@ -4281,13 +4310,20 @@
 
   // The wheel over the rail works like the drag: it moves the arrow along the ladder and the pane
   // follows at the ladder's scale. zeldfep, 2026-11-09: "it just tries to land it to the next
-  // number it should work like the drag feature". It used to move the pane a fixed 100px a notch,
-  // which is a quarter of the way to the next number in one jump, or all of it in a short section.
+  // number it should work like the drag feature". It used to move the pane by whatever the wheel
+  // reported, 100px a notch on most mice: a quarter of the way to the next number in one jump, or
+  // all of it in a short section.
   // A notch is now two rungs wherever you are. It eases over a few frames so the arrow and the pane
   // read as one motion; with animations turned off it goes straight there.
+  //
+  // It is two rungs on every mouse, too. What a notch reports is the machine's choice: zeldfep's
+  // reports 600 where the usual is 100 (measured on v0.3.128), so it went 84px down the ladder and
+  // hopped past the numbers while the same build worked for somebody else. One wheel event counts
+  // for at most one standard notch; a high-resolution wheel's small steps still add up.
   {
     const track = $('railTrack')
     const LADDER_PER_WHEEL = 14 / 100
+    const STANDARD_NOTCH = 100
     let at = 0
     let target = null
     let frame = 0
@@ -4316,7 +4352,9 @@
       const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? body.clientHeight : 1
       const max = Math.max(0, body.scrollHeight - body.clientHeight)
       if (target === null) { at = body.scrollTop; target = at }
-      target = Math.max(0, Math.min(max, target + e.deltaY * unit * LADDER_PER_WHEEL * panePerLadder))
+      const wheel = e.deltaY * unit
+      const notch = Math.sign(wheel) * Math.min(Math.abs(wheel), STANDARD_NOTCH)
+      target = Math.max(0, Math.min(max, target + notch * LADDER_PER_WHEEL * panePerLadder))
       if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
         body.scrollTop = target
         updateRail()
