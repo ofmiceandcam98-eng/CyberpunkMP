@@ -40,6 +40,26 @@ static bool IsCellInRange(const GridCell::TPosition aCenter, const GridCell::TPo
            aCell.y >= aCenter.y - aRange && aCell.y < aCenter.y + aRange;
 }
 
+// Tells one player what is in somebody's hand.
+//
+// For whoever starts seeing a puppet after it drew its weapon: the event that said so went
+// out before they could hear it, and a weapon is only announced when it changes.
+static void SendHeldWeapon(const ConnectionId aConnection, flecs::entity aPuppet)
+{
+    const auto* pWeapon = aPuppet.get<WeaponComponent>();
+
+    if (!pWeapon || pWeapon->WeaponId == 0)
+        return;
+
+    server::NotifyWeaponEvent event;
+    event.set_id(aPuppet.id());
+    event.set_kind(0);
+    event.set_weapon_id(pWeapon->WeaponId);
+    event.set_magazine_ammo(pWeapon->MagazineAmmo);
+
+    GServer->Send(aConnection, event);
+}
+
 // An empty vehicle awaiting teardown.
 //
 // NOTHING SETS THIS ANY MORE, and the system that consumes it therefore never fires.
@@ -261,6 +281,7 @@ void Level::AddPlayer(flecs::entity aEntity) noexcept
                 return;
 
             GServer->Send(pPlayerComponent->Connection, Serialize(aEntity));
+            SendHeldWeapon(pPlayerComponent->Connection, aEntity);
         });
 
     // Replay the rolling stock. Vehicle spawns and seat entries replicate through
@@ -2604,7 +2625,10 @@ void Level::TransferCell(flecs::entity aEntity, GridCell* apOldCell, GridCell* a
                     [owner, connection = pPlayer->Connection](flecs::entity aVisible)
                     {
                         if (aVisible != owner)
+                        {
                             GServer->Send(connection, Level::Serialize(aVisible));
+                            SendHeldWeapon(connection, aVisible);
+                        }
                     });
             }
 
@@ -2643,6 +2667,7 @@ void Level::TransferCell(flecs::entity aEntity, GridCell* apOldCell, GridCell* a
             if (!wasVisible && isVisible)
             {
                 GServer->Send(aPlayerComponent.Connection, Level::Serialize(aEntity));
+                SendHeldWeapon(aPlayerComponent.Connection, aEntity);
             }
             else if (wasVisible && !isVisible)
             {
