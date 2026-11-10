@@ -6,6 +6,39 @@ Unofficial build of [CyberpunkMP](https://github.com/tiltedphoques/CyberpunkMP) 
 
 **Helping out?** Start with [CONTRIBUTING.md](https://github.com/ofmiceandcam98-eng/CyberpunkMP/blob/main/CONTRIBUTING.md) — the build toolchain has load-bearing version pins and a clean checkout of upstream does not compile.
 
+## What changed — v0.3.128
+
+**You have to update for this one.** The game and the server changed together, so older
+versions can no longer connect.
+
+- **A new character select screen.** New panels and portraits, and your character's stats
+  on the right. SELECT now locks in your pick, and pressing it again releases it.
+- **You should see your own character.** The world you load into decides your body, and
+  every male character was being loaded into a female one, so the look had nowhere to go.
+  The launcher now installs a world for each body and uses the one that matches who you
+  picked. Seen working on a male character in third person; female characters use the same
+  world they always did, and how they look to themselves has not been tested on 2.5.
+- **What you are wearing is saved.** Get dressed once and your clothes are on you the next
+  time you log in.
+- **Other players get your look when they arrive late.** After your first autosave the
+  server was losing your look, so anyone joining after that got nothing to draw.
+- **A save can no longer shrink your character.** If the world you load into cannot hold
+  all your perks, your saved perks stay as they were, and skill levels never go down.
+- **The launcher copes with GitHub having a bad minute.** It retries, explains the problem
+  in plain words, and falls back to the last release it already checked.
+- **Uninstall now removes the multiplayer world saves too.** Your own saves are not touched.
+
+**Still broken on 2.5 - known, and being worked on:**
+
+- **The inventory screen shows the default body**, not yours. Third person is what to trust.
+- **Level and street cred come from the world you load into**, not your character, and only
+  the perks that world can pay for apply in game. The rest stay saved.
+- **Changing your look at a mirror or ripperdoc is not saved yet.**
+- **The game crashed once while loading into the city** during testing, out of five entries.
+  If it happens to you, try again and tell us on Discord.
+- **Voice chat has not been proven on 2.5.** Text chat works.
+- **Two extra start-up screens** still appear before the menu. Skip them.
+
 ## What changed — v0.3.127
 
 **Night City Online runs on Cyberpunk 2.5.** This is the first release built for the new
