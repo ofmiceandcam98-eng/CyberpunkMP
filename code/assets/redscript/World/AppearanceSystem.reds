@@ -263,6 +263,8 @@ public native class AppearanceSystem extends IScriptable {
 
         if IsDefined(entity) {
             this.PutInHand(entity, weapon);
+        } else {
+            GameInstance.GetNetworkWorldSystem().ScriptLog(s"[Weapon] puppet \(EntityID.GetHash(entityId)) is not in the world yet - kept for when it arrives");
         }
     }
 
@@ -286,7 +288,12 @@ public native class AppearanceSystem extends IScriptable {
                 transaction.GiveItem(entity, item, 1);
             }
 
-            transaction.AddItemToSlot(entity, slot, item);
+            // Each step says how it went, because a weapon that does not show looks the same
+            // whichever of these refused it.
+            let canPlace = transaction.CanPlaceItemInSlot(entity, slot, item);
+            let placed = transaction.AddItemToSlot(entity, slot, item);
+
+            GameInstance.GetNetworkWorldSystem().ScriptLog(s"[Weapon] hand of \(EntityID.GetHash(entity.GetEntityID())): has item \(transaction.HasItem(entity, item)), can place \(canPlace), placed \(placed), slot empty \(transaction.IsSlotEmpty(entity, slot)), spawning \(transaction.IsSlotEmptySpawningItem(entity, slot))");
         }
     }
 

@@ -29,6 +29,24 @@ import CyberpunkMP.World.*
 @addField(PlayerPuppet)
 public let m_mpMoneyRestored: Bool;
 
+// The moment money arrives. The save reads the balance every 90 seconds, which can say that
+// 25,000 eddies appeared and cannot say when, and it happened twice to zeldfep on 2026-11-10
+// with nothing in the log to explain it. Costs a comparison per item added.
+@wrapMethod(PlayerPuppet)
+protected cb func OnItemAddedToInventory(evt: ref<ItemAddedEvent>) -> Bool {
+    if ItemID.GetTDBID(evt.itemID) == ItemID.GetTDBID(MarketSystem.Money()) {
+        let network = GameInstance.GetNetworkWorldSystem();
+
+        if IsDefined(network) {
+            let where = this.GetWorldPosition();
+
+            network.ScriptLog(s"[MONEY] 0 added: event says \(evt.currentQuantity), silent \(evt.flaggedAsSilent), holding \(GameInstance.GetTransactionSystem(this.GetGame()).GetItemQuantity(this, MarketSystem.Money())), at \(where.X), \(where.Y), \(where.Z)");
+        }
+    }
+
+    return wrappedMethod(evt);
+}
+
 // 0 not decided yet, 1 the perk restore landed, 2 it fell short. Also one per body.
 @addField(PlayerPuppet)
 public let m_mpPerkGuard: Int32;
