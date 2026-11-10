@@ -38,17 +38,26 @@ import CyberpunkMP.World.*
 // actually behind it.
 public func MpCsGold() -> HDRColor = new HDRColor(1.12, 0.92, 0.13, 1.0)
 public func MpCsGoldDim() -> HDRColor = new HDRColor(0.49, 0.42, 0.11, 1.0)
-public func MpCsRed() -> HDRColor = new HDRColor(1.0, 0.18, 0.27, 1.0)
-public func MpCsRedDim() -> HDRColor = new HDRColor(0.49, 0.11, 0.16, 1.0)
+// The launcher's reds (#f73932, #79221b), which is what design D was signed off in.
+public func MpCsRed() -> HDRColor = new HDRColor(0.97, 0.22, 0.20, 1.0)
+public func MpCsRedDim() -> HDRColor = new HDRColor(0.47, 0.13, 0.11, 1.0)
 public func MpCsInk() -> HDRColor = new HDRColor(0.95, 0.96, 0.97, 1.0)
 public func MpCsInkDim() -> HDRColor = new HDRColor(0.59, 0.63, 0.67, 1.0)
 public func MpCsInkFaint() -> HDRColor = new HDRColor(0.37, 0.42, 0.46, 1.0)
 public func MpCsPlate() -> HDRColor = new HDRColor(0.04, 0.03, 0.055, 1.0)
+// The plate under something gold and chosen: the selected card, a locked SELECT.
+public func MpCsGoldPlate() -> HDRColor = new HDRColor(0.09, 0.07, 0.016, 1.0)
 public func MpCsVoid() -> HDRColor = new HDRColor(0.016, 0.016, 0.031, 1.0)
+// Anything printed ON the gold plates.
+public func MpCsOnGold() -> HDRColor = new HDRColor(0.1, 0.08, 0.0, 1.0)
 
 // The font the game itself uses. Borrowing it rather than shipping one is why this screen
 // reads as part of Cyberpunk instead of as an overlay sitting on top of it.
 public func MpCsFont() -> String = "base\\gameplay\\gui\\fonts\\raj\\raj.inkfontfamily"
+
+// The render's wide face, for the title, the dossier name and the go plate. It ships with the
+// game (found in the archive file tables, styles Regular, Medium, Bold, Black).
+public func MpCsFontWide() -> String = "base\\gameplay\\gui\\fonts\\orbitron\\orbitron.inkfontfamily"
 
 /**
  * THE ONLY LOGGING ON THIS SCREEN THAT ANYBODY WILL EVER READ.
@@ -209,6 +218,319 @@ public func MpCsBorder(parent: ref<inkCompoundWidget>, x: Float, y: Float, w: Fl
     MpCsRect(parent, x + w - 1.0, y, 1.0, h, color, opacity);
 }
 
+// ============================================================================ design D's kit
+//
+// zeldfep, 2026-11-09: "keep the old backdrop and the polygon in drawing in the middle ... keep
+// everything else". Design D is the original render's panels around today's backdrop and
+// rings; the mock is _internal-docs/design-revamp/selector-2026-11-09.
+//
+// Everything below is still rectangles and text, the two things proven on this screen. The
+// cut corners and the lean do not need a drawn texture or a new widget type.
+
+/**
+ * Text in the wide face.
+ */
+public func MpCsTextWide(parent: ref<inkCompoundWidget>, x: Float, y: Float, text: String,
+                         size: Int32, style: CName, color: HDRColor) -> ref<inkText> {
+    let t = MpCsText(parent, x, y, text, size, style, color);
+
+    t.SetFontFamily(MpCsFontWide());
+    t.SetFontStyle(style);
+
+    return t;
+}
+
+/**
+ * Hang text from a fraction of its own size, so x/y become its centre (0.5) or right edge (1.0).
+ */
+public func MpCsAlign(t: ref<inkText>, fractionX: Float, fractionY: Float) -> Void {
+    t.SetFitToContent(true);
+    t.SetAnchorPoint(new Vector2(fractionX, fractionY));
+}
+
+/**
+ * Shorten to a character budget. Measuring needs a finished layout and this screen is rebuilt
+ * whole, so each caller states how many of its widest letters fit.
+ */
+public func MpCsClip(text: String, budget: Int32) -> String {
+    if StrLen(text) <= budget {
+        return text;
+    }
+
+    return StrLeft(text, budget - 2) + "...";
+}
+
+/**
+ * One straight line at any angle: a thin rectangle, rotated about its middle.
+ */
+public func MpCsLine(parent: ref<inkCompoundWidget>, x1: Float, y1: Float, x2: Float, y2: Float,
+                     thickness: Float, color: HDRColor, opacity: Float) -> Void {
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+    let l = new inkRectangle();
+
+    l.SetAnchor(inkEAnchor.TopLeft);
+    l.SetAnchorPoint(new Vector2(0.5, 0.5));
+    l.SetMargin(new inkMargin((x1 + x2) / 2.0, (y1 + y2) / 2.0, 0.0, 0.0));
+    l.SetSize(new Vector2(SqrtF(dx * dx + dy * dy), thickness));
+    l.SetTintColor(color);
+    l.SetOpacity(opacity);
+    l.SetRotation(Rad2Deg(AtanF(dy, dx)));
+    l.Reparent(parent);
+}
+
+/**
+ * How far a row leans, in degrees. Measured off the render: every row points at a horizon at
+ * y 586, so the side panels read as curved screens. side is +1 on the left, -1 on the right.
+ */
+public func MpCsTilt(yc: Float, side: Float) -> Float = (586.0 - yc) * 0.00473 * side
+
+/**
+ * A leaning row. Draw into what this returns using ordinary stage coordinates.
+ *
+ * ROTATION, NOT SHEAR. At two degrees they are the same picture, and rotation is proven on
+ * this screen by the rings.
+ *
+ * The outer canvas sits on the pivot and turns about its own corner, sized the same way the
+ * screen's root canvas is (left alone). The inner canvas moves the origin back to the stage's.
+ */
+public func MpCsFan(parent: ref<inkCompoundWidget>, px: Float, py: Float, degrees: Float) -> ref<inkCanvas> {
+    let pivot = new inkCanvas();
+
+    pivot.SetAnchor(inkEAnchor.TopLeft);
+    pivot.SetAnchorPoint(new Vector2(0.0, 0.0));
+    pivot.SetMargin(new inkMargin(px, py, 0.0, 0.0));
+    pivot.SetRenderTransformPivot(new Vector2(0.0, 0.0));
+    pivot.SetRotation(degrees);
+    pivot.SetInteractive(false);
+    pivot.Reparent(parent);
+
+    let stage = new inkCanvas();
+
+    stage.SetAnchor(inkEAnchor.TopLeft);
+    stage.SetAnchorPoint(new Vector2(0.0, 0.0));
+    stage.SetMargin(new inkMargin(-px, -py, 0.0, 0.0));
+    stage.SetInteractive(false);
+    stage.Reparent(pivot);
+
+    return stage;
+}
+
+public func MpCsFanL(parent: ref<inkCompoundWidget>, yc: Float) -> ref<inkCanvas> =
+    MpCsFan(parent, 60.0, yc, MpCsTilt(yc, 1.0))
+
+public func MpCsFanR(parent: ref<inkCompoundWidget>, yc: Float) -> ref<inkCanvas> =
+    MpCsFan(parent, 1868.0, yc, MpCsTilt(yc, -1.0))
+
+/**
+ * The polygon's top (upper=true) or bottom edge at x. The shapes here are all convex.
+ */
+public func MpCsPolyY(xs: array<Float>, ys: array<Float>, x: Float, upper: Bool) -> Float {
+    let n = ArraySize(xs);
+    let i = 0;
+    let found = false;
+    let best = 0.0;
+
+    while i < n {
+        let j = (i + 1) % n;
+        let low = MinF(xs[i], xs[j]);
+        let high = MaxF(xs[i], xs[j]);
+
+        if x >= low && x <= high && high - low > 0.0001 {
+            let y = ys[i] + (ys[j] - ys[i]) * (x - xs[i]) / (xs[j] - xs[i]);
+
+            if !found || (upper && y < best) || (!upper && y > best) {
+                best = y;
+                found = true;
+            }
+        }
+
+        i += 1;
+    }
+
+    return best;
+}
+
+/**
+ * The polygon's corner x positions, sorted, without repeats.
+ */
+public func MpCsPolyStops(xs: array<Float>) -> array<Float> {
+    let out: array<Float>;
+    let i = 0;
+
+    while i < ArraySize(xs) {
+        let at = 0;
+        let repeat = false;
+
+        while at < ArraySize(out) && out[at] <= xs[i] + 0.001 {
+            if AbsF(out[at] - xs[i]) <= 0.001 {
+                repeat = true;
+            }
+
+            at += 1;
+        }
+
+        if !repeat {
+            ArrayInsert(out, at, xs[i]);
+        }
+
+        i += 1;
+    }
+
+    return out;
+}
+
+/**
+ * A filled convex polygon, out of rectangles.
+ *
+ * Between each pair of corners: one large rectangle for everything flat, and narrow strips
+ * only along the slanted edges, each stepping at most two units. The strips hide under the
+ * outline, and any seam between them stays in the sliver along the edge instead of running
+ * across a plate.
+ */
+public func MpCsPolyFill(parent: ref<inkCompoundWidget>, xs: array<Float>, ys: array<Float>,
+                         color: HDRColor, opacity: Float) -> Void {
+    let stops = MpCsPolyStops(xs);
+    let s = 0;
+
+    while s < ArraySize(stops) - 1 {
+        let a = stops[s];
+        let b = stops[s + 1];
+        let topA = MpCsPolyY(xs, ys, a + 0.001, true);
+        let topB = MpCsPolyY(xs, ys, b - 0.001, true);
+        let lowA = MpCsPolyY(xs, ys, a + 0.001, false);
+        let lowB = MpCsPolyY(xs, ys, b - 0.001, false);
+        let coreTop = MaxF(topA, topB);
+        let coreLow = MinF(lowA, lowB);
+
+        if coreLow > coreTop {
+            MpCsRect(parent, a, coreTop, b - a, coreLow - coreTop, color, opacity);
+        }
+
+        let rise = MaxF(AbsF(topB - topA), AbsF(lowB - lowA));
+
+        if rise > 0.5 {
+            let count = CeilF(rise / 2.0);
+            let width = (b - a) / Cast<Float>(count);
+            let i = 0;
+
+            while i < count {
+                let left = a + Cast<Float>(i) * width;
+                let middle = left + width / 2.0;
+                let top = MpCsPolyY(xs, ys, middle, true);
+                let low = MpCsPolyY(xs, ys, middle, false);
+
+                if coreTop - top > 0.1 {
+                    MpCsRect(parent, left, top, width + 0.25, coreTop - top, color, opacity);
+                }
+
+                if low - coreLow > 0.1 {
+                    MpCsRect(parent, left, coreLow, width + 0.25, low - coreLow, color, opacity);
+                }
+
+                i += 1;
+            }
+        }
+
+        s += 1;
+    }
+}
+
+/**
+ * The polygon's outline.
+ */
+public func MpCsPolyEdge(parent: ref<inkCompoundWidget>, xs: array<Float>, ys: array<Float>,
+                         thickness: Float, color: HDRColor, opacity: Float) -> Void {
+    let n = ArraySize(xs);
+    let i = 0;
+
+    while i < n {
+        let j = (i + 1) % n;
+
+        MpCsLine(parent, xs[i], ys[i], xs[j], ys[j], thickness, color, opacity);
+        i += 1;
+    }
+}
+
+public func MpCsCutXs(x: Float, w: Float, c: Float) -> array<Float> = [x, x + w - c, x + w, x + w, x + c, x]
+
+public func MpCsCutYs(y: Float, h: Float, c: Float) -> array<Float> = [y, y, y + c, y + h, y + h, y + h - c]
+
+/**
+ * A character card's outline, grown by d for the selected card's halo.
+ */
+public func MpCsCardXs(x: Float, w: Float, d: Float) -> array<Float> =
+    [x - d, x + w - 20.0 + d, x + w + d, x + w + d, x + w - 10.0 + d, x + 12.0 - d, x - d]
+
+public func MpCsCardYs(y: Float, h: Float, d: Float) -> array<Float> =
+    [y - d, y - d, y + 20.0 - d, y + h - 10.0 + d, y + h + d, y + h + d, y + h - 12.0 + d]
+
+public func MpCsLifepathPart(lifepath: String, big: Bool) -> CName {
+    let key = StrUpper(lifepath);
+
+    if StrContains(key, "NOMAD") {
+        return big ? n"LifepathNomad_Big" : n"LifepathNomad1";
+    }
+
+    if StrContains(key, "STREET") {
+        return big ? n"LifepathStreetKid_Big" : n"LifepathStreetKid1";
+    }
+
+    if StrContains(key, "CORP") {
+        return big ? n"LifepathCorpo_Big" : n"LifepathCorpo1";
+    }
+
+    return n"";
+}
+
+/**
+ * The game's own lifepath emblem, from the save screen's atlas. Parts read from the atlas.
+ */
+public func MpCsLifepathIcon(parent: ref<inkCompoundWidget>, x: Float, y: Float, w: Float, h: Float,
+                             lifepath: String, big: Bool, color: HDRColor, opacity: Float) -> Void {
+    let part = MpCsLifepathPart(lifepath, big);
+
+    if Equals(part, n"") {
+        return;
+    }
+
+    let i = new inkImage();
+
+    i.SetAnchor(inkEAnchor.TopLeft);
+    i.SetAnchorPoint(new Vector2(0.0, 0.0));
+    i.SetMargin(new inkMargin(x, y, 0.0, 0.0));
+    i.SetSize(new Vector2(w, h));
+    i.SetAtlasResource(r"base\\gameplay\\gui\\fullscreen\\load_game\\save_game.inkatlas");
+    i.SetTexturePart(part);
+    i.SetTintColor(color);
+    i.SetOpacity(opacity);
+    i.Reparent(parent);
+}
+
+/**
+ * The render's two lines of voice and four of graffiti, per lifepath. The nomad's are the
+ * render's own; the street kid's and the corporate's were written for the mock.
+ */
+public func MpCsLifepathLines(lifepath: String) -> array<String> {
+    let key = StrUpper(lifepath);
+
+    if StrContains(key, "NOMAD") {
+        return ["\"ROADS TEACH MORE", "THAN PEOPLE.\"", "SOME", "BORDERS", "ARE", "A SUGGESTION."];
+    }
+
+    if StrContains(key, "STREET") {
+        return ["\"THE STREET KEEPS", "THE RECEIPTS.\"", "EVERY", "BLOCK", "OWES", "SOMEBODY."];
+    }
+
+    if StrContains(key, "CORP") {
+        return ["\"READ THE CONTRACT.", "THEN READ IT AGAIN.\"", "LOYALTY", "IS A", "LINE", "ITEM."];
+    }
+
+    let none: array<String>;
+
+    return none;
+}
+
 // ============================================================================ state
 
 @addField(SingleplayerMenuGameController)
@@ -261,6 +583,12 @@ let m_csCreateArmed: Bool;
 // First DEL asks, second deletes. Cleared whenever the caret moves.
 @addField(SingleplayerMenuGameController)
 let m_csDeleteArmed: Bool;
+
+// SELECT's padlock. While it is on, the caret stays put: the cards, the arrow keys and DELETE
+// all refuse, and ENTER CITY plays the character it is on. MpCsClose drops it, so it lasts as
+// long as the screen is open. Read it through MpCsIsLocked, which also asks the roster.
+@addField(SingleplayerMenuGameController)
+let m_csLocked: Bool;
 
 /**
  * THE MENU GOES AWAY WHILE THE SELECTOR IS UP.
@@ -462,15 +790,29 @@ public func MpCsOpen() -> Void {
     MpCsRect(c, 0.0, 0.0, 720.0, 1080.0, MpCsVoid(), 0.55);
     MpCsRect(c, 0.0, 880.0, 1920.0, 200.0, MpCsVoid(), 0.45);
 
-    // Registration marks. The mockup's corner brackets - the detail that says "this is an
-    // instrument you are reading" rather than "this is a dialog box".
-    this.MpCsRegistration(c);
+    this.MpCsScreenEdge(c);
 
     // ---------------------------------------------------------------- title
-    MpCsText(c, 68.0, 96.0, MpCsSpaced("NIGHT CITY ONLINE"), 14, n"Medium", MpCsGold());
-    MpCsGlowText(c, 68.0, 122.0, "SELECT IDENTITY", 76, n"Bold", MpCsInk());
-    MpCsText(c, 68.0, 214.0, MpCsSpaced("WHO ARE YOU TONIGHT"), 15, n"Regular", MpCsInkFaint());
-    MpCsRect(c, 68.0, 248.0, 540.0, 1.0, MpCsRed(), 0.9);
+    let lead = MpCsFan(c, 60.0, 30.0, 1.6);
+
+    MpCsText(lead, 66.0, 20.0, "NEXUS OS v2.4.1", 13, n"Medium", MpCsInkDim());
+    MpCsText(lead, 66.0, 36.0, "USER://PROFILE_MANAGER", 13, n"Medium", MpCsInkDim());
+
+    let title = MpCsFan(c, 60.0, 85.0, 1.7);
+
+    MpCsTextWide(title, 66.0, 56.0, "CHARACTER SELECTION", 44, n"Bold", MpCsRedDim());
+    MpCsTextWide(title, 64.0, 56.0, "CHARACTER SELECTION", 44, n"Bold", MpCsRed());
+
+    let strap = MpCsFan(c, 60.0, 124.0, 1.7);
+
+    MpCsText(strap, 66.0, 114.0, MpCsSpaced("SAME CITY. DIFFERENT STORIES."), 16, n"Medium", MpCsInkDim());
+
+    MpCsText(c, 1392.0, 30.0, "CITY ACCESS TERMINAL", 13, n"Medium", MpCsInkDim());
+    MpCsText(c, 1392.0, 46.0, "SEQ.2047-9-443", 13, n"Medium", MpCsInkDim());
+    MpCsText(c, 1392.0, 62.0, "AUTH: OK", 13, n"Medium", MpCsInkDim());
+    MpCsText(c, 1760.0, 28.0, "BEFORE", 15, n"Medium", MpCsInkDim());
+    MpCsText(c, 1760.0, 48.0, "TOMORROW", 15, n"Medium", MpCsInkDim());
+    MpCsRect(c, 1760.0, 74.0, 22.0, 2.0, MpCsInkDim(), 0.6);
 
     // ---------------------------------------------------------------- roster
     //
@@ -501,28 +843,43 @@ public func MpCsOpen() -> Void {
     let slot = 0;
 
     while slot < MpCsMaxSlots() {
-        this.MpCsCard(c, slot, 68.0, 322.0 + Cast<Float>(slot) * 99.0, slot < unlocked);
+        this.MpCsCard(c, slot, slot < unlocked);
         slot += 1;
     }
 
     // ---------------------------------------------------------------- detail
     this.MpCsScanRings(c);
-    this.MpCsDetail(c, 1232.0, 196.0);
+    this.MpCsDetail(c);
 
     // ---------------------------------------------------------------- actions
     //
-    // The three verbs, on the game's own menu items rather than here. These are LABELS of
-    // what the menu underneath can do, drawn in the mockup's positions so the composition
-    // is right; the presses themselves stay on menu items, which are focusable and
-    // controller-navigable in a way a runtime widget is not.
-    this.MpCsActions(c, 68.0, 910.0);
-    this.MpCsEnterButton(c, 1332.0, 894.0);
-    this.MpCsStatusLine(c, 68.0, 984.0);
+    // The verbs, drawn where the render has them. These are LABELS: a press lands through
+    // MpCsClickAt, which knows where each one was drawn.
+    this.MpCsActions(c);
+    this.MpCsEnterButton(c);
+    this.MpCsStatusLine(c, 62.0, 932.0);
 
     // The keys, on screen. A screen driven by keys nobody is told about is a screen that
-    // does not work, and this one hid its own exit for a whole build.
-    MpCsText(c, 68.0, 1030.0, MpCsSpaced("CLICK A SLOT, THEN CONFIRM"), 13, n"Medium",
-             MpCsGold());
+    // does not work, and this one hid its own exit for a whole build. Not while a refusal is
+    // up: that plate sits here and it matters more.
+    if Equals(network.GetCharacterError(), "") {
+        let hint = MpCsFan(c, 60.0, 968.0, -1.3);
+
+        MpCsText(hint, 62.0, 960.0, MpCsSpaced(this.MpCsIsLocked() ? "LOCKED IN - PRESS ENTER CITY" : "CLICK A SLOT, THEN CONFIRM"),
+                 15, n"Medium", MpCsGold());
+    }
+
+    let quip = MpCsFan(c, 60.0, 1000.0, -1.3);
+
+    MpCsText(quip, 58.0, 986.0, "IDENTITY IS A TOOL.", 15, n"Medium", MpCsInkFaint());
+    MpCsText(quip, 58.0, 1006.0, "MAKE IT YOURS.", 15, n"Medium", MpCsInkFaint());
+
+    MpCsText(c, 1524.0, 1006.0, "HUMANITY // MACHINE // OPPORTUNITY", 13, n"Medium", MpCsInkDim());
+    MpCsRect(c, 1806.0, 1012.0, 12.0, 3.0, MpCsRed(), 1.0);
+    MpCsRect(c, 1822.0, 1012.0, 12.0, 3.0, MpCsRed(), 1.0);
+    MpCsRect(c, 1838.0, 1012.0, 30.0, 2.0, MpCsRed(), 0.7);
+
+    this.MpCsMapBuild(c);
 
     /*
      * THE MENU GOES AWAY. zeldfep, 2026-09-08: "still acting as an overlay the buttons
@@ -588,40 +945,44 @@ public func MpCsClose() -> Void {
 
     this.MpCsShowMenuList();
     this.m_csOpen = false;
+    this.m_csLocked = false;
 }
 
 /**
- * The four corner brackets.
+ * The screen's own edge: hairlines that lean with the panels, and two corner ticks.
  */
 @addMethod(SingleplayerMenuGameController)
-public func MpCsRegistration(parent: ref<inkCanvas>) -> Void {
-    let a = 0.55;
+public func MpCsScreenEdge(parent: ref<inkCanvas>) -> Void {
+    let line = MpCsRed();
+    let a = 0.4;
 
-    // top-left
-    MpCsRect(parent, 34.0, 34.0, 20.0, 1.0, MpCsRed(), a);
-    MpCsRect(parent, 34.0, 34.0, 1.0, 20.0, MpCsRed(), a);
-    // top-right
-    MpCsRect(parent, 1866.0, 34.0, 20.0, 1.0, MpCsRed(), a);
-    MpCsRect(parent, 1885.0, 34.0, 1.0, 20.0, MpCsRed(), a);
-    // bottom-left
-    MpCsRect(parent, 34.0, 1045.0, 20.0, 1.0, MpCsRed(), a);
-    MpCsRect(parent, 34.0, 1026.0, 1.0, 20.0, MpCsRed(), a);
-    // bottom-right
-    MpCsRect(parent, 1866.0, 1045.0, 20.0, 1.0, MpCsRed(), a);
-    MpCsRect(parent, 1885.0, 1026.0, 1.0, 20.0, MpCsRed(), a);
+    MpCsLine(parent, 760.0, 14.0, 30.0, 10.0, 1.0, line, a);
+    MpCsLine(parent, 30.0, 10.0, 30.0, 1046.0, 1.0, line, a);
+    MpCsLine(parent, 30.0, 1046.0, 770.0, 1006.0, 1.0, line, a);
+
+    MpCsLine(parent, 1350.0, 14.0, 1890.0, 8.0, 1.0, line, a);
+    MpCsLine(parent, 1890.0, 8.0, 1890.0, 1050.0, 1.0, line, a);
+    MpCsLine(parent, 1890.0, 1050.0, 1500.0, 1024.0, 1.0, line, a);
+
+    MpCsRect(parent, 34.0, 12.0, 34.0, 2.0, line, 0.75);
+    MpCsRect(parent, 34.0, 12.0, 2.0, 34.0, line, 0.75);
+    MpCsRect(parent, 1852.0, 10.0, 34.0, 2.0, line, 0.75);
+    MpCsRect(parent, 1884.0, 10.0, 2.0, 34.0, line, 0.75);
 }
 
 /**
- * One character card.
+ * One character card, 520 x 130 at a 158 pitch.
  *
- * 568 x 90 with an 18px notch, the mockup's dimensions. The active card is the one piece
- * of gold on the screen: gold border, a lit plate, a 5px bar hanging off its left edge,
- * and it sits 14px further right than the others. That offset is doing real work - it is
- * readable at a glance and from across a room, which a colour change alone is not.
+ * Face cell, emblem cell, words. The selected card is the one piece of gold in the roster: a
+ * gold outline with a halo and the SELECTED chip. Every other card carries a red bar on its
+ * outer edge.
+ *
+ * THE FACE CELL HOLDS THE INITIAL until the picture feature exists (Atlas
+ * character-select-mockup-items-never-built). It is a place on the card now, so the picture
+ * has somewhere to go.
  */
 @addMethod(SingleplayerMenuGameController)
-public func MpCsCard(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float,
-                     unlocked: Bool) -> Void {
+public func MpCsCard(parent: ref<inkCanvas>, slot: Int32, unlocked: Bool) -> Void {
     let network = GameInstance.GetNetworkWorldSystem();
 
     if !IsDefined(network) {
@@ -631,8 +992,25 @@ public func MpCsCard(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float,
     let index = this.MpCsRosterIndex(slot);
     let occupied = index >= 0;
     let selected = unlocked && slot == this.m_csCursor;
-    let w = 568.0;
-    let h = 90.0;
+    let x = 60.0;
+    let y = 163.0 + Cast<Float>(slot) * 158.0;
+    let w = 520.0;
+    let h = 130.0;
+    let row = MpCsFanL(parent, y + h / 2.0);
+    let px = x + 14.0;
+    let py = y + 7.0;
+    let pw = 136.0;
+    let ph = h - 14.0;
+    let ex = px + pw + 6.0;
+    let ew = 68.0;
+    let tx = ex + ew + 18.0;
+    let xs = MpCsCardXs(x, w, 0.0);
+    let ys = MpCsCardYs(y, h, 0.0);
+
+    // Locked in: the other cards have stopped answering, so they stop looking as if they would.
+    if this.MpCsIsLocked() && !selected {
+        row.SetOpacity(0.45);
+    }
 
     /*
      * A LOCKED SLOT IS DRAWN, DIMMED, AND DOES NOTHING.
@@ -642,60 +1020,48 @@ public func MpCsCard(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float,
      * that highlights and then refuses is a worse answer than a card that never pretended.
      */
     if !unlocked {
-        MpCsRect(parent, x, y, w, h, MpCsPlate(), 0.45);
-        MpCsBorder(parent, x, y, w, h, MpCsRedDim(), 0.35);
-
-        MpCsText(parent, x + 15.0, y + 36.0, s"0\(slot + 1)", 13, n"Regular", MpCsInkFaint());
-        MpCsText(parent, x + 128.0, y + 32.0, "LOCKED", 26, n"Bold", MpCsInkFaint());
-        MpCsText(parent, x + 128.0, y + 62.0, "AN EXTRA CHARACTER SLOT", 13, n"Regular",
-                 MpCsInkFaint());
+        MpCsPolyFill(row, xs, ys, MpCsPlate(), 0.55);
+        MpCsPolyEdge(row, xs, ys, 1.0, MpCsRed(), 0.18);
+        MpCsRect(row, x, y + 4.0, 7.0, h - 16.0, MpCsRedDim(), 0.6);
+        MpCsPolyEdge(row, MpCsCutXs(px, pw, 12.0), MpCsCutYs(py, ph, 12.0), 1.0, MpCsRed(), 0.16);
+        MpCsPolyEdge(row, MpCsCutXs(ex, ew, 8.0), MpCsCutYs(py, ph, 8.0), 1.0, MpCsRed(), 0.14);
+        MpCsText(row, tx, y + 34.0, "LOCKED", 26, n"Medium", MpCsInkFaint());
+        MpCsText(row, tx, y + 72.0, "AN EXTRA CHARACTER SLOT", 17, n"Medium", MpCsInkFaint());
 
         return;
     }
 
-    // The selected card steps right, as in the mockup.
-    let cx = selected ? x + 14.0 : x;
-
-    let plate = selected ? MpCsGold() : MpCsPlate();
-    let plateAlpha = selected ? 0.14 : 0.72;
-    let edge = selected ? MpCsGold() : MpCsRedDim();
-    let edgeAlpha = selected ? 1.0 : 0.85;
-
-    // The mockup's glow on the active card - 34px of gold bleed. Drawn as a larger plate
-    // behind rather than a shadow, which ink does not have.
     if selected {
-        MpCsRect(parent, cx - 10.0, y - 10.0, w + 20.0, h + 20.0, MpCsGold(), 0.10);
+        MpCsPolyEdge(row, MpCsCardXs(x, w, 4.0), MpCsCardYs(y, h, 4.0), 2.0, MpCsGold(), 0.22);
+        MpCsPolyEdge(row, MpCsCardXs(x, w, 8.0), MpCsCardYs(y, h, 8.0), 3.0, MpCsGold(), 0.08);
     }
 
-    MpCsRect(parent, cx, y, w, h, plate, plateAlpha);
-    MpCsBorder(parent, cx, y, w, h, edge, edgeAlpha);
+    MpCsPolyFill(row, xs, ys, selected ? MpCsGoldPlate() : MpCsPlate(), selected ? 0.88 : 0.8);
+    MpCsPolyEdge(row, xs, ys, selected ? 2.5 : 1.0, selected ? MpCsGold() : MpCsRed(), selected ? 1.0 : 0.34);
 
-    if selected {
-        MpCsRect(parent, cx - 14.0, y + 6.0, 5.0, h - 12.0, MpCsGold(), 1.0);
+    if !selected {
+        MpCsRect(row, x, y + 3.0, 7.0, h - 15.0, MpCsRed(), 1.0);
+        MpCsRect(row, x + w - 56.0, y + h - 16.0, 22.0, 2.0, MpCsInkDim(), 0.5);
+        MpCsRect(row, x + w - 56.0, y + h - 11.0, 22.0, 2.0, MpCsInkDim(), 0.5);
+        MpCsRect(row, x + w - 30.0, y + h - 16.0, 10.0, 7.0, MpCsInkDim(), 0.25);
     }
 
-    // Slot number.
-    MpCsText(parent, cx + 15.0, y + 36.0, s"0\(slot + 1)", 13, n"Regular",
-             selected ? MpCsGold() : MpCsInkFaint());
+    // The face cell and the emblem cell.
+    let cellXs = MpCsCutXs(px - 1.0, pw + 2.0, 12.0);
+    let cellYs = MpCsCutYs(py - 1.0, ph + 2.0, 12.0);
 
-    // The chip - a 64px square with the character's initial in it. Empty slots get a
-    // dash, which is the one thing that distinguishes "nobody here" from "somebody whose
-    // name failed to load".
-    let chipX = cx + 47.0;
-    let chipY = y + 13.0;
-
-    MpCsRect(parent, chipX, chipY, 64.0, 64.0, MpCsRed(), occupied ? 0.14 : 0.05);
-    MpCsBorder(parent, chipX, chipY, 64.0, 64.0, edge, occupied ? 0.9 : 0.4);
+    MpCsPolyFill(row, cellXs, cellYs, MpCsPlate(), 1.0);
+    MpCsPolyEdge(row, cellXs, cellYs, 1.0, selected ? MpCsGold() : MpCsRed(), selected ? 1.0 : 0.3);
+    MpCsPolyEdge(row, MpCsCutXs(ex, ew, 8.0), MpCsCutYs(py, ph, 8.0), 1.0, selected ? MpCsGold() : MpCsRed(), selected ? 0.5 : 0.22);
 
     if !occupied {
-        MpCsText(parent, chipX + 26.0, chipY + 18.0, "+", 24, n"Bold",
-                 selected ? MpCsGold() : MpCsInkFaint());
-        MpCsText(parent, cx + 128.0, y + 32.0, "EMPTY SLOT", 26, n"Bold",
-                 selected ? MpCsGold() : MpCsInkFaint());
+        MpCsPolyEdge(row, MpCsCutXs(px + 44.0, 48.0, 6.0), MpCsCutYs(py + 34.0, 48.0, 6.0), 1.5,
+                     selected ? MpCsGold() : MpCsInkDim(), 1.0);
 
-        // An empty slot is a DESTINATION now, not a dead row. Selecting it points the
-        // account at it, and the creator's save lands there - which is what makes a second
-        // character an addition rather than a replacement.
+        let plus = MpCsText(row, px + 68.0, py + 58.0, "+", 36, n"Medium", selected ? MpCsGold() : MpCsInkDim());
+
+        MpCsAlign(plus, 0.5, 0.5);
+
         /*
          * AN EMPTY SLOT ASKS FOR A CHARACTER. zeldfep, 2026-09-08: "the empty slots should
          * prompt add new character".
@@ -706,55 +1072,62 @@ public func MpCsCard(parent: ref<inkCanvas>, slot: Int32, x: Float, y: Float,
          * same reasoning that just saved a character when clicks were falling through to
          * the trash can.
          *
-         *   not selected  ->  + ADD NEW CHARACTER
+         *   not selected  ->  EMPTY SLOT 0N
          *   selected      ->  CLICK AGAIN TO CREATE
          *   armed         ->  the next click runs the creator
          */
-        let prompt = "+  ADD NEW CHARACTER";
+        let prompt = s"EMPTY SLOT 0\(slot + 1)";
 
         if selected {
             prompt = this.m_csCreateArmed ? "CREATING..." : "CLICK AGAIN TO CREATE";
         }
 
-        MpCsText(parent, cx + 128.0, y + 62.0, prompt, 13, n"Regular",
-                 selected ? MpCsGold() : MpCsInkFaint());
+        MpCsText(row, tx, y + 34.0, "ADD NEW CHARACTER", 24, n"Medium", selected ? MpCsGold() : MpCsInk());
+        MpCsText(row, tx, y + 72.0, prompt, 17, n"Medium", selected ? MpCsGold() : MpCsInkDim());
 
         return;
     }
 
-    let name = network.GetRosterName(Cast<Uint32>(index));
+    let u = Cast<Uint32>(index);
+    let name = network.GetRosterName(u);
     let shown = NotEquals(name, "") ? name : "unnamed";
+    let lifepath = network.GetRosterLifepath(u);
 
-    MpCsText(parent, chipX + 24.0, chipY + 16.0, StrLeft(shown, 1), 24, n"Bold",
-             selected ? MpCsGold() : MpCsInkDim());
+    let initial = MpCsText(row, px + pw / 2.0, py + ph / 2.0, StrUpper(StrLeft(shown, 1)), 52, n"Bold", MpCsInkDim());
 
-    MpCsText(parent, cx + 128.0, y + 24.0, shown, 26, n"Bold",
+    MpCsAlign(initial, 0.5, 0.5);
+
+    MpCsLifepathIcon(row, ex + 12.0, py + 36.0, 44.0, 44.0, lifepath, false,
+                     selected ? MpCsGold() : MpCsInkDim(), 1.0);
+
+    // The chip takes the right of the top line on the selected card, so the name gets less.
+    MpCsText(row, tx, y + 20.0, StrUpper(MpCsClip(shown, selected ? 11 : 20)), 27, n"Medium",
              selected ? MpCsGold() : MpCsInk());
 
-    // Lifepath and state on one line. This is what the protocol flag day was FOR - with
-    // four characters the name alone stops being enough to tell them apart.
-    let lifepath = network.GetRosterLifepath(Cast<Uint32>(index));
-    let meta = NotEquals(lifepath, "") ? lifepath : "no lifepath on record";
-
-    if !network.HasRosterSpawnedBefore(Cast<Uint32>(index)) {
-        meta += "  -  NEVER PLAYED";
-    }
-
-    MpCsText(parent, cx + 128.0, y + 58.0, StrUpper(meta), 14, n"Regular", MpCsInkFaint());
-
-    // Level, right-aligned by measurement rather than by anchor: the card is a canvas and
-    // the number is at most four glyphs, so a fixed inset lands it in the same place every
-    // time without a second layout pass.
     if selected && this.m_csDeleteArmed {
-        MpCsText(parent, cx + 128.0, y + 58.0, "ARE YOU SURE?  [ DEL ] AGAIN TO DELETE", 14,
-                 n"Bold", MpCsRed());
+        MpCsText(row, tx, y + 58.0, "ARE YOU SURE?", 19, n"Bold", MpCsRed());
+        MpCsText(row, tx, y + 86.0, "[ DEL ] AGAIN TO DELETE", 17, n"Bold", MpCsRed());
+    } else {
+        // Lifepath and state: what the protocol flag day was FOR - with four characters the
+        // name alone stops being enough to tell them apart.
+        let meta = NotEquals(lifepath, "") ? lifepath : "no lifepath on record";
+
+        if !network.HasRosterSpawnedBefore(u) {
+            meta += "  -  NEVER PLAYED";
+        }
+
+        MpCsText(row, tx, y + 58.0, StrUpper(meta), 18, n"Medium", MpCsInkDim());
+        MpCsText(row, tx, y + 86.0, s"LV. \(network.GetRosterLevel(u))", 18, n"Medium", MpCsInkDim());
     }
 
-    let level = network.GetRosterLevel(Cast<Uint32>(index));
+    if selected {
+        MpCsRect(row, x + w - 124.0, y + 24.0, 104.0, 28.0, MpCsGold(), 1.0);
 
-    MpCsText(parent, cx + w - 84.0, y + 32.0, s"LV \(level)", 26, n"Regular",
-             selected ? MpCsGold() : MpCsInkDim());
+        // LOCKED IN, not LOCKED: a card that says LOCKED is a slot this account may not use.
+        let chip = MpCsText(row, x + w - 72.0, y + 38.0, this.MpCsIsLocked() ? "LOCKED IN" : "SELECTED", 17, n"Bold", MpCsOnGold());
 
+        MpCsAlign(chip, 0.5, 0.5);
+    }
 }
 
 /**
@@ -862,7 +1235,14 @@ protected cb func OnGlobalRelease(e: ref<inkPointerEvent>) -> Bool {
 
         MpCsLog(s"click screen=\(pos.X),\(pos.Y)  authored=\(ax),\(ay)");
 
+        // The click map sees every click first. True means it was for the tool.
+        if this.MpCsMapTake(ax, ay, pos.X, pos.Y) {
+            e.Handle();
+            return true;
+        }
+
         this.MpCsClickAt(ax, ay);
+        this.MpCsMapRefresh();
 
         /*
          * EVERY click is consumed while this screen is up, not just the ones that hit
@@ -1013,6 +1393,11 @@ protected cb func OnGlobalRelease(e: ref<inkPointerEvent>) -> Bool {
  */
 @addMethod(SingleplayerMenuGameController)
 public func MpCsStep(delta: Int32) -> Void {
+    if this.MpCsIsLocked() {
+        this.MpCsSayLocked();
+        return;
+    }
+
     let network = GameInstance.GetNetworkWorldSystem();
 
     if !IsDefined(network) {
@@ -1056,23 +1441,22 @@ public func MpCsStep(delta: Int32) -> Void {
 }
 
 /**
- * THE MOCKUP'S THREE ACTIONS, at its own coordinates (left 68, bottom 112).
+ * SELECT and DELETE, where the render has its buttons.
  *
  * zeldfep, 2026-09-08: "select and create new and delete from mock up add them we can add
  * the fatures later."
  *
- * Drawn as the mockup draws them - clipped-corner plates, uppercase, letter-spaced - with
- * one addition it did not need: THE KEY IS ON THE BUTTON. Hand-built widgets cannot be
- * clicked on this controller (proven across six builds), so a button with no key printed on
- * it is decoration that lies about what it does. The label says what it does; the bracket
- * says how.
+ * Drawn as the render draws them, with one addition it did not need: THE KEY IS ON THE
+ * BUTTON. Hand-built widgets cannot be clicked on this controller (proven across six builds),
+ * so a button with no key printed on it is decoration that lies about what it does. The
+ * label says what it does; the bracket says how.
  *
  * Enabled state follows what is actually possible right now, so a button never offers
- * something the server would refuse: DELETE greys out on an empty slot, CREATE greys out on
- * an occupied one.
+ * something the server would refuse: SELECT and DELETE grey out on an empty slot, and DELETE
+ * greys out while the pick is locked.
  */
 @addMethod(SingleplayerMenuGameController)
-public func MpCsActions(parent: ref<inkCanvas>, x: Float, y: Float) -> Void {
+public func MpCsActions(parent: ref<inkCanvas>) -> Void {
     let occupied = this.MpCsRosterIndex(this.m_csCursor) >= 0;
 
     /*
@@ -1085,42 +1469,81 @@ public func MpCsActions(parent: ref<inkCanvas>, x: Float, y: Float) -> Void {
      * free one. Two ways to do something, one of which cannot express the choice, is a way
      * to pick the wrong slot.
      */
-    this.MpCsActionButton(parent, x, y, 236.0, "SELECT", "CLICK", true);
-    this.MpCsActionButton(parent, x + 252.0, y, 236.0, "DELETE", "DEL", occupied);
+    let locked = this.MpCsIsLocked();
+
+    this.MpCsActionButton(parent, 47.0, 852.0, 222.0, locked ? "LOCKED" : "SELECT", "CLICK", MpCsGold(), occupied, true, locked);
+    this.MpCsActionButton(parent, 285.0, 848.0, 222.0, "DELETE", "DEL", MpCsRed(), occupied && !locked, false, false);
 }
 
 @addMethod(SingleplayerMenuGameController)
-public func MpCsActionButton(parent: ref<inkCanvas>, x: Float, y: Float, w: Float,
-                             label: String, key: String, enabled: Bool) -> Void {
-    let h = 58.0;
-    let edge = enabled ? MpCsRed() : MpCsRedDim();
-    let text = enabled ? MpCsInk() : MpCsInkFaint();
+public func MpCsActionButton(parent: ref<inkCanvas>, x: Float, y: Float, w: Float, label: String,
+                             key: String, colour: HDRColor, enabled: Bool, padlock: Bool, shut: Bool) -> Void {
+    let h = 66.0;
+    let row = MpCsFanL(parent, y + h / 2.0);
+    let xs = MpCsCutXs(x, w, 12.0);
+    let ys = MpCsCutYs(y, h, 12.0);
+    let ink = enabled ? colour : MpCsInkFaint();
+    let ix = x + 20.0;
+    let iy = y + 20.0;
 
-    MpCsRect(parent, x, y, w, h, MpCsPlate(), enabled ? 0.72 : 0.4);
-    MpCsBorder(parent, x, y, w, h, edge, enabled ? 0.9 : 0.35);
+    // Locked in wears the selected card's halo and plate, so the two read as one state.
+    if shut {
+        MpCsPolyEdge(row, MpCsCutXs(x - 4.0, w + 8.0, 14.0), MpCsCutYs(y - 4.0, h + 8.0, 14.0), 2.0, MpCsGold(), 0.22);
+        MpCsPolyEdge(row, MpCsCutXs(x - 8.0, w + 16.0, 16.0), MpCsCutYs(y - 8.0, h + 16.0, 16.0), 3.0, MpCsGold(), 0.08);
+    }
 
-    MpCsText(parent, x + 18.0, y + 10.0, MpCsSpaced(label), 17, n"Bold", text);
-    MpCsText(parent, x + 18.0, y + 34.0, s"[ \(key) ]", 12, n"Regular",
-             enabled ? MpCsGold() : MpCsInkFaint());
+    MpCsPolyFill(row, xs, ys, shut ? MpCsGoldPlate() : MpCsPlate(), shut ? 0.88 : (enabled ? 0.82 : 0.45));
+    MpCsPolyEdge(row, xs, ys, shut ? 2.5 : (enabled ? 1.5 : 1.0), enabled ? colour : MpCsRed(), enabled ? 1.0 : 0.25);
+
+    if padlock {
+        MpCsRect(row, ix + 3.0, iy + 11.0, 18.0, 13.0, ink, 1.0);
+
+        if shut {
+            MpCsLine(row, ix + 7.0, iy + 11.0, ix + 7.0, iy + 4.0, 2.0, ink, 1.0);
+            MpCsLine(row, ix + 6.0, iy + 4.0, ix + 18.0, iy + 4.0, 2.0, ink, 1.0);
+            MpCsLine(row, ix + 17.0, iy + 4.0, ix + 17.0, iy + 11.0, 2.0, ink, 1.0);
+        } else {
+            // Open: the shackle stands clear of the body and its right leg stops short of it.
+            MpCsLine(row, ix + 7.0, iy + 11.0, ix + 7.0, iy - 2.0, 2.0, ink, 1.0);
+            MpCsLine(row, ix + 6.0, iy - 2.0, ix + 18.0, iy - 2.0, 2.0, ink, 1.0);
+            MpCsLine(row, ix + 17.0, iy - 2.0, ix + 17.0, iy + 3.0, 2.0, ink, 1.0);
+        }
+    } else {
+        MpCsLine(row, ix + 3.0, iy + 6.0, ix + 21.0, iy + 6.0, 2.0, ink, 1.0);
+        MpCsLine(row, ix + 9.0, iy + 6.0, ix + 9.0, iy + 2.0, 2.0, ink, 1.0);
+        MpCsLine(row, ix + 8.0, iy + 2.0, ix + 16.0, iy + 2.0, 2.0, ink, 1.0);
+        MpCsLine(row, ix + 15.0, iy + 2.0, ix + 15.0, iy + 6.0, 2.0, ink, 1.0);
+        MpCsLine(row, ix + 6.0, iy + 6.0, ix + 7.0, iy + 24.0, 2.0, ink, 1.0);
+        MpCsLine(row, ix + 6.0, iy + 24.0, ix + 18.0, iy + 24.0, 2.0, ink, 1.0);
+        MpCsLine(row, ix + 17.0, iy + 24.0, ix + 18.0, iy + 6.0, 2.0, ink, 1.0);
+    }
+
+    MpCsText(row, x + 54.0, y + 19.0, label, 22, n"Bold", ink);
+
+    let bracket = MpCsText(row, x + w - 16.0, y + 25.0, s"[ \(key) ]", 15, n"Medium", enabled ? MpCsGold() : MpCsInkFaint());
+
+    MpCsAlign(bracket, 1.0, 0.0);
 }
 
 /**
- * ENTER NIGHT CITY - the mockup's one filled button, bottom right.
+ * The go plate, bottom right.
  *
  * The only solid gold thing on the screen, because it is the only action that ends it. Every
  * other control is an outline; this one is filled, which is the design language's way of
  * saying "this is the thing you came here to press".
  *
  * It reads what the caret is on, so it never offers to enter the world as nobody: an empty
- * slot turns it into CREATE, which is what ENTER actually does there.
+ * slot turns it into CREATE, which is what pressing it actually does there.
  */
 @addMethod(SingleplayerMenuGameController)
-public func MpCsEnterButton(parent: ref<inkCanvas>, x: Float, y: Float) -> Void {
+public func MpCsEnterButton(parent: ref<inkCanvas>) -> Void {
     let network = GameInstance.GetNetworkWorldSystem();
     let index = this.MpCsRosterIndex(this.m_csCursor);
     let occupied = index >= 0;
-    let w = 520.0;
-    let h = 92.0;
+    let x = 1347.0;
+    let y = 850.0;
+    let w = 372.0;
+    let h = 86.0;
 
     /*
      * THE CONFIRMATION, AND IT NAMES WHO. zeldfep: "select should have a confirmation box on
@@ -1128,40 +1551,191 @@ public func MpCsEnterButton(parent: ref<inkCanvas>, x: Float, y: Float) -> Void 
      *
      * "Click the card again" was a confirmation nobody could see - the same gesture as
      * selecting, distinguished only by being the second one. This says what will happen and
-     * to whom, so the press is a decision rather than a repetition:
+     * to whom, so the press is a decision rather than a repetition. The render's plate says
+     * ENTER CITY and its tab says something else; here the tab carries the confirmation:
      *
-     *   a character  ->  YES - PLAY AS <NAME>
-     *   an empty slot ->  YES - CREATE IN SLOT N
+     *   a character  ->  ENTER CITY   | YES - PLAY AS <NAME>
+     *   an empty slot ->  CREATE      | YES - CREATE IN SLOT N
      *
      * The name is the point. With four slots and a roster that changes, "enter the world" is
      * not enough to be sure which person you are about to be - and being the wrong one is
      * exactly what this screen exists to prevent.
      */
-    let label = "SELECT A SLOT";
-    let sub = "CLICK A CARD ON THE LEFT";
+    let plate = "NO SLOT";
+    let ask = "SELECT A SLOT";
+    let who = "ON THE LEFT";
     let armed = false;
 
     if occupied && IsDefined(network) {
         let name = network.GetRosterName(Cast<Uint32>(index));
         let shown = NotEquals(name, "") ? name : "unnamed";
 
-        label = s"YES - PLAY AS \(shown)";
-        sub = "CLICK HERE, OR THE CARD AGAIN";
+        plate = "ENTER CITY";
+        ask = "YES - PLAY AS";
+        who = StrUpper(MpCsClip(shown, 12));
         armed = true;
     } else {
         if this.m_csCursor >= 0 {
-            label = s"YES - CREATE IN SLOT 0\(this.m_csCursor + 1)";
-            sub = "RUNS THE CHARACTER CREATOR";
+            plate = "CREATE";
+            ask = "YES - CREATE IN";
+            who = s"SLOT 0\(this.m_csCursor + 1)";
             armed = true;
         }
     }
 
-    MpCsRect(parent, x, y, w, h, MpCsGold(), armed ? 1.0 : 0.24);
+    let row = MpCsFan(parent, 1889.0, y + h / 2.0, MpCsTilt(y + h / 2.0, -1.0));
+    let ink = armed ? MpCsOnGold() : MpCsInkFaint();
 
-    let ink = armed ? new HDRColor(0.1, 0.08, 0.0, 1.0) : MpCsInkFaint();
+    // The offset base and the face, the launcher's plate.
+    MpCsPolyFill(row, [x + 7.0, x + w + 7.0, x + w + 7.0, x + 25.0, x + 7.0],
+                 [y + 7.0, y + 7.0, y + h + 7.0, y + h + 7.0, y + h - 11.0], MpCsGoldDim(), armed ? 1.0 : 0.2);
+    MpCsPolyFill(row, [x, x + w, x + w, x + 18.0, x], [y, y, y + h, y + h, y + h - 18.0], MpCsGold(), armed ? 1.0 : 0.24);
 
-    MpCsText(parent, x + 30.0, y + 14.0, label, 30, n"Bold", ink);
-    MpCsText(parent, x + 30.0, y + 60.0, sub, 13, n"Medium", ink);
+    MpCsLine(row, x + 22.0, y + 29.0, x + 34.0, y + 43.0, 4.0, ink, 1.0);
+    MpCsLine(row, x + 34.0, y + 43.0, x + 22.0, y + 57.0, 4.0, ink, 1.0);
+    MpCsLine(row, x + 38.0, y + 29.0, x + 50.0, y + 43.0, 4.0, ink, 1.0);
+    MpCsLine(row, x + 50.0, y + 43.0, x + 38.0, y + 57.0, 4.0, ink, 1.0);
+
+    MpCsTextWide(row, x + 70.0, y + 24.0, plate, 36, n"Bold", ink);
+
+    // The tab that names who.
+    let tabX = x + w + 4.0;
+    let tabW = 166.0;
+    let tabXs = MpCsCutXs(tabX, tabW, 12.0);
+    let tabYs = MpCsCutYs(y + 2.0, h - 4.0, 12.0);
+
+    MpCsPolyFill(row, tabXs, tabYs, MpCsPlate(), 0.9);
+    MpCsPolyEdge(row, tabXs, tabYs, 1.5, MpCsGold(), armed ? 1.0 : 0.3);
+    MpCsText(row, tabX + 14.0, y + 17.0, ask, 17, n"Medium", armed ? MpCsGold() : MpCsInkFaint());
+    MpCsText(row, tabX + 14.0, y + 44.0, who, 20, n"Bold", armed ? MpCsInk() : MpCsInkFaint());
+}
+
+// ---------------------------------------------------------------------- what a click tests
+//
+// One set of numbers. MpCsHitAt decides with them and the click map at the bottom of this file
+// draws them, so an outline on screen is always the region that is live. A box is
+// [left, top, right, bottom] in authored units.
+
+public func MpCsHitEnter() -> array<Float> = [1340.0, 826.0, 1895.0, 952.0]
+
+// MpCsActions draws DELETE at x 285-507, y 848-914, leaning up by about eight at its centre.
+public func MpCsHitDelete() -> array<Float> = [279.0, 832.0, 513.0, 922.0]
+
+// MpCsActions draws SELECT at x 47-269, y 852-918, leaning up by about five at its right end.
+// Same margins as DELETE; the two boxes stop four units short of each other.
+public func MpCsHitSelect() -> array<Float> = [41.0, 841.0, 275.0, 932.0]
+
+public func MpCsCardFirst() -> Float = 163.0
+
+public func MpCsCardPitch() -> Float = 158.0
+
+public func MpCsCardHeight() -> Float = 130.0
+
+/**
+ * The roster block, with slack above and below so a click just over the first card or under
+ * the last still reads as aiming at it. Forty, the bias measured below: the title sits just over
+ * the first card and the buttons just under the last.
+ *
+ * The x range stays a plain bound: there is only one column, so nothing to be nearest TO.
+ */
+public func MpCsHitRoster() -> array<Float> =
+    [40.0, MpCsCardFirst() - 40.0, 620.0,
+     MpCsCardFirst() + Cast<Float>(MpCsMaxSlots() - 1) * MpCsCardPitch() + MpCsCardHeight() + 40.0]
+
+/**
+ * Where a card's centre line is at a given x. Each card leans about x 60, so it depends on where
+ * along the card you are.
+ */
+public func MpCsCardCentre(slot: Int32, x: Float) -> Float {
+    let middle = MpCsCardFirst() + Cast<Float>(slot) * MpCsCardPitch() + MpCsCardHeight() / 2.0;
+
+    return middle + (x - 60.0) * TanF(Deg2Rad(MpCsTilt(middle, 1.0)));
+}
+
+public func MpCsInBox(x: Float, y: Float, box: array<Float>) -> Bool =
+    x >= box[0] && x <= box[2] && y >= box[1] && y <= box[3]
+
+public func MpCsHitIdNone() -> Int32 = -1
+
+public func MpCsHitIdEnter() -> Int32 = 100
+
+public func MpCsHitIdDelete() -> Int32 = 101
+
+public func MpCsHitIdSelect() -> Int32 = 102
+
+public func MpCsHitName(hit: Int32) -> String {
+    if hit == MpCsHitIdEnter() {
+        return "ENTER";
+    }
+
+    if hit == MpCsHitIdDelete() {
+        return "DELETE";
+    }
+
+    if hit == MpCsHitIdSelect() {
+        return "SELECT";
+    }
+
+    return hit >= 0 ? s"CARD \(hit + 1)" : "NOTHING";
+}
+
+/**
+ * What a point on the screen is, without doing anything about it: a slot index, one of the
+ * MpCsHitId values, or none. ENTER is tested first with a generous margin: it overlaps nothing,
+ * so being loose costs nothing and being tight costs a press that appears to do nothing.
+ *
+ * NEAREST CARD WINS, rather than strict bands.
+ *
+ * zeldfep's three measurements all landed in the LOWER half of their card:
+ *
+ *   372 -> slot 1 (band 322-412, centre 367)
+ *   590 -> slot 3 (band 520-610, centre 565)
+ *   653 -> slot 4 (band 619-709, centre 664)
+ *
+ * Consistent with a downward bias of roughly 40px between where the cursor looks and
+ * where the click reports - which is exactly his "I have to click a little above where
+ * the button actually is", and why "slot 2 is hard to get": it is the one card bracketed
+ * on both sides, so the bias pushes a centred aim into slot 3.
+ *
+ * Measuring that bias and subtracting a constant would work until it was wrong - a
+ * different resolution, a different UI scale, and it is off again with nobody knowing
+ * why. Nearest-centre is correct for ANY offset smaller than half the card pitch, and it
+ * degrades gently rather than snapping to the wrong card at a boundary. It also removes
+ * the dead gaps between cards, where a click previously did nothing at all.
+ */
+public func MpCsHitAt(x: Float, y: Float) -> Int32 {
+    if MpCsInBox(x, y, MpCsHitEnter()) {
+        return MpCsHitIdEnter();
+    }
+
+    if MpCsInBox(x, y, MpCsHitDelete()) {
+        return MpCsHitIdDelete();
+    }
+
+    if MpCsInBox(x, y, MpCsHitSelect()) {
+        return MpCsHitIdSelect();
+    }
+
+    if !MpCsInBox(x, y, MpCsHitRoster()) {
+        return MpCsHitIdNone();
+    }
+
+    let best = MpCsHitIdNone();
+    let bestDistance = 99999.0;
+    let slot = 0;
+
+    while slot < MpCsMaxSlots() {
+        let distance = AbsF(y - MpCsCardCentre(slot, x));
+
+        if distance < bestDistance {
+            bestDistance = distance;
+            best = slot;
+        }
+
+        slot += 1;
+    }
+
+    return best;
 }
 
 /**
@@ -1175,6 +1749,7 @@ public func MpCsEnterButton(parent: ref<inkCanvas>, x: Float, y: Float) -> Void 
  *
  *   the four cards       select that slot; a second click on the SAME card acts on it
  *   ENTER NIGHT CITY     act on whatever the caret is on
+ *   SELECT               lock or unlock the character the caret is on
  *
  * Acting means the obvious thing for the slot: enter the world as a character, or run the
  * creator on an empty one. That is why all four empty slots "point to new character" - each
@@ -1183,82 +1758,39 @@ public func MpCsEnterButton(parent: ref<inkCanvas>, x: Float, y: Float) -> Void 
  */
 @addMethod(SingleplayerMenuGameController)
 public func MpCsClickAt(x: Float, y: Float) -> Void {
-    // The ENTER button first, with a generous margin. It overlaps nothing, so being loose
-    // here costs nothing and being tight costs a press that appears to do nothing.
-    if x >= 1300.0 && x <= 1890.0 && y >= 860.0 && y <= 1020.0 {
+    let hit = MpCsHitAt(x, y);
+
+    if hit == MpCsHitIdSelect() {
+        this.MpCsToggleLock();
+        return;
+    }
+
+    if hit == MpCsHitIdEnter() {
         this.MpCsAct();
         return;
     }
 
-    // DELETE button - MpCsActions draws it at x 320-556, y 910-968. Click is the input that
-    // reliably arrives (the DEL key's delete_save never reaches OnGlobalRelease), so deletion
-    // is driven from here. Two clicks: arm, then confirm (MpCsDelete).
-    if x >= 314.0 && x <= 562.0 && y >= 900.0 && y <= 978.0 {
+    // Click is the input that reliably arrives (the DEL key's delete_save never reaches
+    // OnGlobalRelease), so deletion is driven from here. Two clicks: arm, then confirm (MpCsDelete).
+    if hit == MpCsHitIdDelete() {
         this.MpCsDelete();
         return;
     }
 
-    /*
-     * NEAREST CARD WINS, rather than strict bands.
-     *
-     * zeldfep's three measurements all landed in the LOWER half of their card:
-     *
-     *   372 -> slot 1 (band 322-412, centre 367)
-     *   590 -> slot 3 (band 520-610, centre 565)
-     *   653 -> slot 4 (band 619-709, centre 664)
-     *
-     * Consistent with a downward bias of roughly 40px between where the cursor looks and
-     * where the click reports - which is exactly his "I have to click a little above where
-     * the button actually is", and why "slot 2 is hard to get": it is the one card bracketed
-     * on both sides, so the bias pushes a centred aim into slot 3.
-     *
-     * Measuring that bias and subtracting a constant would work until it was wrong - a
-     * different resolution, a different UI scale, and it is off again with nobody knowing
-     * why. Nearest-centre is correct for ANY offset smaller than half the 99px pitch, and it
-     * degrades gently rather than snapping to the wrong card at a boundary. It also removes
-     * the dead gaps between cards, where a click previously did nothing at all.
-     *
-     * The x range stays a plain bound: horizontally there is only one column, so there is
-     * nothing to be nearest TO.
-     */
-    if x < 40.0 || x > 700.0 {
+    if hit < 0 {
         return;
     }
 
-    let first = 322.0;
-    let pitch = 99.0;
-    let height = 90.0;
-
-    // Outside the roster block entirely, with a card's worth of slack at each end so a click
-    // just above the first or below the last still reads as aiming at it.
-    if y < first - height || y > first + Cast<Float>(MpCsMaxSlots() - 1) * pitch + height * 2.0 {
+    // Locked in: a press on a card neither moves the caret nor acts on it.
+    if this.MpCsIsLocked() {
+        this.MpCsSayLocked();
         return;
     }
 
-    let best = -1;
-    let bestDistance = 99999.0;
-    let slot = 0;
-
-    while slot < MpCsMaxSlots() {
-        let centre = first + Cast<Float>(slot) * pitch + height / 2.0;
-        let distance = AbsF(y - centre);
-
-        if distance < bestDistance {
-            bestDistance = distance;
-            best = slot;
-        }
-
-        slot += 1;
-    }
-
-    if best < 0 {
-        return;
-    }
-
-    if this.m_csCursor == best {
+    if this.m_csCursor == hit {
         this.MpCsAct();
     } else {
-        this.MpCsSelect(best);
+        this.MpCsSelect(hit);
     }
 }
 
@@ -1343,6 +1875,11 @@ public class MpCsDeleteRefresh extends DelayCallback {
  */
 @addMethod(SingleplayerMenuGameController)
 public func MpCsDelete() -> Void {
+    if this.MpCsIsLocked() {
+        this.MpCsSayLocked();
+        return;
+    }
+
     let network = GameInstance.GetNetworkWorldSystem();
     if !IsDefined(network) || !network.IsConnected() {
         MpCsLog(s"delete clicked with no connection");
@@ -1372,6 +1909,48 @@ public func MpCsDelete() -> Void {
     this.m_csDeleteArmed = true;
     this.MpCsOpen();
     this.MpCsSay("ARE YOU SURE? Click DELETE again to delete this character.");
+}
+
+/**
+ * True while the player has locked in the character the caret is on. It asks the roster as well
+ * as the flag, so a slot that empties underneath the lock cannot stay locked.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsIsLocked() -> Bool {
+    return this.m_csLocked && this.MpCsRosterIndex(this.m_csCursor) >= 0;
+}
+
+/**
+ * SELECT'S PADLOCK. zeldfep, 2026-11-09: "make sure that its working lock so you can lock the
+ * character you want to select".
+ *
+ * Not the same word as a LOCKED slot, which is one this account may not use. This one is the
+ * player's own choice about the character the caret is on, so an empty slot refuses it: there
+ * is nobody there to lock. Confirming stays with ENTER CITY, and it does not need the lock.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsToggleLock() -> Void {
+    if this.MpCsRosterIndex(this.m_csCursor) < 0 {
+        this.m_csLocked = false;
+        this.MpCsSay("This slot is empty, so there is nobody to lock.");
+        return;
+    }
+
+    this.m_csLocked = !this.m_csLocked;
+    this.m_csCreateArmed = false;
+    this.m_csDeleteArmed = false;
+
+    MpCsLog(s"lock=\(this.m_csLocked) on slot \(this.m_csCursor + 1)");
+    this.MpCsOpen();
+}
+
+/**
+ * The answer to anything the lock has just stopped, in one place so every refusal says how to
+ * undo it.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsSayLocked() -> Void {
+    this.MpCsSay("Locked in. Click LOCKED to change character.");
 }
 
 /**
@@ -1472,7 +2051,7 @@ public func MpCsPixelsPerUnit() -> Float {
 }
 
 /**
- * THE IDENTITY SCAN - the mockup's rings, between the roster and the dossier.
+ * THE MIDDLE OF THE SCREEN: the rings, the polygon, and who it is.
  *
  * ink has no circle, so a ring is drawn as short tangential segments placed around a centre:
  * each one rotated to match its own angle, so the run of them reads as a curve rather than a
@@ -1484,12 +2063,14 @@ public func MpCsPixelsPerUnit() -> Float {
  * and read worse than stillness. Motion is worth having and wants the screen to stop
  * rebuilding wholesale first - noted rather than faked.
  *
- * Centre is the mockup's own: scan block at x 690 + ring origin 235, y 196 + 280.
+ * THE POLYGON holds the selected character's face once the picture feature exists; until
+ * then, the initial. Showing the whole character the player picks is a larger build, flagged
+ * as the-selector-s-middle-should-show-the-whole-character-the-pl.
  */
 @addMethod(SingleplayerMenuGameController)
 public func MpCsScanRings(parent: ref<inkCanvas>) -> Void {
-    let cx = 925.0;
-    let cy = 476.0;
+    let cx = 967.0;
+    let cy = 470.0;
 
     let index = this.MpCsRosterIndex(this.m_csCursor);
     let occupied = index >= 0;
@@ -1502,7 +2083,38 @@ public func MpCsScanRings(parent: ref<inkCanvas>) -> Void {
     this.MpCsRing(parent, cx, cy, 168.0, 24, 26.0, 2.0, colour, 0.45);
     this.MpCsRing(parent, cx, cy, 128.0, 72, 6.0, 2.0, colour, 0.30);
 
-    // The subject, under the rings, in the mockup's sizes.
+    // A regular hexagon is exactly three rectangles, each turned sixty degrees from the
+    // last. Opaque, so where they cross does not show.
+    let side = 124.0;
+    let turn = 0;
+
+    while turn < 3 {
+        let piece = new inkRectangle();
+
+        piece.SetAnchor(inkEAnchor.TopLeft);
+        piece.SetAnchorPoint(new Vector2(0.5, 0.5));
+        piece.SetMargin(new inkMargin(cx, cy, 0.0, 0.0));
+        piece.SetSize(new Vector2(side, side * 1.7320508));
+        piece.SetTintColor(MpCsPlate());
+        piece.SetRotation(Cast<Float>(turn) * 60.0);
+        piece.Reparent(parent);
+
+        turn += 1;
+    }
+
+    let corner = 0;
+
+    while corner < 6 {
+        let a = Deg2Rad(Cast<Float>(corner) * 60.0);
+        let b = Deg2Rad(Cast<Float>(corner + 1) * 60.0);
+
+        MpCsLine(parent, cx + side * CosF(a), cy + side * SinF(a), cx + side * CosF(b), cy + side * SinF(b),
+                 3.0, colour, 1.0);
+
+        corner += 1;
+    }
+
+    // The subject, under the rings.
     let network = GameInstance.GetNetworkWorldSystem();
 
     if occupied && IsDefined(network) {
@@ -1510,14 +2122,16 @@ public func MpCsScanRings(parent: ref<inkCanvas>) -> Void {
         let shown = NotEquals(name, "") ? name : "unnamed";
         let lifepath = network.GetRosterLifepath(Cast<Uint32>(index));
 
-        MpCsText(parent, cx - 200.0, cy + 250.0, shown, 44, n"Bold", MpCsInk());
+        MpCsAlign(MpCsText(parent, cx, cy, StrUpper(StrLeft(shown, 1)), 96, n"Bold", MpCsInkDim()), 0.5, 0.5);
+        MpCsAlign(MpCsText(parent, cx, cy + 250.0, StrUpper(MpCsClip(shown, 22)), 44, n"Bold", MpCsInk()), 0.5, 0.0);
 
         if NotEquals(lifepath, "") {
-            MpCsText(parent, cx - 200.0, cy + 306.0, lifepath, 14, n"Medium", MpCsGold());
+            MpCsAlign(MpCsText(parent, cx, cy + 306.0, StrUpper(lifepath), 16, n"Medium", MpCsGold()), 0.5, 0.0);
         }
     } else {
-        MpCsText(parent, cx - 200.0, cy + 250.0, "NO SIGNAL", 44, n"Bold", MpCsInkFaint());
-        MpCsText(parent, cx - 200.0, cy + 306.0, "SLOT EMPTY", 14, n"Medium", MpCsInkFaint());
+        MpCsAlign(MpCsText(parent, cx, cy, "+", 96, n"Medium", MpCsInkFaint()), 0.5, 0.5);
+        MpCsAlign(MpCsText(parent, cx, cy + 250.0, "NO SIGNAL", 44, n"Bold", MpCsInkFaint()), 0.5, 0.0);
+        MpCsAlign(MpCsText(parent, cx, cy + 306.0, MpCsSpaced("SLOT EMPTY"), 16, n"Medium", MpCsInkFaint()), 0.5, 0.0);
     }
 }
 
@@ -1561,80 +2175,100 @@ public func MpCsRing(parent: ref<inkCanvas>, cx: Float, cy: Float, radius: Float
 /**
  * The dossier on whoever the caret is on.
  *
- * 620 wide with a striped gold header, which is the design language's "this is the thing
- * in play" marker - flat fills are states, stripes are attention.
+ * The render's panel: a trapezoid, because the panel curves away from the viewer. Every row
+ * inside leans with it. Only facts the server sends today are on it; the render's street
+ * cred, last location, play time and playstyle need data this screen does not get (Atlas
+ * character-select-mockup-items-never-built).
  */
 @addMethod(SingleplayerMenuGameController)
-public func MpCsDetail(parent: ref<inkCanvas>, x: Float, y: Float) -> Void {
+public func MpCsDetail(parent: ref<inkCanvas>) -> Void {
     let network = GameInstance.GetNetworkWorldSystem();
 
     if !IsDefined(network) {
         return;
     }
 
-    let w = 620.0;
-    let h = 460.0;
+    let L = 1355.0;
+    let E = 1868.0;
+    let xs = [L, E - 24.0, E, E, E - 20.0, L + 20.0, L];
+    let ys = [118.0, 96.0, 120.0, 802.0, 824.0, 810.0, 790.0];
 
-    MpCsRect(parent, x, y, w, h, MpCsPlate(), 0.82);
-    MpCsBorder(parent, x, y, w, h, MpCsGoldDim(), 0.9);
-
-    // The hazard strip: alternating gold and dark, drawn as blocks. Striped rather than
-    // flat because this panel is what the ENTER press acts on - it is the screen's claim
-    // about who you are about to become, and that is worth marking.
-    let i = 0;
-
-    while i < 34 {
-        MpCsRect(parent, x + 1.0 + Cast<Float>(i) * 18.0, y + 1.0, 9.0, 7.0, MpCsGold(), 0.85);
-        i += 1;
-    }
+    MpCsPolyFill(parent, xs, ys, MpCsPlate(), 0.86);
+    MpCsPolyEdge(parent, xs, ys, 1.0, MpCsRed(), 0.34);
+    MpCsLine(parent, L, 119.0, L + 40.0, 117.0, 4.0, MpCsGold(), 1.0);
 
     let index = this.MpCsRosterIndex(this.m_csCursor);
 
     if index < 0 {
-        MpCsText(parent, x + 26.0, y + 40.0, "NO CHARACTER", 40, n"Bold", MpCsInkFaint());
-        MpCsRect(parent, x + 26.0, y + 100.0, w - 52.0, 1.0, MpCsRedDim(), 0.8);
-        MpCsText(parent, x + 26.0, y + 124.0,
-                 "This slot is empty. CREATE NEW CHARACTER", 19, n"Regular", MpCsInkDim());
-        MpCsText(parent, x + 26.0, y + 150.0,
-                 "runs the creator and fills it.", 19, n"Regular", MpCsInkDim());
+        MpCsTextWide(MpCsFanR(parent, 170.0), 1392.0, 146.0, "NO CHARACTER", 38, n"Bold", MpCsInkFaint());
+        MpCsRect(MpCsFanR(parent, 318.0), 1392.0, 318.0, 450.0, 1.0, MpCsRedDim(), 0.75);
+
+        let empty = MpCsFanR(parent, 370.0);
+
+        MpCsText(empty, 1392.0, 346.0, "This slot is empty.", 24, n"Medium", MpCsInkDim());
+        MpCsText(empty, 1392.0, 382.0, "Click it again to run the creator and fill it.", 22, n"Medium", MpCsInkDim());
         return;
     }
 
     let u = Cast<Uint32>(index);
     let name = network.GetRosterName(u);
     let shown = NotEquals(name, "") ? name : "unnamed";
+    let lifepath = network.GetRosterLifepath(u);
+    let lines = MpCsLifepathLines(lifepath);
 
-    MpCsText(parent, x + 26.0, y + 34.0, shown, 40, n"Bold", MpCsGold());
+    MpCsTextWide(MpCsFanR(parent, 170.0), 1392.0, 148.0, StrUpper(MpCsClip(shown, 11)), 38, n"Bold", MpCsGold());
 
-    // Level as a filled chip - the mockup's inverted badge, dark ink on gold.
-    MpCsRect(parent, x + w - 130.0, y + 44.0, 104.0, 30.0, MpCsGold(), 1.0);
-    MpCsText(parent, x + w - 116.0, y + 49.0, s"LEVEL \(network.GetRosterLevel(u))", 15,
-             n"Medium", new HDRColor(0.1, 0.08, 0.0, 1.0));
+    let level = MpCsFanR(parent, 156.0);
 
-    MpCsRect(parent, x + 26.0, y + 96.0, w - 52.0, 1.0, MpCsRedDim(), 0.8);
+    MpCsPolyEdge(level, MpCsCutXs(1752.0, 100.0, 8.0), MpCsCutYs(134.0, 44.0, 8.0), 1.5, MpCsGold(), 1.0);
+    MpCsAlign(MpCsTextWide(level, 1802.0, 156.0, s"LV. \(network.GetRosterLevel(u))", 23, n"Medium", MpCsGold()), 0.5, 0.5);
+
+    let id = MpCsFanR(parent, 240.0);
+
+    MpCsLifepathIcon(id, 1392.0, 210.0, 50.0, 50.0, lifepath, false, MpCsGold(), 1.0);
+    MpCsText(id, 1456.0, 212.0, StrUpper(NotEquals(lifepath, "") ? lifepath : "no lifepath"), 27, n"Medium", MpCsInk());
+
+    if ArraySize(lines) >= 6 {
+        MpCsText(id, 1456.0, 252.0, lines[0], 18, n"Medium", MpCsInkDim());
+        MpCsText(id, 1456.0, 275.0, lines[1], 18, n"Medium", MpCsInkDim());
+    }
+
+    MpCsRect(MpCsFanR(parent, 318.0), 1392.0, 318.0, 450.0, 1.0, MpCsInkDim(), 0.35);
 
     // Key/value rows. Every one of these is a fact the server sent, which is the point of
     // the panel: it is the roster made legible, not a description of it.
-    let lifepath = network.GetRosterLifepath(u);
-    let rowY = y + 122.0;
+    this.MpCsRow(parent, 354.0, "LIFEPATH", NotEquals(lifepath, "") ? lifepath : "not recorded");
+    this.MpCsRow(parent, 416.0, "SLOT", s"0\(this.m_csCursor + 1) OF 04");
+    this.MpCsRow(parent, 459.0, "STATUS", network.HasRosterSpawnedBefore(u) ? "played" : "never played");
+    this.MpCsRow(parent, 502.0, "IN PLAY", network.IsRosterActive(u) ? "yes - this is you" : "no");
 
-    this.MpCsRow(parent, x, rowY, w, "LIFEPATH",
-                 NotEquals(lifepath, "") ? lifepath : "not recorded");
-    this.MpCsRow(parent, x, rowY + 46.0, w, "SLOT", s"0\(this.m_csCursor + 1) OF 04");
-    this.MpCsRow(parent, x, rowY + 92.0, w, "STATUS",
-                 network.HasRosterSpawnedBefore(u) ? "played" : "never played");
-    this.MpCsRow(parent, x, rowY + 138.0, w, "IN PLAY",
-                 network.IsRosterActive(u) ? "yes - this is you" : "no");
+    this.MpCsAttributes(parent, index);
 
-    this.MpCsAttributes(parent, x + 26.0, rowY + 186.0, index);
+    // The render's right-hand column: the emblem large, in red, over a line of graffiti. The
+    // emblem is the game's own, so every lifepath has one.
+    MpCsRect(parent, 1682.0, 556.0, 1.0, 236.0, MpCsRedDim(), 0.75);
+    MpCsLifepathIcon(parent, 1716.0, 556.0, 136.0, 136.0, lifepath, true, MpCsRed(), 0.9);
+
+    if ArraySize(lines) >= 6 {
+        let i = 2;
+
+        while i < 6 {
+            MpCsText(parent, 1706.0, 706.0 + Cast<Float>(i - 2) * 22.0, lines[i], 18, n"Medium", MpCsRed());
+            i += 1;
+        }
+    }
 }
 
+/**
+ * A key/value row, centred on yc, with its rule underneath.
+ */
 @addMethod(SingleplayerMenuGameController)
-public func MpCsRow(parent: ref<inkCanvas>, x: Float, y: Float, w: Float, key: String,
-                    value: String) -> Void {
-    MpCsText(parent, x + 26.0, y, key, 13, n"Regular", MpCsInkFaint());
-    MpCsText(parent, x + 240.0, y - 4.0, value, 17, n"Regular", MpCsInk());
-    MpCsRect(parent, x + 26.0, y + 30.0, w - 52.0, 1.0, MpCsRedDim(), 0.35);
+public func MpCsRow(parent: ref<inkCanvas>, yc: Float, key: String, value: String) -> Void {
+    let row = MpCsFanR(parent, yc);
+
+    MpCsText(row, 1392.0, yc - 10.0, key, 18, n"Medium", MpCsInkDim());
+    MpCsText(row, 1620.0, yc - 12.0, value, 19, n"Medium", MpCsInk());
+    MpCsRect(row, 1392.0, yc + 21.0, 450.0, 1.0, MpCsRedDim(), 0.5);
 }
 
 // ============================================================================ status
@@ -1703,23 +2337,16 @@ public func MpCsSay(message: String) -> Void {
 }
 
 /**
- * THE ATTRIBUTE BARS, from the mockup's dossier.
+ * THE ATTRIBUTES: the game's own icon, the name and the number, as the render has them.
  *
  * The flag day that carries them: CharacterSummary gained a repeated Attribute so the
  * selector can show who somebody IS, not only what they are called.
  *
- * Drawn as skewed segments the way the mockup does - a filled run against an unfilled
- * remainder - because a bar made of parts reads as a rating where a solid fill reads as a
- * progress meter. Twenty segments, which is the game's own attribute ceiling.
- *
- * THE TYPE IS NOT INTERPRETED HERE. It arrives as the game's own gamedataStatType number
- * and the names for those are not written down anywhere I can check, so a row is labelled
- * from MpCsAttributeName and falls back to the raw number. Guessing five enum values and
- * shipping them as labels is how somebody ends up reading their Reflexes as their Cool -
- * the types are logged instead, so the next build can name them from evidence.
+ * THE TYPE IS NOT INTERPRETED HERE. It arrives as the game's own gamedataStatType number and
+ * a row is labelled from MpCsAttributeName, which falls back to the raw number.
  */
 @addMethod(SingleplayerMenuGameController)
-public func MpCsAttributes(parent: ref<inkCanvas>, x: Float, y: Float, index: Int32) -> Void {
+public func MpCsAttributes(parent: ref<inkCanvas>, index: Int32) -> Void {
     let network = GameInstance.GetNetworkWorldSystem();
 
     if !IsDefined(network) || index < 0 {
@@ -1728,59 +2355,61 @@ public func MpCsAttributes(parent: ref<inkCanvas>, x: Float, y: Float, index: In
 
     let u = Cast<Uint32>(index);
     let count = network.GetRosterAttributeCount(u);
+    let head = MpCsFanR(parent, 546.0);
 
-    MpCsText(parent, x, y, "ATTRIBUTES", 13, n"Regular", MpCsInkFaint());
-    MpCsRect(parent, x + 130.0, y + 8.0, 400.0, 1.0, MpCsRedDim(), 0.7);
+    MpCsText(head, 1392.0, 536.0, "ATTRIBUTES", 18, n"Medium", MpCsInkDim());
 
     if count == 0u {
-        MpCsText(parent, x, y + 28.0, "none recorded for this character", 15, n"Regular",
-                 MpCsInkFaint());
+        MpCsText(MpCsFanR(parent, 586.0), 1392.0, 576.0, "none recorded for this character", 18, n"Medium", MpCsInkFaint());
         return;
     }
 
     let i = 0u;
 
-    // The panel is 460 tall and this block starts 308 into it, so 152 remain. The header
-    // takes 26, leaving 126 - which is FIVE rows at a 26 pitch with room for the bar height.
-    // It was a 30 pitch capped at six: six rows need 180 and even five needed 164, so the
-    // bottom row was drawn 13px BELOW the panel's own border. Cyberpunk has exactly five
-    // attributes, so the sixth slot was never real - and drawing it is what pushed the
-    // block out of the frame.
+    // Cyberpunk has exactly five attributes.
     while i < count && i < 5u {
         let type = network.GetRosterAttributeType(u, i);
         let value = network.GetRosterAttributeValue(u, i);
-        let rowY = y + 26.0 + Cast<Float>(i) * 26.0;
+        let yc = 586.0 + Cast<Float>(i) * 43.0;
+        let row = MpCsFanR(parent, yc);
 
-        MpCsText(parent, x, rowY, MpCsAttributeName(type), 14, n"Regular", MpCsInkDim());
-
-        // Twenty segments, skewed, filled to the value. Skew is what makes it the game's
-        // own bar rather than a generic one.
-        let segment = 0;
-
-        while segment < 20 {
-            let filled = segment < value;
-            let sx = x + 150.0 + Cast<Float>(segment) * 18.0;
-
-            let bar = new inkRectangle();
-            bar.SetAnchor(inkEAnchor.TopLeft);
-            bar.SetAnchorPoint(new Vector2(0.5, 0.5));
-            bar.SetMargin(new inkMargin(sx, rowY + 8.0, 0.0, 0.0));
-            bar.SetSize(new Vector2(13.0, 14.0));
-            bar.SetTintColor(filled ? MpCsGold() : MpCsInk());
-            bar.SetOpacity(filled ? 0.95 : 0.10);
-            bar.SetRotation(-18.0);
-            bar.Reparent(parent);
-
-            segment += 1;
-        }
-
-        // Inside the panel, with the same 26 inset the left edge uses. This column sat
-        // at 552 and a two-digit value ran to about 574, past the panel's inner edge at
-        // 568 - which is why the numbers were drawn sitting on the border.
-        MpCsText(parent, x + 516.0, rowY - 2.0, s"\(value)", 18, n"Medium", MpCsInk());
+        MpCsAttributeIcon(row, 1390.0, yc - 15.0, 30.0, type, MpCsInkDim());
+        MpCsText(row, 1434.0, yc - 10.0, MpCsAttributeName(type), 18, n"Medium", MpCsInkDim());
+        MpCsAlign(MpCsText(row, 1658.0, yc - 12.0, s"\(value)", 21, n"Medium", MpCsInk()), 1.0, 0.0);
+        MpCsRect(row, 1434.0, yc + 19.0, 226.0, 1.0, MpCsRedDim(), 0.45);
 
         i += 1u;
     }
+}
+
+/**
+ * The game's own icon for an attribute, by the same comparison MpCsAttributeName uses.
+ * Part names read from attributes_icons.inkatlas and PerkAttributeHelper.GetIconAtlasPart.
+ */
+public func MpCsAttributeIcon(parent: ref<inkCompoundWidget>, x: Float, y: Float, size: Float,
+                              type: Uint32, color: HDRColor) -> Void {
+    let part = n"";
+
+    if type == Cast<Uint32>(EnumInt(gamedataStatType.Strength)) { part = n"ico_body"; }
+    if type == Cast<Uint32>(EnumInt(gamedataStatType.Reflexes)) { part = n"ico_ref"; }
+    if type == Cast<Uint32>(EnumInt(gamedataStatType.Intelligence)) { part = n"ico_int"; }
+    if type == Cast<Uint32>(EnumInt(gamedataStatType.TechnicalAbility)) { part = n"ico_tech"; }
+    if type == Cast<Uint32>(EnumInt(gamedataStatType.Cool)) { part = n"ico_cool"; }
+
+    if Equals(part, n"") {
+        return;
+    }
+
+    let i = new inkImage();
+
+    i.SetAnchor(inkEAnchor.TopLeft);
+    i.SetAnchorPoint(new Vector2(0.0, 0.0));
+    i.SetMargin(new inkMargin(x, y, 0.0, 0.0));
+    i.SetSize(new Vector2(size, size));
+    i.SetAtlasResource(r"base\\gameplay\\gui\\common\\icons\\attributes_icons.inkatlas");
+    i.SetTexturePart(part);
+    i.SetTintColor(color);
+    i.Reparent(parent);
 }
 
 /**
@@ -1931,4 +2560,475 @@ public func MpCsActiveSlot() -> Int32 {
     }
 
     return first >= 0 ? first : 0;
+}
+
+// ============================================================================ the click map
+//
+// WHERE THE CLICKS ACTUALLY GO, DRAWN ON THE SCREEN. zeldfep, 2026-09-08: "how about you let
+// me draw where the buttons are instead of guessing". The first version found the 1440p click
+// bug in one sentence ("your draw box is correct the selection is wayyy off"), came out once
+// that was fixed, and was kept on the server. It carried its own copy of the box numbers, so
+// the first layout change made it wrong. This one reads MpCsHitEnter and friends, the same
+// numbers MpCsHitAt tests, so an outline cannot disagree with a click.
+//
+// WHAT IT DRAWS: every click box with its coordinates, the lines where one card hands over to
+// the next, a crosshair on the last click with what it hit, rulers on two edges, and two exact
+// points for working out a transform. MEASURE turns clicks into corners and prints the box
+// between them, with the same numbers going to the client log.
+//
+// CYAN IS THE CLICK. It is --glitch in docs/DESIGN-LANGUAGE.md, the one hue outside the palette,
+// and it means the click and nothing else. White is what YOU measured. Nothing else on this
+// screen uses either as an outline, so a screenshot cannot confuse the tool with the design.
+//
+// DEVELOPER ACCOUNTS ONLY, through the slot count: developers are given four, a public account
+// one. If extra slots ever go on sale, this needs a real role check first.
+
+public func MpCsMapCyan() -> HDRColor = new HDRColor(0.235, 0.91, 0.937, 1.0)
+
+public func MpCsMapChipView() -> array<Float> = [640.0, 8.0, 760.0, 40.0]
+
+public func MpCsMapChipMeasure() -> array<Float> = [768.0, 8.0, 926.0, 40.0]
+
+public func MpCsMapInt(value: Float) -> String = IntToString(Cast<Int32>(value))
+
+/**
+ * Ink cannot measure text until a layout has run and this layer is rebuilt on every click, so
+ * a plate is sized from the length. Measured on the Selector Test bench in Rajdhani Medium 15:
+ * these labels run 6.3 to 7.0 units a character, so 7.4 errs wide rather than clipping.
+ */
+public func MpCsMapTextWidth(text: String) -> Float = Cast<Float>(StrLen(text)) * 7.4 + 14.0
+
+/**
+ * An inverted plate: solid colour, dark text. The label a box carries.
+ */
+public func MpCsMapTag(parent: ref<inkCompoundWidget>, x: Float, y: Float, text: String,
+                       color: HDRColor) -> Void {
+    let w = MpCsMapTextWidth(text);
+    let left = ClampF(x, 4.0, 1916.0 - w);
+    let top = ClampF(y, 4.0, 1054.0);
+
+    MpCsRect(parent, left, top, w, 22.0, color, 1.0);
+    MpCsText(parent, left + 7.0, top + 1.0, text, 15, n"Medium", MpCsVoid());
+}
+
+/**
+ * Coloured text on a dark plate, for the readouts that should not shout. Text over the
+ * backdrop always gets a plate: the picture behind it is a photograph of a busy UI.
+ */
+public func MpCsMapNote(parent: ref<inkCompoundWidget>, x: Float, y: Float, text: String,
+                        color: HDRColor) -> Void {
+    let w = MpCsMapTextWidth(text);
+    let left = ClampF(x, 4.0, 1916.0 - w);
+    let top = ClampF(y, 4.0, 1054.0);
+
+    MpCsRect(parent, left, top, w, 22.0, MpCsVoid(), 0.86);
+    MpCsText(parent, left + 7.0, top + 1.0, text, 15, n"Medium", color);
+}
+
+/**
+ * A two-unit outline with heavier corners. Two units because the first version drew one and
+ * zeldfep could not find it; the corners are what lets a box read over the busy backdrop.
+ */
+public func MpCsMapFrame(parent: ref<inkCompoundWidget>, x: Float, y: Float, w: Float, h: Float,
+                         color: HDRColor) -> Void {
+    let arm = 16.0;
+    let thick = 5.0;
+
+    MpCsRect(parent, x, y, w, 2.0, color, 1.0);
+    MpCsRect(parent, x, y + h - 2.0, w, 2.0, color, 1.0);
+    MpCsRect(parent, x, y, 2.0, h, color, 1.0);
+    MpCsRect(parent, x + w - 2.0, y, 2.0, h, color, 1.0);
+
+    MpCsRect(parent, x, y, arm, thick, color, 1.0);
+    MpCsRect(parent, x, y, thick, arm, color, 1.0);
+    MpCsRect(parent, x + w - arm, y, arm, thick, color, 1.0);
+    MpCsRect(parent, x + w - thick, y, thick, arm, color, 1.0);
+    MpCsRect(parent, x, y + h - thick, arm, thick, color, 1.0);
+    MpCsRect(parent, x, y + h - arm, thick, arm, color, 1.0);
+    MpCsRect(parent, x + w - arm, y + h - thick, arm, thick, color, 1.0);
+    MpCsRect(parent, x + w - thick, y + h - arm, thick, arm, color, 1.0);
+}
+
+/**
+ * One click box: a faint fill so the area reads as an area, its frame, and its numbers.
+ */
+public func MpCsMapBox(parent: ref<inkCompoundWidget>, box: array<Float>, name: String, tagY: Float) -> Void {
+    let cyan = MpCsMapCyan();
+    let w = box[2] - box[0];
+    let h = box[3] - box[1];
+
+    MpCsRect(parent, box[0], box[1], w, h, cyan, 0.08);
+    MpCsMapFrame(parent, box[0], box[1], w, h, cyan);
+    MpCsMapTag(parent, box[0], tagY,
+               s"\(name)  X \(MpCsMapInt(box[0]))-\(MpCsMapInt(box[2]))  Y \(MpCsMapInt(box[1]))-\(MpCsMapInt(box[3]))",
+               cyan);
+}
+
+/**
+ * A cross with an open middle, so whatever is under the point stays visible.
+ */
+public func MpCsMapCross(parent: ref<inkCompoundWidget>, x: Float, y: Float, arm: Float, thick: Float,
+                         color: HDRColor) -> Void {
+    let half = thick / 2.0;
+
+    MpCsRect(parent, x - arm - 8.0, y - half, arm, thick, color, 1.0);
+    MpCsRect(parent, x + 8.0, y - half, arm, thick, color, 1.0);
+    MpCsRect(parent, x - half, y - arm - 8.0, thick, arm, color, 1.0);
+    MpCsRect(parent, x - half, y + 8.0, thick, arm, color, 1.0);
+    MpCsRect(parent, x - 1.0, y - 1.0, 2.0, 2.0, color, 1.0);
+}
+
+@addField(SingleplayerMenuGameController)
+let m_csMapRoot: wref<inkCanvas>;
+
+@addField(SingleplayerMenuGameController)
+let m_csMapHidden: Bool;
+
+@addField(SingleplayerMenuGameController)
+let m_csMapMeasure: Bool;
+
+@addField(SingleplayerMenuGameController)
+let m_csMapPerUnit: Float;
+
+@addField(SingleplayerMenuGameController)
+let m_csMapClicked: Bool;
+
+@addField(SingleplayerMenuGameController)
+let m_csMapX: Float;
+
+@addField(SingleplayerMenuGameController)
+let m_csMapY: Float;
+
+@addField(SingleplayerMenuGameController)
+let m_csMapPixelX: Float;
+
+@addField(SingleplayerMenuGameController)
+let m_csMapPixelY: Float;
+
+@addField(SingleplayerMenuGameController)
+let m_csMapHit: Int32;
+
+@addField(SingleplayerMenuGameController)
+let m_csMapCorners: Int32;
+
+@addField(SingleplayerMenuGameController)
+let m_csMapFirstX: Float;
+
+@addField(SingleplayerMenuGameController)
+let m_csMapFirstY: Float;
+
+@addMethod(SingleplayerMenuGameController)
+public func MpCsMapAllowed() -> Bool {
+    let network = GameInstance.GetNetworkWorldSystem();
+
+    return IsDefined(network) && network.GetCharacterSlots() > 1;
+}
+
+/**
+ * The display as the game has it, without the log line MpCsPixelsPerUnit writes.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsMapDisplay() -> String {
+    let settings = GameInstance.GetSettingsSystem(GetGameInstance());
+
+    if !IsDefined(settings) {
+        return "UNKNOWN";
+    }
+
+    let variable = settings.GetVar(n"/video/display", n"Resolution") as ConfigVarListString;
+
+    return IsDefined(variable) ? variable.GetValue() : "UNKNOWN";
+}
+
+/**
+ * Called last in MpCsOpen, so it sits on top. The layer is its own canvas because a click that
+ * hits nothing must still move the crosshair, and rebuilding the whole screen for that would
+ * throw away the backdrop to redraw a cross.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsMapBuild(parent: ref<inkCanvas>) -> Void {
+    if !this.MpCsMapAllowed() {
+        return;
+    }
+
+    let layer = new inkCanvas();
+
+    layer.SetName(n"mp_cs_click_map");
+    layer.SetAnchor(inkEAnchor.TopLeft);
+    layer.SetAnchorPoint(new Vector2(0.0, 0.0));
+    layer.SetMargin(new inkMargin(0.0, 0.0, 0.0, 0.0));
+    layer.SetSize(new Vector2(1920.0, 1080.0));
+    layer.SetInteractive(false);
+    layer.Reparent(parent);
+
+    this.m_csMapRoot = layer;
+
+    if this.m_csMapPerUnit <= 0.0 {
+        this.m_csMapPerUnit = this.MpCsPixelsPerUnit();
+    }
+
+    this.MpCsMapDraw();
+}
+
+@addMethod(SingleplayerMenuGameController)
+public func MpCsMapRefresh() -> Void {
+    if IsDefined(this.m_csMapRoot) {
+        this.m_csMapRoot.RemoveAllChildren();
+        this.MpCsMapDraw();
+    }
+}
+
+@addMethod(SingleplayerMenuGameController)
+public func MpCsMapDraw() -> Void {
+    let c = this.m_csMapRoot;
+
+    if !IsDefined(c) {
+        return;
+    }
+
+    this.MpCsMapChip(c, MpCsMapChipView(), this.m_csMapHidden ? "MAP OFF" : "MAP ON", !this.m_csMapHidden);
+
+    // Hidden means hidden: the design has to be judgeable with nothing of ours on top of it.
+    if this.m_csMapHidden {
+        return;
+    }
+
+    this.MpCsMapChip(c, MpCsMapChipMeasure(), this.m_csMapMeasure ? "MEASURE ON" : "MEASURE OFF", this.m_csMapMeasure);
+
+    let cyan = MpCsMapCyan();
+    let root = this.GetRootCompoundWidget().GetSize();
+
+    MpCsMapNote(c, 934.0, 13.0,
+                s"DISPLAY \(this.MpCsMapDisplay())   \(FloatToStringPrec(this.m_csMapPerUnit, 3)) PX PER UNIT   ROOT \(MpCsMapInt(root.X))x\(MpCsMapInt(root.Y))",
+                cyan);
+
+    // Measure swallows clicks, and a screen that silently stops pressing looks broken.
+    if this.m_csMapMeasure {
+        MpCsMapTag(c, 768.0, 44.0, "MEASURING: CLICKS PRESS NOTHING. CLICK TWO CORNERS.", MpCsInk());
+    }
+
+    this.MpCsMapRulers(c);
+    this.MpCsMapRegions(c);
+    this.MpCsMapTargets(c);
+    this.MpCsMapMeasured(c);
+    this.MpCsMapLastClick(c);
+}
+
+@addMethod(SingleplayerMenuGameController)
+public func MpCsMapChip(parent: ref<inkCanvas>, box: array<Float>, label: String, lit: Bool) -> Void {
+    let cyan = MpCsMapCyan();
+    let w = box[2] - box[0];
+    let h = box[3] - box[1];
+
+    MpCsRect(parent, box[0], box[1], w, h, lit ? cyan : MpCsVoid(), lit ? 1.0 : 0.86);
+    MpCsMapFrame(parent, box[0], box[1], w, h, cyan);
+
+    let text = MpCsText(parent, box[0] + w / 2.0, box[1] + h / 2.0, label, 16, n"Bold", lit ? MpCsVoid() : cyan);
+
+    MpCsAlign(text, 0.5, 0.5);
+}
+
+/**
+ * Ticks every 100 units on the bottom and right edges, numbered every 200, so a screenshot can
+ * be read for coordinates without anybody clicking anything.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsMapRulers(parent: ref<inkCanvas>) -> Void {
+    let cyan = MpCsMapCyan();
+    let i = 1;
+
+    while i < 20 {
+        let x = Cast<Float>(i) * 100.0;
+        let major = i % 2 == 0;
+        let length = major ? 16.0 : 9.0;
+
+        MpCsRect(parent, x - 1.0, 1080.0 - length, 2.0, length, cyan, 1.0);
+
+        if major {
+            MpCsMapNote(parent, x - 22.0, 1038.0, IntToString(i * 100), cyan);
+        }
+
+        i += 1;
+    }
+
+    i = 1;
+
+    while i < 11 {
+        let y = Cast<Float>(i) * 100.0;
+        let major = i % 2 == 0;
+        let length = major ? 16.0 : 9.0;
+
+        MpCsRect(parent, 1920.0 - length, y - 1.0, length, 2.0, cyan, 1.0);
+
+        if major {
+            MpCsMapNote(parent, 1852.0, y - 11.0, IntToString(i * 100), cyan);
+        }
+
+        i += 1;
+    }
+}
+
+/**
+ * Every region MpCsHitAt tests. The roster is one box with the lines inside it that decide
+ * between cards: nearest centre wins, so the real edge of a card is halfway to its neighbour,
+ * and on this design those halfway lines lean with the rows.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsMapRegions(parent: ref<inkCanvas>) -> Void {
+    let cyan = MpCsMapCyan();
+    let roster = MpCsHitRoster();
+    let left = roster[0];
+    let right = roster[2];
+
+    MpCsMapBox(parent, MpCsHitEnter(), "ENTER", 828.0);
+    MpCsMapBox(parent, MpCsHitDelete(), "DELETE", 810.0);
+    MpCsMapBox(parent, MpCsHitSelect(), "SELECT", 810.0);
+    MpCsMapBox(parent, roster, "CARDS", 125.0);
+
+    let slot = 0;
+
+    while slot < MpCsMaxSlots() {
+        let top = MpCsCardFirst() + Cast<Float>(slot) * MpCsCardPitch();
+        let centreRight = MpCsCardCentre(slot, right);
+
+        MpCsLine(parent, left, MpCsCardCentre(slot, left), right, centreRight, 1.5, cyan, 0.6);
+        MpCsMapTag(parent, right + 6.0, centreRight - 11.0,
+                   s"CARD \(slot + 1)  Y \(MpCsMapInt(top))-\(MpCsMapInt(top + MpCsCardHeight()))", cyan);
+
+        if slot + 1 < MpCsMaxSlots() {
+            let fromY = (MpCsCardCentre(slot, left) + MpCsCardCentre(slot + 1, left)) / 2.0;
+            let toY = (MpCsCardCentre(slot, right) + MpCsCardCentre(slot + 1, right)) / 2.0;
+
+            MpCsLine(parent, left, fromY, right, toY, 3.0, cyan, 1.0);
+        }
+
+        slot += 1;
+    }
+}
+
+/**
+ * Two exact points. Reading = a * authored + b, so clicking both solves scale and offset for an
+ * axis with nothing left to interpret, which a card-sized target cannot do.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsMapTargets(parent: ref<inkCanvas>) -> Void {
+    let ink = MpCsInk();
+
+    MpCsMapCross(parent, 960.0, 270.0, 18.0, 3.0, ink);
+    MpCsMapNote(parent, 992.0, 259.0, "A  960, 270", ink);
+    MpCsMapCross(parent, 960.0, 810.0, 18.0, 3.0, ink);
+    MpCsMapNote(parent, 992.0, 799.0, "B  960, 810", ink);
+}
+
+@addMethod(SingleplayerMenuGameController)
+public func MpCsMapMeasured(parent: ref<inkCanvas>) -> Void {
+    if this.m_csMapCorners < 1 {
+        return;
+    }
+
+    let ink = MpCsInk();
+
+    MpCsMapCross(parent, this.m_csMapFirstX, this.m_csMapFirstY, 14.0, 3.0, ink);
+
+    if this.m_csMapCorners < 2 {
+        return;
+    }
+
+    let x = MinF(this.m_csMapFirstX, this.m_csMapX);
+    let y = MinF(this.m_csMapFirstY, this.m_csMapY);
+    let w = AbsF(this.m_csMapX - this.m_csMapFirstX);
+    let h = AbsF(this.m_csMapY - this.m_csMapFirstY);
+
+    MpCsRect(parent, x, y, w, h, ink, 0.1);
+    MpCsMapFrame(parent, x, y, w, h, ink);
+    MpCsMapTag(parent, x, y - 24.0, s"BOX  X \(MpCsMapInt(x))  Y \(MpCsMapInt(y))  W \(MpCsMapInt(w))  H \(MpCsMapInt(h))", ink);
+}
+
+/**
+ * Where the game says the last click was. The cursor is where it was pressed; any gap between
+ * the two is the correction, visible rather than worked out.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsMapLastClick(parent: ref<inkCanvas>) -> Void {
+    if !this.m_csMapClicked {
+        return;
+    }
+
+    let cyan = MpCsMapCyan();
+    let x = this.m_csMapX;
+    let y = this.m_csMapY;
+    let first = s"\(MpCsHitName(this.m_csMapHit))  X \(MpCsMapInt(x))  Y \(MpCsMapInt(y))";
+    let second = s"DISPLAY \(MpCsMapInt(this.m_csMapPixelX)), \(MpCsMapInt(this.m_csMapPixelY))";
+    let w = MaxF(MpCsMapTextWidth(first), MpCsMapTextWidth(second));
+    let tagX = x + 18.0;
+    let tagY = y + 18.0;
+
+    // Flip rather than clamp: a clamped readout would slide over the very point it describes.
+    if tagX + w > 1910.0 {
+        tagX = x - 18.0 - w;
+    }
+
+    if tagY + 46.0 > 1054.0 {
+        tagY = y - 18.0 - 46.0;
+    }
+
+    MpCsMapCross(parent, x, y, 56.0, 4.0, cyan);
+    MpCsMapTag(parent, tagX, tagY, first, cyan);
+    MpCsMapNote(parent, tagX, tagY + 24.0, second, cyan);
+}
+
+/**
+ * Sees every click before the screen does. True means the click was for the tool and goes no
+ * further; false means the screen handles it as usual and the crosshair just records it.
+ */
+@addMethod(SingleplayerMenuGameController)
+public func MpCsMapTake(x: Float, y: Float, pixelX: Float, pixelY: Float) -> Bool {
+    if !this.MpCsMapAllowed() {
+        return false;
+    }
+
+    if MpCsInBox(x, y, MpCsMapChipView()) {
+        this.m_csMapHidden = !this.m_csMapHidden;
+
+        // Measure swallows clicks. Left on behind a hidden map, the screen would look dead.
+        if this.m_csMapHidden {
+            this.m_csMapMeasure = false;
+        }
+
+        this.MpCsMapRefresh();
+        return true;
+    }
+
+    if !this.m_csMapHidden && MpCsInBox(x, y, MpCsMapChipMeasure()) {
+        this.m_csMapMeasure = !this.m_csMapMeasure;
+        this.m_csMapCorners = 0;
+        this.MpCsMapRefresh();
+        return true;
+    }
+
+    this.m_csMapClicked = true;
+    this.m_csMapX = x;
+    this.m_csMapY = y;
+    this.m_csMapPixelX = pixelX;
+    this.m_csMapPixelY = pixelY;
+    this.m_csMapHit = MpCsHitAt(x, y);
+
+    MpCsLog(s"click map: \(MpCsHitName(this.m_csMapHit)) at \(MpCsMapInt(x)),\(MpCsMapInt(y))");
+
+    if !this.m_csMapMeasure {
+        return false;
+    }
+
+    if this.m_csMapCorners != 1 {
+        this.m_csMapFirstX = x;
+        this.m_csMapFirstY = y;
+        this.m_csMapCorners = 1;
+    } else {
+        this.m_csMapCorners = 2;
+
+        MpCsLog(s"click map: box x=\(MpCsMapInt(MinF(this.m_csMapFirstX, x))) y=\(MpCsMapInt(MinF(this.m_csMapFirstY, y))) w=\(MpCsMapInt(AbsF(x - this.m_csMapFirstX))) h=\(MpCsMapInt(AbsF(y - this.m_csMapFirstY)))");
+    }
+
+    this.MpCsMapRefresh();
+    return true;
 }

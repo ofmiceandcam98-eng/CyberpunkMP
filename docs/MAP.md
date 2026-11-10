@@ -1063,7 +1063,7 @@ fixes — money is not server-authoritative today. See `docs/PHASE5-STAGE6B-MONE
   left the world" — now it does.
   - **The signal**: `client.proto` `LeaveWorldRequest` (a flag day when it ships — it moved
     the proto hash); `NetworkWorldSystem.LeaveWorld()` sends it; `CharacterSelect.reds` calls
-    it on the FIRST open of a selector session (`!m_csOpen`, near line 339). Server side is
+    it on the FIRST open of a selector session (`!m_csOpen`, in `MpCsOpen`). Server side is
     `ChatSystem::HandleLeaveWorldRequest` — it saves position (as `OnDisconnection` does),
     `Level::Remove`s the puppet, `destruct()`s it, clears the handle. Both call sites carry a
     DO-NOT-UNDO banner pointing here.

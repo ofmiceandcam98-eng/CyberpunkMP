@@ -331,9 +331,14 @@ those pages ask for and the code does not do yet.
   shipped overlay still needed a zoom of 2.6 on a real screen. `/trsave` keeps a tuned placement.
 - **Over live gameplay, panels are see-through**: a low-alpha fill, background blur and a bright
   border, so each box reads as its own (zeldfep, 2026-09-14: *"blur see through"*).
-- **No clipped-corner diamonds in ink.** zeldfep read them as clutter on the selector and the talk
-  button (2026-09-14), and nothing draws them now. The clipped corner is a launcher mark. The trade
-  page still draws cut corners; this call came after it.
+- **No clipped-corner diamonds in ink.** zeldfep read the rotated-square notches as clutter on the
+  selector and the talk button (2026-09-14), and nothing draws them now. A real cut corner is a
+  different thing: the selector draws them as shapes since design D (zeldfep, 2026-11-09), and the
+  trade page still asks for them.
+- **Ink has no polygons, so build them.** `MpCsPolyFill` and `MpCsPolyEdge` make a convex shape from
+  rectangles and lines, and `MpCsFan` leans a row by turning a canvas about a point. The game's own
+  icons can be bound by atlas path; read the part names from the atlas, because a wrong one draws
+  nothing and says nothing.
 - **Changing an offer clears both confirmations.** The server enforces it: somebody who agreed to
   the old offer has not agreed to this one.
 
@@ -345,9 +350,9 @@ those pages ask for and the code does not do yet.
 - **One accent per screen.** Gold on the selector, cyan on trade. Red is the shared warning.
 - **Text over an image gets a scrim.** The selector puts black at .55 under the roster and .45
   along the bottom.
-- **Selection moves as well as recolours.** The selected card steps 14 units right, which reads
-  when colour alone does not.
-- **One filled control per screen: the one that ends it.** ENTER NIGHT CITY is the only solid
+- **Selection says so in more than colour.** The selected card gets a gold outline, a halo and a
+  SELECTED chip, which reads when colour alone does not.
+- **One filled control per screen: the one that ends it.** The ENTER CITY plate is the only solid
   button on the selector. Everything else is an outline.
 
 **Mocking one up**
@@ -365,7 +370,7 @@ those pages ask for and the code does not do yet.
 **Designs still in play**
 
 Not in the code yet. What is open is tracked on the Atlas (`trade-menu-approved-never-built`,
-`character-select-mockup-items-never-built`).
+`character-select-mockup-items-never-built`, `the-selector-s-middle-should-show-the-whole-character-the-pl`).
 
 - **Where trade sits is unsettled.** The design page puts one panel on chat's bottom line, so the
   two read as one strip. zeldfep's rework in game (2026-09-10) split it into the four floating boxes
