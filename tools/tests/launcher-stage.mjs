@@ -4,7 +4,8 @@
 //   node tools/tests/launcher-stage.mjs [port] [minutes]
 //   http://127.0.0.1:8772/?scene=ready
 //
-// Scenes: ready, admin, update, frameworks, testbuild, notready, signedout, worst. Add &motion=full
+// Scenes: ready, admin, update, frameworks, testbuild, launcherold, notready, signedout, worst. The
+// launcher's own updater is driven from the console: stage.emit('onLauncherUpdate', { state: 'ready' }). Add &motion=full
 // or &motion=reduced to force either set of motion rules, whatever this machine's animation setting
 // is, and &result=fail to make Update refuse the way it does while the game is running. Size the window
 // to 1180x800 to match the launcher (its minimum is 1024x740). It binds to loopback only and exits
@@ -75,6 +76,7 @@ function stage (scene, result) {
       if (scene === 'update') return { ...current, upToDate: false }
       if (scene === 'frameworks') return { ...current, upToDate: false, payloadCurrent: true, prerequisitesStale: ['RED4ext', 'ArchiveXL'] }
       if (scene === 'testbuild') return { ...current, testBuildTag: 'v0.3.127-test.93' }
+      if (scene === 'launcherold') return { ...current, launcher: { current: '0.3.127', available: '0.3.128', upToDate: false } }
       return current
     },
     prereleaseList: () => ({ ok: true, newer: updated ? null : 'v0.3.127-test.94' }),
@@ -119,6 +121,7 @@ function stage (scene, result) {
       return { ok: true, message: 'Staged: nothing was added.' }
     },
     openMod: { ok: true },
+    restartToUpdate: { ok: true },
     deleteMod: { ok: false, error: 'Staged: nothing was removed.' }
   }
 
