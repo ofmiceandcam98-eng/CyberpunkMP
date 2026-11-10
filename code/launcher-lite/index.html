@@ -56,6 +56,7 @@
     /* What the button kit needs and nothing else has. --glitch is the one hue outside this
        palette, and only the click glitch may use it. */
     --glitch: #3ce8ef;
+    --blue:   #4f88d5;
     --plate-dead: #2a0d11;
     --tread-2: #ae3b36;
     --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
@@ -513,8 +514,8 @@
   button.action:active:not(:disabled) { transform: translateY(1px); }
   button.action:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-  .discord { background: #5865f2; color: #fff; }
-  .join { background: #5865f2; color: #fff; }
+  .discord { background: var(--blue); color: #140406; }
+  .join { background: var(--blue); color: #140406; }
 
   /* Destructive and secondary actions, kept small and away from the main flow. */
   .footlinks {
