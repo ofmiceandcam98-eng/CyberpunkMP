@@ -27,25 +27,32 @@ public class ChatController extends inkHUDGameController {
     // The name last read back for confirmation. Empty until the first Enter; cleared
     // whenever the prompt opens or closes, so a stale one can never confirm a new name.
     private let m_pendingName: String;
-    // The trade overlay's runtime canvas, built onto this controller's root. See
-    // TradeScreen.reds for the render; kept here because the overlay lives on this HUD
-    // controller and only a real field on the class can hold it (annotations cannot).
+    // ---- the trade panel (TradeScreen.reds draws it, TradePopup.reds gives it the mouse) ----
+    //
+    // State lives HERE because this is the controller that exists for the whole session and
+    // owns chat, and only a real field on the class can hold it (annotations cannot attach to
+    // our own classes). The popup comes and goes; the trade does not go with it.
+    //
+    // The HUD chip's canvas, on this controller's root - what stays beside chat while the
+    // mouse is given back, or before an invitation is opened.
     private let m_trRoot: wref<inkCanvas>;
-    // Live-tunable trade overlay placement (position as a fraction of the measured root, zoom,
-    // and box gap). Seeded from the MpTr* defaults on first open, then nudged in-game via the
-    // /tr* chat commands so the overlay can be placed without a ship per tweak.
+    // Where the panel sits, as fractions of the SCREEN (x, y) and a zoom - seeded from the MpTr*
+    // defaults, nudged with /tr*, kept with /trsave.
     private let m_trFracX: Float;
     private let m_trFracY: Float;
     private let m_trZoom: Float;
-    private let m_trGap: Float;
     private let m_trTuned: Bool;
-    // Trade overlay keyboard state: whether it is up (gates input + guards listener register/
-    // unregister), which footer button is selected (0=Cancel, 1=Confirm, 2=Exit), and the eddies
-    // amount the +/- keys adjust.
-    private let m_trOpen: Bool;
-    private let m_trSel: Int32;
-    private let m_trEddies: Int32;
-    private let m_trHelp: Bool;
+    // The trade as last told by the server (or the /tradeui preview), and what only this side
+    // knows about it - scroll, an amount on its way, a line of feedback.
+    private let m_trView: ref<MpTrView>;
+    private let m_trUi: ref<MpTrUi>;
+    // The popup while it is up. Null means the mouse is the game's.
+    private let m_trPopup: ref<MpTradePopup>;
+    // Whether the Enter listener ("bring the panel back") is registered.
+    private let m_trKeys: Bool;
+    // Bumped whenever a new trade view arrives, so a delayed "take the chip down" for an old
+    // ending cannot take down a new trade's chip.
+    private let m_trEpoch: Int32;
     private let m_nameLabel: wref<inkText>;
 
     protected cb func OnInitialize() -> Bool {
@@ -173,11 +180,21 @@ public class ChatController extends inkHUDGameController {
     protected cb func OnUninitialize() -> Bool {
         FTLog(s"[ChatController] OnUninitialize");
         this.m_player.UnregisterInputListener(this, n"UIEnterChatMessage");
+        // A HUD being rebuilt must not leave a cursor popup behind with nobody to answer it.
+        // The trade itself is the server's; the next NotifyTrade puts the chip back.
+        this.MpTrKeys(false);
+        if IsDefined(this.m_trPopup) {
+            this.m_trPopup.Close();
+        }
     }
 
     private func UpdateInputHints() -> Void {
         let evt = new UpdateInputHintMultipleEvent();
         evt.targetHintContainer = n"GameplayInputHelper";
+        // The game draws this one, in its own style and with the CURRENT binding, beside the
+        // other prompts - the ink-ui rule: a key prompt is an input hint, not a widget.
+        evt.AddInputHint(CreateInputHint(n"Trade", n"TradeAccept", false),
+                         !this.m_chatInputOpen && this.MpTrChipShowing());
         evt.AddInputHint(CreateInputHint(n"Chat", n"UIEnterChatMessage", false), !this.m_chatInputOpen);
         evt.AddInputHint(CreateInputHint(n"Cancel", n"back", false), this.m_chatInputOpen);
         evt.AddInputHint(CreateInputHint(n"Send", n"EnterChat", false), this.m_chatInputOpen);
@@ -445,225 +462,513 @@ public class ChatController extends inkHUDGameController {
         this.UpdateInputHints();
     }
 
-    // ------------------------------------------------------------------ trade overlay
+    // ------------------------------------------------------------------ the trade panel
     //
-    // Runtime-built, hung on this controller's root compound widget and scaled by
-    // rootWidth/1920, exactly as the selector builds onto the menu root. The render is
-    // MpTrBuild in TradeScreen.reds; this owns the canvas and the open/close state.
-    public final func MpTrOpen() -> Void {
-        let root = this.GetRootCompoundWidget();
-        if !IsDefined(root) {
-            let network = GameInstance.GetNetworkWorldSystem();
-            if IsDefined(network) {
-                network.ScriptLog("[TradeScreen] no root compound widget - cannot open");
-            }
-            return;
-        }
+    // Three surfaces, one trade:
+    //   - the PANEL, in a cursor popup (TradePopup.reds) - the whole deal, clickable;
+    //   - the CHIP, on this HUD root - a line beside chat while the mouse is the game's;
+    //   - CHAT, which keeps working throughout, because trades are haggled in text.
+    // Everything shown comes from NotifyTrade (OnMpTradeChanged); everything done is a /trade
+    // command (MpTrAct). Nothing here can make a deal the server does not hold.
 
-        if IsDefined(this.m_trRoot) {
-            this.m_trRoot.RemoveAllChildren();
-        } else {
-            let canvas = new inkCanvas();
-            canvas.SetName(n"mp_trade_overlay");
-            // Top-left anchor AND pivot: scaling happens around the pivot, and a centre-
-            // pivoted (Fill) canvas throws the composition off-screen when scaled - the
-            // exact selector bug (CharacterSelect.MpCsOpen).
-            canvas.SetAnchor(inkEAnchor.TopLeft);
-            canvas.SetAnchorPoint(new Vector2(0.0, 0.0));
-            canvas.SetMargin(new inkMargin(0.0, 0.0, 0.0, 0.0));
-            // NOT interactive: a full-screen interactive canvas swallows input and soft-locks
-            // the game (selector test.27). The shell takes no input; buttons get their own hit
-            // rects when input is wired with the data.
-            canvas.SetInteractive(false);
-            canvas.Reparent(root);
-            this.m_trRoot = canvas;
-        }
+    public final func MpTrViewNow() -> ref<MpTrView> {
+        return this.m_trView;
+    }
 
-        // Scale to whatever the root actually measures; a not-yet-laid-out root reports zero,
-        // so fall back to 1:1 rather than scaling the composition to nothing. Everything below is
-        // driven by the MEASURED root size, so it adapts to any resolution (zeldfep runs 2K).
-        // Keyboard nav on OUR OWN input actions (TradeNavUp/Down, TradeOfferLess/More,
-        // TradeAccept, TradeExit) - declared in CyberpunkMP.xml and appended to UIBase, the
-        // same mechanism that makes push-to-talk and the chat hotkey fire in gameplay. The
-        // menu actions tried first (navigate_*/proceed) need a UI context a HUD widget never
-        // has, so they never fired (the test.40 "cannot click anything"). Still NO
-        // game-context push (that broke chat typing, reverted test.50) - the typed /tr*
-        // fallbacks keep working regardless. Unregistered in MpTrClose.
-        if !this.m_trOpen {
-            this.m_player.RegisterInputListener(this, n"TradeNavUp");
-            this.m_player.RegisterInputListener(this, n"TradeNavDown");
-            this.m_player.RegisterInputListener(this, n"TradeOfferLess");
-            this.m_player.RegisterInputListener(this, n"TradeOfferMore");
-            this.m_player.RegisterInputListener(this, n"TradeAccept");
-            this.m_player.RegisterInputListener(this, n"TradeExit");
-            this.m_trOpen = true;
+    public final func MpTrUiNow() -> ref<MpTrUi> {
+        if !IsDefined(this.m_trUi) {
+            this.m_trUi = new MpTrUi();
+            this.m_trUi.pending = -1;
         }
+        return this.m_trUi;
+    }
 
-        // Seed the tunable placement from the defaults on the first open; the /tr* commands
-        // nudge these live thereafter.
+    // (screen fraction x, screen fraction y, zoom, unused) - the shape /trsave keeps.
+    public final func MpTrPlacement() -> Vector4 {
         if !this.m_trTuned {
-            this.m_trFracX = MpTrShiftFracX();
-            this.m_trFracY = MpTrShiftFracY();
+            this.m_trFracX = MpTrScreenFracX();
+            this.m_trFracY = MpTrScreenFracY();
             this.m_trZoom = MpTrZoom();
-            this.m_trGap = MpTrGapDefault();
-            this.m_trSel = 3; // no footer ring until the player navigates (arrows) or presses Enter
-            // A /trsave'd placement overrides the baked default; (0,0,0,0) = nothing saved.
+            // A /trsave'd placement overrides the default; zoom 0 means nothing was saved.
             let saved = GameInstance.GetNetworkWorldSystem().GetChatSystem().LoadTradePlacement();
             if saved.Z > 0.0 {
                 this.m_trFracX = saved.X;
                 this.m_trFracY = saved.Y;
                 this.m_trZoom = saved.Z;
-                this.m_trGap = saved.W;
             }
             this.m_trTuned = true;
         }
+        return new Vector4(this.m_trFracX, this.m_trFracY, this.m_trZoom, 0.0);
+    }
 
+    private final func MpTrLog(line: String) -> Void {
+        // ScriptLog, not FTLog: FTLog reaches no file this project collects (the naming saga).
+        let network = GameInstance.GetNetworkWorldSystem();
+        if IsDefined(network) {
+            network.ScriptLog(s"[TradeScreen] \(line)");
+        }
+    }
+
+    /**
+     * The server says the trade changed. Raised by NetworkWorldSystem.OnTradeStateChanged.
+     *
+     * The panel opens BY ITSELF only when a trade becomes Open: both people chose it at that
+     * point (one asked, one accepted), so the mouse coming up is what they are waiting for. An
+     * invitation does NOT take the mouse - somebody mid-fight or mid-drive gets a chip and a
+     * key, not a cursor they did not ask for.
+     */
+    protected cb func OnMpTradeChanged(evt: ref<MpTradeChanged>) -> Bool {
+        let network = GameInstance.GetNetworkWorldSystem();
+        if !IsDefined(network) {
+            return false;
+        }
+
+        let previous = this.m_trView;
+        let view = MpTrViewFromNetwork(network);
+        let ui = this.MpTrUiNow();
+
+        // Every money command gets one answer (the server pushes on a refusal too), so when no
+        // amount is left in flight the server's figure is the true one and the guess is done.
+        if ui.inFlight > 0 {
+            ui.inFlight -= 1;
+        }
+        if ui.inFlight == 0 {
+            ui.pending = -1;
+        }
+
+        let wasOpen = IsDefined(previous) && !previous.mock && previous.live && previous.state == 1u;
+        let newTrade = !IsDefined(previous) || previous.mock || NotEquals(previous.partner, view.partner) || !previous.live;
+
+        if newTrade {
+            ui.listTop = 0;
+            ui.theirTop = 0;
+            ui.notice = "";
+        }
+
+        this.m_trView = view;
+        this.m_trEpoch += 1;
+
+        if view.live {
+            this.MpTrKeys(true);
+
+            if view.state == 1u && !wasOpen && !this.m_chatInputOpen {
+                this.MpTrShowPanel();
+                return true;
+            }
+        } else {
+            // An ending stays readable - on the panel if it is up, as the chip if not - and goes
+            // by itself a few seconds later. Either one can also be closed straight away.
+            ui.pending = -1;
+            ui.inFlight = 0;
+            let done = new MpTrHideChipCallback();
+            done.owner = this;
+            done.epoch = this.m_trEpoch;
+            GameInstance.GetDelaySystem(this.m_player.GetGame()).DelayCallback(done, 4.0, false);
+        }
+
+        this.MpTrRefresh();
+        return true;
+    }
+
+    // Called a few seconds after an ending, unless something newer has happened since.
+    public final func MpTrEndingExpired(epoch: Int32) -> Void {
+        if epoch != this.m_trEpoch || !IsDefined(this.m_trView) || this.m_trView.live {
+            return;
+        }
+        this.MpTrFinish();
+    }
+
+    // The panel, with the mouse. Reused if it is already up.
+    public final func MpTrShowPanel() -> Void {
+        if !IsDefined(this.m_trView) {
+            return;
+        }
+
+        if IsDefined(this.m_trPopup) {
+            this.m_trPopup.Redraw();
+            return;
+        }
+
+        /*
+         * If Codeware's popup manager never attached (it hooks PopupsManager.OnPlayerAttach),
+         * opening would silently do nothing - the worst failure here, a trade nobody can see.
+         * So say so, keep the chip up, and point at the typed commands, which always work.
+         */
+        if !MpTradePopup.CanOpen() {
+            this.MpTrLog("panel cannot open - Codeware's popup manager is not initialised");
+            let notice = new ChatMessageUIEvent();
+            notice.author = "SERVER";
+            notice.message = "The trade panel could not open. Type /trade view to see the deal, /trade confirm or /trade cancel.";
+            this.QueueEvent(notice);
+            this.MpTrRefresh();
+            return;
+        }
+
+        let popup = MpTradePopup.Create(this);
+        this.m_trPopup = popup;
+        popup.Open(this);
+        this.MpTrRefresh();
+    }
+
+    // Give the mouse back. The trade carries on; only CANCEL walks away.
+    public final func MpTrHidePanel() -> Void {
+        if IsDefined(this.m_trPopup) {
+            this.m_trPopup.Close();
+        }
+    }
+
+    public final func MpTrPopupShown(popup: ref<MpTradePopup>) -> Void {
+        let size = popup.RootSize();
+        let p = this.MpTrPlacement();
+        // The measurement the placement rests on - see MpTrScreenFracX.
+        this.MpTrLog(s"panel open - root \(size.X)x\(size.Y), panel at \(p.X),\(p.Y) of the screen, scale \(popup.Scale()), zoom \(p.Z)");
+    }
+
+    public final func MpTrPopupClosed(popup: ref<MpTradePopup>) -> Void {
+        if Equals(this.m_trPopup, popup) {
+            this.m_trPopup = null;
+            this.MpTrLog("panel closed - the mouse is the game's again");
+        }
+        this.MpTrRefresh();
+    }
+
+    // Everything back to no trade at all.
+    public final func MpTrFinish() -> Void {
+        this.m_trView = null;
+        this.MpTrKeys(false);
+        this.MpTrHidePanel();
+        this.MpTrRefresh();
+    }
+
+    // Redraw whatever is showing: the panel if it is up, otherwise the chip.
+    public final func MpTrRefresh() -> Void {
+        if IsDefined(this.m_trPopup) {
+            this.m_trPopup.Redraw();
+        }
+        this.MpTrDrawChip();
+        this.UpdateInputHints();
+    }
+
+    public final func MpTrChipShowing() -> Bool {
+        return IsDefined(this.m_trView) && !IsDefined(this.m_trPopup);
+    }
+
+    private final func MpTrDrawChip() -> Void {
+        let root = this.GetRootCompoundWidget();
+        if !IsDefined(root) {
+            return;
+        }
+
+        if !IsDefined(this.m_trRoot) {
+            let canvas = new inkCanvas();
+            canvas.SetName(n"mp_trade_chip");
+            canvas.SetAnchor(inkEAnchor.TopLeft);
+            canvas.SetAnchorPoint(new Vector2(0.0, 0.0));
+            // NOT interactive: this is the HUD, and an interactive canvas here swallows input.
+            canvas.SetInteractive(false);
+            canvas.Reparent(root);
+            this.m_trRoot = canvas;
+        }
+
+        this.m_trRoot.RemoveAllChildren();
+
+        if !this.MpTrChipShowing() {
+            this.m_trRoot.SetVisible(false);
+            return;
+        }
+
+        /*
+         * Placed the way the v2 overlay was - 1.04 and 0.12 of the chat root, scaled by
+         * rootWidth/1920 x zoom - so the chip lands where the panel's top edge is.
+         */
         let rootSize = root.GetSize();
+        let zoom = this.MpTrPlacement().Z;
         let scale = 1.0;
         if rootSize.X > 1.0 {
-            scale = (rootSize.X / 1920.0) * this.m_trZoom;
-            // Land the composition's authored top-left at a FRACTION of the measured root, so the
-            // overlay sits to the RIGHT of the chat box (which owns the bottom-left) on any display.
-            this.m_trRoot.SetMargin(new inkMargin(
-                rootSize.X * this.m_trFracX - MpTrPanelX() * scale,
-                rootSize.Y * this.m_trFracY - MpTrPanelY() * scale, 0.0, 0.0));
+            scale = (rootSize.X / 1920.0) * zoom;
+            this.m_trRoot.SetMargin(new inkMargin(rootSize.X * 1.04 - MpTrPanelX() * scale,
+                                                  rootSize.Y * 0.12 - MpTrPanelY() * scale, 0.0, 0.0));
         }
         this.m_trRoot.SetScale(new Vector2(scale, scale));
 
-        MpTrBuild(this.m_trRoot, this.m_trGap, this.m_trSel, this.m_trEddies);
-        if this.m_trHelp {
-            MpTrHelp(this.m_trRoot);
-        }
-        this.m_trRoot.SetVisible(true);
-        // Frosted backdrop behind the see-through boxes. Standalone call (no modal context push),
-        // so worst case it simply does not blur - it cannot hide the HUD or trap input.
-        PopupStateUtils.SetBackgroundBlur(this, true);
-        // ScriptLog, not FTLog: the opened line is the evidence a live session collects
-        // (placement values to bake as defaults, and now that the overlay was up at all
-        // when diagnosing the keys). FTLog reaches no collected file - the naming saga.
-        let network = GameInstance.GetNetworkWorldSystem();
-        if IsDefined(network) {
-            network.ScriptLog(s"[TradeScreen] opened - root \(rootSize.X)x\(rootSize.Y) scale \(scale) fracX \(this.m_trFracX) fracY \(this.m_trFracY) zoom \(this.m_trZoom) gap \(this.m_trGap)");
-        }
-    }
+        let v = this.m_trView;
+        // The tab always says TRADE; the line says the state, and the gold ENTER plate shows with
+        // its verb whenever Enter does something here.
+        let line = s"with \(v.partner)";
+        let hint = "open";
+        let session = v.mock ? "PREVIEW" : MpTrSession(v.session);
 
-    public final func MpTrClose() -> Void {
-        if IsDefined(this.m_trRoot) {
-            this.m_trRoot.RemoveAllChildren();
-            this.m_trRoot.SetVisible(false);
-        }
-        if this.m_trOpen {
-            this.m_player.UnregisterInputListener(this, n"TradeNavUp");
-            this.m_player.UnregisterInputListener(this, n"TradeNavDown");
-            this.m_player.UnregisterInputListener(this, n"TradeOfferLess");
-            this.m_player.UnregisterInputListener(this, n"TradeOfferMore");
-            this.m_player.UnregisterInputListener(this, n"TradeAccept");
-            this.m_player.UnregisterInputListener(this, n"TradeExit");
-            this.m_trOpen = false;
-        }
-        // Forget the ring so a reopened overlay cannot be confirmed by a single leftover
-        // Enter - TradeAccept has to walk there again (or land there via its own two-press
-        // guard in MpTrActivate).
-        this.m_trSel = 3;
-        PopupStateUtils.SetBackgroundBlur(this, false);
-        let network = GameInstance.GetNetworkWorldSystem();
-        if IsDefined(network) {
-            network.ScriptLog("[TradeScreen] closed");
-        }
-    }
-
-    private final func MpTrEddies(delta: Int32) -> Void {
-        this.m_trEddies += delta;
-        if this.m_trEddies < 0 { this.m_trEddies = 0; }
-        if this.m_trEddies > 20100 { this.m_trEddies = 20100; }
-        this.MpTrOpen();
-    }
-
-    private final func MpTrNav(delta: Int32) -> Void {
-        // From the no-selection state (3) the first press lands on CANCEL going down and the
-        // X going up; after that it cycles CANCEL (0) -> CONFIRM (1) -> X (2).
-        if this.m_trSel > 2 {
-            if delta > 0 {
-                this.m_trSel = 0;
-            } else {
-                this.m_trSel = 2;
-            }
+        if !v.live {
+            line = StrLen(v.reason) > 0 ? v.reason : "The trade is over.";
+            hint = "";
         } else {
-            this.m_trSel = (this.m_trSel + delta + 3) % 3;
+            if v.state == 0u {
+                if v.incoming {
+                    line = s"\(v.partner) wants to trade";
+                    hint = "look";
+                } else {
+                    line = s"Waiting for \(v.partner) to accept";
+                }
+            } else {
+                if v.theirConfirmed && !v.myConfirmed {
+                    line = s"\(v.partner) has locked in";
+                }
+            }
         }
-        this.MpTrOpen();
+
+        MpTrHudChip(this.m_trRoot, "TRADE", line, hint, session);
+        this.m_trRoot.SetVisible(true);
     }
 
-    private final func MpTrActivate() -> Void {
-        // Nothing selected yet: the first Enter only puts the ring on CONFIRM and asks for a
-        // second press - the name prompt's read-back pattern. A trade must never commit on a
-        // single keystroke (see the ApplyTrade non-idempotence note on the Atlas trade branch).
-        if this.m_trSel > 2 {
-            this.m_trSel = 1;
-            this.MpTrOpen();
+    // The one key: Enter brings the panel back. Registered only while there is a trade.
+    private final func MpTrKeys(on: Bool) -> Void {
+        if on && !this.m_trKeys {
+            this.m_player.RegisterInputListener(this, n"TradeAccept");
+            this.m_trKeys = true;
+        }
+        if !on && this.m_trKeys {
+            this.m_player.UnregisterInputListener(this, n"TradeAccept");
+            this.m_trKeys = false;
+        }
+    }
+
+    private final func MpTrSend(command: String) -> Void {
+        this.MpTrLog(s"sent \(command)");
+        GameInstance.GetNetworkWorldSystem().GetChatSystem().Send(command);
+    }
+
+    /**
+     * A click on the panel, by region id (TradeScreen.reds). Each one is a /trade command, or a
+     * purely local change (scroll, the preview). Nothing here moves anything: the server decides
+     * and the next NotifyTrade shows what it decided.
+     */
+    public final func MpTrAct(id: Int32, how: String) -> Void {
+        let v = this.m_trView;
+        if !IsDefined(v) {
             return;
         }
-        // Cancel (0) and Exit (2) just close; Confirm (1) will commit once the trade data wire
-        // exists - for now it logs and closes like the others. ScriptLog, not FTLog: this line
-        // is the evidence a live session collects that the key fired (the naming-saga lesson -
-        // FTLog reaches no collected file).
-        if this.m_trSel == 1 {
-            let network = GameInstance.GetNetworkWorldSystem();
-            if IsDefined(network) {
-                network.ScriptLog("[TradeScreen] confirm (mock) via TradeAccept");
+        let ui = this.MpTrUiNow();
+        this.MpTrLog(s"click \(id) (\(how))");
+
+        if id == MpTrIdHide() {
+            if v.live {
+                this.MpTrHidePanel();
+            } else {
+                this.MpTrFinish();
+            }
+            return;
+        }
+
+        // The BLUR trial switch: purely local, on every screen of the panel, ended or not.
+        if id == MpTrIdBlur() {
+            ui.blur = !ui.blur;
+            if IsDefined(this.m_trPopup) {
+                this.m_trPopup.ApplyBlur();
+            }
+            this.MpTrLog(s"blur \(ui.blur)");
+            this.MpTrRefresh();
+            return;
+        }
+
+        if !v.live {
+            return;
+        }
+
+        if id == MpTrIdCancel() {
+            if v.mock {
+                this.MpTrFinish();
+            } else {
+                this.MpTrSend("/trade cancel");
+            }
+            return;
+        }
+
+        if id == MpTrIdConfirm() {
+            if v.state == 0u {
+                if v.incoming && !v.mock {
+                    this.MpTrSend("/trade accept");
+                }
+                return;
+            }
+            if v.state == 1u && !v.myConfirmed && ui.pending < 0 {
+                if v.mock {
+                    v.myConfirmed = true;
+                    this.MpTrRefresh();
+                } else {
+                    // The version on screen goes with it; the server refuses a stale one.
+                    this.MpTrSend(s"/trade confirm \(v.version)");
+                }
+            }
+            return;
+        }
+
+        if v.state != 1u {
+            return;
+        }
+
+        if id >= MpTrIdMoney() && id < MpTrIdMoney() + 6 {
+            let base = ui.pending >= 0 ? ui.pending : v.myMoney;
+            let next = base + MpTrMoneyStep(id);
+            if next > v.available { next = v.available; }
+            if next < 0 { next = 0; }
+            if next == base {
+                return;
+            }
+            if v.mock {
+                v.myMoney = next;
+                v.myConfirmed = false;
+            } else {
+                // Shown straight away, sent straight away; the server's echo replaces it. Counted,
+                // so a fast run of clicks keeps showing the LAST amount rather than each echo.
+                ui.pending = next;
+                ui.inFlight += 1;
+                this.MpTrSend(s"/trade money \(next)");
+            }
+            this.MpTrRefresh();
+            return;
+        }
+
+        // Rows and their quantity buttons.
+        let index = -1;
+        let change = 0;   // 0 toggle, -1 one fewer, +1 one more
+        if id >= MpTrIdMore() {
+            index = id - MpTrIdMore();
+            change = 1;
+        } else {
+            if id >= MpTrIdLess() {
+                index = id - MpTrIdLess();
+                change = -1;
+            } else {
+                if id >= MpTrIdRow() {
+                    index = id - MpTrIdRow();
+                }
             }
         }
-        this.MpTrClose();
+
+        if index < 0 || index >= ArraySize(v.holdings) {
+            return;
+        }
+
+        let item = v.holdings[index];
+        let want = 0;
+        if change == 0 {
+            // A click puts the WHOLE stack in, or takes it back out: one click for a gun, and
+            // the stepper for "twenty of the ammo".
+            want = item.offered > 0 ? 0 : item.qty;
+        } else {
+            want = item.offered + change;
+            if want > item.qty { want = item.qty; }
+            if want < 0 { want = 0; }
+        }
+
+        if want == item.offered {
+            return;
+        }
+
+        if v.mock {
+            item.offered = want;
+            v.myConfirmed = false;
+            this.MpTrRefresh();
+            return;
+        }
+
+        // 0 takes it back out (the server's /trade item <id> 0).
+        this.MpTrSend(s"/trade item \(item.id) \(want)");
+    }
+
+    // The wheel, over the panel but off both lists: your list scrolls a row at a time.
+    public final func MpTrScroll(rows: Int32) -> Void {
+        let ui = this.MpTrUiNow();
+        ui.listTop += rows;
+        this.MpTrRefresh();
+    }
+
+    // A rail (drag, press, wheel) or the wheel over a list: list 0 is yours, 1 theirs. The render
+    // clamps it, so a rail can ask for one past the end.
+    public final func MpTrSetTop(list: Int32, top: Int32) -> Void {
+        let ui = this.MpTrUiNow();
+        if list == 1 {
+            if ui.theirTop == top { return; }
+            ui.theirTop = top;
+        } else {
+            if ui.listTop == top { return; }
+            ui.listTop = top;
+        }
+        this.MpTrRefresh();
+    }
+
+    // /tradeui: the panel with made-up contents, for checking placement and the mouse alone.
+    private final func MpTrPreview() -> Void {
+        if IsDefined(this.m_trView) && !this.m_trView.mock && this.m_trView.live {
+            let notice = new ChatMessageUIEvent();
+            notice.author = "SERVER";
+            notice.message = "You are in a real trade - the preview would hide it. Finish or cancel it first.";
+            this.QueueEvent(notice);
+            return;
+        }
+        this.m_trView = MpTrMockView();
+        let ui = this.MpTrUiNow();
+        ui.listTop = 0;
+        ui.theirTop = 0;
+        ui.pending = -1;
+        ui.inFlight = 0;
+        ui.notice = "Preview - nothing here is sent.  ESC hides the panel, ENTER brings it back.";
+        this.MpTrKeys(true);
+        this.MpTrShowPanel();
+    }
+
+    // A placement nudge: the panel moves while it is up, so the change can be judged by eye.
+    private final func MpTrNudge(dx: Float, dy: Float, dzoom: Float) -> Void {
+        this.MpTrPlacement();
+        this.m_trFracX += dx;
+        this.m_trFracY += dy;
+        this.m_trZoom += dzoom;
+        if this.m_trZoom < 0.5 { this.m_trZoom = 0.5; }
+        this.MpTrLog(s"placement \(this.m_trFracX),\(this.m_trFracY) zoom \(this.m_trZoom)");
+        if IsDefined(this.m_trView) {
+            this.MpTrShowPanel();
+        }
     }
 
     private final func SendChat() -> Void {
         let textEntered: String = this.m_input.GetText();
 
-        // Client-side commands, handled here and NOT sent on: the trade overlay's shell
-        // trigger. "/tradeui" opens it with mock data, "/tradeoff" closes it. This is a
-        // scaffold - the real overlay opens when a NotifyTrade arrives (flag-day A).
+        // Client-side trade commands, handled here and NOT sent on. The real trade needs none of
+        // them - it is /trade <player> to the server and the panel from there - these are the
+        // preview and the placement tools.
+        //
+        // /tradeui opens the panel with made-up contents (MpTrMockView): the way to check the
+        // mouse and the placement alone. /tradeoff takes the preview down.
         if Equals(textEntered, "/tradeui") {
             this.m_input.SetText("");
-            this.MpTrOpen();
+            this.MpTrPreview();
             return;
         }
         if Equals(textEntered, "/tradeoff") {
             this.m_input.SetText("");
-            this.MpTrClose();
+            if IsDefined(this.m_trView) && this.m_trView.mock {
+                this.MpTrFinish();
+            } else {
+                this.MpTrHidePanel();
+            }
             return;
         }
-        // Live placement nudges - open with /tradeui first, then move/scale the overlay in-game
-        // until it sits right. Each re-renders and logs the values; read the final fracX/fracY/
-        // zoom/gap off the "[TradeScreen] opened" line and they get baked as the new defaults.
-        if Equals(textEntered, "/trright") { this.m_input.SetText(""); this.m_trFracX += 0.04; this.MpTrOpen(); return; }
-        if Equals(textEntered, "/trleft")  { this.m_input.SetText(""); this.m_trFracX -= 0.04; this.MpTrOpen(); return; }
-        if Equals(textEntered, "/trup")    { this.m_input.SetText(""); this.m_trFracY -= 0.03; this.MpTrOpen(); return; }
-        if Equals(textEntered, "/trdown")  { this.m_input.SetText(""); this.m_trFracY += 0.03; this.MpTrOpen(); return; }
-        if Equals(textEntered, "/trbig")   { this.m_input.SetText(""); this.m_trZoom += 0.1;  this.MpTrOpen(); return; }
-        if Equals(textEntered, "/trsmall") { this.m_input.SetText(""); this.m_trZoom -= 0.1;  this.MpTrOpen(); return; }
-        if Equals(textEntered, "/trgap")   { this.m_input.SetText(""); this.m_trGap += 8.0;   this.MpTrOpen(); return; }
-        if Equals(textEntered, "/trreset") { this.m_input.SetText(""); this.m_trTuned = false; this.MpTrOpen(); return; }
-        // /trsave - persist the current placement to a file so it survives relaunch (no numbers,
-        // no ship needed). LoadTradePlacement on next open picks it up.
+        // Placement nudges, as fractions of the screen. The panel moves while it is up, and the
+        // values are logged ("[TradeScreen] placement ..."); /trsave keeps them.
+        if Equals(textEntered, "/trright") { this.m_input.SetText(""); this.MpTrNudge(0.02, 0.0, 0.0); return; }
+        if Equals(textEntered, "/trleft")  { this.m_input.SetText(""); this.MpTrNudge(-0.02, 0.0, 0.0); return; }
+        if Equals(textEntered, "/trup")    { this.m_input.SetText(""); this.MpTrNudge(0.0, -0.02, 0.0); return; }
+        if Equals(textEntered, "/trdown")  { this.m_input.SetText(""); this.MpTrNudge(0.0, 0.02, 0.0); return; }
+        if Equals(textEntered, "/trbig")   { this.m_input.SetText(""); this.MpTrNudge(0.0, 0.0, 0.1); return; }
+        if Equals(textEntered, "/trsmall") { this.m_input.SetText(""); this.MpTrNudge(0.0, 0.0, -0.1); return; }
+        if Equals(textEntered, "/trreset") { this.m_input.SetText(""); this.m_trTuned = false; this.MpTrNudge(0.0, 0.0, 0.0); return; }
+        // /trsave keeps the placement in the mod's own folder, so it survives a relaunch and goes
+        // with an uninstall (the footprint rule).
         if Equals(textEntered, "/trsave") {
             this.m_input.SetText("");
-            GameInstance.GetNetworkWorldSystem().GetChatSystem().SaveTradePlacement(this.m_trFracX, this.m_trFracY, this.m_trZoom, this.m_trGap);
-            return;
-        }
-        // Typed fallbacks for the trade controls - guaranteed since typing always works. Eddies
-        // -/+ and confirm; exit is /tradeoff.
-        if Equals(textEntered, "/tr+") { this.m_input.SetText(""); this.MpTrEddies(1); return; }
-        if Equals(textEntered, "/tr-") { this.m_input.SetText(""); this.MpTrEddies(-1); return; }
-        if Equals(textEntered, "/trok") { this.m_input.SetText(""); this.m_trSel = 1; this.MpTrActivate(); return; }
-        if Equals(textEntered, "/tradehelp") { this.m_input.SetText(""); this.m_trHelp = !this.m_trHelp; this.MpTrOpen(); return; }
-        // /trade <player> - the real-player trigger. Open the overlay WITH the modal cursor, and
-        // forward the command to the server's /trade flow. Data stays mock until the NotifyTrade
-        // wire (flag-day A); this makes the cursor trigger on a real trade, not just /tradeui.
-        let trParts = StrSplit(textEntered, " ");
-        if ArraySize(trParts) >= 2 && Equals(trParts[0], "/trade") {
-            this.MpTrOpen();
-            GameInstance.GetNetworkWorldSystem().GetChatSystem().Send(textEntered);
-            this.m_input.SetText("");
+            let p = this.MpTrPlacement();
+            GameInstance.GetNetworkWorldSystem().GetChatSystem().SaveTradePlacement(p.X, p.Y, p.Z, 0.0);
+            this.MpTrLog(s"placement saved \(p.X),\(p.Y) zoom \(p.Z)");
             return;
         }
         if NotEquals(textEntered, "") {
@@ -782,20 +1087,20 @@ public class ChatController extends inkHUDGameController {
         let actionName: CName = ListenerAction.GetName(action);
         let actionType: gameinputActionType = ListenerAction.GetType(action);
 
-        // Trade overlay keyboard nav, on our own UIBase actions (see MpTrOpen for why these
-        // and not the menu actions). Only while the overlay is up and the chat field is not
-        // focused, so it never eats typing. Arrows up/down move the gold ring, left/right
-        // step the eddies offer, Enter activates, Backspace closes. Press only - the XML
-        // accepts nothing else, so a tap acts once (the VoiceCycleRange rule).
-        if this.m_trOpen && !this.m_chatInputOpen {
-            if Equals(actionType, gameinputActionType.BUTTON_PRESSED) {
-                if Equals(actionName, n"TradeExit") { this.MpTrClose(); return true; }
-                if Equals(actionName, n"TradeNavDown") { this.MpTrNav(1); return true; }
-                if Equals(actionName, n"TradeNavUp") { this.MpTrNav(-1); return true; }
-                if Equals(actionName, n"TradeOfferLess") { this.MpTrEddies(-1); return true; }
-                if Equals(actionName, n"TradeOfferMore") { this.MpTrEddies(1); return true; }
-                if Equals(actionName, n"TradeAccept") { this.MpTrActivate(); return true; }
+        // Enter brings the trade panel (and the mouse) back while a trade is up. Our own UIBase
+        // action, the push-to-talk mechanism - proven live on 2.5 (2026-11-09, eight presses
+        // logged). Registered only while there is a trade, and never while chat has focus, so it
+        // cannot eat typing. Everything else on the panel is the mouse now.
+        if this.m_trKeys && !this.m_chatInputOpen && Equals(actionName, n"TradeAccept")
+           && Equals(actionType, gameinputActionType.BUTTON_PRESSED) {
+            if this.MpTrChipShowing() {
+                if this.m_trView.live {
+                    this.MpTrShowPanel();
+                } else {
+                    this.MpTrFinish();
+                }
             }
+            return true;
         }
 
         if !this.m_chatInputOpen {
@@ -810,6 +1115,19 @@ public class ChatController extends inkHUDGameController {
             }
         } else {
             return this.OnChatInputAction(action, consumer);
+        }
+    }
+}
+
+// Takes a trade's ending off the screen a few seconds after it arrived - unless the epoch moved,
+// which means a newer trade (or a newer ending) owns the panel now.
+public class MpTrHideChipCallback extends DelayCallback {
+    public let owner: wref<ChatController>;
+    public let epoch: Int32;
+
+    public func Call() -> Void {
+        if IsDefined(this.owner) {
+            this.owner.MpTrEndingExpired(this.epoch);
         }
     }
 }

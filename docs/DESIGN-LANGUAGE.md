@@ -319,18 +319,39 @@ those pages ask for and the code does not do yet.
 
 **HUD overlays**
 
-- **A HUD widget gets no mouse.** Keyboard works through our own `UIBase` actions. A modal push
-  half-captures input: it broke chat typing and still gave no cursor. Clicking needs the overlay to
-  be a menu controller, like `ServerListController`.
+- **A HUD widget gets no mouse; a popup does, without a menu.** The HUD layer has no cursor, and a
+  modal push half-captures input (it broke chat typing and still gave no cursor). For a cursor over
+  the running game, draw the panel in a Codeware `CustomPopup` - an in-game notification with
+  `isBlocking` and `useCursor`, the game's own mechanism for the car colour picker. **Not**
+  `InGamePopup`, which adds slow-motion, blur and that same modal push. Leave a line on the HUD and
+  one key to bring the popup back, so the mouse can be given back to chat without ending anything
+  (`TradePopup.reds`; built 2026-11-10, not yet run in game). Keyboard-only HUD controls still go
+  through our own `UIBase` actions.
 - **A tool for dealing with someone sits beside the conversation.** The trade overlay is drawn on
   the chat controller with chat live to its left, not as a full-screen menu. Trades get negotiated
   in text, and a full-screen menu pulls you out of an RP scene.
+- **Two columns:** what you offer and what they offer. At real size there is no room for a third,
+  so the inventory stays in the game's own screen; clicking one of your rows puts it in or takes it
+  back, and a stack gets its own stepper. Cyberware and quest items are never listed.
+- **A list scrolls by the rail, the launcher's own.** No UP and DN buttons: the ladder above (*The
+  rail is a ladder*) at 4/3, without its step tabs, inside the bay - drag the arrow, press the
+  ladder, wheel two rungs a notch (zeldfep, 2026-11-11: *"it should act the same"*; `MpTrDrawRail`).
+  The arrow steps a row at a time, because a list shows whole rows.
+- **Say the rule where the decision is.** A line beside the panel says any change to either offer
+  clears both confirmations.
+- **Colour says whose it is:** cyan for your side, red for theirs, gold for money.
+- **The overlay never decides a trade.** It drives the server's trade session. Applying the same
+  trade twice moves the money twice, so a confirm from the UI must never apply one itself.
 - **Place it as a fraction of the measured root**, not in pixels (`MpTrShiftFracX/Y`). zeldfep,
   2026-09-14: *"move them right past the chat box; dynamic to monitor size"*.
 - **Tune the size live, then bake it.** The trade mockup was honest about game scale and the
   shipped overlay still needed a zoom of 2.6 on a real screen. `/trsave` keeps a tuned placement.
-- **Over live gameplay, panels are see-through**: a low-alpha fill, background blur and a bright
-  border, so each box reads as its own (zeldfep, 2026-09-14: *"blur see through"*).
+- **Over live gameplay, panels are see-through**: a low-alpha fill and a bright border, so each box
+  reads as its own (zeldfep, 2026-09-14: *"blur see through"*). Ink cannot blur only what sits
+  behind a panel - the game's own popup blur (`PopupStateUtils.SetBackgroundBlur`) softens the
+  whole world - so the trade panel ships a firmer fill (72%) while the look-alikes wait on
+  zeldfep's pick on the trade page (2026-11-11). The game's blur is in the build as the panel's
+  BLUR trial switch, off at start, with a 60% fill while on (`TradePopup.ApplyBlur`).
 - **No clipped-corner diamonds in ink.** zeldfep read the rotated-square notches as clutter on the
   selector and the talk button (2026-09-14), and nothing draws them now. A real cut corner is a
   different thing: the selector draws them as shapes since design D (zeldfep, 2026-11-09), and the
@@ -372,21 +393,16 @@ those pages ask for and the code does not do yet.
 Not in the code yet. What is open is tracked on the Atlas (`trade-menu-approved-never-built`,
 `character-select-mockup-items-never-built`, `the-selector-s-middle-should-show-the-whole-character-the-pl`).
 
-- **Where trade sits is unsettled.** The design page puts one panel on chat's bottom line, so the
-  two read as one strip. zeldfep's rework in game (2026-09-10) split it into the four floating boxes
-  to the right of chat that the code draws. Neither has replaced the other on paper.
-- **Two columns:** what you offer and what they offer. At real size there is no room for a third,
-  so the inventory stays in the game's own screen, and clicking one of your rows adds or removes it.
+- **Where trade sits: one panel right of chat.** The four floating boxes of 2026-09-10 were folded
+  back into one panel by `9ff39029`, and the panel took design D's cut corners on 2026-11-10. Its
+  exact spot is a screen fraction derived from zeldfep's tuned v2 placement through one inferred
+  number (a 3840-wide HUD); the first session reads the "panel open" log line and `/trsave`s a fix.
 - **Limits show before anyone confirms.** Weight and eddies sit in the header, because a trade that
   would put you over your carry limit has to be refusable before both sides confirm. Nothing
   refuses one yet.
 - **Eddies are typed.** Reaching 2500 by pressing + is not a design. The field comes first, steppers
-  cover the last unit or two, and it stops at what you carry. Today the arrow keys step it.
-- **Say the rule where the decision is.** A line beside the panel says any change to either offer
-  clears both confirmations.
-- **Colour says whose it is:** cyan for your side, red for theirs, gold for money.
-- **The overlay never decides a trade.** It drives the server's trade session. Applying the same
-  trade twice moves the money twice, so a confirm from the UI must never apply one itself.
+  cover the last unit or two, and it stops at what you carry. Today the panel steps by 1, 100 and
+  1000 and clamps to what you can spend; an exact amount is the typed `/trade money 2500`.
 - **The selector arrives; it does not appear.** A short fade or slide on open, because showing up
   at full opacity is most of what makes a runtime-built screen feel bolted on.
 - **An authored layout is still the goal.** Named parts in a resource with a bound controller
