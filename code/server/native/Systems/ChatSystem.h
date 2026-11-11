@@ -154,8 +154,28 @@ struct ChatSystem
     // ------------------------------------------------------------------ trades ----
 
     // Both sides of a live trade, shown to BOTH people. A private view of a shared deal is
-    // how somebody confirms something they never saw.
+    // how somebody confirms something they never saw. Shown in the trade PANEL now - this is
+    // PushTrade with no reason; the text version is TellTrade, for /trade view.
     void ShowTrade(const TradeSession& acSession);
+
+    /**
+     * NotifyTrade to both traders, each from their own side.
+     *
+     * Called on every change and on every ending, while the session pointer is still valid
+     * (before Sweep). An ended trade carries its reason - acWhy to the other side, and
+     * acEnderWhy to acEndedBy, because "they walked away" is not what the person who walked
+     * away should read.
+     */
+    //
+    // acOnly, when set, sends to that one character - the answer to a refused /trade money,
+    // so the sender's panel settles the amount it guessed without the partner's moving.
+    void PushTrade(const TradeSession& acSession, const std::string& acWhy = {},
+                   const std::string& acEndedBy = {}, const std::string& acEnderWhy = {},
+                   const std::string& acOnly = {});
+
+    // The old four-line text block, to one person. Kept for /trade view: typing still works
+    // when the panel does not, and that is exactly when somebody needs to see the deal.
+    void TellTrade(const TradeSession& acSession, const PlayerComponent& acTo);
 
     /**
      * End this character's trade and tell the other side why.
@@ -163,8 +183,13 @@ struct ChatSystem
      * Public because disconnect, death and a character switch all need it. Never ends one
      * that is COMMITTING - see TradeStore::EndFor for why that is not a cancellable state.
      */
+    //
+    // acWhy is phrased for the OTHER side ("they walked away"). acEnderWhy is what
+    // acCharacterId's own panel says; pass the full reason when the ender did not cause it
+    // (distance, a partner who vanished mid-confirm).
     void EndTradeFor(const std::string& acCharacterId, TradeState aState,
-                     const std::string& acWhy);
+                     const std::string& acWhy,
+                     const std::string& acEnderWhy = "Trade cancelled.");
 
     // Expiry and the continuous distance check. Driven from the server tick.
     void TickTrades();

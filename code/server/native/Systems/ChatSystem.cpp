@@ -1435,11 +1435,96 @@ void ChatSystem::AnnounceCall(const CallSession& acSession, CallState aState)
 /**
  * Both sides of a trade, as the server currently understands it.
  *
- * Printed on every change, to BOTH people, because a trade is the one place where the two
+ * Shown on every change, to BOTH people, because a trade is the one place where the two
  * players must be looking at the same thing before they agree. A private view of a shared
  * deal is how somebody confirms something they never saw.
+ *
+ * Shown in the trade PANEL. This used to print four chat lines to both people on every
+ * change, which was the whole interface while trading was chat-only; with the panel drawing
+ * NotifyTrade it would only bury the conversation the trade is happening in. The text is
+ * still one command away - /trade view - for when the panel is not there.
  */
 void ChatSystem::ShowTrade(const TradeSession& acSession)
+{
+    PushTrade(acSession);
+}
+
+void ChatSystem::PushTrade(const TradeSession& acSession, const std::string& acWhy,
+                           const std::string& acEndedBy, const std::string& acEnderWhy,
+                           const std::string& acOnly)
+{
+    auto& store = GServer->GetPlayerStore();
+    const auto& trades = GServer->GetTrades();
+
+    // netpack, not protobuf: no add_*() to append with, so each list is built and set whole.
+    const auto toWire = [](const std::vector<CharacterRecord::ItemStack>& acStacks)
+    {
+        Vector<server::ItemStack> out;
+        out.reserve(acStacks.size());
+
+        for (const auto& stack : acStacks)
+        {
+            server::ItemStack entry;
+            entry.set_id(stack.Id);
+            entry.set_quantity(stack.Quantity);
+            out.push_back(entry);
+        }
+
+        return out;
+    };
+
+    for (const auto& id : {acSession.A, acSession.B})
+    {
+        if (!acOnly.empty() && id != acOnly)
+            continue;
+
+        const auto entity = FindByActiveCharacter(id);
+        if (!entity)
+            continue;
+
+        const auto* pPlayer = entity.get<PlayerComponent>();
+        if (!pPlayer)
+            continue;
+
+        std::string partner = "someone";
+
+        if (const auto* pOther = store.FindCharacterById(acSession.Other(id)))
+        {
+            if (!pOther->Name.empty())
+                partner = pOther->Name;
+        }
+
+        const auto view = BuildTradeView(trades, acSession, id, store.FindCharacterById(id), partner);
+
+        if (!view.Mine || !view.Theirs)
+            continue;
+
+        server::NotifyTrade notify;
+        notify.set_trade_id(acSession.TradeId.c_str());
+        notify.set_state(static_cast<uint32_t>(acSession.State));
+        notify.set_partner(view.Partner.c_str());
+        notify.set_incoming(view.Incoming);
+        notify.set_version(view.Version);
+        notify.set_my_money(view.Mine->Money);
+        notify.set_my_items(toWire(view.Mine->Items));
+        notify.set_my_confirmed(view.Mine->Confirmed);
+        notify.set_their_money(view.Theirs->Money);
+        notify.set_their_items(toWire(view.Theirs->Items));
+        notify.set_their_confirmed(view.Theirs->Confirmed);
+        notify.set_available_money(view.Available);
+        notify.set_holdings(toWire(view.Holdings));
+
+        if (IsTradeOver(acSession.State))
+        {
+            const auto& why = (!acEndedBy.empty() && id == acEndedBy) ? acEnderWhy : acWhy;
+            notify.set_reason(why.c_str());
+        }
+
+        GServer->Send(pPlayer->Connection, notify);
+    }
+}
+
+void ChatSystem::TellTrade(const TradeSession& acSession, const PlayerComponent& acTo)
 {
     auto& store = GServer->GetPlayerStore();
 
@@ -1458,27 +1543,16 @@ void ChatSystem::ShowTrade(const TradeSession& acSession)
         return fmt::format("  {}{}: {}", who, acOffer.Confirmed ? " [CONFIRMED]" : "", line);
     };
 
-    for (const auto& id : {acSession.A, acSession.B})
-    {
-        const auto entity = FindByActiveCharacter(id);
-        if (!entity)
-            continue;
+    Tell(acTo, "--- trade ---");
+    Tell(acTo, describe(acSession.A, acSession.OfferA));
+    Tell(acTo, describe(acSession.B, acSession.OfferB));
 
-        const auto* pPlayer = entity.get<PlayerComponent>();
-        if (!pPlayer)
-            continue;
-
-        Tell(*pPlayer, "--- trade ---");
-        Tell(*pPlayer, describe(acSession.A, acSession.OfferA));
-        Tell(*pPlayer, describe(acSession.B, acSession.OfferB));
-
-        if (!acSession.BothConfirmed())
-            Tell(*pPlayer, "/trade confirm when you are happy, /trade cancel to walk away.");
-    }
+    if (!acSession.BothConfirmed())
+        Tell(acTo, "/trade confirm when you are happy, /trade cancel to walk away.");
 }
 
 void ChatSystem::EndTradeFor(const std::string& acCharacterId, TradeState aState,
-                             const std::string& acWhy)
+                             const std::string& acWhy, const std::string& acEnderWhy)
 {
     auto& trades = GServer->GetTrades();
 
@@ -1496,6 +1570,10 @@ void ChatSystem::EndTradeFor(const std::string& acCharacterId, TradeState aState
         if (const auto* pPlayer = entity.get<PlayerComponent>())
             Tell(*pPlayer, fmt::format("Trade cancelled - {}.", acWhy));
     }
+
+    // Both panels close, each with the line that is true for its reader. Before the Sweep,
+    // which is what frees the session this points at.
+    PushTrade(*pSession, fmt::format("Trade cancelled - {}.", acWhy), acCharacterId, acEnderWhy);
 
     trades.Sweep();
 }
@@ -1518,6 +1596,8 @@ void ChatSystem::TickTrades()
                     Tell(*pPlayer, "Trade expired.");
             }
         }
+
+        PushTrade(*pSession, "The trade expired.");
     }
 
     if (!expired.empty())
@@ -1560,8 +1640,9 @@ void ChatSystem::TickTrades()
             tooFar.emplace_back(pSession->A, "you moved too far apart");
     }
 
+    // Nobody walked away on purpose here, so both panels say why - the A side included.
     for (const auto& [id, why] : tooFar)
-        EndTradeFor(id, TradeState::Cancelled, why);
+        EndTradeFor(id, TradeState::Cancelled, why, fmt::format("Trade cancelled - {}.", why));
 }
 
 void ChatSystem::TickMedical()
@@ -4636,7 +4717,7 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         if (verb.empty())
         {
             Tell(acSender, "Usage: /trade <player>   then  /trade money <n>, /trade item <id> <n>,");
-            Tell(acSender, "       /trade confirm, /trade view, /trade cancel");
+            Tell(acSender, "       /trade item <id> 0 to take it back, /trade confirm, /trade view, /trade cancel");
             return true;
         }
 
@@ -4691,6 +4772,9 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
                 return true;
             }
 
+            // The text, to the one who asked - and the panel pushed again, which is how a
+            // panel somebody closed comes back without the trade starting over.
+            TellTrade(*pSession, acSender);
             ShowTrade(*pSession);
             return true;
         }
@@ -4717,12 +4801,14 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             catch (...)
             {
                 Tell(acSender, fmt::format("'{}' is not an amount.", arg));
+                PushTrade(*pSession, {}, {}, {}, me);   // the panel's guess settles back
                 return true;
             }
 
             if (amount < 0)
             {
                 Tell(acSender, "You cannot offer a negative amount.");
+                PushTrade(*pSession, {}, {}, {}, me);
                 return true;
             }
 
@@ -4741,6 +4827,7 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             if (amount > available)
             {
                 Tell(acSender, fmt::format("You have {} eddies available.", available));
+                PushTrade(*pSession, {}, {}, {}, me);
                 return true;
             }
 
@@ -4790,13 +4877,39 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
                 return true;
             }
 
+            auto* pOffer = pSession->OfferFor(me);
+
+            /**
+             * Zero takes it back out.
+             *
+             * There was no way to withdraw an item once offered - only to cancel the whole
+             * trade and start again - which the chat commands could live with and a panel
+             * where clicking a row adds it cannot. A withdrawal is an edit like any other:
+             * both confirmations reset, because a deal with one thing fewer in it is not the
+             * deal anybody agreed to.
+             */
             if (quantity == 0)
             {
-                Tell(acSender, "Offer at least one.");
+                const auto before = pOffer->Items.size();
+
+                pOffer->Items.erase(std::remove_if(pOffer->Items.begin(), pOffer->Items.end(),
+                                                   [itemId](const CharacterRecord::ItemStack& acStack)
+                                                   { return acStack.Id == itemId; }),
+                                    pOffer->Items.end());
+
+                if (pOffer->Items.size() == before)
+                {
+                    Tell(acSender, "That is not in your offer.");
+                    return true;
+                }
+
+                pSession->OfferA.Touch();
+                pSession->OfferB.Touch();
+                pSession->TouchedAt = TradeStore::Now();
+
+                ShowTrade(*pSession);
                 return true;
             }
-
-            auto* pOffer = pSession->OfferFor(me);
 
             if (pOffer->Items.size() >= kTradeItemLimit)
             {
@@ -4851,6 +4964,37 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
                 return true;
             }
 
+            /**
+             * A confirm may name the version it agrees to, and a stale one is refused.
+             *
+             * The panel always sends it: the click and a partner's last-second edit can cross
+             * on the wire, and without this the click would land on a deal the clicker never
+             * saw. Refused rather than applied, and the panel is pushed again so the new deal
+             * is what is on screen for the next click. Typed "/trade confirm" with no number
+             * keeps its old meaning.
+             */
+            if (!arg.empty())
+            {
+                uint32_t seen = 0;
+
+                try
+                {
+                    seen = static_cast<uint32_t>(std::stoul(arg));
+                }
+                catch (...)
+                {
+                    Tell(acSender, "Usage: /trade confirm");
+                    return true;
+                }
+
+                if (seen != TradeVersion(*pSession))
+                {
+                    Tell(acSender, "The offer changed just now - look again, then confirm.");
+                    ShowTrade(*pSession);
+                    return true;
+                }
+            }
+
             pSession->OfferFor(me)->Confirmed = true;
             pSession->TouchedAt = TradeStore::Now();
 
@@ -4876,7 +5020,8 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             if (!pLeft || !pRight)
             {
                 Tell(acSender, "That character is no longer there.");
-                EndTradeFor(me, TradeState::Failed, "the other character is gone");
+                EndTradeFor(me, TradeState::Failed, "the other character is gone",
+                            "Trade cancelled - the other character is gone.");
                 return true;
             }
 
@@ -4888,7 +5033,8 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
             if (!leftEntity || !rightEntity)
             {
                 Tell(acSender, "They are gone.");
-                EndTradeFor(me, TradeState::Failed, "the other player left");
+                EndTradeFor(me, TradeState::Failed, "the other player left",
+                            "Trade cancelled - the other player left.");
                 return true;
             }
 
@@ -4926,6 +5072,10 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
                                                : "Trade failed - nothing was moved.");
                     }
                 }
+
+                PushTrade(*pSession, reason == "insufficient_funds"
+                                         ? "Trade failed - somebody could not cover it."
+                                         : "Trade failed - nothing was moved.");
 
                 trades.Sweep();
                 return true;
@@ -4967,8 +5117,21 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
                     PushMoney(*pPlayer, static_cast<int32_t>(pCharacter->Money), "trade");
 
                 Tell(*pPlayer, "Trade complete.");
-                Tell(*pPlayer, "Your things are updated - reconnect if anything looks stale.");
             }
+
+            /**
+             * The ITEMS, the same way the money goes above - and for the same race.
+             *
+             * Inventory is still taken from the client: every capture (each 90 seconds) sends
+             * the whole inventory and the server keeps it. ApplyTrade has just moved the items
+             * in the record, but neither GAME has changed, so the giver's next capture put the
+             * item back in their record and the receiver's dropped it - the trade reversed
+             * itself a minute and a half later. NotifyTrade in state Completed carries both
+             * final offers, and each client removes what it gave and adds what it got, so the
+             * next capture reports a figure that already agrees. See the Atlas branch
+             * item-trades-are-undone-by-the-next-inventory-capture.
+             */
+            PushTrade(*pSession, "Trade complete.");
 
             trades.Sweep();
             return true;
@@ -5034,6 +5197,10 @@ bool ChatSystem::HandleModerationCommand(flecs::entity aSender, const PlayerComp
         Tell(acSender, fmt::format("Asked {} to trade.", pTheirCharacter->Name));
         Tell(*pInvitee, fmt::format("{} wants to trade. /trade accept, or ignore it.",
                                     DisplayNameFor(acSender.DiscordId, pSelf, acSender.Username)));
+
+        // Both panels learn of it: the invitee's offers ACCEPT/DECLINE, the inviter's shows
+        // that it is waiting.
+        PushTrade(session);
 
         spdlog::info("{} asked {} to trade ({})", acSender.Username, pInvitee->Username,
                      session.TradeId);

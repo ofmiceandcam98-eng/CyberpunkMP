@@ -360,3 +360,89 @@ private:
      */
     std::list<TradeSession> m_sessions;
 };
+
+/**
+ * The number both people confirm against.
+ *
+ * Every edit Touch()es BOTH offers, so either offer's version would move; the sum is used so
+ * the figure is the same whichever side asks. A confirm that names an older number is
+ * refused - see /trade confirm - which is what stops somebody agreeing to the deal on their
+ * screen and receiving the one their partner changed it to a moment later.
+ */
+inline uint32_t TradeVersion(const TradeSession& acSession)
+{
+    return acSession.OfferA.Version + acSession.OfferB.Version;
+}
+
+/**
+ * One trader's view of a trade: what NotifyTrade carries to them.
+ *
+ * Pure, and kept here rather than in ChatSystem, so the arithmetic is tested against the
+ * real store (tools/tests/trade_view_test.cpp) instead of being trusted. The figures it
+ * offers the panel MUST be the ones the /trade commands accept - a panel that shows 37 of
+ * something the server will only take 36 of is a panel that lies - so it asks the same
+ * questions those commands ask: AvailableMoney against the reservation, HeldQuantity
+ * against what is promised elsewhere.
+ */
+struct TradeView
+{
+    const TradeOffer* Mine{nullptr};
+    const TradeOffer* Theirs{nullptr};
+    std::string Partner;
+    bool Incoming{false};
+    uint32_t Version{0};
+
+    // Only while the trade is live; an ended trade offers nothing to pick from.
+    int64_t Available{0};
+    std::vector<CharacterRecord::ItemStack> Holdings;
+};
+
+inline TradeView BuildTradeView(const TradeStore& acTrades, const TradeSession& acSession,
+                                const std::string& acFor, const CharacterRecord* apSelf,
+                                const std::string& acPartnerName)
+{
+    TradeView view;
+    view.Mine = acSession.OfferFor(acFor);
+    view.Theirs = acSession.OfferFor(acSession.Other(acFor));
+    view.Partner = acPartnerName;
+    view.Incoming = acSession.B == acFor;
+    view.Version = TradeVersion(acSession);
+
+    if (!apSelf || !view.Mine || IsTradeOver(acSession.State))
+        return view;
+
+    // Exactly the /trade money check: what is owned, less what is promised in OTHER trades.
+    // This offer's own money is added back, because changing an amount is not spending it
+    // twice.
+    const auto reservedElsewhere = acTrades.ReservedMoney(acFor) - view.Mine->Money;
+    view.Available = PlayerStore::AvailableMoney(*apSelf, reservedElsewhere);
+
+    // One row per distinct item, in the order the character holds them, each the quantity
+    // /trade item would accept: held, less what other trades have promised. A stack already
+    // in THIS offer still counts as available - re-offering it sets the amount.
+    std::vector<uint64_t> seen;
+
+    for (const auto& stack : apSelf->Inventory)
+    {
+        if (stack.Id == 0 || std::find(seen.begin(), seen.end(), stack.Id) != seen.end())
+            continue;
+
+        seen.push_back(stack.Id);
+
+        const auto held = PlayerStore::HeldQuantity(*apSelf, stack.Id);
+
+        uint32_t inThisOffer = 0;
+        for (const auto& offered : view.Mine->Items)
+        {
+            if (offered.Id == stack.Id)
+                inThisOffer += offered.Quantity;
+        }
+
+        const auto promisedElsewhere = acTrades.ReservedItems(acFor, stack.Id) - inThisOffer;
+
+        if (held > promisedElsewhere)
+            view.Holdings.push_back({stack.Id, held - promisedElsewhere});
+    }
+
+    return view;
+}

@@ -718,6 +718,58 @@ message NotifyCall {
     bool incoming = 5;
 }
 
+/**
+ * One trade, as the server understands it, from the RECIPIENT's side.
+ *
+ * Sent to BOTH people on every change and on every ending, the same way NotifyCall mirrors
+ * CallStore: the trade panel draws this and nothing else, so it cannot show a deal the server
+ * does not hold. Before this the panel drew mock data and its buttons reached nothing.
+ *
+ * Recipient-relative on purpose - "mine" and "theirs" rather than A and B - so the client
+ * never needs to know which side of the session it is, and the partner is a display name
+ * rather than a CharacterId for the reason NotifyCall gives: an id that survives renames is
+ * not something to hand to whoever you happen to trade with.
+ *
+ * The panel ACTS through the existing /trade chat commands, not through a request of its
+ * own. The session lifecycle in TradeStore is what makes a trade happen exactly once, and a
+ * second door into it is how a duplicated packet would duplicate assets.
+ *
+ * Declared above Protocol: netpack emits C++ in file order, and a message used before its
+ * declaration does not build.
+ */
+message NotifyTrade {
+    string trade_id = 1;
+
+    // TradeState from TradeStore.h, as its underlying value.
+    uint32 state = 2;
+
+    // The other trader's character name, already resolved on the server.
+    string partner = 3;
+
+    // True when this player was the one INVITED - decides ACCEPT/DECLINE against waiting.
+    bool incoming = 4;
+
+    // Moves on every edit to either offer. /trade confirm <version> is refused when it is
+    // stale, so a confirm can only ever agree to the deal that was on screen.
+    uint32 version = 5;
+
+    int64 my_money = 6;
+    repeated ItemStack my_items = 7;
+    bool my_confirmed = 8;
+
+    int64 their_money = 9;
+    repeated ItemStack their_items = 10;
+    bool their_confirmed = 11;
+
+    // What this player could still put in: eddies and items, net of anything promised
+    // elsewhere. Empty once the trade is over.
+    int64 available_money = 12;
+    repeated ItemStack holdings = 13;
+
+    // Why it ended, phrased for this recipient. Empty while the trade is live.
+    string reason = 14;
+}
+
 message Protocol {
     oneof content {
         AuthenticationResponse authentication_response = 1;
@@ -753,5 +805,6 @@ message Protocol {
         NotifyQuickhackResult notify_quickhack_result = 31;
         NotifyPossessions notify_possessions = 32;
         NotifyCall notify_call = 33;
+        NotifyTrade notify_trade = 34;
     }
 }
