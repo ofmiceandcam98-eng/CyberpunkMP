@@ -181,29 +181,6 @@ public func MpCsGlowText(parent: ref<inkCompoundWidget>, x: Float, y: Float, tex
 }
 
 /**
- * THE CLIPPED CORNER, which is the signature of this whole design language.
- *
- * ink has no polygon clipping, so the notch is drawn rather than cut: a square the colour
- * of what is BEHIND the plate, rotated 45 degrees and parked over the corner so it eats
- * it. The rotation is why this works at all - an axis-aligned square would just be a
- * smaller square sitting in the corner.
- *
- * Only the top-right and bottom-left are notched, which is the asymmetry the mockup uses
- * and the game's own panels use: notching all four reads as a stop sign.
- */
-public func MpCsNotch(parent: ref<inkCompoundWidget>, x: Float, y: Float, size: Float,
-                      color: HDRColor) -> Void {
-    let n = new inkRectangle();
-    n.SetAnchor(inkEAnchor.TopLeft);
-    n.SetAnchorPoint(new Vector2(0.5, 0.5));
-    n.SetMargin(new inkMargin(x, y, 0.0, 0.0));
-    n.SetSize(new Vector2(size, size));
-    n.SetTintColor(color);
-    n.SetRotation(45.0);
-    n.Reparent(parent);
-}
-
-/**
  * A one-pixel outline, as four rules.
  *
  * Cheaper to read than to look at: ink rectangles have no stroke, so a border is the four
@@ -764,11 +741,6 @@ public func MpCsOpen() -> Void {
     // An opaque black bed goes down FIRST. The image is drawn at the 1920x1080 it was
     // authored at, and anything the menu is showing behind it - the badlands, the expansion
     // logo - must not read through the edges if a resolution ever leaves a seam.
-    // Anchored Fill rather than sized, deliberately. Every other coordinate on this screen
-    // depends on the scale measured above being right; this one does not. If the root ever
-    // reports zero and the scale falls back to 1:1, the composition is wrong but the screen
-    // is still BLACK behind it rather than half-covered over the game's own menu - which is
-    // the difference between something that looks unfinished and something that looks broken.
     // Sized rather than Fill-anchored, for the same reason the canvas is: inside a scaled
     // canvas a Fill child covers the canvas's own box, which the scale has already moved.
     // 1920x1080 in authored units is exactly the screen once the scale is applied.
@@ -921,8 +893,11 @@ public func MpCsOpen() -> Void {
      * fired either. Three instruments, three silences, and somewhere in there it locked the
      * main menu.
      *
-     * The question is still worth answering, but not here. A diagnostic does not get to sit
-     * in the screen a person is trying to use; it belongs somewhere a failure costs nothing.
+     * It was answered later, from the HUD controller, and the answer is NO: spawning the
+     * CLI-authored library hard-crashed the client every session, so this screen stays
+     * runtime-built (Atlas: can-a-cli-authored-inkwidget-be-spawned-three-probes-three-s).
+     * The lesson that outlives it: a diagnostic does not get to sit in the screen a person is
+     * trying to use.
      *
      * WHAT IT DID ESTABLISH, and this was worth the trip: the menu root lays out at
      * 3840x2160, measured rather than assumed, which is the whole reason this composition

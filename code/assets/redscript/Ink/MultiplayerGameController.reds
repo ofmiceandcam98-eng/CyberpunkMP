@@ -15,18 +15,6 @@ import CyberpunkMP.Plugins.*
  * IsConnected() itself and simply has nothing to show while that is false, the same
  * survives-a-reconnect shape as MpStatusEffectPoll in Combat.reds.
  */
-// Reads the ink probe out three seconds after both asks - see MpInkProbeOnce. A concrete
-// class because DelayCallback requires one, same as the speaking poll below.
-public class MpInkProbeVerdict extends DelayCallback {
-    public let controller: wref<MultiplayerGameController>;
-
-    public func Call() -> Void {
-        if IsDefined(this.controller) {
-            this.controller.MpInkProbeReport();
-        }
-    }
-}
-
 public class MpVoiceSpeakingPoll extends DelayCallback {
     public let controller: wref<MultiplayerGameController>;
 
@@ -64,12 +52,6 @@ public class MultiplayerGameController extends inkGameController {
 
     // The "you are talking" indicator. Built on first transmission, not at startup.
     private let m_voiceIndicator: wref<inkText>;
-
-    // The ink-probe experiment (Atlas: can-a-cli-authored-inkwidget-be-spawned...).
-    // One-shot per session; comes out the moment the question is answered.
-    private let m_inkProbeArmed: Bool;
-    private let m_inkProbeControl: Bool;
-    private let m_inkProbeAuthored: Bool;
 
     // Who ELSE is talking right now - built on first sighting of a remote speaker, not at
     // startup. Separate widget from m_voiceIndicator: your own state and everyone else's
@@ -311,100 +293,13 @@ public class MultiplayerGameController extends inkGameController {
     protected cb func OnPositionAnimationFinish(anim: ref<inkAnimProxy>) -> Bool {
         this.m_startupAnimProxy.UnregisterFromAllCallbacks(inkanimEventType.OnFinish);
         this.m_phoneIconWidget.SetVisible(true);
-        // The ink probe is DISABLED, and its being disabled IS the verdict: on 2026-09-13 it
-        // HARD-CRASHED the client a few seconds after spawn, every session. AsyncSpawnFromExternal
-        // of the CLI-authored character_select.inkwidget takes the game down - so a CLI-authored
-        // inkwidget is NOT safely spawnable this way; the selector stays runtime-built. Do not
-        // re-arm this in a build anyone plays. See atlas:can-a-cli-authored-inkwidget-be-spawned.
-        // this.MpInkProbeOnce();
+        // An ink probe used to be armed here. It is gone, and what it found is the reason the
+        // character selector is built at runtime: on 2026-09-13 AsyncSpawnFromExternal of the
+        // CLI-authored character_select.inkwidget hard-crashed the client a few seconds after
+        // spawn, every session. Do not spawn that library from a build anyone plays.
+        // Atlas: can-a-cli-authored-inkwidget-be-spawned-three-probes-three-s.
         //
-        // RECONCILE 2026-09-22: the two branches disagreed here and the merge keeps the safe
-        // half of each. lifepath disabled the probe (above) - kept, because an active probe
-        // crashes the client. main replaced the hand-drawn talk button with a real input hint
-        // (30fe295) and REMOVED MpBuildTalkButton, so lifepath's MpBuildTalkButton() call is
-        // NOT re-added - it would not compile, and TALK is the input hint now.
-    }
-
-    /**
-     * THE DISCRIMINATING TEST the menu-controller probes could not give us.
-     *
-     * Three builds asked SingleplayerMenuGameController to AsyncSpawnFromExternal and no
-     * callback EVER fired - for the CLI-authored library OR for multiplayer_ui, which this
-     * controller spawns successfully every session (chat, emotes, jobs, deliveries). So
-     * the same two asks run HERE, where async spawning provably works:
-     *
-     *   control spawns, authored does not  -> the CLI round-trip makes bad libraries
-     *   both spawn                         -> the library is fine; the MENU controller is
-     *                                         the blocker, and the selector stays runtime-built
-     *   both silent                        -> AsyncSpawnFromExternal (vs FromLocal) is the
-     *                                         suspect on every controller
-     *
-     * Spawned widgets are hidden immediately - this is a measurement, not UI. Requires
-     * zz_NightCityOnline_Selector.archive in the payload (the authored library lives there;
-     * its backdrop texture is what proved the archive itself loads).
-     */
-    private func MpInkProbeOnce() -> Void {
-        if this.m_inkProbeArmed {
-            return;
-        }
-        this.m_inkProbeArmed = true;
-
-        this.MpInkProbeLog("asking for BOTH libraries from MultiplayerGameController - verdict in 3s");
-
-        this.AsyncSpawnFromExternal(this.GetRootCompoundWidget(),
-                                    r"mods\\cyberpunkmp\\multiplayer_ui.inkwidget",
-                                    n"server_list", this, n"OnMpInkProbeControl");
-
-        this.AsyncSpawnFromExternal(this.GetRootCompoundWidget(),
-                                    r"nightcityonline\\character_select.inkwidget",
-                                    n"character_select", this, n"OnMpInkProbeAuthored");
-
-        // Silence has to report itself - a wait needs a deadline and a failure branch,
-        // or it cannot be told from still-working. Same lesson as the menu-side probe.
-        let verdict = new MpInkProbeVerdict();
-        verdict.controller = this;
-        GameInstance.GetDelaySystem(GetGameInstance()).DelayCallback(verdict, 3.0, false);
-    }
-
-    private func MpInkProbeLog(text: String) -> Void {
-        FTLog(s"[InkProbe] \(text)");
-        let network = GameInstance.GetNetworkWorldSystem();
-        if IsDefined(network) {
-            network.ScriptLog(s"[InkProbe] \(text)");
-        }
-    }
-
-    protected cb func OnMpInkProbeControl(widget: ref<inkWidget>, userData: ref<IScriptable>) -> Bool {
-        this.m_inkProbeControl = true;
-        this.MpInkProbeLog(s"CONTROL callback fired - widget defined: \(IsDefined(widget))");
-        if IsDefined(widget) {
-            widget.SetVisible(false);
-        }
-    }
-
-    protected cb func OnMpInkProbeAuthored(widget: ref<inkWidget>, userData: ref<IScriptable>) -> Bool {
-        this.m_inkProbeAuthored = true;
-        this.MpInkProbeLog(s"AUTHORED callback fired - widget defined: \(IsDefined(widget))");
-        if IsDefined(widget) {
-            widget.SetVisible(false);
-        }
-    }
-
-    // Called by the verdict DelayCallback, so it cannot be private.
-    public func MpInkProbeReport() -> Void {
-        if this.m_inkProbeControl && this.m_inkProbeAuthored {
-            this.MpInkProbeLog("VERDICT: BOTH spawned - the CLI-authored library is VALID; the menu controller is the blocker");
-        } else {
-            if this.m_inkProbeControl && !this.m_inkProbeAuthored {
-                this.MpInkProbeLog("VERDICT: control spawned, authored SILENT - the CLI round-trip produces bad libraries");
-            } else {
-                if !this.m_inkProbeControl && !this.m_inkProbeAuthored {
-                    this.MpInkProbeLog("VERDICT: BOTH silent - AsyncSpawnFromExternal itself is the suspect, on every controller");
-                } else {
-                    this.MpInkProbeLog("VERDICT: authored spawned but control did NOT - unexpected; re-read the control path");
-                }
-            }
-        }
+        // TALK is an input hint since 30fe295, so there is no talk button to build here either.
     }
 
     private cb func OnActivatePhoneElements(element: Uint32) -> Bool {
@@ -426,56 +321,6 @@ public class MultiplayerGameController extends inkGameController {
             }
         }
     }
-
-/*
-    protected cb func OnVehicleMount(value: Bool) -> Bool {
-        FTLog(s"[MultiplayerGameController] OnPlayerEnteredVehicle");
-        if value  {
-            let targets = new inkWidgetsSet();
-            targets.Select(this.GetWidget(n"hud"));
-            this.PlayLibraryAnimationOnTargets(n"to_vehicle", targets);
-
-            let message = new ChatMessageUIEvent();
-            message.m_author = "jackhumbert";
-            message.m_message = "Mounting to vehicle";
-            this.QueueEvent(message);
-
-        } else {
-            let targets = new inkWidgetsSet();
-            targets.Select(this.GetWidget(n"hud"));
-            this.PlayLibraryAnimationOnTargets(n"from_vehicle", targets);
-
-            let message = new ChatMessageUIEvent();
-            message.m_author = "jackhumbert";
-            message.m_message = "Unmounting from vehicle";
-            this.QueueEvent(message);
-        }
-    }
-
-    protected cb func OnPlayerEnteredVehicle(value: Int32) -> Bool {
-        FTLog(s"[MultiplayerGameController] OnPlayerEnteredVehicle");
-        if value != 0 {
-            let targets = new inkWidgetsSet();
-            targets.Select(this.GetWidget(n"hud"));
-            this.PlayLibraryAnimationOnTargets(n"to_vehicle", targets);
-
-            let message = new ChatMessageUIEvent();
-            message.m_author = "jackhumbert";
-            message.m_message = "Mounting to vehicle";
-            this.QueueEvent(message);
-
-        } else {
-            let targets = new inkWidgetsSet();
-            targets.Select(this.GetWidget(n"hud"));
-            this.PlayLibraryAnimationOnTargets(n"from_vehicle", targets);
-
-            let message = new ChatMessageUIEvent();
-            message.m_author = "jackhumbert";
-            message.m_message = "Unmounting from vehicle";
-            this.QueueEvent(message);
-        }
-    }
-    */
 
     private func UpdateInputHints() -> Void {
         let evt = new UpdateInputHintMultipleEvent();
@@ -807,97 +652,6 @@ public class MultiplayerGameController extends inkGameController {
         };
         return true;
     }
-
-// Chat
-
-    // protected cb func OnChatSpawned(widget: ref<inkWidget>, userData: ref<IScriptable>) -> Bool {
-    //     FTLog(s"[MultiplayerGameController] OnChatSpawned");
-    //     this.m_messageController = this.GetWidget(n"hud/chat/wrapper/chat/scrollarea/messages").GetController() as ListController;
-    //     if !IsDefined(this.m_messageController) {
-    //         FTLog(s"[MultiplayerGameController] OnChatSpawned - LIST CONTROLLER NOT FOUND");
-    //     }
-    //     this.m_scrollArea = this.GetWidget(n"hud/chat/wrapper/chat/scrollarea") as inkScrollArea;
-    //     if !IsDefined(this.m_scrollArea) {
-    //         FTLog(s"[MultiplayerGameController] OnChatSpawned - SCROLLAREA NOT FOUND");
-    //     }
-    //     // this.m_scrollArea.RegisterToCallback(n"OnScrollChanged", this, n"OnScrollChanged");
-    //     // this.m_scrollController = this.GetWidget(n"hud/chat/wrapper/chat").GetController() as inkScrollController;
-    //     // if !IsDefined(this.m_scrollController) {
-    //         // FTLog(s"[MultiplayerGameController] OnChatSpawned - SCROLL CONTROLLER NOT FOUND");
-    //     // }
-    //     this.m_input = this.GetWidget(n"hud/chat/wrapper/input_box/input") as inkTextInput;
-    //     if !IsDefined(this.m_input) {
-    //         FTLog(s"[MultiplayerGameController] OnChatSpawned - INPUT WIDGET NOT FOUND");
-    //     }
-
-    //     this.m_messageController.Clear(true);
-
-    //     let messageData = new ChatMessageUIEvent();
-    //     messageData.m_author = "SERVER";
-    //     messageData.m_message = "Connected to " + this.m_server;
-    //     this.QueueEvent(messageData);
-
-    //     if Equals(StringToName(this.m_server), n"test") {
-
-    //         let message: ref<ChatMessageUIEvent>;
-
-    //         message = new ChatMessageUIEvent();
-    //         message.m_author = "jackhumbert";
-    //         message.m_message = "Wow, it works";
-    //         this.QueueEvent(message);
-
-    //         message = new ChatMessageUIEvent();
-    //         message.m_author = "yamashi";
-    //         message.m_message = "Yeah";
-    //         this.QueueEvent(message);
-
-    //         message = new ChatMessageUIEvent();
-    //         message.m_author = "jackhumbert";
-    //         message.m_message = "This is just static text though";
-    //         this.QueueEvent(message);
-
-    //         message = new ChatMessageUIEvent();
-    //         message.m_author = "yamashi";
-    //         message.m_message = "Yeah";
-    //         this.QueueEvent(message);
-
-    //         message = new ChatMessageUIEvent();
-    //         message.m_author = "jackhumbert";
-    //         message.m_message = "Ok, not from the server or anything";
-    //         this.QueueEvent(message);
-
-    //         message = new ChatMessageUIEvent();
-    //         message.m_author = "yamashi";
-    //         message.m_message = "Yeah";
-    //         this.QueueEvent(message);
-
-    //         message = new ChatMessageUIEvent();
-    //         message.m_author = "jackhumbert";
-    //         message.m_message = "Cool";
-    //         this.QueueEvent(message);
-
-    //         message = new ChatMessageUIEvent();
-    //         message.m_author = "yamashi";
-    //         message.m_message = "Yeah";
-    //         this.QueueEvent(message);
-
-    //         message = new ChatMessageUIEvent();
-    //         message.m_author = "jackhumbert";
-    //         message.m_message = "Neat";
-    //         this.QueueEvent(message);
-
-    //         message = new ChatMessageUIEvent();
-    //         message.m_author = "jackhumbert";
-    //         message.m_message = "This is a long message to test the wrapping capabilities";
-    //         this.QueueEvent(message);
-
-    //         message = new ChatMessageUIEvent();
-    //         message.m_author = "jackhumbert";
-    //         message.m_message = "This is a really long message to make sure that we're actually testing the wrapping capabilities, since the box itself is currently 1000 wide";
-    //         this.QueueEvent(message);
-    //     }
-    // }
-
 
 // Emote Selector
 
