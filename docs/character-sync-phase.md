@@ -14,6 +14,8 @@ Protocol note that shapes everything below: netpack hashes the .proto files into
 
 Pipeline note (cross-cutting blocker): the test-build pipeline ships **DLL-only**. Workstreams marked **[PIPELINE-BLOCKED]** need redscript (.reds), TweakDB (.tweak), or archive (.ent) delivery. Unblocking this (extend the pipeline to ship the redscript/tweaks/archive folders alongside the DLL — they are plain files consumed by RED4ext/redscript/TweakXL/ArchiveXL at load) is itself **increment 0** of this phase, because targets (b) and (c) both dead-end without it.
 
+**Status, 2026-11-10 - read this before acting on anything below.** This is the August plan, kept as history; only the three points here have been re-checked, and nothing else in it should be taken as current. (1) **[PIPELINE-BLOCKED] no longer applies**: test builds install the whole payload - scripts, tweaks and archives - not the DLL alone. (2) **b4-B's question - what other players are built from - has its current answer in `docs/MAP.md`, CODE MAP, row "Player templates"**: the `tpp_cutscene` templates carry no body of their own, and Verify fails if a spawned record names a template that has not been measured the same way. (3) **c2's "ma imports ONLY ui_male + sportbike anims" no longer describes the shipped file**: the male `tpp_cutscene` template carries a `Gameplay Animation Setup` with 125 sets, the same count as the female one (measured 2026-11-10).
+
 ---
 
 ## Target (a) — "see each other moments after connection"

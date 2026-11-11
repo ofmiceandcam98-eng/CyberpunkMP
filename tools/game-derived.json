@@ -1,0 +1,65 @@
+{
+  "about": [
+    "What in this repository was taken from the game at one patch, and what was measured about the templates other players are built from.",
+    "tools/CheckGameDerived.ps1 reads it, tools/Verify.ps1 runs that, and it fails when: an entry in takenFromGame was matched to a patch other than game.supportedVersion in publish/manifest-source.json; a file under archiveRoot is neither under ours nor in takenFromGame; a record other players are spawned from names a template that is not in playerTemplates.",
+    "takenFrom says the work was redone at that patch. Change it only after doing what refresh says, in the same commit. stale and refresh are printed as the failure, so write them for somebody who was not here.",
+    "Paths use forward slashes. Entries in ours are relative to archiveRoot - one ending in / is a folder and covers everything under it, any other is one file and covers only itself; the rest are relative to the repository."
+  ],
+
+  "archiveRoot": "code/assets/Archives/source/archive",
+
+  "ours": [
+    {
+      "path": "mods/",
+      "why": "our own namespace - the game has nothing under it, so nothing here replaces a game file"
+    },
+    {
+      "path": "nightcityonline/",
+      "why": "our own namespace - the game has nothing under it, so nothing here replaces a game file"
+    },
+    {
+      "path": "multi/gameplay/gui/widgets/minimap/minimap_pingsystem_mapping.inkwidget",
+      "why": "looks like a game path and is not one: WolvenKit.CLI unbundle finds no such file in the game's content or ep1 archives on 2.5 (2026-11-10; the same search finds prototype_hud.inkhud)"
+    }
+  ],
+
+  "takenFromGame": [
+    {
+      "path": "code/assets/Archives/source/archive/base/gameplay/gui/prototype_hud.inkhud",
+      "takenFrom": "2.5",
+      "ours": "one inkHudWidgetSpawnEntry, multiplayer_ui, after new_phone; the other 72 entries are the game's (compared with the 2.5 file 2026-11-10)",
+      "stale": "it replaces the game's whole HUD layout for every player, so anything the patch added, renamed or moved in the game's own file is silently missing. A 2024 copy carried into 2.5 hid the police, reaper_mq062 and cyberware_mq062 HUD elements and aimed the car HUD at a slot 2.5 had renamed; it took six days to find (1308b165).",
+      "refresh": "redo it from the patched game's own file: docs/MAP.md, CODE MAP, row 'HUD layout override' has the WolvenKit round trip."
+    },
+    {
+      "path": "code/assets/Archives/source/archive/ep1/quest/ep1_standalone.gamedef",
+      "takenFrom": "2.5",
+      "ours": "two of the three root quests and the spawn tag; everything else is the game's (compared with the 2.5 file 2026-11-10)",
+      "stale": "it replaces the game's own start definition, which is what every new character begins from. If the patch changed the original, a fresh character starts from an old definition: at worst a spawn tag that no longer exists, which is how players once fell through the map.",
+      "refresh": "unbundle the patched game's ep1\\quest\\ep1_standalone.gamedef from its ep1 archives, set the root quests and spawn tag named in docs/MAP.md, CODE MAP, row 'Clean start & quest gating', and repack zz_NightCityOnline_CleanStart.archive (same round trip as the HUD row). Then start a fresh character once."
+    },
+    {
+      "path": "vendor/RED4ext.SDK",
+      "takenFrom": "2.5",
+      "ours": "upstream's 'Update types for patch 2.5' with the CyberpunkMP hand-decoded engine structures merged in",
+      "stale": "every engine structure the client reads by layout comes from here. Built against the wrong patch it reads the wrong bytes: crashes, or values that are quietly wrong.",
+      "refresh": "vendor/RED4ext.SDK/NCO-PROVENANCE.md: diff this tree against the upstream base it names, take upstream's update for the new patch, and re-check each decode it lists as ours or unverified."
+    }
+  ],
+
+  "playerTemplates": {
+    "about": "Templates a record may spawn another player from. Each was serialized with WolvenKit.CLI and has no entSkinnedMeshComponent of its own, so the only body on it is the one that player's own character sends. A template with stock meshes puts those same meshes on every player.",
+    "measured": [
+      {
+        "path": "mods/cyberpunkmp/player_ma_tpp_cutscene.ent",
+        "stockMeshes": 0,
+        "on": "2026-11-10"
+      },
+      {
+        "path": "mods/cyberpunkmp/player_wa_tpp_cutscene.ent",
+        "stockMeshes": 0,
+        "on": "2026-11-10"
+      }
+    ]
+  }
+}

@@ -190,6 +190,72 @@ foreach ($component in ($sourceManifest.components | Where-Object { $_.class -eq
 if ($patchOk) { Pass "patch $gamePatch and the pinned frameworks agree in INSTALL.txt, README and CONTRIBUTING" }
 
 # ---------------------------------------------------------------------------
+Head "what was taken from the game, and what other players are built from"
+# The checks are tools\CheckGameDerived.ps1 - its header says what they are for - and the list
+# they read is tools\game-derived.json. They live outside this file so that
+# tools\tests\game_derived_test.ps1 can run them against a copy of the tree broken one way at a
+# time: a gate nobody has watched fail is a gate nobody knows works. Both run here.
+$installedPatch = $null
+$gameExePath = if ($script:GameDir) { Join-Path $script:GameDir "bin\x64\Cyberpunk2077.exe" } else { $null }
+if ($gameExePath -and (Test-Path -LiteralPath $gameExePath)) {
+    $installedPatch = ([string](Get-Item -LiteralPath $gameExePath).VersionInfo.ProductVersion).Trim()
+}
+
+$derivedFindings = @()
+$derivedRan = $true
+try { $derivedFindings = @(& (Join-Path $PSScriptRoot "CheckGameDerived.ps1") -Root $Repo -InstalledPatch $installedPatch) }
+catch {
+    $derivedRan = $false
+    Fail -Summary "tools\CheckGameDerived.ps1 stopped before it finished" `
+         -What "nothing taken from the game was checked against the patch, and nothing checked what other players are built from." `
+         -Where "$($_.Exception.Message)" `
+         -Fix "run .\tools\CheckGameDerived.ps1 by itself and read the error; tools\game-derived.json is the first thing it reads"
+}
+Set-Location $Repo
+
+if ($derivedRan -and $derivedFindings.Count -eq 0) {
+    Fail -Summary "tools\CheckGameDerived.ps1 reported nothing" `
+         -What "it says ok for each thing it checked, so silence means it checked nothing - and silence would otherwise read as a pass." `
+         -Where "tools\CheckGameDerived.ps1" `
+         -Fix "run .\tools\CheckGameDerived.ps1 by itself; it should print one line per check"
+}
+
+# A different game installed here is not a failure - the build box follows Steam, and a hotfix
+# for the patch players are still on has to be shippable the morning the game moves. It is said
+# twice, here and beside the verdict, so it is not scrolled past.
+$installedPatchNote = $null
+foreach ($finding in $derivedFindings) {
+    if ($finding.Kind -eq 'fail') {
+        Fail -Summary $finding.Summary -What $finding.What -Where $finding.Where -Fix $finding.Fix
+    }
+    elseif ($finding.Kind -eq 'note') {
+        $installedPatchNote = $finding.Summary
+        Write-Host "  NOTE  $($finding.Summary)" -ForegroundColor Yellow
+        Write-Host "        what   $($finding.What)" -ForegroundColor DarkYellow
+        Write-Host "        where  $($finding.Where)" -ForegroundColor DarkYellow
+        Write-Host "        fix    $($finding.Fix)" -ForegroundColor DarkYellow
+    }
+    else { Pass $finding.Summary }
+}
+
+# Continue, not Stop: anything the test writes to stderr must fail on its exit code with the
+# output shown, not abort this whole script at the first line.
+$savedPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+$derivedTestOut = @(& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "tests\game_derived_test.ps1") 2>&1)
+$derivedTestCode = $LASTEXITCODE
+$ErrorActionPreference = $savedPreference
+
+$derivedTestLines = @($derivedTestOut | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+if ($derivedTestCode -ne 0) {
+    Fail -Summary "game_derived_test.ps1 is failing" `
+         -What "one of the checks above no longer fires on the thing it exists to catch, so a clean result from it means less than it says." `
+         -Where (($derivedTestLines | Select-Object -Last 10) -join ' ;; ') `
+         -Fix "run it for the full output: powershell -NoProfile -File tools\tests\game_derived_test.ps1"
+}
+else { Pass "game_derived_test.ps1 - $($derivedTestLines | Select-Object -Last 1)" }
+
+# ---------------------------------------------------------------------------
 Head "redscript natives vs C++ RTTI"
 # Every script that declares a native class, beside the C++ that has to expose it. This used to
 # check NetworkWorldSystem alone while its pass line read as if it covered the whole mod.
@@ -638,6 +704,10 @@ if (-not $SkipTests) {
 
 # ---------------------------------------------------------------------------
 Write-Host ""
+if ($installedPatchNote) {
+    Write-Host "NOTE  $installedPatchNote - see 'what was taken from the game' above." -ForegroundColor Yellow
+    Write-Host ""
+}
 if ($problems) {
     Write-Host "$($problems.Count) problem(s):" -ForegroundColor Red
     foreach ($p in $problems) { Write-Host "  - $($p.Summary)" -ForegroundColor Red }

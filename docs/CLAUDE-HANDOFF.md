@@ -95,7 +95,8 @@ Codeware 1.21.2, ArchiveXL 1.28.6, TweakXL 1.12.0, InputLoader 0.2.6) - the Stea
 NOT wipe the install here, it left the 2.31 versions in place, so check versions rather than
 presence. Full Verify green including `redscript compiles` against 2.5; 229 GB free. The 2.31
 launcher, payloads and prerequisite zips are archived at `/mnt/vol/backups/launcher-2.31-20261102/`
-(README + SHA256SUMS inside). No REDmod, no local WolvenKit, no Linux toolchain.
+(README + SHA256SUMS inside). No Linux toolchain. REDmod and a local WolvenKit CLI were missing
+on that date and are there now (2026-11-10) - map §5 holds the current answer.
 
 Anything above older than a week is a belief, not a fact — re-run the checks and update the
 two lines above rather than arguing from them.
