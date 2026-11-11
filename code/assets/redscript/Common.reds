@@ -24,6 +24,12 @@ public class CharacterNameRequest extends Event {
     public let m_current: String;
 }
 
+// The trade changed - a NotifyTrade arrived, or the connection dropped mid-trade. Raised by
+// NetworkWorldSystem.OnTradeStateChanged for the same reason as CharacterNameRequest: the world
+// system owns no widgets, and ChatController owns the trade panel. Carries nothing - the panel
+// reads the whole state back from the native mirror, so it can never act on half of one.
+public class MpTradeChanged extends Event {}
+
 public class ChatMessageData extends IScriptable {
     public let m_author: String;
     public let m_message: String;

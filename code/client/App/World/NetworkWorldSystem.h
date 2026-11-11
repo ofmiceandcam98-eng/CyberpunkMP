@@ -287,6 +287,57 @@ struct NetworkWorldSystem : RED4ext::IGameSystem, Core::HookingAgent, flecs::wor
     // can never be in.
     static constexpr uint32_t kNoCall = 0xFFFFFFFF;
 
+    // A player-to-player trade, for the TRADE PANEL.
+    //
+    // The call's contract, again: a mirror of the last NotifyTrade, replaced wholesale by
+    // the next, and the panel decides nothing - it draws this and sends /trade commands. The
+    // server has already turned A and B into mine and theirs, so nothing here knows which
+    // side of the session this player is.
+    //
+    // UNLIKE the call, an ending is HELD rather than cleared: the panel has to say why it
+    // closed, and a completed trade's final offers are what MpInventory.ApplyTrade moves in
+    // the game. IsTradeLive() is the "is there one" question; the state says which ending.
+    //
+    // Scalars and an index, for the roster's reason - redscript crosses the boundary well
+    // with scalars and badly with structs. Item ids are numbers; TdbidFromNumber turns them
+    // back. Money is Int32 for the reason GetRestoreMoney gives.
+    uint32_t GetTradeState() const { return m_tradeState; }
+    bool IsTradeLive() const { return m_tradeState <= kTradeCommitting; }
+    Red::CString GetTradeId() const { return m_tradeId.c_str(); }
+    Red::CString GetTradePartner() const { return m_tradePartner.c_str(); }
+    bool IsTradeIncoming() const { return m_tradeIncoming; }
+    uint32_t GetTradeVersion() const { return m_tradeVersion; }
+    int32_t GetTradeMoney(bool aMine) const;
+    bool IsTradeConfirmed(bool aMine) const { return aMine ? m_tradeMyConfirmed : m_tradeTheirConfirmed; }
+    uint32_t GetTradeItemCount(bool aMine) const;
+    uint64_t GetTradeItemId(bool aMine, uint32_t aIndex) const;
+    uint32_t GetTradeItemQuantity(bool aMine, uint32_t aIndex) const;
+    int32_t GetTradeAvailableMoney() const;
+    uint32_t GetTradeHoldingCount() const { return static_cast<uint32_t>(m_tradeHoldings.size()); }
+    uint64_t GetTradeHoldingId(uint32_t aIndex) const;
+    uint32_t GetTradeHoldingQuantity(uint32_t aIndex) const;
+    Red::CString GetTradeReason() const { return m_tradeReason.c_str(); }
+
+    /**
+     * True ONCE per completed trade, then false.
+     *
+     * The item move on completion must happen exactly once - doing it twice gives the
+     * receiver a second copy and takes a second one off the giver, and that is the very
+     * duplication the server's session lifecycle exists to rule out. The server sends
+     * Completed once, but the latch makes "once" a property of this client rather than an
+     * assumption about the wire.
+     */
+    bool TakeTradeCompletion();
+
+    // TradeState values from the server's TradeStore.h. Duplicated as numbers rather than
+    // shared, for the reason HandleNotifyCall gives: the client must not grow opinions about
+    // what a state means beyond "still going" and "how it ended".
+    static constexpr uint32_t kTradeRequested = 0;
+    static constexpr uint32_t kTradeOpen = 1;
+    static constexpr uint32_t kTradeCommitting = 2;
+    static constexpr uint32_t kTradeCompleted = 3;
+    static constexpr uint32_t kNoTrade = 0xFFFFFFFF;
+
     /**
      * Was the game started through the Night City Online launcher?
      *
@@ -552,6 +603,34 @@ protected:
     // Where a call is now. The only thing that writes the call state below.
     void HandleNotifyCall(const PacketEvent<server::NotifyCall>& aMessage);
     void HandleNotifyPossessions(const PacketEvent<server::NotifyPossessions>& aMessage);
+
+    // Where a trade is now. The only thing that writes the trade state below.
+    void HandleNotifyTrade(const PacketEvent<server::NotifyTrade>& aMessage);
+
+    /**
+     * The trade the panel is showing. Written ONLY by HandleNotifyTrade, every field
+     * replaced by each notification - so the panel can never show one side of one version
+     * beside the other side of another.
+     */
+    uint32_t m_tradeState{kNoTrade};
+    std::string m_tradeId;
+    std::string m_tradePartner;
+    bool m_tradeIncoming{false};
+    uint32_t m_tradeVersion{0};
+    int64_t m_tradeMyMoney{0};
+    int64_t m_tradeTheirMoney{0};
+    bool m_tradeMyConfirmed{false};
+    bool m_tradeTheirConfirmed{false};
+    int64_t m_tradeAvailable{0};
+    std::vector<std::pair<uint64_t, uint32_t>> m_tradeMyItems;
+    std::vector<std::pair<uint64_t, uint32_t>> m_tradeTheirItems;
+    std::vector<std::pair<uint64_t, uint32_t>> m_tradeHoldings;
+    std::string m_tradeReason;
+
+    // The completed trade whose items have been handed to script to move - the latch
+    // behind TakeTradeCompletion. Never cleared: a trade id is never reused.
+    std::string m_tradeCompletionTaken;
+    bool m_tradeCompletionPending{false};
 
     // Set while a freshly created character is waiting to be sent to the server.
     bool m_newCharacterPending{false};
@@ -1037,6 +1116,23 @@ RTTI_DEFINE_CLASS(NetworkWorldSystem, {
     RTTI_METHOD(AnswerCall);
     RTTI_METHOD(DeclineCall);
     RTTI_METHOD(HangUpCall);
+    RTTI_METHOD(GetTradeState);
+    RTTI_METHOD(IsTradeLive);
+    RTTI_METHOD(GetTradeId);
+    RTTI_METHOD(GetTradePartner);
+    RTTI_METHOD(IsTradeIncoming);
+    RTTI_METHOD(GetTradeVersion);
+    RTTI_METHOD(GetTradeMoney);
+    RTTI_METHOD(IsTradeConfirmed);
+    RTTI_METHOD(GetTradeItemCount);
+    RTTI_METHOD(GetTradeItemId);
+    RTTI_METHOD(GetTradeItemQuantity);
+    RTTI_METHOD(GetTradeAvailableMoney);
+    RTTI_METHOD(GetTradeHoldingCount);
+    RTTI_METHOD(GetTradeHoldingId);
+    RTTI_METHOD(GetTradeHoldingQuantity);
+    RTTI_METHOD(GetTradeReason);
+    RTTI_METHOD(TakeTradeCompletion);
     RTTI_METHOD(VoiceRefreshDevices);
     RTTI_METHOD(VoiceInputCount);
     RTTI_METHOD(VoiceOutputCount);

@@ -1131,6 +1131,121 @@ public class MpInventory {
     return 0;
   }
 
+  /**
+   * Moves a COMPLETED trade's items in this game - what this player gave goes, what they got
+   * arrives.
+   *
+   * WHY THE CLIENT DOES THIS. The server already moved the items in its record (ApplyTrade),
+   * but inventory is still taken FROM the client: every capture sends the whole inventory and
+   * the server keeps it. Leave the game as it was and the giver's next capture puts the item
+   * back in their record while the receiver's drops it - the trade reverses itself ninety
+   * seconds later. Eddies already work this way (NotifyMoney, ApplyServerMoney); this is the
+   * same correction for items, from the same server message that says the trade happened.
+   *
+   * Exactly once per trade: NetworkWorldSystem.TakeTradeCompletion is the latch. Running it
+   * twice would hand over a second copy and take a second one.
+   *
+   * Given items are unequipped first, the strip code's rule: RemoveItem on something still in a
+   * slot leaves the slot pointing at an item that no longer exists. Body slots are never
+   * touched, and the panel never offers cyberware (MpTrNotTradeable) - taking chrome out of a
+   * body is not what a trade means.
+   */
+  public static func ApplyTrade(network: ref<NetworkWorldSystem>) -> Void {
+    let player = GetPlayer(GetGameInstance());
+    let transaction = GameInstance.GetTransactionSystem(GetGameInstance());
+
+    if !IsDefined(player) || !IsDefined(transaction) {
+      network.ScriptLog("trade: cannot move the items - no player or transaction system. The next capture will undo this trade's items.");
+      return;
+    }
+
+    let gave = 0;
+    let missing = 0;
+    let n = network.GetTradeItemCount(true);
+    let i: Uint32 = 0u;
+
+    while i < n {
+      let id = network.GetTradeItemId(true, i);
+      let quantity = Cast<Int32>(network.GetTradeItemQuantity(true, i));
+      let tdbid = network.TdbidFromNumber(id);
+
+      if TDBID.IsValid(tdbid) && quantity > 0 {
+        MpInventory.UnequipIfWorn(player, tdbid);
+
+        if transaction.RemoveItemByTDBID(player, tdbid, quantity, true) {
+          gave += 1;
+        } else {
+          // The server's record said this player had it and the game does not. Said plainly:
+          // it is the one way this can disagree, and the next capture settles it.
+          missing += 1;
+          network.ScriptLog(s"trade: could not take \(quantity) of \(id) out of the game - not held");
+        }
+      }
+
+      i += 1u;
+    }
+
+    let got = 0;
+    n = network.GetTradeItemCount(false);
+    i = 0u;
+
+    while i < n {
+      let tdbid = network.TdbidFromNumber(network.GetTradeItemId(false, i));
+      let quantity = Cast<Int32>(network.GetTradeItemQuantity(false, i));
+
+      if TDBID.IsValid(tdbid) && quantity > 0 {
+        transaction.GiveItemByTDBID(player, tdbid, quantity);
+        got += 1;
+      }
+
+      i += 1u;
+    }
+
+    network.ScriptLog(s"trade: items moved - gave \(gave) stack(s), received \(got), \(missing) not found");
+  }
+
+  // Takes an item off if this player is wearing or wielding it - every slot of every area, not
+  // just the first, so a weapon in a second holster counts. Body slots are never touched.
+  public static func UnequipIfWorn(player: ref<GameObject>, tdbid: TweakDBID) -> Void {
+    let equipData = EquipmentSystem.GetData(player);
+    let equipment = EquipmentSystem.GetInstance(player);
+
+    if !IsDefined(equipData) || !IsDefined(equipment) {
+      return;
+    }
+
+    let paperdoll: array<SEquipArea> = equipData.GetPaperDollEquipAreas();
+    let p = 0;
+
+    while p < ArraySize(paperdoll) {
+      let area = paperdoll[p].areaType;
+      let isBody = Equals(area, gamedataEquipmentArea.RightArm)
+                || Equals(area, gamedataEquipmentArea.LeftArm)
+                || Equals(area, gamedataEquipmentArea.BaseFists);
+
+      if !isBody {
+        let slots = equipData.GetNumberOfSlots(area);
+        let s = 0;
+
+        while s < slots {
+          let equipped = equipData.GetItemInEquipSlot(area, s);
+
+          if ItemID.IsValid(equipped) && Equals(ItemID.GetTDBID(equipped), tdbid) {
+            let unequip = new UnequipRequest();
+            unequip.owner = player;
+            unequip.areaType = area;
+            unequip.slotIndex = s;
+            equipment.QueueRequest(unequip);
+          }
+
+          s += 1;
+        }
+      }
+
+      p += 1;
+    }
+  }
+
   public static func HeldCount(ids: array<Uint64>, counts: array<Int32>, wanted: Uint64) -> Int32 {
     let i = 0;
 

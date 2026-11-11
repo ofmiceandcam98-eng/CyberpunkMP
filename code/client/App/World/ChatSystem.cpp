@@ -4,17 +4,38 @@
 #include "App/ChatMessageEvent.h"
 #include "App/Settings.h"
 #include <RED4ext/Scripting/Natives/Generated/game/ui/IGameSystemUI.hpp>
+#include "Core/Facades/Runtime.hpp"
 #include <filesystem>
 #include <fstream>
 #include <cstdlib>
+#include <system_error>
 
-// Where the trade placement persists. Next to the user profile (writable, survives relaunch and
-// reinstall) rather than under Program Files. Mirrors the marker-file spots Settings::Load uses.
+/**
+ * Where the trade panel's placement persists: INSIDE the mod's own folder.
+ *
+ * It used to be %USERPROFILE%\nco-trade-placement.txt - a write location neither layer of the
+ * uninstall footprint knew about, so an uninstall left it behind, which the footprint rule
+ * forbids (Atlas: trade-placement-file-is-written-outside-the-uninstall-footprint). The mod's
+ * folder is what uninstallMod removes whole, so a file here leaves with the mod.
+ *
+ * A new name as well as a new place: the old file holds positions relative to the CHAT BOX,
+ * and the panel now places itself as a fraction of the SCREEN. Reading the old numbers as the
+ * new kind would put the panel somewhere nobody chose.
+ */
 static std::filesystem::path TradePlacementPath()
 {
+    return Core::Runtime::GetModuleDir() / "trade-placement.txt";
+}
+
+// The old profile file, removed the first time placement is read or written, so machines that
+// already have one end up with a clean footprint instead of a permanent leftover.
+static void RemoveLegacyTradePlacement()
+{
     if (const auto home = std::getenv("USERPROFILE"))
-        return std::filesystem::path(home) / "nco-trade-placement.txt";
-    return std::filesystem::current_path() / "nco-trade-placement.txt";
+    {
+        std::error_code ec;
+        std::filesystem::remove(std::filesystem::path(home) / "nco-trade-placement.txt", ec);
+    }
 }
 
 void ChatSystem::OnWorldAttached(RED4ext::world::RuntimeScene* aScene)
@@ -67,6 +88,8 @@ RED4ext::CString ChatSystem::GetUsername()
 
 void ChatSystem::SaveTradePlacement(float aX, float aY, float aZoom, float aGap)
 {
+    RemoveLegacyTradePlacement();
+
     try
     {
         std::ofstream file(TradePlacementPath(), std::ios::trunc);
@@ -83,6 +106,9 @@ RED4ext::Vector4 ChatSystem::LoadTradePlacement()
     // (0,0,0,0) means "no saved placement" - the redscript side keeps its defaults then. A real
     // save always has zoom > 0, which is the sentinel the caller checks.
     RED4ext::Vector4 placement{0.f, 0.f, 0.f, 0.f};
+
+    RemoveLegacyTradePlacement();
+
     try
     {
         std::ifstream file(TradePlacementPath());

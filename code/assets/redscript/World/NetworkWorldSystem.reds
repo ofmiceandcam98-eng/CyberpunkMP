@@ -211,6 +211,28 @@ public native class NetworkWorldSystem extends IGameSystem {
     public native func DeclineCall() -> Void;
     public native func HangUpCall() -> Void;
 
+    // The trade, as the last NotifyTrade said - see NetworkWorldSystem.h. "Mine" and "theirs"
+    // are already from this player's side. An ending is held (state and reason) until the next
+    // notification; IsTradeLive() is the "is there one" question.
+    public native func GetTradeState() -> Uint32;
+    public native func IsTradeLive() -> Bool;
+    public native func GetTradeId() -> String;
+    public native func GetTradePartner() -> String;
+    public native func IsTradeIncoming() -> Bool;
+    public native func GetTradeVersion() -> Uint32;
+    public native func GetTradeMoney(mine: Bool) -> Int32;
+    public native func IsTradeConfirmed(mine: Bool) -> Bool;
+    public native func GetTradeItemCount(mine: Bool) -> Uint32;
+    public native func GetTradeItemId(mine: Bool, index: Uint32) -> Uint64;
+    public native func GetTradeItemQuantity(mine: Bool, index: Uint32) -> Uint32;
+    public native func GetTradeAvailableMoney() -> Int32;
+    public native func GetTradeHoldingCount() -> Uint32;
+    public native func GetTradeHoldingId(index: Uint32) -> Uint64;
+    public native func GetTradeHoldingQuantity(index: Uint32) -> Uint32;
+    public native func GetTradeReason() -> String;
+    // True once per completed trade - the latch that makes the item move happen exactly once.
+    public native func TakeTradeCompletion() -> Bool;
+
     // Why the last CONNECTION was refused - the server's own sentence, plus the code
     // (EDenialCode in GameServer.h) and, on manifest denials, the version the server
     // wanted. Empty/zero when the last disconnect was nobody refusing anything. This is
@@ -365,6 +387,22 @@ public native class NetworkWorldSystem extends IGameSystem {
      * rather than holding the last state: the phone has to be TOLD to take a call down,
      * and an absence would leave it showing one forever.
      */
+    /**
+     * A trade changed. Called from native when a NotifyTrade arrives (or a disconnect ends one).
+     *
+     * Two jobs, in this order. FIRST the item move a completed trade owes this game - before
+     * anything else, and here rather than in the panel, because it must happen whether or not
+     * the HUD is up: a skipped move is undone by the next inventory capture (Atlas:
+     * item-trades-are-undone-by-the-next-inventory-capture). THEN the panel is told.
+     */
+    public func OnTradeStateChanged() -> Void {
+        if this.TakeTradeCompletion() {
+            MpInventory.ApplyTrade(this);
+        }
+
+        GameInstance.GetUISystem(GetGameInstance()).QueueEvent(new MpTradeChanged());
+    }
+
     public func OnCallStateChanged() -> Void {
         if !this.HasCall() {
             MpPhoneCall.Dismiss();

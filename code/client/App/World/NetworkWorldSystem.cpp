@@ -3227,6 +3227,104 @@ void NetworkWorldSystem::HandleNotifyCall(const PacketEvent<server::NotifyCall>&
     Red::CallVirtual(Red::GetGameSystem<NetworkWorldSystem>(), "OnCallStateChanged");
 }
 
+void NetworkWorldSystem::HandleNotifyTrade(const PacketEvent<server::NotifyTrade>& aMessage)
+{
+    const auto copy = [](const auto& acStacks, std::vector<std::pair<uint64_t, uint32_t>>& aOut)
+    {
+        aOut.clear();
+        aOut.reserve(acStacks.size());
+
+        for (const auto& stack : acStacks)
+            aOut.emplace_back(stack.get_id(), stack.get_quantity());
+    };
+
+    // Wholesale, every field, every time - see the note on m_tradeState.
+    m_tradeState = aMessage.get_state();
+    m_tradeId = aMessage.get_trade_id().c_str();
+    m_tradePartner = aMessage.get_partner().c_str();
+    m_tradeIncoming = aMessage.get_incoming();
+    m_tradeVersion = aMessage.get_version();
+    m_tradeMyMoney = aMessage.get_my_money();
+    m_tradeTheirMoney = aMessage.get_their_money();
+    m_tradeMyConfirmed = aMessage.get_my_confirmed();
+    m_tradeTheirConfirmed = aMessage.get_their_confirmed();
+    m_tradeAvailable = aMessage.get_available_money();
+    copy(aMessage.get_my_items(), m_tradeMyItems);
+    copy(aMessage.get_their_items(), m_tradeTheirItems);
+    copy(aMessage.get_holdings(), m_tradeHoldings);
+    m_tradeReason = aMessage.get_reason().c_str();
+
+    // Armed only for a trade not already handed over - the latch's other half.
+    m_tradeCompletionPending = m_tradeState == kTradeCompleted && m_tradeId != m_tradeCompletionTaken;
+
+    spdlog::info("[Trade] {} state {} with {} v{} - mine {} eddies/{} item(s){}, theirs {} eddies/{} item(s){}, "
+                 "{} holding(s), {} available{}{}",
+                 m_tradeId, m_tradeState, m_tradePartner, m_tradeVersion, m_tradeMyMoney, m_tradeMyItems.size(),
+                 m_tradeMyConfirmed ? " [confirmed]" : "", m_tradeTheirMoney, m_tradeTheirItems.size(),
+                 m_tradeTheirConfirmed ? " [confirmed]" : "", m_tradeHoldings.size(), m_tradeAvailable,
+                 m_tradeReason.empty() ? "" : " - ", m_tradeReason);
+
+    // Script owns the panel and the game's inventory; native holds what came off the wire.
+    Red::CallVirtual(Red::GetGameSystem<NetworkWorldSystem>(), "OnTradeStateChanged");
+}
+
+// Eddies cross to script as Int32 (see GetRestoreMoney). Clamped rather than cast, so a
+// figure past two billion reads as the most it can be instead of wrapping negative.
+static int32_t TradeEddiesForScript(int64_t aValue)
+{
+    if (aValue < 0)
+        return 0;
+
+    return aValue > 2147483647 ? 2147483647 : static_cast<int32_t>(aValue);
+}
+
+int32_t NetworkWorldSystem::GetTradeMoney(bool aMine) const
+{
+    return TradeEddiesForScript(aMine ? m_tradeMyMoney : m_tradeTheirMoney);
+}
+
+int32_t NetworkWorldSystem::GetTradeAvailableMoney() const
+{
+    return TradeEddiesForScript(m_tradeAvailable);
+}
+
+uint32_t NetworkWorldSystem::GetTradeItemCount(bool aMine) const
+{
+    return static_cast<uint32_t>((aMine ? m_tradeMyItems : m_tradeTheirItems).size());
+}
+
+uint64_t NetworkWorldSystem::GetTradeItemId(bool aMine, uint32_t aIndex) const
+{
+    const auto& items = aMine ? m_tradeMyItems : m_tradeTheirItems;
+    return aIndex < items.size() ? items[aIndex].first : 0;
+}
+
+uint32_t NetworkWorldSystem::GetTradeItemQuantity(bool aMine, uint32_t aIndex) const
+{
+    const auto& items = aMine ? m_tradeMyItems : m_tradeTheirItems;
+    return aIndex < items.size() ? items[aIndex].second : 0;
+}
+
+uint64_t NetworkWorldSystem::GetTradeHoldingId(uint32_t aIndex) const
+{
+    return aIndex < m_tradeHoldings.size() ? m_tradeHoldings[aIndex].first : 0;
+}
+
+uint32_t NetworkWorldSystem::GetTradeHoldingQuantity(uint32_t aIndex) const
+{
+    return aIndex < m_tradeHoldings.size() ? m_tradeHoldings[aIndex].second : 0;
+}
+
+bool NetworkWorldSystem::TakeTradeCompletion()
+{
+    if (!m_tradeCompletionPending)
+        return false;
+
+    m_tradeCompletionPending = false;
+    m_tradeCompletionTaken = m_tradeId;
+    return true;
+}
+
 bool NetworkWorldSystem::IsModEnabled() const
 {
     // The SAME question Main.cpp and Core::Application::Update already ask, answered from
@@ -4201,6 +4299,7 @@ void NetworkWorldSystem::OnInitialize(const RED4ext::JobHandle& aJob)
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleNotifyMoney>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleNotifyCall>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleNotifyPossessions>(this);
+    pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleNotifyTrade>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleRequestCharacterName>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleWorldState>(this);
     pNetworkService->RegisterHandler<&NetworkWorldSystem::HandleInteraction>(this);
@@ -4563,6 +4662,17 @@ void NetworkWorldSystem::OnDisconnected(Client::EDisconnectReason aReason)
 
     m_interpolationSystem->OnDisconnected();
     m_vehicleSystem->OnDisconnected();
+
+    // A trade does not survive the session - the server cancels it on disconnect - but the
+    // ending it pushes never reaches a client that is no longer connected. Taken down here
+    // so the panel does not sit on screen offering a deal that no longer exists. A completed
+    // trade still waiting to be applied is left armed: that move is owed either way.
+    if (m_tradeState <= kTradeCommitting)
+    {
+        m_tradeState = kNoTrade;
+        m_tradeReason = "Trade cancelled - the connection dropped.";
+        Red::CallVirtual(Red::GetGameSystem<NetworkWorldSystem>(), "OnTradeStateChanged");
+    }
 
     // The session id dies with the session. Only world detach cleared it before, so a
     // disconnect with the world still attached (server restart mid-play) left the old
