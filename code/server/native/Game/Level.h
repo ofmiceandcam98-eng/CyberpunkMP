@@ -39,20 +39,6 @@ struct Level
     gsl::not_null<GridCell*> GetCell(GridCell::TPosition aPosition) noexcept;
     gsl::not_null<World*> GetWorld() noexcept { return m_pWorld; }
 
-    template <class T> void ForEachInRange(const GridCell* pCell, int16_t aRange, T func) noexcept
-    {
-        const auto pos = pCell->GetPosition();
-        for (int i = pos.x - aRange; i < (aRange + pos.x); ++i)
-            for (int j = pos.y - aRange; j < (aRange + pos.y); ++j)
-            {
-                const auto itor = m_cells.find(GridCell::TPosition{static_cast<int16_t>(i), static_cast<int16_t>(j)});
-                if (itor != std::end(m_cells))
-                {
-                    itor.value()->ForEach(func);
-                }
-            }
-    }
-
     template <class T> void ForEachCellInRange(const GridCell* pCell, int16_t aRange, T func) noexcept
     {
         const auto pos = pCell->GetPosition();

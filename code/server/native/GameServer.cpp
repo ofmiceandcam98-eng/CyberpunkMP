@@ -186,12 +186,6 @@ GameServer::~GameServer()
     GServer = nullptr;
 }
 
-void GameServer::Kill()
-{
-    m_run = false;
-    Close();
-}
-
 void GameServer::Run()
 {
     while (m_run && !s_stopRequested && IsListening())

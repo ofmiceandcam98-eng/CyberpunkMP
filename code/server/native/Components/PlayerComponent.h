@@ -87,9 +87,6 @@ struct PlayerComponent
 
     const char* GetUsername() const;
 
-    const char* GetDiscordId() const { return DiscordId.c_str(); }
-    EPermissionLevel GetLevel() const { return Level; }
-
     // Levels are ordered, so this is a single comparison rather than a list of roles.
     bool HasAtLeast(EPermissionLevel aRequired) const { return Level >= aRequired; }
 

@@ -117,14 +117,6 @@ constexpr const char* ToString(const Lifepath aLifepath) noexcept
     }
 }
 
-constexpr Lifepath FromString(const std::string_view aName) noexcept
-{
-    if (aName == "corpo") return Lifepath::Corporate;
-    if (aName == "streetkid") return Lifepath::StreetKid;
-    if (aName == "nomad") return Lifepath::Nomad;
-    return Lifepath::Unknown;
-}
-
 /**
  * One entry in a kit. The name is carried alongside the id purely so the grant can be
  * logged in a form a human can read - the server never needs to know what an item IS.

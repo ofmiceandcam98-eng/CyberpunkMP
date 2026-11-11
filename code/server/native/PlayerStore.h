@@ -461,20 +461,11 @@ struct PlayerStore
      * Const and cheap, because it is checked on the path of every message rather than only
      * when somebody asks. A block that is enforced at the command surface and not at the
      * delivery surface is not a block - it is a rule the next caller gets to forget.
+     *
+     * Asked of a character directly: every caller already has one, and must not resolve an
+     * account a second time - a block is the ACTIVE character's, and re-resolving invites
+     * the wrong one to answer.
      */
-    bool IsBlocked(const std::string& acDiscordId, const std::string& acNumber) const
-    {
-        const auto* pCharacter = FindCharacter(acDiscordId);
-        if (!pCharacter)
-            return false;
-
-        return std::find(pCharacter->Blocked.begin(), pCharacter->Blocked.end(), acNumber) !=
-               pCharacter->Blocked.end();
-    }
-
-    // The same question asked of a character directly, for paths that already have one and
-    // must not resolve an account a second time - a block is the ACTIVE character's, and
-    // re-resolving invites the wrong one to answer.
     static bool IsBlockedBy(const CharacterRecord& acCharacter, const std::string& acNumber)
     {
         return std::find(acCharacter.Blocked.begin(), acCharacter.Blocked.end(), acNumber) !=

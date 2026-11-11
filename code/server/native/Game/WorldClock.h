@@ -36,7 +36,6 @@ struct WorldClock
     // container's TZ), scale 1:1. Night in Night City when it is night outside. /time
     // HH:MM leaves this mode; /time real enters it. Persisted like everything else.
     void SetRealTime(bool aEnabled) noexcept;
-    bool IsRealTime() const noexcept { return m_realTime; }
 
 protected:
     void Tick() noexcept;
