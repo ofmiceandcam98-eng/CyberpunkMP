@@ -416,6 +416,57 @@ foreach ($u in $unhandled) {
 if (-not $unhandled) { Pass "$($requests.Count) client requests, all handled" }
 
 # ---------------------------------------------------------------------------
+Head "the cell grid is one number"
+# The server stamps a cell on what it sends and tells the client how big a cell is; the client
+# works the cell out again and DROPS the message when the two differ. A second copy of the size
+# has broken that three times - 2026-08-24, 2026-08-30, 2026-11-11 - each time past a comment
+# saying "one place". The checks are tools\CheckOneGrid.ps1, whose header tells the three
+# stories, and tools\tests\one_grid_test.ps1 breaks a copy of the tree one way at a time to
+# prove each of them still fires. Both run here.
+$gridFindings = @()
+$gridRan = $true
+try { $gridFindings = @(& (Join-Path $PSScriptRoot "CheckOneGrid.ps1") -Root $Repo) }
+catch {
+    $gridRan = $false
+    Fail -Summary "tools\CheckOneGrid.ps1 stopped before it finished" `
+         -What "nothing checked that the server stamps cells at the size it advertises - the mistake that makes every client drop what it is sent, with nothing in the server log." `
+         -Where "$($_.Exception.Message)" `
+         -Fix "run .\tools\CheckOneGrid.ps1 by itself and read the error"
+}
+Set-Location $Repo
+
+if ($gridRan -and $gridFindings.Count -eq 0) {
+    Fail -Summary "tools\CheckOneGrid.ps1 reported nothing" `
+         -What "it says ok for each thing it checked, so silence means it checked nothing - and silence would otherwise read as a pass." `
+         -Where "tools\CheckOneGrid.ps1" `
+         -Fix "run .\tools\CheckOneGrid.ps1 by itself; it should print one line per check"
+}
+
+foreach ($finding in $gridFindings) {
+    if ($finding.Kind -eq 'fail') {
+        Fail -Summary $finding.Summary -What $finding.What -Where $finding.Where -Fix $finding.Fix
+    }
+    else { Pass $finding.Summary }
+}
+
+# Continue, not Stop: anything the test writes to stderr must fail on its exit code with the
+# output shown, not abort this whole script at the first line.
+$savedPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+$gridTestOut = @(& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "tests\one_grid_test.ps1") 2>&1)
+$gridTestCode = $LASTEXITCODE
+$ErrorActionPreference = $savedPreference
+
+$gridTestLines = @($gridTestOut | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+if ($gridTestCode -ne 0) {
+    Fail -Summary "one_grid_test.ps1 is failing" `
+         -What "one of the grid checks above no longer fires on the thing it exists to catch, so a clean result from it means less than it says." `
+         -Where (($gridTestLines | Select-Object -Last 10) -join ' ;; ') `
+         -Fix "run it for the full output: powershell -NoProfile -File tools\tests\one_grid_test.ps1"
+}
+else { Pass "one_grid_test.ps1 - $($gridTestLines | Select-Object -Last 1)" }
+
+# ---------------------------------------------------------------------------
 # Only movement and voice may be unreliable.
 #
 # This guards a PROOF, not a style rule. The 2026-09-04 session/epoch audit concluded there
