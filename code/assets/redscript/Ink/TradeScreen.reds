@@ -395,6 +395,17 @@ public func MpTrDrawHits(c: ref<inkCanvas>, hits: ref<MpTrHits>, owner: ref<IScr
     }
 }
 
+// The mouse map's markers (TradePopup.m_mark0): an invisible dot at a known panel point. Not
+// interactive, so it never takes a click; 1% rather than 0% so nothing can skip laying it out.
+public func MpTrMarkDX() -> Float = 1000.0
+public func MpTrMarkDY() -> Float = 500.0
+
+public func MpTrMark(c: ref<inkCanvas>, x: Float, y: Float) -> ref<inkWidget> {
+    let r = MpCsRect(c, x, y, 1.0, 1.0, MpTrCyan(), 0.01);
+    r.SetInteractive(false);
+    return r;
+}
+
 // "mptr_12" back to 12; -1 for anything else.
 public func MpTrHitId(widget: wref<inkWidget>) -> Int32 {
     if !IsDefined(widget) {

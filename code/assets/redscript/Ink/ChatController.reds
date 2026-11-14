@@ -501,7 +501,7 @@ public class ChatController extends inkHUDGameController {
         return new Vector4(this.m_trFracX, this.m_trFracY, this.m_trZoom, 0.0);
     }
 
-    private final func MpTrLog(line: String) -> Void {
+    public final func MpTrLog(line: String) -> Void {
         // ScriptLog, not FTLog: FTLog reaches no file this project collects (the naming saga).
         let network = GameInstance.GetNetworkWorldSystem();
         if IsDefined(network) {
