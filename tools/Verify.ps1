@@ -601,16 +601,24 @@ if (-not $SkipTests) {
     if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
         Write-Host "  !!    node is not on PATH - launcher tests SKIPPED" -ForegroundColor Yellow
     }
-    elseif (-not (Test-Path (Join-Path $launcherDir "node_modules"))) {
-        Write-Host "  !!    code\launcher-lite\node_modules is missing - launcher tests SKIPPED. A fresh worktree starts without it: run pnpm install in that folder." -ForegroundColor Yellow
-    }
     else {
-        $launcherTests = @(
-            (Join-Path $launcherDir "manifest.selftest.mjs"),
-            (Join-Path $launcherDir "prereq.selftest.mjs"),
-            (Join-Path $launcherDir "renderer.selftest.mjs"),
-            (Join-Path $PSScriptRoot "tests\launcher_buttons_test.mjs")
-        )
+        # require.selftest.mjs needs nothing from node_modules, so it runs in a fresh worktree
+        # too - the one place every other launcher test is skipped. It is the check for a
+        # mistake that hid for three months: main.js is an ES module, six functions called
+        # require() anyway, and Uninstall and Deep clean removed nothing.
+        $launcherTests = @((Join-Path $launcherDir "require.selftest.mjs"))
+
+        if (-not (Test-Path (Join-Path $launcherDir "node_modules"))) {
+            Write-Host "  !!    code\launcher-lite\node_modules is missing - the other launcher tests SKIPPED. A fresh worktree starts without it: run pnpm install in that folder." -ForegroundColor Yellow
+        }
+        else {
+            $launcherTests += @(
+                (Join-Path $launcherDir "manifest.selftest.mjs"),
+                (Join-Path $launcherDir "prereq.selftest.mjs"),
+                (Join-Path $launcherDir "renderer.selftest.mjs"),
+                (Join-Path $PSScriptRoot "tests\launcher_buttons_test.mjs")
+            )
+        }
 
         foreach ($test in $launcherTests) {
             $name = Split-Path $test -Leaf
