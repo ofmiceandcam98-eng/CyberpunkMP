@@ -12,9 +12,13 @@
  * an injected script), there would be no credential sitting there to steal.
  */
 
-import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } from 'electron'
+// This file is an ES module, so `require` does not exist in it: everything is imported
+// here. Six functions used to call require() for execSync, execFileSync and screen, and
+// five of them did it inside a try, so the ReferenceError was swallowed and they quietly
+// found nothing for three months. require.selftest.mjs fails on the next one.
+import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, screen, shell } from 'electron'
 import electronUpdater from 'electron-updater'
-import { spawn, spawnSync } from 'node:child_process'
+import { execFileSync, execSync, spawn, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, rmdirSync, statSync, lstatSync, copyFileSync, unlinkSync, realpathSync, appendFileSync } from 'node:fs'
 import fsp from 'node:fs/promises'
 import AdmZip from 'adm-zip'
@@ -624,7 +628,6 @@ function launcherFootprint () {
 function findUninstallRegistryEntries () {
   const entries = []
   try {
-    const { execSync } = require('node:child_process')
     const out = execSync(
       'reg query "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall" /s',
       { windowsHide: true, maxBuffer: 8 * 1024 * 1024 }).toString()
@@ -667,7 +670,6 @@ function findUninstallRegistryEntries () {
 // break the other manager the person went back to.
 function findNxmRegistration () {
   try {
-    const { execSync } = require('node:child_process')
     const out = execSync(
       'reg query "HKCU\\Software\\Classes\\nxm\\shell\\open\\command" /ve',
       { windowsHide: true }).toString()
@@ -838,7 +840,6 @@ function collectResidue (aIncludeLive) {
 // fatal - a half-clean with an honest list beats an exception with nothing done.
 function purgeResidue (aResidue) {
   const failed = []
-  const { execFileSync } = require('node:child_process')
 
   for (const d of aResidue.dirs) {
     try { rmSync(d, { recursive: true, force: true }) } catch (err) { failed.push(`${d} (${err.code || err.message})`) }
@@ -1201,7 +1202,6 @@ function findGameDir () {
   // is Cyberpunk 2077's GOG product id. Checked FIRST because a GOG player's install
   // is the one the folder-guessing below most often misses.
   try {
-    const { execSync } = require('node:child_process')
     for (const key of ['HKLM\\SOFTWARE\\WOW6432Node\\GOG.com\\Games\\1423049311',
                        'HKLM\\SOFTWARE\\GOG.com\\Games\\1423049311']) {
       try {
@@ -1292,7 +1292,6 @@ function steamRoots () {
 
   // Reading the registry without a dependency: `reg query` is always present.
   try {
-    const { execSync } = require('node:child_process')
     const out = execSync('reg query "HKCU\\Software\\Valve\\Steam" /v SteamPath', { windowsHide: true })
       .toString()
     const match = out.match(/SteamPath\s+REG_SZ\s+(.+)/)
@@ -4179,7 +4178,6 @@ let lastAutoHeight = 0
 function fitWindowToRole () {
   if (!mainWindow || mainWindow.isDestroyed()) return
   try {
-    const { screen } = require('electron')
     const work = screen.getDisplayMatching(mainWindow.getBounds()).workAreaSize
     const wanted = Math.min(isAdmin() ? 940 : 800, work.height - 24)
     const [w, h] = mainWindow.getSize()
