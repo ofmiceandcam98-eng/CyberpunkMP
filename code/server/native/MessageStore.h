@@ -485,14 +485,6 @@ public:
         return inbox;
     }
 
-    /**
-     * How many messages are waiting. For the one-line notice on arrival.
-     */
-    size_t UnreadCount(const std::string& acCharacterId) const
-    {
-        return Undelivered(acCharacterId).size();
-    }
-
     // Whether a change is waiting for Flush - for the shutdown trace in ~GameServer.
     bool IsDirty() const
     {

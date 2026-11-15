@@ -68,6 +68,21 @@ internal class Program
         gitFolderPath = gitFolderPath.Replace('/', Path.DirectorySeparatorChar)
                                      .Replace('\\', Path.DirectorySeparatorChar);
 
+        // A linked worktree keeps its git folder INSIDE the main checkout, at
+        // <main>/.git/worktrees/<name>, and names its own root in that folder's "gitdir"
+        // file (the path of the worktree's .git). Cutting ".git" off the path, as below,
+        // answered with the MAIN checkout: the generator read that checkout's headers,
+        // wrote the bindings there, and the worktree's own build then failed with
+        // "namespace 'Internal' does not exist". An ordinary clone has no such file and
+        // takes the cut below exactly as before.
+        string worktreeLink = Path.Combine(gitFolderPath, "gitdir");
+        if (File.Exists(worktreeLink))
+        {
+            string? worktreeRoot = Path.GetDirectoryName(File.ReadAllText(worktreeLink).Trim());
+            if (!string.IsNullOrEmpty(worktreeRoot) && Directory.Exists(worktreeRoot))
+                return worktreeRoot + Path.DirectorySeparatorChar;
+        }
+
         // Remove the .git part from the path
         string repositoryRoot = gitFolderPath.TrimEnd(Path.DirectorySeparatorChar)
                                              .Remove(gitFolderPath.LastIndexOf(".git", StringComparison.Ordinal));

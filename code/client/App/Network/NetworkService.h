@@ -43,7 +43,6 @@ struct NetworkService final
         return m_dispatcher.sink<PacketEvent<MessageType>>().connect<Func>(std::forward<T>(args)...);
     }
 
-    entt::dispatcher& GetDispatcher() { return m_dispatcher; }
     const server::Settings& GetServerSettings() const { return m_settings; }
 
     TP_NOCOPYMOVE(NetworkService);

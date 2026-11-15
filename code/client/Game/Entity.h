@@ -24,20 +24,4 @@ struct Controller
 constexpr auto IdleController_SetAnimation = Core::RawFunc<
     /* hash = */ 2268141838UL,
     /* type = */ void (*)(Game::Controller*, AnimationData&)>();
-
-template <class T>
-Red::Handle<T> FindComponent(Red::Entity* apEntity)
-{
-    static auto pClass = Red::ResolveClass<T>();
-    if (pClass && apEntity)
-    {
-        for (auto& component : apEntity->componentsStorage.components)
-        {
-            if (component && component->GetType()->IsA(pClass))
-                return Red::Cast<T>(component);
-        }
-    }
-
-    return {};
-}
 }

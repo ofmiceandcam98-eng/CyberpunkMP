@@ -117,8 +117,6 @@ public:
      */
     std::vector<std::string> Search(const std::string& acNeedle, size_t aMax);
 
-    const std::string& GetInstanceId() const { return m_instanceId; }
-
 private:
     std::mutex m_mutex;      // handlers run on the game thread today, but the API queue does not
     std::ofstream m_stream;

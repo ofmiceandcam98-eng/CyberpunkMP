@@ -53,7 +53,6 @@ struct GameServer final : Server
     GameServer();
     ~GameServer() override;
 
-    void Kill();
     // Asks the tick loop to end, from any thread. Static so a late signal cannot reach a
     // server that is already being destroyed.
     static void RequestStop() noexcept { s_stopRequested = true; }
@@ -90,8 +89,6 @@ protected:
     static ScratchAllocator& GetScratch();
 
 private:
-
-    void FetchServerEntitlements();
 
     // Result of asking Discord to vouch for a connecting player.
     enum class EDiscordAuthResult

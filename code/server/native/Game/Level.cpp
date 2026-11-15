@@ -21,6 +21,7 @@
 #include "Systems/ChatSystem.h"   // telling someone their seat is taken
 #include "VehicleSeats.h"         // seat ids are CName hashes - names, never magic numbers
 #include "Validation.h"           // sanity checks on anything a client sent
+#include "LogThrottle.h"          // a refusal at movement rate is one line, not thirty a second
 
 #include <chrono>
 #include <cmath>                  // std::floor, for ToCell - see Level::kCellSize
@@ -957,34 +958,58 @@ void Level::HandleMoveEntityRequest(PacketEvent<client::MoveEntityRequest>& aMes
 {
     flecs::entity target(GetWorld()->get_world(), aMessage.get_id());
 
+    // The four refusals below are throttled per entity id - see LogThrottle.h for the
+    // measurements. A client that is wrong about an entity is wrong about it at movement
+    // rate, so each of these was a flushed warning per packet: the live server once wrote
+    // 89,531 of them in two hours. The first refusal for an id is always written in full,
+    // then one line every five seconds for that id with "unlogged repeats" saying how many
+    // arrived in between. The wording before that field is unchanged, so anything that
+    // searches the log for these messages still finds them.
+    uint64_t repeats = 0;
+
     if (!target)
     {
-        spdlog::warn("Attempt to move invalid entity {:x} from connection {:x}", aMessage.get_id(), aMessage.ConnectionId);
+        static thread_local LogThrottle s_throttle;
+
+        if (s_throttle.ShouldLog(aMessage.get_id(), repeats))
+            spdlog::warn("Attempt to move invalid entity {:x} from connection {:x}, unlogged repeats={}",
+                         aMessage.get_id(), aMessage.ConnectionId, repeats);
         return;
     }
 
     const auto player = target.parent();
     if (!player)
     {
-        spdlog::warn("Attempt to move an entity without an owner from connection {:x}", aMessage.ConnectionId);
+        static thread_local LogThrottle s_throttle;
+
+        if (s_throttle.ShouldLog(aMessage.get_id(), repeats))
+            spdlog::warn("Attempt to move an entity without an owner from connection {:x}, move id={:#x} unlogged repeats={}",
+                         aMessage.ConnectionId, aMessage.get_id(), repeats);
         return;
     }
 
     auto* pPlayer = player.get<PlayerComponent>();
     if (!pPlayer)
     {
+        static thread_local LogThrottle s_throttle;
+
         // Every observed desync on the container deployment funnels through this branch,
         // so it says everything it knows: which id the client sent (generation bits
         // included), whether that entity is alive, and what the parent actually is.
-        spdlog::warn("The entity's owner is not a player! move id={:#x} alive={} target='{}' parent id={:#x} parent='{}' from connection {:x}",
-                     aMessage.get_id(), target.is_alive(), target.name().c_str(),
-                     player.raw_id(), player.name().c_str(), aMessage.ConnectionId);
+        if (s_throttle.ShouldLog(aMessage.get_id(), repeats))
+            spdlog::warn("The entity's owner is not a player! move id={:#x} alive={} target='{}' parent id={:#x} parent='{}' from connection {:x}, unlogged repeats={}",
+                         aMessage.get_id(), target.is_alive(), target.name().c_str(),
+                         player.raw_id(), player.name().c_str(), aMessage.ConnectionId, repeats);
         return;
     }
 
     if (pPlayer->Connection != aMessage.ConnectionId)
     {
-        spdlog::warn("The entity's owner is not the current player! From connection {:x}", aMessage.ConnectionId);
+        static thread_local LogThrottle s_throttle;
+
+        if (s_throttle.ShouldLog(aMessage.get_id(), repeats))
+            spdlog::warn("The entity's owner is not the current player! From connection {:x}, move id={:#x} unlogged repeats={}",
+                         aMessage.ConnectionId, aMessage.get_id(), repeats);
         return;
     }
 

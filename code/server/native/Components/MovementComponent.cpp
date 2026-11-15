@@ -4,6 +4,7 @@
 #include "PlayerComponent.h"
 #include "AttachmentComponent.h"
 #include "AuthorityComponent.h"
+#include "Game/Level.h"           // Level::ToCell - the one place the grid is declared
 
 #include <cmath>
 
@@ -33,12 +34,6 @@ constexpr float kReducedRateRange = 600.f;
 // ~7 and ~2 updates a second, which is enough to keep a distant puppet honest.
 constexpr uint32_t kReducedRateDivisor = 4;
 constexpr uint32_t kDistantRateDivisor = 16;
-constexpr float kWorldCellSize = 60000.f;
-
-int32_t ToSnapshotCell(float aCoordinate)
-{
-    return static_cast<int32_t>(std::floor(aCoordinate / kWorldCellSize));
-}
 
 // Where the recipient effectively is, for measuring interest.
 //
@@ -164,8 +159,14 @@ void ReplicateMovementComponent(flecs::entity aEntity, const MovementComponent& 
     message.set_locomotion(aComponent.Locomotion);
     message.set_upper_body(aComponent.UpperBody);
     message.set_world_revision(1);
-    message.set_cell_x(ToSnapshotCell(aComponent.Position.x));
-    message.set_cell_y(ToSnapshotCell(aComponent.Position.y));
+
+    // The client re-derives this cell from the position at the size the server ADVERTISES
+    // and drops the update when the two differ. This used to be worked out here from a
+    // private 60000 while the advertised grid is Level::kCellSize (6000): the same answer
+    // only within 6000 units of the origin, and a different one past it. Ask the grid.
+    const auto cell = Level::ToCell(aComponent.Position);
+    message.set_cell_x(cell.x);
+    message.set_cell_y(cell.y);
     message.set_sequence(pMutable->ReplicatedSequence);
 
     if (const auto* pAuthority = aEntity.get<AuthorityComponent>())

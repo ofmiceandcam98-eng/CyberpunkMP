@@ -6,18 +6,11 @@
 #include "AuthorityComponent.h"
 
 #include "GameServer.h"
-
-#include <cmath>
+#include "Game/Level.h"           // Level::ToCell - the one place the grid is declared
 
 namespace
 {
 constexpr uint32_t kWorldRevision = 1;
-constexpr float kWorldCellSize = 60000.f;
-
-int32_t ToSnapshotCell(float aCoordinate)
-{
-    return static_cast<int32_t>(std::floor(aCoordinate / kWorldCellSize));
-}
 }
 
 void ReplicateVehicleSpawn(flecs::entity aEntity, const VehicleComponent& aVehicleComponent, const MovementComponent& aMovementComponent)
@@ -33,8 +26,12 @@ void ReplicateVehicleSpawn(flecs::entity aEntity, const VehicleComponent& aVehic
     load.set_rotation(aMovementComponent.Rotation.z);
     load.set_tweak_id(aVehicleComponent.TweakDBID);
     load.set_world_revision(kWorldRevision);
-    load.set_cell_x(ToSnapshotCell(aMovementComponent.Position.x));
-    load.set_cell_y(ToSnapshotCell(aMovementComponent.Position.y));
+
+    // From the grid, never a private copy of its size - see the same lines in
+    // MovementComponent.cpp. The client drops a load whose cell it cannot re-derive.
+    const auto cell = Level::ToCell(aMovementComponent.Position);
+    load.set_cell_x(cell.x);
+    load.set_cell_y(cell.y);
     load.set_sequence(aMovementComponent.Sequence);
 
     if (const auto* pAuthority = aEntity.get<AuthorityComponent>())

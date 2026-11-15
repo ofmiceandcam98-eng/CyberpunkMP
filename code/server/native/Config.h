@@ -80,8 +80,6 @@ struct DiscordConfig
     std::string RolesFile{};
 
     bool IsEnabled() const { return Enabled; }
-    const char* GetGuildId() const { return GuildId.c_str(); }
-    bool GetRequireMembership() const { return RequireMembership; }
 
     static EPermissionLevel ParseLevel(const std::string& acName)
     {
@@ -290,9 +288,7 @@ struct Config : IConfig
     uint16_t GetTickRate() const override { return TickRate; }
     uint16_t GetUpdateRate() const override { return UpdateRate; }
     const char* GetPassword() const { return Password.c_str(); }
-    const char* GetServerListEndpoint() const { return ServerListEndpoint.c_str(); }
     const FlecsConfig& GetFlecsConfig() const { return Flecs; }
-    const DiscordConfig& GetDiscordConfig() const { return Discord; }
 
     // Both sides of the post-migration merge added a field here. CoalesceMovement came from
     // the Phase 5 branch, ServerListEndpoint from the server-list fix during the swap - and a

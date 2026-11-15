@@ -102,24 +102,6 @@ enum class CallState : uint32_t
     Failed = 8,
 };
 
-inline const char* CallStateName(CallState aState)
-{
-    switch (aState)
-    {
-    case CallState::Dialing: return "dialing";
-    case CallState::Ringing: return "ringing";
-    case CallState::Connected: return "connected";
-    case CallState::Declined: return "declined";
-    case CallState::Missed: return "missed";
-    case CallState::Busy: return "busy";
-    case CallState::Ended: return "ended";
-    case CallState::Cancelled: return "cancelled";
-    case CallState::Failed: return "failed";
-    }
-
-    return "?";
-}
-
 inline bool IsCallOver(CallState aState)
 {
     return aState != CallState::Dialing && aState != CallState::Ringing &&

@@ -19,9 +19,6 @@ struct ChatMessageUIEvent : RED4ext::red::Event
 
 RTTI_DEFINE_CLASS(ChatMessageUIEvent, {
     RTTI_PARENT(RED4ext::red::Event);
-    // auto pType = Red::GetClass("String");
-    // type->props.PushBack(Red::CProperty::Create(pType, "author", nullptr, static_cast<uint32_t>(0x40)));
-    // type->props.PushBack(Red::CProperty::Create(pType, "message", nullptr, static_cast<uint32_t>(0x60)));
     RTTI_PROPERTY(author);
     RTTI_PROPERTY(message);
     RTTI_PROPERTY(channel);
