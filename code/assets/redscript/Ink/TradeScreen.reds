@@ -361,6 +361,18 @@ public class MpTrHits {
         ArrayPush(this.list, hit);
     }
 
+    // The region with this id (the latest, as At would pick it); null for none.
+    public func Find(id: Int32) -> ref<MpTrHit> {
+        let i = ArraySize(this.list) - 1;
+        while i >= 0 {
+            if this.list[i].id == id {
+                return this.list[i];
+            }
+            i -= 1;
+        }
+        return null;
+    }
+
     // Latest first: a quantity button drawn over its row wins over the row.
     public func At(x: Float, y: Float) -> Int32 {
         let i = ArraySize(this.list) - 1;
@@ -393,17 +405,6 @@ public func MpTrDrawHits(c: ref<inkCanvas>, hits: ref<MpTrHits>, owner: ref<IScr
         r.RegisterToCallback(n"OnHoverOut", owner, n"OnMpTrHitOut");
         i += 1;
     }
-}
-
-// The mouse map's markers (TradePopup.m_mark0): an invisible dot at a known panel point. Not
-// interactive, so it never takes a click; 1% rather than 0% so nothing can skip laying it out.
-public func MpTrMarkDX() -> Float = 1000.0
-public func MpTrMarkDY() -> Float = 500.0
-
-public func MpTrMark(c: ref<inkCanvas>, x: Float, y: Float) -> ref<inkWidget> {
-    let r = MpCsRect(c, x, y, 1.0, 1.0, MpTrCyan(), 0.01);
-    r.SetInteractive(false);
-    return r;
 }
 
 // "mptr_12" back to 12; -1 for anything else.

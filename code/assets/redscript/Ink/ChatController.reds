@@ -621,7 +621,7 @@ public class ChatController extends inkHUDGameController {
         let size = popup.RootSize();
         let p = this.MpTrPlacement();
         // The measurement the placement rests on - see MpTrScreenFracX.
-        this.MpTrLog(s"panel open - root \(size.X)x\(size.Y), panel at \(p.X),\(p.Y) of the screen, scale \(popup.Scale()), zoom \(p.Z)");
+        this.MpTrLog(s"panel open - root \(size.X)x\(size.Y), panel at \(p.X),\(p.Y) of the screen, scale \(popup.Scale()), zoom \(p.Z), \(popup.MapFacts())");
     }
 
     public final func MpTrPopupClosed(popup: ref<MpTradePopup>) -> Void {

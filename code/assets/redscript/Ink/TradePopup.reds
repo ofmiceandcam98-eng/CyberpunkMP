@@ -54,22 +54,9 @@ public class MpTradePopup extends CustomPopup {
     // it did itself and never clears a blur some other screen owns.
     private let m_blurOn: Bool;
 
-    // The screen-to-panel map, MEASURED rather than assumed. The first one was hand-made - the
-    // Resolution text from the video settings, the root's size and a top-left pivot nothing sets -
-    // and in test.110 it left the rail deaf while every button worked, because buttons never use
-    // it (zeldfep, 2026-11-14: "the rail is broken"). Now two invisible markers sit at known panel
-    // points and the engine's own WidgetUtils.GlobalToLocal - the conversion glamdoc's colour
-    // wheel and the frame switcher apply to GetScreenSpacePosition - says where the cursor is
-    // relative to each. Two markers give the scale and the offset, whatever the resolution, the
-    // layer's scaling or the canvas's pivot. Kept between redraws, because markers a redraw made
-    // this frame are not laid out until the next.
-    private let m_mark0: wref<inkWidget>;
-    private let m_mark1: wref<inkWidget>;
-    private let m_mapOk: Bool;
-    private let m_mapP: Vector2;      // the panel point (MpTrPanelX, MpTrPanelY) in screen space
-    private let m_mapU: Vector2;      // GlobalToLocal units per screen unit
-    private let m_mapK: Vector2;      // GlobalToLocal units per panel unit
-    private let m_mapLogged: Bool;
+    // Widget clicks checked against the conversion this panel (MapCheck) - the first few are
+    // logged, and every miss is.
+    private let m_checks: Int32;
 
     // False when Codeware's popup manager never attached (it hooks PopupsManager.OnPlayerAttach).
     // Opening then does nothing at all, so the caller has to know to say so instead.
@@ -104,10 +91,18 @@ public class MpTradePopup extends CustomPopup {
 
         let canvas = new inkCanvas();
         canvas.SetName(n"mp_trade_panel");
-        // Top-left anchor AND pivot, so scaling grows down-and-right from the corner instead of
-        // throwing the composition off-screen (the selector bug, CharacterSelect.MpCsOpen).
+        // Top-left anchor and anchor point place the canvas by its corner. They do NOT say what it
+        // scales about - that is the render-transform pivot, which defaults to the CENTRE.
         canvas.SetAnchor(inkEAnchor.TopLeft);
         canvas.SetAnchorPoint(new Vector2(0.0, 0.0));
+        // So the pivot is set, and DO NOT REMOVE IT. test.110 and test.111 left it alone; on this
+        // canvas, which has a real size, the centre is (960, 540), and scaling 1.35x about it drew
+        // the panel 340 x 191 root units up and left of where the mouse conversion assumed it. Every
+        // button still worked - they get their own clicks - but a press on your rail converted onto
+        // your own rows and ticked an item in, and the wheel over their list scrolled yours
+        // (zeldfep's test.110 log, 2026-11-14: "click 101 (position)" for presses on the ladder).
+        // The selector never hit this because its canvas has no size, so its centre IS its corner.
+        canvas.SetRenderTransformPivot(new Vector2(0.0, 0.0));
         // A real size, covering the whole authored composition. A zero-size parent can keep its
         // children out of hit-testing - one candidate for why the selector's hand-built hit
         // rectangles never once received a click - and Codeware's own popup container sets one.
@@ -205,9 +200,6 @@ public class MpTradePopup extends CustomPopup {
         let rootH = size.Y > 1.0 ? size.Y : 2160.0;
         let placement = this.m_owner.MpTrPlacement();
 
-        let oldScale = this.m_scale;
-        let oldX = this.m_originX;
-        let oldY = this.m_originY;
         this.m_scale = MpTrScaleFor(rootW, placement.Z);
         this.m_originX = rootW * placement.X - MpTrPanelX() * this.m_scale;
         this.m_originY = rootH * placement.Y - MpTrPanelY() * this.m_scale;
@@ -219,13 +211,6 @@ public class MpTradePopup extends CustomPopup {
         this.m_hits.Clear();
         MpTrBuild(this.m_canvas, view, ui, this.m_hits);
         MpTrDrawHits(this.m_canvas, this.m_hits, this);
-
-        // A new placement makes the kept map wrong; the markers below re-measure it.
-        if this.m_scale != oldScale || this.m_originX != oldX || this.m_originY != oldY {
-            this.m_mapOk = false;
-        }
-        this.m_mark0 = MpTrMark(this.m_canvas, MpTrPanelX(), MpTrPanelY());
-        this.m_mark1 = MpTrMark(this.m_canvas, MpTrPanelX() + MpTrMarkDX(), MpTrPanelY() + MpTrMarkDY());
     }
 
     /**
@@ -306,9 +291,25 @@ public class MpTradePopup extends CustomPopup {
             let id = this.m_clicked;
             this.m_clicked = 0;
             let how = "widget";
+            let screen = evt.GetScreenSpacePosition();
 
-            if id <= 0 {
-                id = this.FallbackHit(evt.GetScreenSpacePosition());
+            if id > 0 {
+                this.MapCheck(id, screen);
+            } else {
+                // No widget took it. A rail comes first: a release there with no drag in progress
+                // means the press never started one, so it is a click on the ladder and the arrow
+                // jumps - the ladder works even if OnPostOnPress never reaches this popup. Never
+                // falls through to the rows: in test.110 a ladder click ticked an item in.
+                if this.CanMap() {
+                    let at = this.ToPanel(screen);
+                    let r = this.m_hits.RailAt(at.X, at.Y);
+                    if r >= 0 {
+                        evt.Handle();
+                        this.LadderClick(r, at);
+                        return true;
+                    }
+                }
+                id = this.FallbackHit(screen);
                 how = "position";
             }
 
@@ -322,53 +323,91 @@ public class MpTradePopup extends CustomPopup {
         return false;
     }
 
-    // Whether a screen position can be turned into panel units: measured now if the markers are
-    // laid out, else the map kept from the last measurement while the placement has not moved.
+    // Whether a screen position can be turned into panel units yet: the video settings give a
+    // screen size and the root has been laid out.
     private func CanMap() -> Bool {
-        return this.Measure() || this.m_mapOk;
+        if !IsDefined(this.m_canvas) || this.m_scale <= 0.0 {
+            return false;
+        }
+        let display = ScreenHelper.GetScreenSize(this.GetGame());
+        let size = this.GetRootWidget().GetSize();
+        return display.X >= 1.0 && display.Y >= 1.0 && size.X >= 1.0 && size.Y >= 1.0;
     }
 
     /**
-     * Measure the map from the two markers (see m_mark0). GlobalToLocal(marker, s) is
-     * (s - P) * u for the marker's screen position P and some unit u; the same call on the
-     * second marker, DX x DY panel units away, gives the screen size of a panel unit. A marker
-     * not laid out yet answers the same for both, which reads as a zero scale and is refused.
+     * Screen position to panel units - once, here, and nowhere else.
+     *
+     * GetScreenSpacePosition is in real display pixels (docs/DESIGN-LANGUAGE.md, measured on the
+     * selector at 1440p), the root is that display at its own size, and the canvas is drawn at the
+     * origin scaled about its pivot: drawn = origin + p + (local - p) * scale. This solves that
+     * for local. The pivot is READ BACK, not assumed, so the conversion stays the exact inverse of
+     * the transform the canvas is given - assuming it is what broke test.110 (OnCreate).
      */
-    private func Measure() -> Bool {
-        if !IsDefined(this.m_mark0) || !IsDefined(this.m_mark1) {
-            return false;
-        }
-        let zero = new Vector2(0.0, 0.0);
-        let a = WidgetUtils.GlobalToLocal(this.m_mark0, zero);
-        let b = WidgetUtils.GlobalToLocal(this.m_mark0, new Vector2(1000.0, 1000.0));
-        let c = WidgetUtils.GlobalToLocal(this.m_mark1, zero);
-        let ux = (b.X - a.X) / 1000.0;
-        let uy = (b.Y - a.Y) / 1000.0;
-        let kx = (a.X - c.X) / MpTrMarkDX();
-        let ky = (a.Y - c.Y) / MpTrMarkDY();
-        if AbsF(ux) < 0.0001 || AbsF(uy) < 0.0001 || AbsF(kx) < 0.0001 || AbsF(ky) < 0.0001 {
-            return false;
-        }
-        this.m_mapU = new Vector2(ux, uy);
-        this.m_mapK = new Vector2(kx, ky);
-        this.m_mapP = new Vector2(-a.X / ux, -a.Y / uy);
-        this.m_mapOk = true;
-
-        // Once per panel: the measurement, beside what the old hand-made map would have used,
-        // so a log says which assumption was wrong.
-        if !this.m_mapLogged && IsDefined(this.m_owner) {
-            this.m_mapLogged = true;
-            let display = ScreenHelper.GetScreenSize(this.GetGame());
-            let root = this.GetRootWidget().GetSize();
-            this.m_owner.MpTrLog(s"mouse map measured - a panel unit is \(kx / ux)x\(ky / uy) screen units, panel corner at \(this.m_mapP.X),\(this.m_mapP.Y) on screen (the settings say \(display.X)x\(display.Y), root \(root.X)x\(root.Y), scale \(this.m_scale), origin \(this.m_originX),\(this.m_originY))");
-        }
-        return true;
+    private func ToPanel(screen: Vector2) -> Vector2 {
+        let display = ScreenHelper.GetScreenSize(this.GetGame());
+        let size = this.GetRootWidget().GetSize();
+        let rx = screen.X * size.X / display.X;
+        let ry = screen.Y * size.Y / display.Y;
+        let pivot = this.m_canvas.GetRenderTransformPivot();
+        let box = this.m_canvas.GetSize();
+        let px = pivot.X * box.X;
+        let py = pivot.Y * box.Y;
+        return new Vector2(px + (rx - this.m_originX - px) / this.m_scale,
+                           py + (ry - this.m_originY - py) / this.m_scale);
     }
 
-    // Screen position to panel units - once, here, and nowhere else.
-    private func ToPanel(screen: Vector2) -> Vector2 {
-        return new Vector2(MpTrPanelX() + (screen.X - this.m_mapP.X) * this.m_mapU.X / this.m_mapK.X,
-                           MpTrPanelY() + (screen.Y - this.m_mapP.Y) * this.m_mapU.Y / this.m_mapK.Y);
+    // What the conversion rests on, for the "panel open" line.
+    public func MapFacts() -> String {
+        let display = ScreenHelper.GetScreenSize(this.GetGame());
+        let pivot = new Vector2(-1.0, -1.0);
+        if IsDefined(this.m_canvas) {
+            pivot = this.m_canvas.GetRenderTransformPivot();
+        }
+        return s"pivot \(pivot.X),\(pivot.Y), the settings say \(display.X)x\(display.Y)";
+    }
+
+    /**
+     * Ground truth for the conversion. A widget has just said the cursor is on box id, so the
+     * conversion of the same click has to land inside that box. The first three of a panel are
+     * logged and so is every miss, with how far off it was - so the log answers "is the mouse
+     * conversion right" by itself, from clicks the player makes anyway.
+     */
+    private func MapCheck(id: Int32, screen: Vector2) -> Void {
+        let hit = this.m_hits.Find(id);
+        if !IsDefined(hit) {
+            return;
+        }
+        this.m_checks += 1;
+        if !this.CanMap() {
+            if this.m_checks <= 3 {
+                this.Note(s"map check: click on \(id) - not converted, the video settings give no screen size");
+            }
+            return;
+        }
+        let at = this.ToPanel(screen);
+        let inside = at.X >= hit.x - 2.0 && at.X <= hit.x + hit.w + 2.0 && at.Y >= hit.y - 2.0 && at.Y <= hit.y + hit.h + 2.0;
+        if this.m_checks > 3 && inside {
+            return;
+        }
+        let said = s"click on \(id) at screen \(screen.X),\(screen.Y) -> panel \(at.X),\(at.Y)";
+        let rect = s"its box \(hit.x),\(hit.y) \(hit.w)x\(hit.h)";
+        if inside {
+            this.Note(s"map check: \(said), inside \(rect)");
+        } else {
+            let dx = hit.x + hit.w * 0.5 - at.X;
+            let dy = hit.y + hit.h * 0.5 - at.Y;
+            this.Note(s"map check: \(said), OUTSIDE \(rect) - the conversion is off by about \(dx),\(dy) panel units");
+        }
+    }
+
+    // A release on a rail that no drag claimed: the arrow jumps to the row under it.
+    private func LadderClick(i: Int32, at: Vector2) -> Void {
+        let rail = this.m_hits.rails[i];
+        let top = rail.Nearest(at.Y);
+        this.Note(s"rail \(rail.list): released on the ladder at \(at.X),\(at.Y) with no drag - row \(rail.top + 1) -> \(top + 1)");
+        if top != rail.top && IsDefined(this.m_owner) {
+            this.m_owner.MpTrSetTop(rail.list, top);
+        }
     }
 
     private func Note(line: String) -> Void {
@@ -392,7 +431,7 @@ public class MpTradePopup extends CustomPopup {
             return false;
         }
         if !this.CanMap() {
-            this.Note("press not placed - the mouse map is not measured yet");
+            this.Note("press not placed - the video settings give no screen size");
             return false;
         }
         let at = this.ToPanel(evt.GetScreenSpacePosition());
@@ -470,7 +509,7 @@ public class MpTradePopup extends CustomPopup {
             }
             this.Note(s"wheel \(dir) at \(at.X),\(at.Y) - over no list, so your list");
         } else {
-            this.Note(s"wheel \(dir) not placed - the mouse map is not measured yet, so your list");
+            this.Note(s"wheel \(dir) not placed - the video settings give no screen size, so your list");
         }
         this.m_owner.MpTrScroll(dir);
         return false;
