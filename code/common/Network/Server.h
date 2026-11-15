@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <chrono>
 #include "SteamInterface.h"
+#include "TickPacer.h"
 #include <Core/Stl.h>
 
 
@@ -77,9 +78,8 @@ private:
 
     uint32_t m_tickRate;
     std::chrono::time_point<std::chrono::high_resolution_clock> m_lastClockSyncTime;
-    std::chrono::time_point<std::chrono::high_resolution_clock> m_lastUpdateTime;
     std::chrono::time_point<std::chrono::high_resolution_clock> m_currentTick;
-    std::chrono::milliseconds m_timeBetweenUpdates;
+    TickPacer m_pacer;
 
     uint64_t m_clientIdentifier;
     uint64_t m_serverIdentifier;

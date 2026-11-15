@@ -202,6 +202,11 @@ private:
     // delays a permission change that Discord itself takes a moment to propagate.
     static constexpr auto kRoleNameTtl = std::chrono::minutes(10);
 
+    // Says how fast the loop is really turning. The configured rate is a request, and until
+    // this existed nobody read the answer: it ran at twice the rate for months
+    // (Network/TickPacer.h). Off the pace is a warning a minute; on it is a line every ten.
+    void ReportTickRate(std::chrono::steady_clock::time_point aNow);
+
     // Logs per-player ping / packet loss on a slow heartbeat, so a laggy player can be
     // told apart from a struggling server.
     void ReportPlayerConnections(std::chrono::steady_clock::time_point aNow);
@@ -284,6 +289,8 @@ private:
     bool m_run = true;
     inline static std::atomic_bool s_stopRequested{false};
     std::chrono::steady_clock::time_point m_lastUpdate;
+    TickMeter m_tickMeter;
+    uint32_t m_onPaceReports{0};
     std::chrono::steady_clock::time_point m_lastConnectionReport;
     std::chrono::steady_clock::time_point m_lastReverify;
     BanList m_bans;

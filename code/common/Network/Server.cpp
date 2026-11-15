@@ -17,8 +17,6 @@ static thread_local Server* s_pServer = nullptr;
 
 Server::Server(uint64_t aClientIdentifier, uint64_t aServerIdentifier) noexcept
     : m_tickRate(10)
-    , m_lastUpdateTime(0ns)
-    , m_timeBetweenUpdates(100ms)
     , m_lastClockSyncTime(0ns)
     , m_clientIdentifier(aClientIdentifier)
     , m_serverIdentifier(aServerIdentifier)
@@ -68,9 +66,8 @@ bool Server::Host(const uint16_t aPort, uint32_t aTickRate, bool bEnableDualStac
     }
 
     m_tickRate = aTickRate;
+    m_pacer.SetRate(m_tickRate);
 
-    // update time in MS
-    m_timeBetweenUpdates = 1000ms / m_tickRate;
     return IsListening();
 }
 
@@ -90,6 +87,7 @@ void Server::Close() noexcept
 void Server::Update() noexcept
 {
     m_currentTick = high_resolution_clock::now();
+    m_pacer.Begin(TickPacer::Clock::now());
 
     if (IsListening())
     {
@@ -122,8 +120,10 @@ void Server::Update() noexcept
 
     OnUpdate();
 
-    const auto cFrameTime = m_currentTick - m_lastUpdateTime;
-    const auto cSleepTime = m_timeBetweenUpdates - cFrameTime;
+    // Rest for what is left of THIS turn's tick. The sum is TickPacer's, and its header says
+    // why it is not worked out here any more: done here, from the previous turn's start, it
+    // ran the loop at twice the configured rate.
+    const auto cSleepTime = m_pacer.Rest(TickPacer::Clock::now());
 
     if (cSleepTime > 0ns)
         std::this_thread::sleep_for(cSleepTime);
@@ -131,8 +131,6 @@ void Server::Update() noexcept
     // If no client is connected, sleep
     if (m_queuedConnections.empty() && m_connections.empty())
         std::this_thread::sleep_for(200ms);
-
-    m_lastUpdateTime = m_currentTick;
 }
 
 void Server::SendToAll(Packet* apPacket, const EPacketFlags aPacketFlags) noexcept
