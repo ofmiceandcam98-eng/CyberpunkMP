@@ -201,6 +201,7 @@ void GameServer::OnUpdate()
     m_tasks.Drain();
     m_dispatcher.update();
 
+    ReportTickRate(now);
     ReportPlayerConnections(now);
     ReverifyPlayers(now);
     SavePlayerPositions(now);
@@ -599,6 +600,34 @@ void GameServer::ReverifyPlayers(std::chrono::steady_clock::time_point aNow)
             }
         })
         .detach();
+}
+
+void GameServer::ReportTickRate(std::chrono::steady_clock::time_point aNow)
+{
+    TickMeter::Reading reading;
+
+    // Only a minute with somebody connected throughout is answered: with nobody on the loop
+    // sleeps 200ms a turn on purpose, and that is not a pace worth reporting.
+    if (!m_tickMeter.Count(aNow, GetClientCount() > 0, reading))
+        return;
+
+    const auto asked = GetTickRate();
+
+    if (TickMeter::OffPace(reading.TurnsPerSecond, asked))
+    {
+        // Too fast is the loop resting for the wrong span; too slow is a turn that takes
+        // longer than its tick, or a host whose sleeps overshoot. Either way every minute
+        // says so until it stops being true.
+        m_onPaceReports = 0;
+        spdlog::warn("[Tick] {:.1f} turns a second over the last minute, asked for {} - the loop is off its pace",
+                     reading.TurnsPerSecond, asked);
+    }
+    else if (m_onPaceReports++ % 10 == 0)
+    {
+        // The first good minute, then one in ten: a healthy server does not fill its log
+        // saying so.
+        spdlog::info("[Tick] {:.1f} turns a second over the last minute, asked for {}", reading.TurnsPerSecond, asked);
+    }
 }
 
 void GameServer::ReportPlayerConnections(std::chrono::steady_clock::time_point aNow)
