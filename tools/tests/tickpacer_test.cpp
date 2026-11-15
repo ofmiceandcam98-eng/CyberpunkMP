@@ -201,6 +201,34 @@ int main()
         Check(old.ShortestGap <= microseconds(300) && old.LongestGap >= milliseconds(15), "and its turns came in pairs: one straight after the last, one a whole tick later");
     }
 
+    // --- what the pace does to a timer that rides the loop -----------------------------------
+    {
+        // Movement is replicated on a turn once 33ms have passed since it last was
+        // (1000 / 30, GameServer::ReplicatePendingMovement). Evenly spaced turns make that
+        // every second turn: 30 a second. The old pairs reached the mark a hair early twice
+        // running and then waited a whole extra tick, so with a light turn other players'
+        // movement went out about 20 times a second - a third less often than configured.
+        const auto sendsPerSecond = [&](const std::function<void(const OnTurn&)>& aLoop) {
+            Clock::time_point last{};
+            int sends = 0;
+            aLoop([&](Clock::time_point aNow) {
+                if (aNow - last < milliseconds(33)) return;
+                last = aNow;
+                ++sends;
+            });
+            return sends / std::chrono::duration<double>(minute).count();
+        };
+
+        const double paced = sendsPerSecond([&](const OnTurn& aOnTurn) { RunPacer(60, Steady(microseconds(300)), minute, aOnTurn); });
+        const double before = sendsPerSecond([&](const OnTurn& aOnTurn) { RunOldSum(60, Steady(microseconds(300)), minute, aOnTurn); });
+        const double heavy = sendsPerSecond([&](const OnTurn& aOnTurn) { RunPacer(60, Steady(milliseconds(8)), minute, aOnTurn); });
+        std::printf("      a 33ms timer riding the loop - the old sum: %.1f a second, the pacer: %.1f\n", before, paced);
+
+        Check(Near(paced, 30.0, 0.05), "a 33ms timer riding the paced loop fires 30 times a second");
+        Check(Near(heavy, 30.0, 0.05), "and still 30 when a turn takes half a tick");
+        Check(before < 22.0, "riding the old sum with a light turn it fired about 20 (kept on record)");
+    }
+
     // --- the meter ----------------------------------------------------------------------------
     {
         Check(!TickMeter::OffPace(60.0, 60), "60 when asked for 60 is on the pace");
