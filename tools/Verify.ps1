@@ -602,11 +602,17 @@ if (-not $SkipTests) {
         Write-Host "  !!    node is not on PATH - launcher tests SKIPPED" -ForegroundColor Yellow
     }
     else {
-        # require.selftest.mjs needs nothing from node_modules, so it runs in a fresh worktree
-        # too - the one place every other launcher test is skipped. It is the check for a
-        # mistake that hid for three months: main.js is an ES module, six functions called
-        # require() anyway, and Uninstall and Deep clean removed nothing.
-        $launcherTests = @((Join-Path $launcherDir "require.selftest.mjs"))
+        # These need nothing from node_modules, so they run in a fresh worktree too - the
+        # one place every other launcher test is skipped.
+        #   require.selftest.mjs     main.js is an ES module, six functions called require()
+        #                            anyway, and Uninstall and Deep clean removed nothing.
+        #   undeclared.selftest.mjs  the general case of that: a call to a name the module
+        #                            never declares parses, passes node --check, and throws
+        #                            on a player's machine.
+        $launcherTests = @(
+            (Join-Path $launcherDir "require.selftest.mjs"),
+            (Join-Path $launcherDir "undeclared.selftest.mjs")
+        )
 
         if (-not (Test-Path (Join-Path $launcherDir "node_modules"))) {
             Write-Host "  !!    code\launcher-lite\node_modules is missing - the other launcher tests SKIPPED. A fresh worktree starts without it: run pnpm install in that folder." -ForegroundColor Yellow
