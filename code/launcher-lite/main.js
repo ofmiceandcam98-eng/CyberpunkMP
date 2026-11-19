@@ -538,6 +538,9 @@ function isServerListeningLocally (port) {
 
 let mainWindow = null
 let accessToken = null   // never sent to the renderer
+let refreshToken = null  // never sent to the renderer either - it is what renews accessToken
+let tokenExpiresAt = 0   // when accessToken stops working, ms since 1970; 0 = not known
+let signInInProgress = false // a sign-in by hand is under way; restoreSession stands aside
 let currentUser = null   // safe subset, mirrored to the renderer
 let lastUpdateCheck = null
 let lastServerStatus = null
@@ -911,8 +914,35 @@ function voiceKeyAfterMigration (settings) {
   return settings.voicePushToTalkKey || 'IK_Y'
 }
 
-function saveToken (token) {
-  if (!token) {
+/*
+ * THE SAVED DISCORD SIGN-IN.
+ *
+ * Three things are kept, encrypted, under settings.token: the access token, the refresh
+ * token, and when the access token stops working.
+ *
+ * WHY THREE. Discord's access token lasts seven days. Until 2026-11 the launcher kept only
+ * that and threw away the refresh token that comes with it, so everybody was signed out a
+ * week after signing in. It read as "the launcher forgot me after a restart", because the
+ * token is only ever checked when the launcher starts - and signing in again means the
+ * whole Discord login, password and all, because the sign-in window starts from an empty
+ * session on purpose.
+ *
+ * WHAT ENDS A SIGN-IN. Only Discord saying no: a 401 on the token itself. Discord not
+ * answering - no network yet after a reboot, a timeout, a rate limit, an outage - says
+ * nothing about the token, and until 2026-11 any of those deleted it for good (see
+ * restoreSession).
+ *
+ * A launcher from before this change saved the bare access token. That still loads: it
+ * works until it expires and simply cannot be renewed.
+ */
+const DISCORD_TIMEOUT_MS = 10000
+
+// Renew when the token has less than this left, so somebody who opens the launcher once a
+// week is never caught by the expiry.
+const RENEW_AHEAD_MS = 24 * 60 * 60 * 1000
+
+function saveSession () {
+  if (!accessToken) {
     saveSettings({ token: null })
     return
   }
@@ -923,19 +953,184 @@ function saveToken (token) {
     return
   }
 
-  saveSettings({ token: safeStorage.encryptString(token).toString('base64') })
+  const session = JSON.stringify({ access: accessToken, refresh: refreshToken, expiresAt: tokenExpiresAt })
+  saveSettings({ token: safeStorage.encryptString(session).toString('base64') })
 }
 
-function loadToken () {
+// Reads the saved sign-in into memory. True when there is one to try.
+function loadSession () {
   const { token } = loadSettings()
-  if (!token || !safeStorage.isEncryptionAvailable()) return null
+  if (!token || !safeStorage.isEncryptionAvailable()) return false
 
+  let plain
   try {
-    return safeStorage.decryptString(Buffer.from(token, 'base64'))
+    plain = safeStorage.decryptString(Buffer.from(token, 'base64'))
   } catch {
     // Different Windows account, or the file was tampered with.
-    return null
+    return false
   }
+
+  let session = null
+  try { session = JSON.parse(plain) } catch { /* the bare token of an older launcher */ }
+
+  if (session && typeof session === 'object' && typeof session.access === 'string') {
+    accessToken = session.access
+    refreshToken = typeof session.refresh === 'string' ? session.refresh : null
+    tokenExpiresAt = Number(session.expiresAt) || 0
+  } else {
+    accessToken = plain
+    refreshToken = null
+    tokenExpiresAt = 0
+  }
+
+  return Boolean(accessToken)
+}
+
+// Signed out, in memory and on disk.
+function forgetSession () {
+  accessToken = null
+  refreshToken = null
+  tokenExpiresAt = 0
+  currentUser = null
+  saveSettings({ token: null })
+}
+
+// Takes the tokens out of an answer from Discord's token endpoint.
+function adoptTokens (data) {
+  accessToken = data.access_token
+  // Discord sends a new refresh token with each answer; the old one stays only if it did not.
+  if (data.refresh_token) refreshToken = data.refresh_token
+  tokenExpiresAt = data.expires_in ? Date.now() + Number(data.expires_in) * 1000 : 0
+}
+
+// Did Discord answer, and refuse this token? The one thing that ends a sign-in. No answer
+// at all, a timeout, a rate limit and a server error are all Discord NOT saying.
+function tokenRefused (err) {
+  return Boolean(err && err.response && err.response.status === 401)
+}
+
+// One short phrase for the log: what came back, or that nothing did.
+function describeDiscordFailure (err) {
+  if (err && err.response) {
+    const said = err.response.data && err.response.data.error ? ` ${err.response.data.error}` : ''
+    return `Discord answered ${err.response.status}${said}`
+  }
+  return `no answer (${(err && (err.code || err.message)) || 'unknown'})`
+}
+
+/**
+ * Trades the refresh token for a new pair. True when it worked.
+ *
+ * A failure here never signs anybody out by itself: the access token may still have days
+ * left, and only Discord refusing THAT ends the sign-in (restoreSession).
+ *
+ * DISCORD HAS TO ALLOW IT. The launcher has no client secret - it runs on the player's own
+ * machine, so a secret in it would be no secret. Discord renews without one only for an
+ * application with "Public Client" switched on in the Developer Portal; for any other it
+ * answers 401 invalid_client, which was this application's answer on 2026-11-18. That
+ * refusal is about the application, not the player, so the refresh token is kept for the
+ * day the switch is on. invalid_grant is the other refusal: this refresh token is spent or
+ * revoked, and it is dropped.
+ */
+async function renewSession (why) {
+  if (!refreshToken) return false
+
+  const body = new URLSearchParams({
+    client_id: DISCORD_CLIENT_ID,
+    grant_type: 'refresh_token',
+    refresh_token: refreshToken
+  })
+
+  try {
+    const response = await axios.post('https://discord.com/api/v10/oauth2/token', body.toString(), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      timeout: DISCORD_TIMEOUT_MS
+    })
+
+    adoptTokens(response.data)
+    saveSession()
+    launcherLog(`sign-in renewed (${why})`)
+    return true
+  } catch (err) {
+    const said = err && err.response && err.response.data ? err.response.data.error : null
+
+    if (said === 'invalid_grant') {
+      refreshToken = null
+      saveSession()
+    }
+
+    launcherLog(`sign-in not renewed (${why}): ${describeDiscordFailure(err)}` +
+                (said === 'invalid_client'
+                  ? ' - Discord renews without a secret only when the application has Public Client switched on'
+                  : ''))
+    return false
+  }
+}
+
+// Is the token known to be at or near its end? A sign-in saved by an older launcher has
+// no expiry on record and is never "due": it is renewed only if Discord refuses it.
+function renewalDue () {
+  return Boolean(refreshToken && tokenExpiresAt && Date.now() >= tokenExpiresAt - RENEW_AHEAD_MS)
+}
+
+/**
+ * Brings back the saved sign-in when the launcher starts.
+ *
+ * THE BUG THIS REPLACES. The old version caught EVERY failure of the identity check and
+ * deleted the saved token under the comment "Expired or revoked". But that check throws for
+ * anything that is not a 200: the network not being up yet after a reboot, a timeout, a
+ * rate limit, Discord having a bad minute. Each of those threw away a token that was fine,
+ * and getting it back is the whole Discord login. Nothing was logged, so it looked random.
+ *
+ * Three ways out now, and only one of them signs anybody out:
+ *
+ *   signed in    Discord vouched for the token (after renewing it, if it had to be).
+ *   signed out   Discord REFUSED the token and it could not be renewed. Logged.
+ *   waiting      Discord did not answer. What is on disk is untouched and the window asks
+ *                again in a few seconds (restoreSignIn in index.html).
+ */
+async function restoreSession () {
+  // Somebody is signing in by hand right now. That sign-in owns the token variables until
+  // it finishes, so say "ask again" and touch nothing.
+  if (signInInProgress) return { ok: false, waiting: true, message: null }
+
+  if (!loadSession()) return { ok: false }
+
+  const identify = async () => {
+    try {
+      await hydrateUserFromToken()
+      return null
+    } catch (err) {
+      return err
+    }
+  }
+
+  const due = renewalDue()
+  if (due) await renewSession('it was within a day of expiring')
+
+  let failure = await identify()
+
+  // Refused, and renewal has not been tried yet this start: try it once.
+  if (failure && tokenRefused(failure) && !due && await renewSession('Discord refused the saved one')) {
+    failure = await identify()
+  }
+
+  if (!failure) return { ok: true, user: publicProfile() }
+
+  if (tokenRefused(failure)) {
+    launcherLog('saved sign-in: Discord refused it and it could not be renewed - signed out')
+    forgetSession()
+    return { ok: false }
+  }
+
+  // Not a refusal. Only this run's memory is cleared, so nothing treats an unconfirmed
+  // token as a signed-in player; the copy on disk stays exactly as it was.
+  launcherLog(`saved sign-in: kept - ${describeDiscordFailure(failure)}`)
+  accessToken = null
+  refreshToken = null
+  tokenExpiresAt = 0
+  currentUser = null
+  return { ok: false, waiting: true, message: 'Discord is not answering - your sign-in is saved. Trying again.' }
 }
 
 function getServerDir () {
@@ -2724,6 +2919,8 @@ async function resetLauncherData () {
   if (choice.response !== 0) return { reset: false }
 
   accessToken = null
+  refreshToken = null
+  tokenExpiresAt = 0
   currentUser = null
   lastUpdateCheck = null
 
@@ -3025,10 +3222,13 @@ async function signInWithDiscord () {
   })
 
   const tokenResponse = await axios.post('https://discord.com/api/v10/oauth2/token', body.toString(), {
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    timeout: DISCORD_TIMEOUT_MS
   })
 
-  accessToken = tokenResponse.data.access_token
+  // The access token, the refresh token that renews it, and when it runs out. Keeping only
+  // the first is why a sign-in used to last exactly seven days.
+  adoptTokens(tokenResponse.data)
 
   return hydrateUserFromToken()
 }
@@ -3043,8 +3243,14 @@ async function signInWithDiscord () {
 async function hydrateUserFromToken () {
   // Ask Discord who this token belongs to. We never trust anything the UI says
   // about the user's identity - it comes from here, or not at all.
+  //
+  // This call THROWS for anything but a 200, and what it throws matters to the caller: a
+  // 401 is Discord refusing the token, everything else is Discord not answering. Do not
+  // catch it here. The timeout is so a dead connection is "not answering" in ten seconds
+  // rather than a launcher that never finishes starting.
   const userResponse = await axios.get('https://discord.com/api/v10/users/@me', {
-    headers: { Authorization: `Bearer ${accessToken}` }
+    headers: { Authorization: `Bearer ${accessToken}` },
+    timeout: DISCORD_TIMEOUT_MS
   })
 
   const user = userResponse.data
@@ -3061,7 +3267,7 @@ async function hydrateUserFromToken () {
   try {
     const membership = await axios.get(
       `https://discord.com/api/v10/users/@me/guilds/${GUILD_ID}/member`,
-      { headers: { Authorization: `Bearer ${accessToken}` }, validateStatus: () => true })
+      { headers: { Authorization: `Bearer ${accessToken}` }, validateStatus: () => true, timeout: DISCORD_TIMEOUT_MS })
 
     if (membership.status === 200 || membership.status === 404) {
       // The two DEFINITIVE answers - in the server, or not. Only these may change
@@ -3604,6 +3810,12 @@ async function launchGame () {
   //
   // Note the '=' form: the game's argument parser silently ignores space-separated
   // values, leaving the setting at its default with no error anywhere.
+  //
+  // A launcher left open for days can be holding a token that is about to run out, and the
+  // server would refuse it at connect. Renew first when it is due; if that does not work
+  // the token goes as it is and the server has the last word, as it always did.
+  if (renewalDue()) await renewSession('the game is about to start')
+
   const args = [
     ...GAME_ARGS,
     '--online',
@@ -4113,7 +4325,7 @@ async function resolveUserLevel () {
 
   if (!map.roles || !map.roles.length) return fallback('role map unavailable')
 
-  const token = loadToken()
+  const token = accessToken
   if (!token) return fallback('no OAuth token on hand')
 
   let memberRoles = []
@@ -4604,40 +4816,28 @@ ipcMain.handle('server:restart', async () => {
 })
 
 ipcMain.handle('discord:login', async () => {
+  // restoreSession stands aside while this is set: the window keeps asking about the saved
+  // sign-in in the background, and both of them write the same three variables.
+  signInInProgress = true
   try {
     await signInWithDiscord()
-    saveToken(accessToken)
+    saveSession()
     return { ok: true, user: publicProfile() }
   } catch (err) {
     return { ok: false, error: err.message }
+  } finally {
+    signInInProgress = false
   }
 })
 
 // Restores a previous session on startup, so signing in is a one-time thing rather
-// than something to repeat every launch.
-ipcMain.handle('discord:restore', async () => {
-  const saved = loadToken()
-  if (!saved) return { ok: false }
-
-  try {
-    accessToken = saved
-    await hydrateUserFromToken()
-    return { ok: true, user: publicProfile() }
-  } catch {
-    // Expired or revoked. Clear it and fall back to the sign-in button rather than
-    // showing a session that no longer works.
-    accessToken = null
-    currentUser = null
-    saveToken(null)
-    return { ok: false }
-  }
-})
+// than something to repeat every launch. The rules for what ends a saved sign-in, and
+// what only postpones it, are restoreSession's.
+ipcMain.handle('discord:restore', () => restoreSession())
 
 ipcMain.handle('discord:logout', () => {
-  accessToken = null
-  currentUser = null
+  forgetSession()
   lastUpdateCheck = null
-  saveToken(null)
   return { ok: true }
 })
 
@@ -6324,7 +6524,7 @@ ipcMain.handle('tailscale:test-invite', async () => {
 ipcMain.handle('devKey:fetch', async () => {
   if (!isAdmin()) return { ok: false, error: 'The dev key is for people with the dev role.' }
 
-  const token = loadToken()
+  const token = accessToken
   if (!token) return { ok: false, error: 'Sign in with Discord first.' }
 
   const published = await fetchPublishedServer()
@@ -6411,7 +6611,7 @@ ipcMain.handle('atlas:get', async () => {
   // Nothing saved: ask the coordination API, which verifies the Discord dev role and is
   // the same route the dev key already travels. A dev never types the address, and it
   // never appears anywhere a player can read - not in this repo, not in server.json.
-  const token = loadToken()
+  const token = accessToken
   if (!token) return { ok: true, url: null }
 
   const published = await fetchPublishedServer()
