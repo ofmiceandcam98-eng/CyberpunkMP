@@ -609,9 +609,13 @@ if (-not $SkipTests) {
         #   undeclared.selftest.mjs  the general case of that: a call to a name the module
         #                            never declares parses, passes node --check, and throws
         #                            on a player's machine.
+        #   session.selftest.mjs     a saved Discord sign-in was deleted by any hiccup at
+        #                            start and by the token's seven-day life; only Discord
+        #                            refusing the token may end one.
         $launcherTests = @(
             (Join-Path $launcherDir "require.selftest.mjs"),
-            (Join-Path $launcherDir "undeclared.selftest.mjs")
+            (Join-Path $launcherDir "undeclared.selftest.mjs"),
+            (Join-Path $launcherDir "session.selftest.mjs")
         )
 
         if (-not (Test-Path (Join-Path $launcherDir "node_modules"))) {

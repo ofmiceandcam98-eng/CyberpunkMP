@@ -5691,12 +5691,29 @@
 
     // Restore a previous sign-in first, so a returning player lands on "Ready to
     // play" instead of signing in again every single launch.
-    const restored = await window.launcher.restore()
-    if (restored.ok) {
-      signedInUser = restored.user
-      render(signedInUser)
-      setStatus('Signed in as ' + restored.user.handle, 'ok')
+    //
+    // "waiting" is Discord not answering: no network yet after a reboot, a rate limit, an
+    // outage. The saved sign-in is still on disk, so this asks again - after 15 seconds,
+    // then 30, then every minute - until Discord says yes or no. It stops the moment
+    // somebody is signed in, by this or by the button.
+    let restoreDelay = 15000
+    const restoreSignIn = async () => {
+      if (signedInUser) return
+
+      const restored = await window.launcher.restore()
+      if (signedInUser) return
+
+      if (restored.ok) {
+        signedInUser = restored.user
+        render(signedInUser)
+        setStatus('Signed in as ' + restored.user.handle, 'ok')
+      } else if (restored.waiting) {
+        if (restored.message) setStatus(restored.message)
+        setTimeout(restoreSignIn, restoreDelay)
+        restoreDelay = Math.min(restoreDelay * 2, 60000)
+      }
     }
+    await restoreSignIn()
 
     await checkUpdates()
     await checkTailscale()
