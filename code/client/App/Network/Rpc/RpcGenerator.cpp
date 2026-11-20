@@ -1,6 +1,9 @@
 #include "RpcGenerator.h"
 
 #include <fstream>
+#include <mutex>
+#include <set>
+#include <utility>
 #include <xbyak/xbyak.h>
 
 #include "App/Network/NetworkService.h"
@@ -25,7 +28,43 @@ void RunRpcFunction(void* aContext, Red::CStackFrame* aFrame, void* aRet, Red::C
     auto id = pRpcService->GetRpcId(apContext->klass, apContext->function);
     if (!id.has_value())
     {
-        spdlog::error("Could not find Rpc id for class {:X}, function {:X}", apContext->klass.hash, apContext->function.hash);
+        /*
+         * THE SERVER NEVER REGISTERED THIS CALL - said ONCE, by NAME, and then dropped.
+         *
+         * This used to log an error with two raw hashes on EVERY invocation. A server that
+         * carries no emote plugin therefore produced one error per emote press: 36 of them
+         * across five client logs in a single night (2026-11-08), and reading them meant
+         * hand-resolving FNV-1a by hand to discover they were EmoteServer::TriggerEmote,
+         * DeliveryServer::LoadDeliveries and JobsServer::SelectJob. Three facts, printed
+         * thirty-six times, in a form nobody can read.
+         *
+         * It is also not an error. A server legitimately carries only the plugins its
+         * operator installed; the client offering a call the server does not implement is
+         * an ordinary configuration, not a fault. Logging it as an error buries the real
+         * ones - which is the cost that matters when a log is the only evidence anyone has.
+         *
+         * So: WARN once per unresolved (class, function), with the names spelled out and
+         * what it means, then stay silent. The names resolve because both are CNames the
+         * client itself registered - the hashes were never necessary.
+         */
+        static std::mutex s_unknownMutex;
+        static std::set<std::pair<uint64_t, uint64_t>> s_reported;
+
+        const auto key = std::make_pair(apContext->klass.hash, apContext->function.hash);
+
+        bool first = false;
+        {
+            std::scoped_lock lock(s_unknownMutex);
+            first = s_reported.insert(key).second;
+        }
+
+        if (first)
+        {
+            spdlog::warn("[Rpc] this server has not registered {}::{} - a plugin that provides "
+                         "it is not loaded. Calls to it are dropped; this is said once.",
+                         apContext->klass.ToString(), apContext->function.ToString());
+        }
+
         return;
     }
 
